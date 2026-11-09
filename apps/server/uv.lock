@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 
 [[package]]
@@ -548,6 +548,71 @@ wheels = [
 ]
 
 [[package]]
+name = "kodera-server"
+version = "0.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "argon2-cffi" },
+    { name = "cryptography" },
+    { name = "django" },
+    { name = "django-environ" },
+    { name = "djangorestframework" },
+    { name = "gunicorn" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "uuid6" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "django-stubs", extra = ["compatible-mypy"] },
+    { name = "djangorestframework-stubs" },
+    { name = "jsonschema-rs" },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-django" },
+    { name = "pytest-randomly" },
+    { name = "pyyaml" },
+    { name = "respx" },
+    { name = "ruff" },
+    { name = "schemathesis" },
+    { name = "time-machine" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "argon2-cffi", specifier = "==25.1.0" },
+    { name = "cryptography", specifier = "==50.0.2" },
+    { name = "django", specifier = "==6.1.2" },
+    { name = "django-environ", specifier = "==0.14.0" },
+    { name = "djangorestframework", specifier = "==3.18.3" },
+    { name = "gunicorn", specifier = "==26.2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
+    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.1" },
+    { name = "uuid6", specifier = "==2025.0.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=5.1" },
+    { name = "djangorestframework-stubs", specifier = ">=3.15" },
+    { name = "jsonschema-rs", specifier = "==0.60.3" },
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pre-commit", specifier = ">=3.8" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "pytest-django", specifier = ">=4.9" },
+    { name = "pytest-randomly", specifier = ">=3.15" },
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "respx", specifier = ">=0.21" },
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "schemathesis", specifier = ">=3.36" },
+    { name = "time-machine", specifier = ">=2.15" },
+]
+
+[[package]]
 name = "librt"
 version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -688,7 +753,7 @@ wheels = [
 
 [[package]]
 name = "pre-commit"
-version = "4.6.2"
+version = "4.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfgv" },
@@ -697,9 +762,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "virtualenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/89/1f3e8e1fc3e97de0fa963495832f581f025f29471602a309e48808244292/pre_commit-4.6.2.tar.gz", hash = "sha256:8f5d7bfb021ecdbcd9d49d89847082dd24172ccde534390081a679ad046e2441", size = 198670, upload-time = "2026-08-10T22:07:18.421Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/c3/6965c2690ddce885ec75121572d065a5b94c5a5d8d3e657927ecda9fd715/pre_commit-4.7.0.tar.gz", hash = "sha256:1f3deee12b914c8fa184bd2b5953391c2e4f36763e403d4a23dc9983fa7c6e86", size = 198120, upload-time = "2026-10-12T20:45:40.32Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/45/e2/bbb7129c9e7999a6b8ee9cca3b66486c25c423ab5a75f34071798b74ce94/pre_commit-4.6.2-py2.py3-none-any.whl", hash = "sha256:e2dde9a75d3bce11bd3831c26d134df00a2803c1d818be6a0383c3dcda25dc4e", size = 226202, upload-time = "2026-08-10T22:07:16.942Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/83/ce0a196e4f7b20b11ce3aa1fc72fb973f64b7628d51c1b8aebad37fb7f81/pre_commit-4.7.0-py2.py3-none-any.whl", hash = "sha256:2e229038ad3656081b70c27913157e4b636ef306f643f024a8a8e3f0f7b2f877", size = 226261, upload-time = "2026-10-12T20:45:38.858Z" },
 ]
 
 [[package]]
@@ -926,71 +991,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/e5/9e274e24eeb027640ffc7442f21239f16d17f47acec15ae34f32e03a5c79/ruff-0.16.6-py3-none-win32.whl", hash = "sha256:0b87d9d16fcb63e8018423ca1d50b7260f15cb2da33e30db4baad4183a948c25", size = 10049212, upload-time = "2026-09-03T16:57:20.55Z" },
     { url = "https://files.pythonhosted.org/packages/22/31/72472449414223ed1a2da236b992adbb1a2ae59e34794574810f60ce068e/ruff-0.16.6-py3-none-win_amd64.whl", hash = "sha256:10d21c51c3495d8eaea7b703a16592117ea6eb1d649e36335aa965ff1173eb39", size = 10556402, upload-time = "2026-09-03T16:57:23.501Z" },
     { url = "https://files.pythonhosted.org/packages/fc/07/d781f8f8e1ac24bef9f3269cf62ffb1407ca24c3a8f12e5e22874f90528c/ruff-0.16.6-py3-none-win_arm64.whl", hash = "sha256:7a976c79b958f94e50a022a19f0f8c87387448020935ec14fc74331bd0a7f2c5", size = 10412850, upload-time = "2026-09-03T16:57:26.416Z" },
-]
-
-[[package]]
-name = "kodera-server"
-version = "0.0.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "argon2-cffi" },
-    { name = "cryptography" },
-    { name = "django" },
-    { name = "django-environ" },
-    { name = "djangorestframework" },
-    { name = "gunicorn" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "uuid6" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "django-stubs", extra = ["compatible-mypy"] },
-    { name = "djangorestframework-stubs" },
-    { name = "jsonschema-rs" },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-django" },
-    { name = "pytest-randomly" },
-    { name = "pyyaml" },
-    { name = "respx" },
-    { name = "ruff" },
-    { name = "schemathesis" },
-    { name = "time-machine" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "argon2-cffi", specifier = "==25.1.0" },
-    { name = "cryptography", specifier = "==50.0.2" },
-    { name = "django", specifier = "==6.1.2" },
-    { name = "django-environ", specifier = "==0.14.0" },
-    { name = "djangorestframework", specifier = "==3.18.3" },
-    { name = "gunicorn", specifier = "==26.2.0" },
-    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
-    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.1" },
-    { name = "uuid6", specifier = "==2025.0.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=5.1" },
-    { name = "djangorestframework-stubs", specifier = ">=3.15" },
-    { name = "jsonschema-rs", specifier = "==0.60.3" },
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "pre-commit", specifier = ">=3.8" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "pytest-cov", specifier = ">=5.0" },
-    { name = "pytest-django", specifier = ">=4.9" },
-    { name = "pytest-randomly", specifier = ">=3.15" },
-    { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "respx", specifier = ">=0.21" },
-    { name = "ruff", specifier = ">=0.6" },
-    { name = "schemathesis", specifier = ">=3.36" },
-    { name = "time-machine", specifier = ">=2.15" },
 ]
 
 [[package]]
