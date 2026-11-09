@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 
 [[package]]
@@ -548,6 +548,71 @@ wheels = [
 ]
 
 [[package]]
+name = "kodera-server"
+version = "0.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "argon2-cffi" },
+    { name = "cryptography" },
+    { name = "django" },
+    { name = "django-environ" },
+    { name = "djangorestframework" },
+    { name = "gunicorn" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "uuid6" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "django-stubs", extra = ["compatible-mypy"] },
+    { name = "djangorestframework-stubs" },
+    { name = "jsonschema-rs" },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-django" },
+    { name = "pytest-randomly" },
+    { name = "pyyaml" },
+    { name = "respx" },
+    { name = "ruff" },
+    { name = "schemathesis" },
+    { name = "time-machine" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "argon2-cffi", specifier = "==25.1.0" },
+    { name = "cryptography", specifier = "==50.0.2" },
+    { name = "django", specifier = "==6.1.2" },
+    { name = "django-environ", specifier = "==0.14.0" },
+    { name = "djangorestframework", specifier = "==3.18.3" },
+    { name = "gunicorn", specifier = "==26.2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
+    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.1" },
+    { name = "uuid6", specifier = "==2025.0.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=5.1" },
+    { name = "djangorestframework-stubs", specifier = ">=3.15" },
+    { name = "jsonschema-rs", specifier = "==0.60.3" },
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pre-commit", specifier = ">=3.8" },
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "pytest-django", specifier = ">=4.9" },
+    { name = "pytest-randomly", specifier = ">=3.15" },
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "respx", specifier = ">=0.21" },
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "schemathesis", specifier = ">=3.36" },
+    { name = "time-machine", specifier = ">=2.15" },
+]
+
+[[package]]
 name = "librt"
 version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -929,73 +994,8 @@ wheels = [
 ]
 
 [[package]]
-name = "kodera-server"
-version = "0.0.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "argon2-cffi" },
-    { name = "cryptography" },
-    { name = "django" },
-    { name = "django-environ" },
-    { name = "djangorestframework" },
-    { name = "gunicorn" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pyjwt", extra = ["crypto"] },
-    { name = "uuid6" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "django-stubs", extra = ["compatible-mypy"] },
-    { name = "djangorestframework-stubs" },
-    { name = "jsonschema-rs" },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-django" },
-    { name = "pytest-randomly" },
-    { name = "pyyaml" },
-    { name = "respx" },
-    { name = "ruff" },
-    { name = "schemathesis" },
-    { name = "time-machine" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "argon2-cffi", specifier = "==25.1.0" },
-    { name = "cryptography", specifier = "==50.0.2" },
-    { name = "django", specifier = "==6.1.2" },
-    { name = "django-environ", specifier = "==0.14.0" },
-    { name = "djangorestframework", specifier = "==3.18.3" },
-    { name = "gunicorn", specifier = "==26.2.0" },
-    { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
-    { name = "pyjwt", extras = ["crypto"], specifier = "==2.15.1" },
-    { name = "uuid6", specifier = "==2025.0.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=5.1" },
-    { name = "djangorestframework-stubs", specifier = ">=3.15" },
-    { name = "jsonschema-rs", specifier = "==0.60.3" },
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "pre-commit", specifier = ">=3.8" },
-    { name = "pytest", specifier = ">=8.3" },
-    { name = "pytest-cov", specifier = ">=5.0" },
-    { name = "pytest-django", specifier = ">=4.9" },
-    { name = "pytest-randomly", specifier = ">=3.15" },
-    { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "respx", specifier = ">=0.21" },
-    { name = "ruff", specifier = ">=0.6" },
-    { name = "schemathesis", specifier = ">=3.36" },
-    { name = "time-machine", specifier = ">=2.15" },
-]
-
-[[package]]
 name = "schemathesis"
-version = "4.32.5"
+version = "4.33.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1012,9 +1012,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/20/50/0149a7be4db5a5b7fab41e3781aabbee0e5f9d72ad57d87243b6db9fa627/schemathesis-4.32.5.tar.gz", hash = "sha256:641fddfef22120f263b60616935f125fa9b71bd32cb3175c6210f38e5ed1cb2f", size = 3805283, upload-time = "2026-10-25T23:01:17.5Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/55/ecae3e8374f7bad565254a917c678d96bea95cea9bf5914df89290a0491a/schemathesis-4.33.1.tar.gz", hash = "sha256:610f2027ef2e60bf287971d5b299e6d25ab9725e2933f4425c41858593b06d79", size = 4039009, upload-time = "2026-11-04T15:30:13.738Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/cd/e603f5243e5016c960974b8f0c6105407bc18a20fed08af58c7466308c41/schemathesis-4.32.5-py3-none-any.whl", hash = "sha256:5ec7e532ebdf9b0e0239a943df2a565174aecda513b61e564d8ad2a3ac801f22", size = 1168235, upload-time = "2026-10-25T23:01:15.163Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/7d/93c07ca9e3a8f2c82898237ccc87c8742081acb84d64d3fe48ffb7709dfe/schemathesis-4.33.1-py3-none-any.whl", hash = "sha256:409ecaa3ade87e9c7a4f417c9efb88bc60e7535252881f54f27e476c34b5c18c", size = 1264091, upload-time = "2026-11-04T15:30:11.37Z" },
 ]
 
 [[package]]
