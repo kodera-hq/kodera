@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Fake ansible-playbook for the development stack.
+#
+# It never opens an SSH connection, never reads a vault or an age identity, and
+# never touches a host. Its job is to make a configuration step runnable on a
+# laptop: log the invocation, print a recap in Ansible's shape, and exit 0.
+#
+# Like `tofu` in this directory, it shadows the real binary on the worker's
+# PATH for ordinary invocations. This does not restrict absolute executable
+# paths, credentials or network calls; it is not a security boundary.
+#
+#   FAKE_TOFU_FAIL=1   fail as an unreachable host would, so the job's failure
+#                      and retry paths get exercised. One switch drives both
+#                      fakes: a job usually needs both to fail together.
+#   FAKE_BIN_LOG=path  where invocations are appended.
+set -euo pipefail
+
+LOG="${FAKE_BIN_LOG:-/tmp/kodera-fakebin.log}"
+playbook="<none>"
+for arg in "$@"; do
+  case "$arg" in
+    *.yml | *.yaml) playbook="$arg"; break ;;
+  esac
+done
+
+printf '%s ansible-playbook' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG"
+for arg in "$@"; do printf ' %q' "$arg" >>"$LOG"; done
+printf '\n' >>"$LOG"
+
+echo "fake-ansible-playbook: ${*}" >&2
+
+if [ "${1:-}" = "--version" ]; then
+  echo "ansible-playbook [core 2.17.0] (fake, dev/fakebin)"
+  exit 0
+fi
+
+host="tenant-dev"
+
+echo
+echo "PLAY [${playbook}] ****************************************************"
+echo
+echo "TASK [Gathering Facts] ***********************************************"
+echo "ok: [${host}]"
+echo
+
+if [ "${FAKE_TOFU_FAIL:-}" = "1" ]; then
+  echo "TASK [kodera.tenant : deploy compose stack] ************************"
+  echo "fatal: [${host}]: UNREACHABLE! => {\"changed\": false, \"msg\": \"Failed to connect to the host via ssh: ssh: connect to host ${host} port 22: Connection refused\", \"unreachable\": true}"
+  echo
+  echo "PLAY RECAP ***********************************************************"
+  echo "${host} : ok=1    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0"
+  echo "fake-ansible-playbook: exiting 4 because FAKE_TOFU_FAIL=1" >&2
+  # 4 is Ansible's exit code for unreachable hosts, not the generic 1: a
+  # retry policy that distinguishes them must be able to see the difference.
+  exit 4
+fi
+
+echo "TASK [kodera.tenant : render compose from the profile] *************"
+echo "changed: [${host}]"
+echo
+echo "TASK [kodera.tenant : deploy compose stack] ************************"
+echo "changed: [${host}]"
+echo
+echo "TASK [kodera.tenant : install the agent cron] **********************"
+echo "changed: [${host}]"
+echo
+echo "PLAY RECAP ***********************************************************"
+echo "${host} : ok=4    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0"
+echo
+
+exit 0

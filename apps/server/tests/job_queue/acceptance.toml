@@ -1,0 +1,233 @@
+# Job-queue acceptance inventory: every A3 acceptance test and its honest state.
+#
+# Authoritative for state; docs/specs/JOB_QUEUE.md §9 describes what each asserts.
+#
+# state = "xfail"  specified, not built. Strict: in every phase the only accepted report is the call
+#                  raising exactly QueueGapError with `gap`; anything else fails the run by name.
+# state = "pass"   passes against this tree; no gap.
+#
+# `gap` is the first thing the test reaches that does not exist, measured by
+# queue_harness.RealBinding: app:<installed app>, module:<module> or service:<module>.<function>.
+#
+# `permissive` and `inert` are the exact AssertionError message, the first line of the failure,
+# that each counterexample queue of counterexamples.py must fail the test with. The self-test runs
+# the test against both. When a test's assertions change, these move with them.
+
+format = 1
+
+[[test]]
+id = "A3-01"
+function = "test_a3_01_a_process_killed_before_the_audit_row_commits_nothing"
+state = "pass"
+permissive = "killed at the desired-state change, the job row was committed"
+inert = "an enqueue returned without waiting at the table the test had locked"
+
+[[test]]
+id = "A3-02"
+function = "test_a3_02_a_duplicate_idempotency_key_returns_the_original_job"
+state = "pass"
+permissive = "a duplicate idempotency key returned a different job"
+inert = "the first enqueue under a key committed no job row"
+
+[[test]]
+id = "A3-03"
+function = "test_a3_03_a_superseded_fence_or_an_expired_lease_writes_nothing"
+state = "pass"
+permissive = "a superseded fence recorded a step"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-04"
+function = "test_a3_04_a_reservation_outlives_the_session_that_claimed_it"
+state = "pass"
+permissive = "a conflicting job was claimed after the claiming session ended: the reservation did not outlive the session"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-05"
+function = "test_a3_05_a_claim_holds_no_lock_while_any_lock_of_its_set_conflicts"
+state = "pass"
+permissive = "a refused claim kept a live lock it had taken"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-06"
+function = "test_a3_06_claims_are_served_in_request_order"
+state = "pass"
+permissive = "a later exclusive request was claimed ahead of an earlier shared request"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-07"
+function = "test_a3_07_a_job_waits_on_its_realm_job_and_fails_when_that_failed"
+state = "pass"
+permissive = "a job was claimed before the realm job it depends on was terminal"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-08"
+function = "test_a3_08_a_process_killed_mid_step_resumes_at_its_first_unfinished_step"
+state = "pass"
+permissive = "a job's first claim did not emit exactly one job.started"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-09"
+function = "test_a3_09_the_sweep_decides_from_dispatch_records_alone"
+state = "pass"
+permissive = "an expired job with an open dispatch was not swept to needs_reconciliation"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-10"
+function = "test_a3_10_a_sub_job_runs_under_its_running_parents_dispatch_fence"
+state = "pass"
+permissive = "an unlisted production sub-job relation started a job"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-11"
+function = "test_a3_11_an_orphaning_past_max_attempts_fails_the_job"
+state = "pass"
+permissive = "an orphaning past a budget of one did not fail the job orphaned_exhausted"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-12"
+function = "test_a3_12_a_decision_leaves_needs_reconciliation_through_its_exits"
+state = "pass"
+permissive = "a decision was recorded on a job not in needs_reconciliation"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-13"
+function = "test_a3_13_realm_jobs_wait_for_deliveries_that_leave_reconciliation_only_by_decision"
+state = "pass"
+permissive = "a realm job was claimed while a realm-changing delivery of its organisation was in flight"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-14"
+function = "test_a3_14_a_job_finishes_only_when_its_steps_and_dispatches_allow"
+state = "pass"
+permissive = "a job finished succeeded with a step unfinished"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-15"
+function = "test_a3_15_a_class_c_step_is_dispatched_once_per_resolution_cycle"
+state = "pass"
+permissive = "a second open dispatch was recorded on one job"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-16"
+function = "test_a3_16_a_runner_write_waits_on_the_job_row_and_is_refused_once_it_moved"
+state = "pass"
+permissive = "a dispatch committed after the job left the runner's claim"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-17"
+function = "test_a3_17_sub_jobs_hold_their_parents_decision_and_close_its_dispatch_when_they_end"
+state = "pass"
+permissive = "a sub-job took a place in request order"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-18"
+function = "test_a3_18_a_due_scheduled_job_is_promoted_into_request_order"
+state = "pass"
+permissive = "a job scheduled for later took a place in request order"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-19"
+function = "test_a3_19_a_decision_needs_the_role_and_both_pieces_of_evidence_in_order"
+state = "pass"
+permissive = "a decision without evidence that the compute terminated was accepted"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-20"
+function = "test_a3_20_live_locks_are_released_on_demand_never_stacked_and_not_kept_on_cancel"
+state = "pass"
+permissive = "the claim's expired lease was renewed before its locks were released"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-21"
+function = "test_a3_21_only_a_step_the_kind_marks_conditional_is_skipped"
+state = "pass"
+permissive = "a step the kind does not mark conditional was skipped"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-22"
+function = "test_a3_22_a_parent_cannot_close_finish_or_be_orphaned_past_a_live_sub_job"
+state = "pass"
+permissive = "a parent closed the dispatch naming its live sub-job"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-23"
+function = "test_a3_23_a_class_c_step_completed_in_an_earlier_cycle_runs_again_when_the_operator_says_so"
+state = "pass"
+permissive = "the sub-job of a running parent could not be claimed"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-24"
+function = "test_a3_24_a_scanning_claim_reads_sub_jobs_then_unplaced_jobs_then_request_order"
+state = "pass"
+permissive = "a scanning claim never read a claimable sub-job"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-25"
+function = "test_a3_25_no_claim_promotion_or_sweep_waits_on_a_held_row_or_skips_a_referenced_one"
+state = "pass"
+permissive = "the sweep waited on a job row another transaction held"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-26"
+function = "test_a3_26_a_claim_checks_reservations_again_once_it_holds_its_live_locks"
+state = "pass"
+permissive = "a realm job's claim never waited at its read of the organisation's deliveries"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-27"
+function = "test_a3_27_a_class_c_step_resolution_cycle_starts_at_its_latest_no_effect_resume"
+state = "pass"
+permissive = "a class C step was dispatched twice in the cycle its latest no-effect resume opened"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-28"
+function = "test_a3_28_subjob_effects_recheck_lease_after_waiting_for_the_parent"
+state = "pass"
+permissive = "a sub-job started a step after its lease expired while waiting for its parent"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-29"
+function = "test_a3_29_subjob_effects_require_each_parent_dispatch_clause"
+state = "pass"
+permissive = "a sub-job effect was accepted under a parent whose status was not running"
+inert = "enqueue_job returned a job that has no committed row"
+
+[[test]]
+id = "A3-30"
+function = "test_a3_30_unsupported_isolation_is_refused_before_queue_work"
+state = "pass"
+permissive = "a queue call accepted unsupported transaction isolation"
+inert = "a queue call accepted unsupported transaction isolation"
+
+[[test]]
+id = "A3-31"
+function = "test_a3_31_a_decision_needs_a_staff_principal_holding_a_current_operator_grant"
+state = "pass"
+permissive = "a customer-realm token was resolved into a staff principal"
+inert = "enqueue_job returned a job that has no committed row"

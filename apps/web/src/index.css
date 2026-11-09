@@ -1,0 +1,349 @@
+/* The one stylesheet the application loads. Everything below is either a token
+   from `@kodera/design-tokens` (ADR-0004) or a rule that decides nothing:
+   there is no value declared here that a designer could change. */
+
+/* Tailwind 4 draws in real cascade layers, and CSS outside every layer beats
+   all of them. The tokens file is put first in `base`, below the utilities, so
+   a utility that sets one of its custom properties still wins, as it did when
+   Tailwind 3 emitted everything unlayered in source order. Declared first, ahead
+   of the first `layer(base)` import, so that `theme` stays the lowest layer. */
+@layer theme, base, components, utilities;
+
+/* Fonts are self-hosted and bundled. DESIGN_SYSTEM.md §1: no third-party
+   request at runtime — a webfont fetched from a CDN is a request to a host the
+   console is not allowed to talk to (ADR-0003), and it leaks a page view to it
+   on every load.
+
+   The family NAME is a contract with the tokens preset, which asks for "Plus
+   Jakarta Sans" and "IBM Plex Mono" by name. A face declared under any other
+   name is matched by nothing, and the page draws system-ui without an error:
+   `@fontsource-variable/plus-jakarta-sans` declares "Plus Jakarta Sans
+   Variable", and that is how every sans string once rendered in the fallback.
+   The static package declares the preset's name, one file per weight, for the
+   four weights DESIGN_SYSTEM.md names and no others.
+
+   The mono is only used for values that are copied or compared, and 500 is its
+   heaviest weight: the design of record never draws mono above 500. A
+   `font-semibold` on a mono value is a 500 the browser thickens itself.
+   `tests/e2e/fonts.spec.ts` fails on a wrong family name and on a weight with
+   no face. */
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+/* The custom properties, for anything that is not a Tailwind class: an inline
+   style computed at runtime, a chart, an embedded document. Same generated
+   file the Tailwind preset is built from, so the two cannot disagree. */
+@import '@kodera/design-tokens/tokens.css' layer(base);
+
+/* `source(none)`: Tailwind 4 would otherwise scan the whole repository, tests
+   and docs included. The files it reads are `content` in `tailwind.config.ts`,
+   as under Tailwind 3. */
+@import 'tailwindcss' source(none);
+
+/* The theme is still the tokens package's Tailwind preset, loaded through
+   `tailwind.config.ts` (ADR-0004). A CSS-first `@theme` is not used here. */
+@config '../tailwind.config.ts';
+
+/* `container` is never a class here; the word only appears in prose under
+   src/. Tailwind 4 would build it from the `narrow` raw media query, which it
+   cannot turn into a width, and emit an invalid rule. Tailwind 3 skipped it. */
+@source not inline('container');
+
+/* From here to the end of the next `@layer base`: Tailwind 4 behaviour kept at
+   its Tailwind 3 value, so the move to 4 changes no layout, colour or style
+   (docs/specs/tailwind-4-migration.md, held by
+   tests/unit/ui/tailwind-compat.test.ts). Drop one only as a design decision,
+   with the screens it moves.
+
+   `hover:` applies on every device, as in Tailwind 3, not only where the
+   primary pointer can hover. */
+@custom-variant hover (&:hover);
+
+/* Two defaults the preset declares and Tailwind 4 does not read from it: the
+   bare `ring`'s colour and the bare `transition*`'s duration. Without these a
+   focus ring draws in `currentcolor` and a transition takes no time. Both are
+   the tokens' own custom properties, the values the preset names (`inline`, so
+   `--focus-ring-color` resolves on the element, where `focus-ground-*`
+   changes it). */
+@theme inline {
+  --default-ring-color: var(--focus-ring-color);
+  --default-transition-duration: var(--dur-base);
+}
+
+/* The preset's font sizes carry no line height, so a `text-*` class keeps the
+   one it inherits. Tailwind 4's own scale pairs each size with a line height;
+   these remove the pairing for every size the preset declares. */
+@theme {
+  --text-xs--line-height: initial;
+  --text-sm--line-height: initial;
+  --text-base--line-height: initial;
+  --text-lg--line-height: initial;
+  --text-xl--line-height: initial;
+  --text-2xl--line-height: initial;
+  --text-3xl--line-height: initial;
+  --text-4xl--line-height: initial;
+}
+
+@layer base {
+  /* A border with no colour class draws Tailwind 3's default grey, not
+     `currentcolor`. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  /* A button shows the pointer, and anything disabled the default cursor, as
+     Tailwind 3's preflight made them. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  :disabled {
+    cursor: default;
+  }
+}
+
+@layer base {
+  html {
+    font-family: theme(fontFamily.sans);
+  }
+
+  /* Plus Jakarta Sans draws a narrow space: 0.178 em in every weight, measured in the font files.
+     Under the page title's tight tracking (−0.045 em) it was 4 px at 30 px, and « Bonjour » and the first name
+     read as one word on staging (2026-11-07); a 600-weight button read « Voirles applications ».
+     This widens the space alone, for the font, not a size of any control: 0.08 em brings it near a
+     usual 0.25 em. It belongs in the tokens package with the font family, as a word-spacing token,
+     and moves there when one is published. Set on every element, not on `html`: an `em` length is
+     resolved where it is declared and inherited as pixels, so 0.08 em of the root's 16 px gave the
+     30 px title 1.3 px. A user stylesheet's own `word-spacing` loses to it as to any author rule,
+     and one marked `!important` on `body` no longer reaches the children; a WCAG 1.4.12 override
+     on `*` with `!important` still wins over it.
+     Monospaced text keeps the font's own space, so columns of code and identifiers stay aligned. */
+  *,
+  ::before,
+  ::after {
+    word-spacing: 0.08em;
+  }
+
+  code,
+  code *,
+  kbd,
+  kbd *,
+  samp,
+  samp *,
+  pre,
+  pre *,
+  .font-mono,
+  .font-mono * {
+    word-spacing: normal;
+  }
+
+  html,
+  body {
+    min-height: 100%;
+  }
+
+  /* The page gradient is the ground and never a card background
+     (DESIGN_SYSTEM.md §2); cards float on it. It is the themed `--c-page-grad`,
+     defined for light, dark and black, so the ground follows `[data-theme]`
+     with everything else. `bg-fixed` keeps the gradient still while the page
+     scrolls, which is what stops the ramp from restarting halfway down a long
+     table.
+
+     `bg-c-page-gradient` is a `backgroundImage` key, not a colour, and the
+     token guard cannot tell the two apart: `c` is also the colour family of
+     every themed role, so the guard reports it unresolved when written in a
+     `.tsx`. It is written here, in CSS, which the guard does not scan — and the
+     page ground belongs in one place anyway. This file's own classes are still
+     checked, exemption and all, by tests/unit/ui/index-css.test.ts.
+     Tracked upstream: kodera-hq/kodera#5, item 1. */
+  body {
+    @apply bg-c-page-gradient bg-fixed text-md leading-body text-c-ink;
+  }
+
+  /* `viewport-fit=cover` (index.html) lets a phone held sideways draw the page
+     under its notch; these keep every layout clear of it. Zero wherever there
+     is no notch, a desktop browser included. `.safe-area-top` and
+     `.safe-area-bottom` below do the same for the narrow layout's bars. */
+  body {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* The browser's own parts — scrollbars, native controls, the canvas behind
+     an overscroll — follow the theme `public/theme.js` sets. The tokens declare
+     no `color-scheme`, and without one a dark page scrolls on a light
+     scrollbar. Light needs nothing: `normal` already draws light. */
+  [data-theme='dark'],
+  [data-theme='black'] {
+    color-scheme: dark;
+  }
+
+  /* The ground a focus ring's offset gap is painted in: the surface a control
+     usually sits on. `focus-ground-*` below changes it for a subtree. */
+  :root,
+  [data-theme] {
+    --focus-ring-ground: var(--c-surface);
+    --c-logo-tile: var(--black);
+    --c-logo-ink: var(--c-on-inverse);
+  }
+
+  /* The page heading that takes focus after a route change
+     (`src/app/RouteFocus.tsx`, docs/specs/00-shell-and-login.md §10). It is
+     where reading resumes, not a control: nothing can be done with it, so it
+     draws no ring — as the headings the error screen and the enrolment guide
+     focus themselves draw none. */
+  [data-route-heading]:focus {
+    outline: none;
+  }
+
+  /* Amounts, percentages, gauges and DNS records are compared column by column,
+     so their digits have to line up. Setting this on the utility rather than at
+     each call site means no screen can forget it. */
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* The keyboard focus ring, where the default one cannot stand on its own.
+   docs/specs/00-shell-and-login.md §10 asks 3:1 against both surfaces the ring
+   touches. The default ring is the theme's `--focus-ring-color` (tokens v0.1.1,
+   equal to `accent-ink`); the ratios are in tests/unit/ui/focus-ring.test.ts.
+
+   `focus-offset`, with `focus-visible:ring-offset-2` beside it, is for a
+   control with a fill or an edge of its own: a button box, a checkbox, a
+   switch. The ring sits 2 px outside it, and the gap takes
+   `--focus-ring-ground`, so both of the ring's neighbours are the ground and
+   none is the fill. Flush, the light ring was 1.20 : 1 against the primary
+   button's `action` fill and 1.00 against its hover fill.
+
+   `focus-ground-*` is for a container painted in a strong fill: every default
+   ring inside it draws the tokens' on-inverse ring, and every offset gap takes
+   the container's own ground. The default ring is 2.20 : 1 on `inverse` in
+   light, and 1.49 / 3.00 / 3.00 on `bad`. */
+@layer utilities {
+  .focus-offset {
+    --tw-ring-offset-color: var(--focus-ring-ground);
+  }
+
+  .logo-tile-black {
+    background-color: var(--c-logo-tile);
+    color: var(--c-logo-ink);
+  }
+
+  .composer-frame-focus:focus-within {
+    --tw-ring-shadow: 0 0 0 0px transparent;
+  }
+
+  .focus-ground-inverse {
+    --focus-ring-color: var(--focus-ring-on-inverse-color);
+    --focus-ring-ground: var(--c-inverse);
+  }
+
+  .focus-ground-action {
+    --focus-ring-color: var(--focus-ring-on-inverse-color);
+    --focus-ring-ground: var(--c-action);
+  }
+
+  .focus-ground-bad {
+    --focus-ring-color: var(--focus-ring-on-inverse-color);
+    --focus-ring-ground: var(--c-bad);
+  }
+
+  /* The inverse card's edge, drawn in dark and black only (owner ruling
+     2026-09-25). In light the inverse ground is a slate card on a frost page
+     and needs no edge. In black `c-inverse` is the page's own colour, and in
+     dark a shade darker than the page: without an edge the contract and
+     support cards on Accueil lose their shape. `Card`'s inverse tone carries the
+     class, so every inverse card gets it from here. Light draws no border at
+     all — not one in the ground's colour, which would still add a pixel to
+     the box — so no light screen moves. Matched on any ancestor's
+     `data-theme`: a light-scoped subtree inside a dark page would still get
+     the edge, and no screen nests one around an inverse card.
+     `tests/e2e/10-appearance.spec.ts` measures it in a browser. */
+  [data-theme='dark'] .inverse-edge,
+  [data-theme='black'] .inverse-edge {
+    @apply border border-c-border;
+  }
+
+  /* A card in dark and black is drawn flat (tokens v0.5.0, DIRECTION.md §6): a shadow reads as
+     nothing on a dark page and its edge already shapes it. Raised grounds are for overlays. Only
+     the shadow layer is zeroed: Tailwind 4 draws rings in `box-shadow` too, so `box-shadow: none`
+     would also erase a ring on a card. */
+  [data-theme='dark'] .card-flat-dark,
+  [data-theme='black'] .card-flat-dark {
+    --tw-shadow: 0 0 transparent;
+  }
+
+  /* The narrow layout's edges (docs/specs/00-shell-and-login.md §4.5). With
+     `viewport-fit=cover` (index.html) a phone draws the page under its notch
+     and its home indicator, and reports how much of each edge they cover as
+     `env(safe-area-inset-*)`; the sticky top bar, the sticky tab bar and the
+     bottom sheet add that much to their own padding. Zero on every screen
+     without such an edge — a desktop browser among them — so a wide layout
+     is drawn exactly as before. Not a design value: the device decides it.
+     Named without a spacing prefix, since `pb-*` is the preset's scale and
+     tests/unit/ui/spacing-guard.test.ts rightly refuses a step it lacks. */
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* The toast stack's corner. Above the narrow layout's tab bar, whose
+     measured height (safe area included) `NarrowShell.tsx` publishes as
+     `--shell-tab-bar-block`; without a tab bar, above the device's own bottom
+     edge. Both resolve to 0 on a desktop, so the wide layout's toasts sit
+     exactly where `bottom-0 right-0` put them. */
+  .toast-edges {
+    bottom: var(--shell-tab-bar-block, env(safe-area-inset-bottom, 0px));
+    right: env(safe-area-inset-right, 0px);
+  }
+
+  /* The right-hand sheet's 24 px padding, grown by the edges a phone draws
+     under (notch, home indicator). On a desktop every inset is 0 and this is
+     exactly the `p-6` it replaces. */
+  .drawer-edges {
+    padding: calc(24px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-right, 0px))
+      calc(24px + env(safe-area-inset-bottom, 0px)) 24px;
+  }
+}
+
+/* WCAG 2.4.11: a control reached with Tab must not end up under the narrow
+   layout's sticky bars. The browser scrolls a focused control until its
+   scroll-margin is in view, and `NarrowShell.tsx` sets these two properties to
+   each bar's measured height while the bars are drawn. On the page's content
+   only (`Shell`'s narrow content column), not on `html`'s scroll-padding: that
+   also applied to the bars' own controls, which can never leave the bars, and
+   tabbing to « Plus » scrolled the whole page to the end. Unset — the wide
+   layout, and every desktop — they are 0, as before. */
+.clear-of-bars * {
+  scroll-margin-top: var(--shell-header-block, 0px);
+  scroll-margin-bottom: var(--shell-tab-bar-block, 0px);
+}
+
+/* DESIGN_SYSTEM.md §4. Motion is decoration here — nothing in the console
+   conveys meaning by moving — so a person who asked their system for less of it
+   gets none, everywhere, rather than in the components that remembered to ask.
+   Not `animation: none`: an animation cancelled outright never fires its `end`
+   event, and anything waiting on that event stops rather than finishes. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

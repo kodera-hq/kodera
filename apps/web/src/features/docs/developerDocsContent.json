@@ -1,0 +1,501 @@
+{
+  "repository": "https://github.com/kodera-hq/kodera",
+  "versions": {
+    "core": "0.40.0",
+    "agent": "0.5.0",
+    "policy": "0.1.4",
+    "sdk": "0.1.0"
+  },
+  "connectors": [
+    {
+      "slug": "hello-webhook",
+      "name": "Hello Webhook",
+      "path": "extensions/hello-webhook/README.md"
+    },
+    {
+      "slug": "github-release-notifier",
+      "name": "GitHub Release Notifier",
+      "path": "extensions/github-release-notifier/README.md"
+    },
+    {
+      "slug": "uptime-incident-bridge",
+      "name": "Uptime Incident Bridge",
+      "path": "extensions/uptime-incident-bridge/README.md"
+    },
+    {
+      "slug": "docs-collab-announcer",
+      "name": "Docs Collab Announcer",
+      "path": "extensions/docs-collab-announcer/manifest.json"
+    },
+    {
+      "slug": "github-repo-tracker",
+      "name": "GitHub Repo Tracker",
+      "path": "extensions/github-repo-tracker/manifest.json"
+    },
+    {
+      "slug": "qonto-treasury-feed",
+      "name": "Qonto Treasury Feed",
+      "path": "extensions/qonto-treasury-feed/manifest.json"
+    },
+    {
+      "slug": "notion-workspace-bridge",
+      "name": "Notion Workspace Bridge",
+      "path": "extensions/notion-workspace-bridge/manifest.json"
+    },
+    {
+      "slug": "gdrive-document-share",
+      "name": "GDrive Document Share",
+      "path": "extensions/gdrive-document-share/manifest.json"
+    },
+    {
+      "slug": "social-pulse-bridge",
+      "name": "Social Pulse Bridge",
+      "path": "extensions/social-pulse-bridge/manifest.json"
+    },
+    {
+      "slug": "frameio-review-bridge",
+      "name": "Frame.io Review Bridge",
+      "path": "extensions/frameio-review-bridge/README.md"
+    }
+  ],
+  "pages": {
+    "en": [
+      {
+        "id": "quickstart",
+        "title": "Quickstart & self-hosting",
+        "summary": "Prepare your workspace. Keep identity and deployment under your control.",
+        "keywords": ["npx", "CLI", "Docker", "OIDC", "self-host"],
+        "supportChannel": "self-hosting",
+        "sources": ["deploy/community/README.md", "packages/create-kodera/README.md", "README.md"],
+        "sections": [
+          {
+            "id": "prepare",
+            "title": "Start with a configuration plan",
+            "paragraphs": [
+              "From a checkout of kodera-hq/kodera, run the dependency-free Node CLI. This dry run validates public domain, external HTTPS issuer and template without creating files or services.",
+              "The five templates are audiovisual-production, tech-studio, b2b-advisory, public-sector and crisis-cell. The audiovisual template includes a Frame.io connector intent."
+            ],
+            "callout": "The CLI is a local pre-release. Registry publication is not confirmed; use the checked-out executable now.",
+            "language": "Shell",
+            "code": "node packages/create-kodera/bin/create-kodera.mjs --self-host \\\n  --domain chat.example.org --oidc-issuer https://id.example.org/realms/studio \\\n  --oidc-client-id console --template audiovisual-production --dry-run"
+          },
+          {
+            "id": "package",
+            "title": "After the official package is published",
+            "paragraphs": [
+              "The package provides create-kodera and kodera-deploy executable names. The npx form below becomes usable after registry publication.",
+              "Real generation additionally requires operator-owned public issuer trust and a source checkout. It creates a new directory, mode-0600 configuration and a template intent; it refuses overwrites."
+            ],
+            "callout": "A generated manifest does not prove that channels, credentials or connector subscriptions exist.",
+            "language": "Shell",
+            "code": "npx create-kodera --self-host --domain chat.example.org \\\n  --oidc-issuer https://id.example.org/realms/studio \\\n  --oidc-client-id console --template audiovisual-production --dry-run"
+          },
+          {
+            "id": "operate",
+            "title": "Generate, inspect, then start Compose",
+            "paragraphs": [
+              "Prepare public-trust.json from your external issuer public keys. Run the shell generator from the repository root; it prints the Compose command for the operator.",
+              "Community includes Caddy, Web, API/migrator, room-access, PostgreSQL, Valkey, Synapse and LiveKit. Docker Compose v2, public DNS, HTTPS and media ports must be configured. The stack supplies no identity provider."
+            ],
+            "callout": "No installation time, memory footprint or remote deployment is promised by this documentation.",
+            "language": "Shell",
+            "code": "bash deploy/community/kodera-deploy.sh --domain chat.example.org \\\n  --oidc-issuer https://id.example.org/realms/studio \\\n  --oidc-origin https://id.example.org --oidc-client-id console \\\n  --support-mailbox support@example.org --trust-file public-trust.json \\\n  --template audiovisual-production --env-file kodera-generated.conf --generate-only"
+          }
+        ],
+        "locale": "en"
+      },
+      {
+        "id": "extensions",
+        "title": "Extension SDK & 10 connectors",
+        "summary": "Bring signed events into channels, with explicit trust boundaries.",
+        "keywords": [
+          "SDK",
+          "HMAC",
+          "Frame.io",
+          "GitHub",
+          "Qonto",
+          "Notion",
+          "GDrive",
+          "Instagram",
+          "Linear",
+          "Stripe",
+          "Sentry"
+        ],
+        "supportChannel": "extensions",
+        "sources": [
+          "packages/extension-sdk/README.md",
+          "extensions/frameio-review-bridge/README.md"
+        ],
+        "sections": [
+          {
+            "id": "envelope",
+            "title": "Sign the exact bytes",
+            "paragraphs": [
+              "The SDK is a zero-dependency ESM/TypeScript package. Its envelope signs timestamp.rawBody using HMAC-SHA256, with a v1= hexadecimal signature. Headers are x-kodera-signature-256 and x-kodera-timestamp.",
+              "The timestamp is a canonical non-negative safe integer, within the inclusive 300-second window. The SDK admits at most 1 MiB of raw body; this browser lab deliberately limits examples to 64 KiB."
+            ],
+            "callout": "The local example secret is public test data. Never paste a production signing secret into this lab.",
+            "language": "TypeScript",
+            "code": "import { signWebhookPayload, verifyWebhookRequest } from \"@kodera/extension-sdk\";\n\nconst rawBody = JSON.stringify({ type: \"asset.ready\", assetId: \"demo-1\" });\nconst timestamp = Math.floor(Date.now() / 1000);\nconst secret = \"local-example-secret-only\";\nconst signature = signWebhookPayload(secret, timestamp, rawBody);\nconst verified = verifyWebhookRequest({\n  secret, rawBody, signatureHeader: signature,\n  timestampHeader: String(timestamp), nowUnixSeconds: timestamp,\n});"
+          },
+          {
+            "id": "routing",
+            "title": "Route events, then admit side effects",
+            "paragraphs": [
+              "createWebhookHandler requires a signed type or event marker; both must agree if present. An optional event header must match the signed marker.",
+              "The handler deduplicates authenticated signatures and delivery IDs before side effects. Its bounded in-memory history is not durable across restarts. Use durable idempotency at the side-effect boundary.",
+              "Native GitHub uses sha256= over rawBody without the SDK timestamp prefix. The Frame.io adapter uses the Kodera SDK envelope. Native provider signatures need a trusted ingress adapter; they are not interchangeable."
+            ],
+            "callout": "Signature verification alone is neither tenant authorization nor a persistent replay guarantee.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "catalogue",
+            "title": "Ten official implementations",
+            "paragraphs": [
+              "The connector list below describes repository implementations, not connected production accounts. Frame.io routes asset.ready to dailies and comment/review events to post-production without fetching assets.",
+              "Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional official connectors for those services."
+            ],
+            "callout": "HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.",
+            "language": "",
+            "code": ""
+          }
+        ],
+        "locale": "en"
+      },
+      {
+        "id": "api",
+        "title": "API reference & webhooks",
+        "summary": "Read the pinned contracts before sending a request.",
+        "keywords": ["Core", "API", "OpenAPI", "Agent", "cURL", "webhooks", "errors"],
+        "supportChannel": "extensions",
+        "sources": [
+          "packages/api-contract/core-api.openapi.yaml",
+          "packages/api-contract/agent-api.openapi.yaml",
+          "packages/extension-sdk/README.md"
+        ],
+        "sections": [
+          {
+            "id": "contracts",
+            "title": "Two separate API boundaries",
+            "paragraphs": [
+              "Core API 0.40.0 is the customer-console contract. Agent API 0.5.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.",
+              "The console uses its authenticated Core transport. It does not call identity providers, infrastructure providers or tenant control endpoints directly."
+            ],
+            "callout": "Configure KODERA_CORE_API_BASE to the real Core base ending in /api/v1. Supply an authorized token through your own terminal session. The example is copied, never executed here.",
+            "language": "cURL",
+            "code": "curl --fail-with-body --silent --show-error \\\n  --header \"Authorization: Bearer $KODERA_ACCESS_TOKEN\" \\\n  --header \"Accept: application/json\" \\\n  \"$KODERA_CORE_API_BASE/me\""
+          },
+          {
+            "id": "errors",
+            "title": "Status, problem details and idempotency",
+            "paragraphs": [
+              "Use each pinned operation response schema, including application/problem+json where declared. HTTP 401/403 are not offline success; 409 requires inspecting the actual operation response.",
+              "Do not blindly retry mutations. Preserve the same idempotency key when checking an uncertain claim. The implemented instant-claim endpoint and generated contract still require reconciliation.",
+              "SDK verification errors include SIGNATURE_MISMATCH and TIMESTAMP_OUT_OF_RANGE. Treat these as refusals, not instructions to weaken verification."
+            ],
+            "callout": "An unavailable service or a 503 can produce a local preview, never a fabricated Cloud allocation.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "events",
+            "title": "Keep transport bytes and event authority separate",
+            "paragraphs": [
+              "Verify raw bytes before parsing or normalizing JSON. A body change, even whitespace, changes its signature. Bind the secret, organisation and target channel using trusted server configuration.",
+              "Delivery and event headers are not signed by the SDK v1 transcript. Signed body routing metadata and handler replay protection must remain in place."
+            ],
+            "callout": "The simulator below performs no network request, provisions no webhook, and persists no secret or replay cache.",
+            "language": "",
+            "code": ""
+          }
+        ],
+        "locale": "en"
+      },
+      {
+        "id": "security",
+        "title": "Architecture & security",
+        "summary": "Understand what ships, what is bounded, and what remains an integration seam.",
+        "keywords": [
+          "Rust",
+          "Keycloak",
+          "WebAuthn",
+          "hwk",
+          "48 kHz",
+          "Ed25519",
+          "EmergencyFrame",
+          "theme",
+          "synapse"
+        ],
+        "supportChannel": "self-hosting",
+        "sources": [
+          "ARCHITECTURE.md",
+          "packages/kodera-rs/README.md",
+          "packages/synapse-policy/README.md",
+          "apps/web/src/features/sounds/synth.ts"
+        ],
+        "sections": [
+          {
+            "id": "identity",
+            "title": "Identity and room policy",
+            "paragraphs": [
+              "An external Keycloak-style OIDC issuer can provide identity. WebAuthn/hwk assurance belongs to the configured identity policy, not to a badge or local UI assertion. Community brings no identity provider.",
+              "synapse-policy 0.1.4 enforces the configured room policy alongside the room-access service. Authenticated membership and grants come from the control plane; local previews grant none."
+            ],
+            "callout": "Clients and SDK use Apache-2.0; server and Synapse policy use AGPL-3.0-or-later. Enterprise Edition has a separate commercial licence.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "native",
+            "title": "Rust codecs, audio and proximity",
+            "paragraphs": [
+              "kodera-rs supplies identifiers, bounded native metadata and EmergencyFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.",
+              "Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. MLS and native hardware/provider seams must not be presented as finished integrations."
+            ],
+            "callout": "No active BLE radio, end-to-end media encryption or emergency-service guarantee is created by this reference.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "themes",
+            "title": "Portable theme metadata",
+            "paragraphs": [
+              "kodera-theme:v1: is a bounded theme share format, capped at 2048 UTF-8 bytes in the native codec. Its canonical base64 encodes a strict five-RGB JSON schema, with four curated presets.",
+              "A theme code carries visual metadata. Base64 is not encryption; do not put secrets or permission claims in it. Native profile/IAM previews are not authenticated grants."
+            ],
+            "callout": "Only example templates belong in version control. Never commit environment secrets, private keys or live tenant identifiers.",
+            "language": "",
+            "code": ""
+          }
+        ],
+        "locale": "en"
+      }
+    ],
+    "fr": [
+      {
+        "id": "quickstart",
+        "title": "Quickstart & auto-hébergement",
+        "summary": "Préparez votre espace. Gardez la maîtrise de l’identité et du déploiement.",
+        "keywords": ["npx", "CLI", "Docker", "OIDC", "auto-hébergement"],
+        "supportChannel": "self-hosting",
+        "sources": ["deploy/community/README.md", "packages/create-kodera/README.md", "README.md"],
+        "sections": [
+          {
+            "id": "prepare",
+            "title": "Commencer par un plan de configuration",
+            "paragraphs": [
+              "Depuis un checkout de kodera-hq/kodera, lancez le CLI Node sans dépendance externe. Ce dry-run valide domaine public, émetteur HTTPS externe et template, sans créer de fichier ni de service.",
+              "Les cinq templates sont audiovisual-production, tech-studio, b2b-advisory, public-sector et crisis-cell. Le template audiovisuel inclut une intention de configuration Frame.io."
+            ],
+            "callout": "Le CLI est une préversion locale. La publication registre n’est pas confirmée ; utilisez immédiatement l’exécutable du dépôt.",
+            "language": "Shell",
+            "code": "node packages/create-kodera/bin/create-kodera.mjs --self-host \\\n  --domain chat.example.org --oidc-issuer https://id.example.org/realms/studio \\\n  --oidc-client-id console --template audiovisual-production --dry-run"
+          },
+          {
+            "id": "package",
+            "title": "Après publication du package officiel",
+            "paragraphs": [
+              "Le package fournit les exécutables create-kodera et kodera-deploy. La forme npx ci-dessous sera utilisable après publication sur le registre.",
+              "La génération réelle demande aussi la confiance publique de votre émetteur et un checkout source. Elle crée un nouveau dossier, une configuration en mode 0600 et un manifeste d’intention ; elle refuse les écrasements."
+            ],
+            "callout": "Un manifeste généré ne prouve pas l’existence de salons, d’identifiants ou d’abonnements aux connecteurs.",
+            "language": "Shell",
+            "code": "npx create-kodera --self-host --domain chat.example.org \\\n  --oidc-issuer https://id.example.org/realms/studio \\\n  --oidc-client-id console --template audiovisual-production --dry-run"
+          },
+          {
+            "id": "operate",
+            "title": "Générer, vérifier, puis démarrer Compose",
+            "paragraphs": [
+              "Préparez public-trust.json avec les clés publiques de votre émetteur externe. Lancez le générateur shell depuis la racine du dépôt ; il affiche la commande Compose à exécuter par l’opérateur.",
+              "Community inclut Caddy, Web, API/migrateur, room-access, PostgreSQL, Valkey, Synapse et LiveKit. Docker Compose v2, DNS public, HTTPS et ports média doivent être configurés. La stack ne fournit pas de fournisseur d’identité."
+            ],
+            "callout": "Cette documentation ne promet ni durée d’installation, ni empreinte mémoire, ni déploiement distant.",
+            "language": "Shell",
+            "code": "bash deploy/community/kodera-deploy.sh --domain chat.example.org \\\n  --oidc-issuer https://id.example.org/realms/studio \\\n  --oidc-origin https://id.example.org --oidc-client-id console \\\n  --support-mailbox support@example.org --trust-file public-trust.json \\\n  --template audiovisual-production --env-file kodera-generated.conf --generate-only"
+          }
+        ],
+        "locale": "fr"
+      },
+      {
+        "id": "extensions",
+        "title": "Extension SDK & 10 connecteurs",
+        "summary": "Amenez les événements signés dans les salons, avec des frontières de confiance explicites.",
+        "keywords": [
+          "SDK",
+          "HMAC",
+          "Frame.io",
+          "GitHub",
+          "Qonto",
+          "Notion",
+          "GDrive",
+          "Instagram",
+          "Linear",
+          "Stripe",
+          "Sentry"
+        ],
+        "supportChannel": "extensions",
+        "sources": [
+          "packages/extension-sdk/README.md",
+          "extensions/frameio-review-bridge/README.md"
+        ],
+        "sections": [
+          {
+            "id": "envelope",
+            "title": "Signer les octets exacts",
+            "paragraphs": [
+              "Le SDK ESM/TypeScript est sans dépendance externe. Son enveloppe signe timestamp.rawBody en HMAC-SHA256, avec une signature hexadécimale v1=. Les en-têtes sont x-kodera-signature-256 et x-kodera-timestamp.",
+              "Le timestamp est un entier canonique positif ou nul, dans la fenêtre inclusive de 300 secondes. Le SDK accepte au plus 1 MiB de corps brut ; ce laboratoire limite volontairement les exemples à 64 KiB."
+            ],
+            "callout": "Le secret local d’exemple est public. Ne collez jamais de secret de signature de production dans ce laboratoire.",
+            "language": "TypeScript",
+            "code": "import { signWebhookPayload, verifyWebhookRequest } from \"@kodera/extension-sdk\";\n\nconst rawBody = JSON.stringify({ type: \"asset.ready\", assetId: \"demo-1\" });\nconst timestamp = Math.floor(Date.now() / 1000);\nconst secret = \"local-example-secret-only\";\nconst signature = signWebhookPayload(secret, timestamp, rawBody);\nconst verified = verifyWebhookRequest({\n  secret, rawBody, signatureHeader: signature,\n  timestampHeader: String(timestamp), nowUnixSeconds: timestamp,\n});"
+          },
+          {
+            "id": "routing",
+            "title": "Router les événements avant les effets de bord",
+            "paragraphs": [
+              "createWebhookHandler exige un marqueur type ou event signé dans le corps ; ils doivent être identiques si les deux sont présents. Un en-tête d’événement éventuel doit correspondre au marqueur signé.",
+              "Le handler déduplique signatures authentifiées et identifiants de livraison avant les effets de bord. Son historique mémoire borné ne survit pas aux redémarrages. Utilisez une idempotence durable à la frontière des effets de bord.",
+              "GitHub natif utilise sha256= sur rawBody, sans préfixe temporel SDK. L’adaptateur Frame.io utilise l’enveloppe du SDK Kodera. Les signatures natives demandent un adaptateur d’entrée de confiance ; elles ne sont pas interchangeables."
+            ],
+            "callout": "Une signature valide ne constitue ni une autorisation de locataire ni une garantie antirejeu persistante.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "catalogue",
+            "title": "Dix implémentations officielles",
+            "paragraphs": [
+              "La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Frame.io route asset.ready vers les dailies et les commentaires/revues vers la post-production sans récupérer les médias.",
+              "Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur officiel supplémentaire pour ces services."
+            ],
+            "callout": "Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.",
+            "language": "",
+            "code": ""
+          }
+        ],
+        "locale": "fr"
+      },
+      {
+        "id": "api",
+        "title": "Référence API & webhooks",
+        "summary": "Lisez les contrats épinglés avant d’envoyer une requête.",
+        "keywords": ["Core", "API", "OpenAPI", "Agent", "cURL", "webhooks", "erreurs"],
+        "supportChannel": "extensions",
+        "sources": [
+          "packages/api-contract/core-api.openapi.yaml",
+          "packages/api-contract/agent-api.openapi.yaml",
+          "packages/extension-sdk/README.md"
+        ],
+        "sections": [
+          {
+            "id": "contracts",
+            "title": "Deux frontières API distinctes",
+            "paragraphs": [
+              "Core API 0.40.0 est le contrat de la console client. Agent API 0.5.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.",
+              "La console utilise son transport Core authentifié. Elle n’appelle pas directement les fournisseurs d’identité, d’infrastructure ou les endpoints de contrôle locataires."
+            ],
+            "callout": "Renseignez KODERA_CORE_API_BASE avec la vraie base Core terminant par /api/v1. Fournissez un token autorisé via votre propre session terminal. Cet exemple est copié, jamais exécuté ici.",
+            "language": "cURL",
+            "code": "curl --fail-with-body --silent --show-error \\\n  --header \"Authorization: Bearer $KODERA_ACCESS_TOKEN\" \\\n  --header \"Accept: application/json\" \\\n  \"$KODERA_CORE_API_BASE/me\""
+          },
+          {
+            "id": "errors",
+            "title": "Statuts, problèmes et idempotence",
+            "paragraphs": [
+              "Utilisez le schéma de réponse de chaque opération épinglée, dont application/problem+json lorsqu’il est déclaré. HTTP 401/403 n’est pas un succès hors ligne ; un 409 demande de lire la réponse réelle de l’opération.",
+              "Ne réessayez pas aveuglément les mutations. Conservez la même clé d’idempotence pour vérifier une attribution incertaine. L’endpoint instant-claim implémenté et le contrat généré demandent encore un rapprochement.",
+              "Les refus SDK incluent SIGNATURE_MISMATCH et TIMESTAMP_OUT_OF_RANGE. Ce sont des refus, jamais une invitation à affaiblir la vérification."
+            ],
+            "callout": "Un service indisponible ou un 503 peut produire un aperçu local, jamais une fausse attribution Cloud.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "events",
+            "title": "Séparer les octets du transport et l’autorité des événements",
+            "paragraphs": [
+              "Vérifiez les octets bruts avant de parser ou normaliser le JSON. Toute modification du corps, même un espace, change sa signature. Liez secret, organisation et salon cible par une configuration serveur de confiance.",
+              "Les en-têtes de livraison et d’événement ne sont pas signés par le transcript SDK v1. Le routage signé dans le corps et la protection antirejeu du handler restent nécessaires."
+            ],
+            "callout": "Le simulateur ci-dessous n’envoie aucune requête réseau, ne crée aucun webhook et ne conserve ni secret ni cache antirejeu.",
+            "language": "",
+            "code": ""
+          }
+        ],
+        "locale": "fr"
+      },
+      {
+        "id": "security",
+        "title": "Architecture & sécurité",
+        "summary": "Comprenez ce qui existe, ce qui est borné et ce qui reste à intégrer.",
+        "keywords": [
+          "Rust",
+          "Keycloak",
+          "WebAuthn",
+          "hwk",
+          "48 kHz",
+          "Ed25519",
+          "EmergencyFrame",
+          "theme",
+          "synapse"
+        ],
+        "supportChannel": "self-hosting",
+        "sources": [
+          "ARCHITECTURE.md",
+          "packages/kodera-rs/README.md",
+          "packages/synapse-policy/README.md",
+          "apps/web/src/features/sounds/synth.ts"
+        ],
+        "sections": [
+          {
+            "id": "identity",
+            "title": "Identité et politique des salons",
+            "paragraphs": [
+              "Un émetteur OIDC externe de type Keycloak peut fournir l’identité. L’assurance WebAuthn/hwk relève de la politique d’identité configurée, jamais d’un badge ou d’une assertion locale de l’interface. Community ne fournit pas de fournisseur d’identité.",
+              "synapse-policy 0.1.4 applique la politique de salon configurée avec le service room-access. Les appartenances authentifiées et les droits viennent du plan de contrôle ; les aperçus locaux n’en accordent aucun."
+            ],
+            "callout": "Les clients et le SDK utilisent Apache-2.0 ; le serveur et la politique Synapse utilisent AGPL-3.0-or-later. Enterprise Edition dispose d’une licence commerciale distincte.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "native",
+            "title": "Codecs Rust, audio et proximité",
+            "paragraphs": [
+              "kodera-rs fournit identifiants, métadonnées natives bornées et codecs EmergencyFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.",
+              "La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les interfaces MLS et matérielles ne doivent pas être présentées comme des intégrations achevées."
+            ],
+            "callout": "Cette référence n’active ni radio BLE, ni chiffrement média de bout en bout, ni garantie de service d’urgence.",
+            "language": "",
+            "code": ""
+          },
+          {
+            "id": "themes",
+            "title": "Métadonnées de thème portables",
+            "paragraphs": [
+              "kodera-theme:v1: est un format de partage de thème borné à 2048 octets UTF-8 dans le codec natif. Son base64 canonique encode un schéma JSON strict à cinq valeurs RGB, avec quatre préréglages.",
+              "Un code thème transporte des métadonnées visuelles. Le base64 n’est pas du chiffrement ; n’y placez ni secret ni revendication de droits. Les aperçus natifs de profil et d’IAM ne sont pas des droits authentifiés."
+            ],
+            "callout": "Seuls les exemples de configuration appartiennent au contrôle de version. Ne commitez jamais de secrets d’environnement, clés privées ou identifiants locataires réels.",
+            "language": "",
+            "code": ""
+          }
+        ],
+        "locale": "fr"
+      }
+    ]
+  },
+  "exportLabels": {
+    "en": {
+      "connectors": "Connectors",
+      "sources": "Sources"
+    },
+    "fr": {
+      "connectors": "Connecteurs",
+      "sources": "Sources"
+    }
+  }
+}

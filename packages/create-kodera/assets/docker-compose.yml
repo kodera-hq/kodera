@@ -1,0 +1,209 @@
+# Kodera Community self-host stack (`KODERA_EDITION=community`, `KODERA_BILLING_ENABLED=false`).
+# It runs no identity provider: sign-in uses an OIDC issuer you operate, set by
+# KODERA_OIDC_PROVIDER_ORIGIN (web) and KODERA_AUTH_TRUST (server); see README.md, "Sign-in".
+# Every pulled image is pinned by digest and every service has a memory limit; the limits are
+# ceilings, not a measured footprint. Respects ADR-0003 (`ADMITTED_SECRET_NAMES` on `server`;
+# LiveKit credentials isolated in `room-access`). `scripts/ci/check-community-deploy.py` checks it.
+
+services:
+  caddy:
+    mem_limit: 128m
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      KODERA_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
+      KODERA_ACME_EMAIL: ${KODERA_ACME_EMAIL:-ops@example.org}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_started
+      server:
+        condition: service_healthy
+      room-access:
+        condition: service_started
+      synapse:
+        condition: service_healthy
+
+  db:
+    mem_limit: 512m
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kodera}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-kodera_server}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kodera} -d ${POSTGRES_DB:-kodera_server}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    mem_limit: 128m
+    image: valkey/valkey:8.0-alpine@sha256:19f0b3d350f5e6de618086d79ecdc9c474ab159bebb16ed95a92e4211562fee5
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    mem_limit: 512m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile.migrator
+    command:
+      - /bin/sh
+      - -c
+      - |
+        python manage.py migrate --noinput --settings config.settings.deploy &&
+        python manage.py migrate --noinput --settings config.settings.deploy_operator
+    restart: "no"
+    environment:
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}
+      KODERA_BILLING_ENABLED: "false"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
+      KODERA_OUTBOX_SEAL_KEY: ${KODERA_OUTBOX_SEAL_KEY:?Set KODERA_OUTBOX_SEAL_KEY in .env}
+      KODERA_MEMBERSHIP_CURSOR_KEY: ${KODERA_MEMBERSHIP_CURSOR_KEY:?Set KODERA_MEMBERSHIP_CURSOR_KEY in .env}
+      KODERA_DISCOVERY_HMAC_KEY: ${KODERA_DISCOVERY_HMAC_KEY:?Set KODERA_DISCOVERY_HMAC_KEY in .env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  server:
+    mem_limit: 768m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      KODERA_EDITION: community
+      KODERA_BILLING_ENABLED: "false"
+      KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in .env (README.md, Sign-in)}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
+      KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
+      KODERA_OUTBOX_SEAL_KEY: ${KODERA_OUTBOX_SEAL_KEY:?Set KODERA_OUTBOX_SEAL_KEY in .env}
+      KODERA_MEMBERSHIP_CURSOR_KEY: ${KODERA_MEMBERSHIP_CURSOR_KEY:?Set KODERA_MEMBERSHIP_CURSOR_KEY in .env}
+      KODERA_DISCOVERY_HMAC_KEY: ${KODERA_DISCOVERY_HMAC_KEY:?Set KODERA_DISCOVERY_HMAC_KEY in .env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    mem_limit: 128m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_CORE_API_URL: https://${KODERA_DOMAIN:-chat.example.org}/api/v1
+        VITE_OIDC_CLIENT_ID: ${KODERA_OIDC_CLIENT_ID:-console}
+        VITE_KEYCLOAK_URL: ${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}
+        VITE_MATRIX_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
+        VITE_TENANT_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
+    command:
+      - "--port"
+      - "8080"
+      - "--prefix"
+      - "/"
+      - "--claim-path"
+      - "/claim"
+      - "--core-origin"
+      - "https://${KODERA_DOMAIN:-chat.example.org}"
+      - "--provider-origin"
+      - "${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}"
+      - "--matrix-domain"
+      - "${KODERA_DOMAIN:-chat.example.org}"
+    restart: unless-stopped
+
+  room-access:
+    mem_limit: 256m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile
+    command: ["python", "-m", "room_access"]
+    restart: unless-stopped
+    environment:
+      ROOM_ACCESS_SYNAPSE_URL: http://synapse:8008
+      ROOM_ACCESS_MATRIX_TOKEN: ${ROOM_ACCESS_MATRIX_TOKEN:?Set ROOM_ACCESS_MATRIX_TOKEN in .env}
+      LIVEKIT_URL: http://livekit:7880
+      LIVEKIT_WS_URL: wss://${KODERA_DOMAIN:-chat.example.org}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in .env}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in .env}
+      ROOM_ACCESS_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:-chat.example.org}
+      ROOM_ACCESS_AGENT_USER: "@kodera-agent:${KODERA_DOMAIN:-chat.example.org}"
+      ROOM_ACCESS_API_BIND: "0.0.0.0"
+      ROOM_ACCESS_API_PORT: "8095"
+      ROOM_ACCESS_WEBHOOK_BIND: "0.0.0.0"
+    depends_on:
+      server:
+        condition: service_healthy
+      synapse:
+        condition: service_healthy
+
+  synapse:
+    mem_limit: 1g
+    image: matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -f /data/homeserver.yaml ]; then
+          /start.py generate
+          printf '\npresence:\n  enabled: true\n' >> /data/homeserver.yaml
+        fi
+        exec /start.py
+    environment:
+      SYNAPSE_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
+      SYNAPSE_REPORT_STATS: "no"
+    volumes:
+      - synapse_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  livekit:
+    mem_limit: 512m
+    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in .env}: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in .env}"
+    ports:
+      - "7881:7881"
+      - "50000-50060:50000-50060/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  valkey_data:
+  synapse_data:

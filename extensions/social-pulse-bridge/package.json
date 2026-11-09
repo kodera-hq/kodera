@@ -1,0 +1,14 @@
+{
+  "name": "@kodera/ext-social-pulse-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Official privacy-preserving Kodera extension syndicating X/Twitter, Mastodon/Fediverse, and Instagram posts with zero tracking pixels and automatic query parameter stripping.",
+  "dependencies": {
+    "@kodera/extension-sdk": "0.1.0"
+  },
+  "scripts": {
+    "test": "node --test test/index.test.mjs"
+  }
+}

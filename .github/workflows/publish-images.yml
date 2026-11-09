@@ -1,0 +1,107 @@
+name: Publish images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/server/**"
+      - ".github/workflows/publish-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-images:
+    name: Build and publish Core, operator-deps and worker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify image publication workflow policy gate
+        run: python3 scripts/ci/check-publish-images-workflow.py --selftest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.3.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push kodera-core API image
+        id: build_api
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.0.1
+        with:
+          context: apps/server
+          file: apps/server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/kodera-core:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push kodera-core-operator-deps image
+        id: build_operator
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.0.1
+        with:
+          context: apps/server
+          file: apps/server/Dockerfile
+          target: dependencies
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/kodera-core-operator-deps:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push kodera-core-worker image
+        id: build_worker
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.0.1
+        with:
+          context: apps/server
+          file: apps/server/Dockerfile.worker
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/kodera-core-worker:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Write published image digests to step summary
+        env:
+          API_DIGEST: ${{ steps.build_api.outputs.digest }}
+          OPERATOR_DIGEST: ${{ steps.build_operator.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.build_worker.outputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$API_DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::missing sha256 digest for kodera-core"; exit 1 ;;
+          esac
+          case "$OPERATOR_DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::missing sha256 digest for kodera-core-operator-deps"; exit 1 ;;
+          esac
+          case "$WORKER_DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::missing sha256 digest for kodera-core-worker"; exit 1 ;;
+          esac
+          {
+            echo "### Published images for \`${REVISION}\`"
+            echo ""
+            echo "- \`api\`: \`ghcr.io/${OWNER}/kodera-core@${API_DIGEST}\`"
+            echo "- \`operator\`: \`ghcr.io/${OWNER}/kodera-core-operator-deps@${OPERATOR_DIGEST}\`"
+            echo "- \`worker\`: \`ghcr.io/${OWNER}/kodera-core-worker@${WORKER_DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

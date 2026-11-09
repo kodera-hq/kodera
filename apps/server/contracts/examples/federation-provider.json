@@ -1,0 +1,41 @@
+{
+  "id": "9b0c1d2e-3f40-4152-8a63-7b8c9d0e1f20",
+  "tenant_id": "2c9f0e7a-1b3d-4e5f-8a9b-0c1d2e3f4a5b",
+  "provider": "microsoft",
+  "state": "configured",
+  "label": "Microsoft ACME",
+  "login_mode": "both",
+  "allowed_email_domains": ["acme.fr"],
+  "domain_checks": [
+    {
+      "domain": "acme.fr",
+      "verified": true,
+      "checked_at": "2026-12-03T09:14:22Z",
+      "failure_code": null
+    }
+  ],
+  "values": {
+    "application_name": "Kodera — ACME",
+    "redirect_uri": "https://id.kodera.io/realms/acme-sa/broker/microsoft/endpoint",
+    "logout_uri": "https://id.kodera.io/realms/acme-sa/broker/microsoft/endpoint/logout",
+    "scopes": ["openid", "profile", "email"],
+    "account_types_label_key": "federation.microsoft.account_types.single_tenant",
+    "issuer_url": "https://login.microsoftonline.com/common/v2.0",
+    "entity_id": null,
+    "acs_url": null
+  },
+  "client_id": "4f2a6c8e-0b2d-4f6a-8c0e-2b4d6f8a0c2e",
+  "secret_set": true,
+  "secret_expires_on": "2027-06-30",
+  "last_test": {
+    "id": "a1b2c3d4-5e6f-4708-8a19-2b3c4d5e6f70",
+    "result": "failed",
+    "at": "2026-12-03T11:02:00Z"
+  },
+  "hosted_account_count": 14,
+  "job_id": null,
+  "activated_at": null,
+  "disabled_at": null,
+  "created_at": "2026-12-03T10:40:00Z",
+  "updated_at": "2026-12-03T11:02:00Z"
+}

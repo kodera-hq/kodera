@@ -1,0 +1,8 @@
+// Not a source file: the extension keeps it out of the token guard's own scan
+// of `src/`, out of the TypeScript projects, and out of the Vitest suite. It
+// exists only to be fed to the scanner by tests/unit/ui/tokens.test.ts, which
+// asserts the guard reports the class below instead of passing over it.
+//
+// `cobalt` is one of our colour families and `450` is not one of its steps, so
+// Tailwind emits no rule at all for this class and no error either.
+export const Broken = () => <div className="bg-cobalt-450" />

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Fake OpenTofu for the development stack.
+#
+# It never contacts a provider, never reads or writes real state, and never
+# holds a credential. Its job is to make a provisioning job runnable on a
+# laptop: log what would have been executed, emit output in the shape the
+# worker parses, and exit 0.
+#
+# The worker's PATH is prefixed with this directory (see compose.yaml), so a
+# ordinary invocation finds this test double. An absolute executable path
+# or a direct network call can bypass PATH selection; this is not a security
+# boundary and must never be given a real credential.
+#
+#   FAKE_TOFU_FAIL=1   exit 1 with a plausible provider error, so failure,
+#                      retry and compensation paths get exercised.
+#   FAKE_BIN_LOG=path  where invocations are appended
+#                      (default /tmp/kodera-fakebin.log).
+set -euo pipefail
+
+LOG="${FAKE_BIN_LOG:-/tmp/kodera-fakebin.log}"
+subcommand="${1:-<none>}"
+
+# Quote every argument so an argument containing a space is readable later as
+# one argument rather than two.
+printf '%s tofu' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG"
+for arg in "$@"; do printf ' %q' "$arg" >>"$LOG"; done
+printf '\n' >>"$LOG"
+
+echo "fake-tofu: ${*}" >&2
+echo "fake-tofu: cwd=$(pwd)" >&2
+
+if [ "${FAKE_TOFU_FAIL:-}" = "1" ]; then
+  cat >&2 <<'ERR'
+
+Error: error creating instance server
+
+  with scaleway_instance_server.tenant,
+  on main.tf line 21, in resource "scaleway_instance_server" "tenant":
+  21: resource "scaleway_instance_server" "tenant" {
+
+quota exceeded: not enough resources in zone fr-par-1
+ERR
+  echo "fake-tofu: exiting 1 because FAKE_TOFU_FAIL=1" >&2
+  exit 1
+fi
+
+case "$subcommand" in
+  init)
+    echo "Initializing the backend..."
+    echo "OpenTofu has been successfully initialized!"
+    ;;
+  validate)
+    echo "Success! The configuration is valid."
+    ;;
+  plan)
+    echo "OpenTofu will perform the following actions:"
+    echo "Plan: 3 to add, 0 to change, 0 to destroy."
+    ;;
+  apply)
+    echo "Apply complete! Resources: 3 added, 0 changed, 0 destroyed."
+    echo
+    echo "Outputs:"
+    echo
+    echo 'host_id = "fr-par-1/11111111-2222-3333-4444-555555555555"'
+    echo 'ipv4 = "203.0.113.10"'
+    echo 'ipv6 = "2001:db8::10"'
+    ;;
+  destroy)
+    echo "Destroy complete! Resources: 3 destroyed."
+    ;;
+  output)
+    # `tofu output -json` is how the worker reads a plan's results. Addresses
+    # come from the documentation ranges (RFC 5737, RFC 3849): they route
+    # nowhere, so a fixture leaking into a request cannot reach a real host.
+    if [ "${2:-}" = "-json" ]; then
+      cat <<'JSON'
+{
+  "host_id": {"sensitive": false, "type": "string", "value": "fr-par-1/11111111-2222-3333-4444-555555555555"},
+  "ipv4": {"sensitive": false, "type": "string", "value": "203.0.113.10"},
+  "ipv6": {"sensitive": false, "type": "string", "value": "2001:db8::10"},
+  "project_id": {"sensitive": false, "type": "string", "value": "66666666-7777-8888-9999-000000000000"}
+}
+JSON
+    else
+      echo 'host_id = "fr-par-1/11111111-2222-3333-4444-555555555555"'
+      echo 'ipv4 = "203.0.113.10"'
+    fi
+    ;;
+  version | -version | --version)
+    echo "OpenTofu v1.8.0 (fake, dev/fakebin)"
+    ;;
+  *)
+    echo "fake-tofu: unhandled subcommand '${subcommand}', pretending it worked" >&2
+    ;;
+esac
+
+exit 0

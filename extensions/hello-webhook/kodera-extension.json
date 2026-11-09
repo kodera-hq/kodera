@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "kodera.extension.v1",
+  "id": "hello-webhook",
+  "name": "Hello Webhook Starter",
+  "version": "0.1.0",
+  "description": "Reference Kodera slash-command and signed webhook starter extension (<15 min onboarding).",
+  "scopes": [
+    "messages:write",
+    "webhooks:incoming"
+  ],
+  "events": [
+    "command.invoked"
+  ],
+  "webhookUrl": "https://extensions.kodera.io/hello-webhook/webhook",
+  "commands": [
+    {
+      "name": "/hello",
+      "description": "Reply with a greeting in the current Kodera channel"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Virtualenvs and tooling caches -----------------------------------------
+.venv/
+venv/
+.python-version
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+
+# --- Environment -------------------------------------------------------------
+# Every .env is ignored; the documented, secret-free example is tracked.
+.env
+.env.*
+!.env.example
+
+# --- Infrastructure state ----------------------------------------------------
+# State files carry resource ids, IPs and sometimes secrets. Remote state only.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+
+# --- Local artefacts ---------------------------------------------------------
+rendered/
+*.log
+*.sqlite3
+media/
+staticfiles/
+
+# --- Assistant and agent tooling ---------------------------------------------
+# Local, per-developer session state from coding assistants. None of it is
+# reviewable and some of it caches file contents, so it never gets committed.
+.agent/
+.agents/
+.assistant/
+.ai/
+AGENT_NOTES.md
+
+# --- OS and editors ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# --- Node -------------------------------------------------------------------
+# The contract linter installs under contracts/lint/ from its lockfile.
+node_modules/

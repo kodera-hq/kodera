@@ -1,0 +1,19 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+# Markdown gives a hard line break to two trailing spaces; trimming them
+# silently reflows the paragraph.
+trim_trailing_whitespace = false
+
+[tokens.json]
+# Byte-for-byte the file the design workstream delivered. Reformatting it —
+# including adding the final newline — would make "verbatim" unverifiable.
+insert_final_newline = false

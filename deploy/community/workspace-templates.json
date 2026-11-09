@@ -1,0 +1,76 @@
+{
+  "audiovisual-production": {
+    "channels": [
+      "production",
+      "post-production",
+      "dailies-rushes",
+      "tournage",
+      "stage-control",
+      "editing-room"
+    ],
+    "connectors": [
+      "frameio-review-bridge"
+    ],
+    "roles": [
+      "Producer",
+      "Director",
+      "post-production",
+      "VFX/Sound Supervisor"
+    ]
+  },
+  "tech-studio": {
+    "channels": [
+      "general",
+      "architecture",
+      "incident-prod"
+    ],
+    "connectors": [
+      "github-repo-tracker"
+    ],
+    "roles": [
+      "Owner",
+      "Engineer"
+    ]
+  },
+  "b2b-advisory": {
+    "channels": [
+      "general",
+      "client-projects",
+      "deliverables"
+    ],
+    "connectors": [
+      "qonto-treasury-feed"
+    ],
+    "roles": [
+      "Partner",
+      "Consultant"
+    ]
+  },
+  "public-sector": {
+    "channels": [
+      "general",
+      "compliance",
+      "on-call"
+    ],
+    "connectors": [],
+    "roles": [
+      "Coordinator",
+      "Member"
+    ]
+  },
+  "crisis-cell": {
+    "channels": [
+      "general",
+      "incident-log",
+      "field-bridge",
+      "urgence"
+    ],
+    "connectors": [
+      "uptime-incident-bridge"
+    ],
+    "roles": [
+      "Coordinator",
+      "Responder"
+    ]
+  }
+}

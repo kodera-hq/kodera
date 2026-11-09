@@ -1,0 +1,30 @@
+{
+  "$comment": "Tokens that break the naming grammar of DESIGN_HANDOFF A3 and are allowed to, one entry per (path, rule) with a written reason. An entry whose token no longer breaks the rule fails the gate, so the file cannot rot into a blanket exemption.",
+  "exceptions": [
+    {
+      "path": "semantic.action.primaryHover",
+      "rule": "segment-case",
+      "reason": "delivered camelCase in the design drop; tokens.json is carried verbatim as the source of truth, so renaming it to action.primary.hover is a breaking token rename and belongs to the grammar pass, not to this bootstrap"
+    },
+    {
+      "path": "semantic.action.onPrimary",
+      "rule": "segment-case",
+      "reason": "delivered camelCase in the design drop; same reason as semantic.action.primaryHover. The build already emits it as --action-on-primary, so consumers are unaffected by the eventual rename"
+    },
+    {
+      "path": "font.lineHeight.tight",
+      "rule": "segment-case",
+      "reason": "the group is camelCase in the design drop; the grammar pass renames the group to font.leading in one change, and splitting that rename across three separate PRs is how half a rename ships"
+    },
+    {
+      "path": "font.lineHeight.snug",
+      "rule": "segment-case",
+      "reason": "same group as font.lineHeight.tight"
+    },
+    {
+      "path": "font.lineHeight.body",
+      "rule": "segment-case",
+      "reason": "same group as font.lineHeight.tight"
+    }
+  ]
+}

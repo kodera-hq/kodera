@@ -1,0 +1,47 @@
+# Local gates. They are a convenience, not the contract: CI runs the same
+# checks and is the thing that blocks a merge. Install with `make precommit`.
+#
+# Rev pins are exact on purpose — a floating rev means a hook can change under
+# a reviewer between two runs of the same commit.
+default_install_hook_types: [pre-commit, commit-msg]
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      # Catches a committed secret before it reaches a remote, where the only
+      # remedy left is rotation.
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        # compose.yaml and the GitHub workflow files are the ones that hurt.
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      # Shell inside `run:` blocks is where workflow bugs hide; actionlint
+      # runs shellcheck over it. Needs Go available locally; if the hook fails
+      # to build on a machine, skip it with SKIP=actionlint — CI runs
+      # actionlint from a pinned binary regardless, so nothing is lost.
+      - id: actionlint

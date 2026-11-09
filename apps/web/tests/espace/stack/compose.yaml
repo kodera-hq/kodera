@@ -1,0 +1,175 @@
+# A real homeserver and media server for Espace (docs/dev/ESPACE_STACK.md): the Console's Matrix
+# client is tested against Synapse and LiveKit, not a mock, because timeline bugs never show
+# against one (messaging-pilot DESIGN §4, E6). Closed as in the pilot: no federation, no open
+# registration. Everything listens on 127.0.0.1 only. Throwaway secrets come from `.runtime/config`, which
+# `bin/up.sh` writes from `env.example` and git ignores.
+
+name: kodera-espace
+
+services:
+  postgres:
+    # Pinned by digest, as the spike measured them (engine-spike/rooms/README.md).
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: synapse
+      # Synapse refuses a database whose collation is not C.
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+    volumes:
+      - pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U synapse']
+      interval: 2s
+      retries: 60
+
+  synapse:
+    image: matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    entrypoint: ['/bin/sh', '/config/start.sh']
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SYNAPSE_REGISTRATION_SECRET: ${SYNAPSE_REGISTRATION_SECRET}
+      SYNAPSE_MACAROON_SECRET: ${SYNAPSE_MACAROON_SECRET}
+      SYNAPSE_FORM_SECRET: ${SYNAPSE_FORM_SECRET}
+      SYNAPSE_PUBLIC_BASEURL: ${SYNAPSE_PUBLIC_BASEURL}
+      KEYCLOAK_PORT: ${KEYCLOAK_PORT}
+      KEYCLOAK_SYNAPSE_SECRET: ${KEYCLOAK_SYNAPSE_SECRET}
+      CONSOLE_ORIGIN: ${CONSOLE_ORIGIN}
+    ports:
+      - '127.0.0.1:${SYNAPSE_PORT}:8008'
+    volumes:
+      # The self-test points this at a mutated copy (smoke.selftest.sh).
+      - ${SYNAPSE_CONFIG_DIR:-./synapse}:/config:ro
+      - synapse:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:8008/health']
+      interval: 2s
+      retries: 90
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  keycloak:
+    # The organisation's realm (Core ADR-0006), as identity realm tooling runs it (26.0.7), with
+    # Synapse's confidential client (DESIGN §2.4). Imported from keycloak/, whose placeholders
+    # Keycloak fills from this environment. Tests create their members through the admin API,
+    # each a new person, so that Synapse's mapping of a first sign-in is tested every run.
+    # Synapse does not wait for it: it reads Keycloak only when a member signs in, and
+    # `up -d --wait` waits for both before any test runs.
+    image: quay.io/keycloak/keycloak:26.0.7@sha256:4388e2379b7e870a447adbe7b80bd61f5fbf04e925832b19669fda4957f05a81
+    command: ['start-dev', '--import-realm']
+    environment:
+      # The browser reaches Keycloak on the host; Synapse, in its container, by its service name.
+      # Tokens carry the browser's issuer either way.
+      KC_HOSTNAME: http://127.0.0.1:${KEYCLOAK_PORT}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
+      KC_HEALTH_ENABLED: 'true'
+      KEYCLOAK_SYNAPSE_SECRET: ${KEYCLOAK_SYNAPSE_SECRET}
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      SYNAPSE_PORT: ${SYNAPSE_PORT}
+    ports:
+      - '127.0.0.1:${KEYCLOAK_PORT}:8080'
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      # The image has no curl or wget.
+      test:
+        [
+          'CMD-SHELL',
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q UP <&3",
+        ]
+      interval: 3s
+      retries: 100
+
+  livekit:
+    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
+    environment:
+      LIVEKIT_KEYS: '${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}'
+      LIVEKIT_CONFIG: |
+        port: 7880
+        log_level: warn
+        rtc:
+          tcp_port: 7881
+          port_range_start: 50000
+          port_range_end: 50020
+          use_external_ip: false
+          node_ip: 127.0.0.1
+        room:
+          # Rooms exist only when the room-access service creates them (DESIGN §2.1).
+          auto_create: false
+          empty_timeout: 30
+    ports:
+      - '127.0.0.1:${LIVEKIT_PORT}:7880'
+      - '127.0.0.1:${LIVEKIT_TCP_PORT}:7881'
+      - '127.0.0.1:50000-50020:50000-50020/udp'
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://localhost:7880/']
+      interval: 2s
+      retries: 60
+
+  # Audio rooms (DESIGN §2.1 item 3): Core's room-access service and the edge that serves its
+  # token call on the homeserver's origin. Only with `--profile audio`, which bin/up.sh starts using the monorepo server source by default.
+  room-access:
+    profiles: [audio]
+    image: python:3.13-slim@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
+    working_dir: /srv
+    # Its one dependency outside the standard library, at Core's pin (pyproject.toml) and its
+    # wheel's hash (uv.lock), the line closure.mjs installs for the agent.
+    command:
+      [
+        '/bin/sh',
+        '-c',
+        'echo "PyJWT==2.15.1 --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193" > /tmp/requirements.txt && pip install --no-cache-dir --quiet --disable-pip-version-check --root-user-action=ignore --require-hashes --only-binary=:all: -r /tmp/requirements.txt && exec python -m room_access',
+      ]
+    environment:
+      ROOM_ACCESS_SYNAPSE_URL: http://synapse:8008
+      ROOM_ACCESS_MATRIX_TOKEN: ${ROOM_ACCESS_MATRIX_TOKEN:-}
+      LIVEKIT_URL: http://livekit:7880
+      LIVEKIT_WS_URL: ws://127.0.0.1:${LIVEKIT_PORT}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      ROOM_ACCESS_ALLOWED_ORIGINS: ${CONSOLE_ORIGIN}
+      ROOM_ACCESS_AGENT_USER: '@kodera-agent:kodera.test'
+      ROOM_ACCESS_API_BIND: 0.0.0.0
+      ROOM_ACCESS_WEBHOOK_BIND: 0.0.0.0
+    volumes:
+      # Without CORE_SRC, `--profile audio` by hand fails at once, naming this path, rather than
+      # mounting an empty directory and restarting. A `:?` here would fail every command, the
+      # profile-less ones CI runs included: Compose interpolates services it does not start.
+      - type: bind
+        source: ${CORE_SRC:-./CORE_SRC-is-unset-name-a-Core-checkout}/room_access
+        target: /srv/room_access
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health')",
+        ]
+      interval: 2s
+      retries: 60
+    depends_on:
+      synapse: { condition: service_healthy }
+      livekit: { condition: service_healthy }
+
+  edge:
+    profiles: [audio]
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    ports:
+      - '127.0.0.1:${EDGE_PORT:-8009}:8080'
+    volumes:
+      - ./edge/default.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:8080/health']
+      interval: 2s
+      retries: 60
+    depends_on:
+      room-access: { condition: service_healthy }
+
+volumes:
+  pg:
+  synapse:

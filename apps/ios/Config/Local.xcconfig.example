@@ -1,0 +1,17 @@
+// Local development values for the Kodera app. Copy to Config/Local.xcconfig
+// (untracked) and adjust. Plain-HTTP loopback origins are admitted by Debug
+// builds only; a Release build refuses them and shows "not configured".
+//
+// `//` starts an .xcconfig comment, hence `http:/$()/`.
+
+// Core from its own repository's docker compose stack (I-1 discovery pending).
+KODERA_CORE_ORIGIN = http:/$()/localhost:8000
+// The Console's own dev server (npm run dev in its repository).
+KODERA_CONSOLE_ORIGIN = http:/$()/localhost:5173
+// dev/keycloak/compose.yml
+KODERA_ISSUER_ORIGINS = http:/$()/localhost:8080
+KODERA_IOS_CLIENT_ID = kodera-ios
+// The dev/keycloak realm, reachable without Core discovery.
+KODERA_DEV_ISSUER = http:/$()/localhost:8080/realms/kodera-dev
+// The dev realm offers offline_access, so a local build can exercise offline sessions.
+KODERA_OFFLINE_ACCESS = YES

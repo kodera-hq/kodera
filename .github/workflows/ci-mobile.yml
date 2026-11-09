@@ -1,0 +1,67 @@
+name: CI — Native Mobile (iOS & Android)
+
+# Called by ci.yml, which decides from the changed paths whether this runs and
+# aggregates every result into the single required check `ci-ok`. Run alone, a
+# path-filtered workflow is never reported on a pull request it skips, so a
+# required check on it would wait forever.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-checks:
+    name: iOS Resources, Swift Packages & Simulator Build
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      XCODEGEN_VERSION: "2.44.1"
+      XCODEGEN_SHA256: a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify iOS app resources
+        working-directory: apps/ios
+        run: python3 scripts/ci/check-app-resources.py
+      - name: Swift package tests (Domain, Client, Auth)
+        working-directory: apps/ios/packages
+        run: |
+          for package in KoderaDomain KoderaClient KoderaAuth; do
+            (cd "$package" && swift test --force-resolved-versions)
+          done
+      - name: Install the pinned XcodeGen release
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          echo "${XCODEGEN_SHA256}  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Unsigned simulator build of the app
+        working-directory: apps/ios
+        run: |
+          test ! -e Config/Local.xcconfig && test ! -L Config/Local.xcconfig
+          xcodegen generate --spec project.yml
+          xcodebuild -project Kodera.xcodeproj -scheme Kodera \
+            -destination 'generic/platform=iOS Simulator' \
+            build CODE_SIGNING_ALLOWED=NO
+
+  android-checks:
+    name: Android Resource & Unit Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Verify Android app resources & unit tests
+        working-directory: apps/android
+        run: |
+          python3 scripts/ci/check-app-resources.py
+          ./gradlew :domain:test :client:test testDebugUnitTest --no-daemon

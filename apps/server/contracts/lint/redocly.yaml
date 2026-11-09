@@ -1,0 +1,52 @@
+# The repository ruleset for `redocly lint contracts/*.openapi.yaml`.
+#
+# `recommended` alone proves only that the document is well-formed: it reports
+# an operation with no client-error response as a warning, and the lint step
+# passes on warnings, so a contract that lost its 400s stayed green. The rules
+# below make the two properties this repository actually relies on into
+# errors. .github/scripts/prove-contract-lint-fails.sh strips a 400 from a
+# copy of the contract on every run and expects each rule below by name.
+# Keep lint local: vendor telemetry stays off.
+telemetry: off
+
+extends:
+  - recommended
+
+rules:
+  # Every operation declares at least one 4xx. Recommended ships this as a
+  # warning; here it fails.
+  operation-4xx-response: error
+
+  # An operation that takes input can receive malformed input, so it declares
+  # what a malformed request gets back. Two rules because a `where` clause is
+  # a conjunction: one for operations with parameters, one for a request body.
+  # `property: parameters` on an Operation subject is the operation's own
+  # list; parameters declared on the path item are not seen. That is the
+  # intended scope: every path-item-level parameter in the contract is a path
+  # parameter, and a malformed one is 404, not 400 (docs/api/CONVENTIONS.md).
+  rule/operation-with-parameters-declares-400:
+    subject:
+      type: Responses
+    assertions:
+      required: ['400']
+    where:
+      - subject:
+          type: Operation
+          property: parameters
+        assertions:
+          defined: true
+    severity: error
+    message: An operation that declares parameters must declare a '400' response.
+  rule/operation-with-request-body-declares-400:
+    subject:
+      type: Responses
+    assertions:
+      required: ['400']
+    where:
+      - subject:
+          type: Operation
+          property: requestBody
+        assertions:
+          defined: true
+    severity: error
+    message: An operation that declares a request body must declare a '400' response.

@@ -1,0 +1,72 @@
+{
+  "format": "kodera-font-assets/1",
+  "conversion": {
+    "library": "fontTools",
+    "version": "4.63.0",
+    "flavor": "WOFF2 to unflavoured sfnt/TTF",
+    "recalculateTimestamp": false,
+    "reorderTables": true
+  },
+  "fonts": [
+    {
+      "file": "PlusJakartaSans-Regular.ttf",
+      "sha256": "ad9a623b6fa9f5bf48285597503589a6f96bb3a02d2b65130647a805bd540d41",
+      "sourcePath": "packages/design-tokens/assets/fonts/plus-jakarta-sans-latin-400-normal.woff2",
+      "sourceSha256": "221a4135d06a4b33abbd535e9a0da4e565d19545ddd9267c4e678a916d54d9b6",
+      "family": "Plus Jakarta Sans",
+      "postScriptName": "PlusJakartaSans-Regular",
+      "weight": 400,
+      "binding": "sansRegular"
+    },
+    {
+      "file": "PlusJakartaSans-Medium.ttf",
+      "sha256": "8b6e0f13b6866f5b7598b4a0a64f82e3050b3c07de4a9e3c960d04b31b5c7bfb",
+      "sourcePath": "packages/design-tokens/assets/fonts/plus-jakarta-sans-latin-500-normal.woff2",
+      "sourceSha256": "bad081c8dbc15aed6c5e4cde5461914f7b3bdc295b7a7aed177e4beddb79bffa",
+      "family": "Plus Jakarta Sans Medium",
+      "postScriptName": "PlusJakartaSans-Medium",
+      "weight": 500,
+      "binding": "sansMedium"
+    },
+    {
+      "file": "PlusJakartaSans-SemiBold.ttf",
+      "sha256": "b40a3cca1ae8a7d1acd57994c5c1c4d1b6744858dd018ca379b15f3948fd7d0b",
+      "sourcePath": "packages/design-tokens/assets/fonts/plus-jakarta-sans-latin-600-normal.woff2",
+      "sourceSha256": "8872bb5c9111df9bd3162c2394aee6354d782b13408a4dd5bbf65c48207206e6",
+      "family": "Plus Jakarta Sans SemiBold",
+      "postScriptName": "PlusJakartaSans-SemiBold",
+      "weight": 600,
+      "binding": "sansSemibold"
+    },
+    {
+      "file": "PlusJakartaSans-Bold.ttf",
+      "sha256": "e51f48799da1cefc8cf8c1c6ded06b1c42fe89d5cc13946fe7ebeab24b3894ba",
+      "sourcePath": "packages/design-tokens/assets/fonts/plus-jakarta-sans-latin-700-normal.woff2",
+      "sourceSha256": "2050755bf475817c96ac7d914c7f07cc3c2d11ff4b3fb4747b8d41de584aad17",
+      "family": "Plus Jakarta Sans",
+      "postScriptName": "PlusJakartaSans-Bold",
+      "weight": 700,
+      "binding": "sansBold"
+    },
+    {
+      "file": "IBMPlexMono-Regular.ttf",
+      "sha256": "3f7efa37307b8b54338fc6437acd67f8d936239ec8e0708551a9b746474f2176",
+      "sourcePath": "packages/design-tokens/assets/fonts/ibm-plex-mono-latin-400-normal.woff2",
+      "sourceSha256": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+      "family": "IBM Plex Mono",
+      "postScriptName": "IBMPlexMono-Regular",
+      "weight": 400,
+      "binding": "monoRegular"
+    }
+  ],
+  "licences": [
+    {
+      "file": "Licenses/OFL-plus-jakarta-sans.txt",
+      "sha256": "e07fd1167c2aaaa6fb965dd66e1e73b13c9c95b76b2d648b6e938780f30b37af"
+    },
+    {
+      "file": "Licenses/OFL-ibm-plex-mono.txt",
+      "sha256": "23b0a9d0c6d3f140a0b77e483c5cfa6bba574325ef5cb189ed9f2fec4884533f"
+    }
+  ]
+}

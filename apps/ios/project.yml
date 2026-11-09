@@ -1,0 +1,88 @@
+name: Kodera
+options:
+  minimumXcodeGenVersion: 2.44.1
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  KoderaDomain:
+    path: packages/KoderaDomain
+  KoderaClient:
+    path: packages/KoderaClient
+  KoderaAuth:
+    path: packages/KoderaAuth
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: "YES"
+targets:
+  Kodera:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes:
+          - Resources/**
+          - Info.plist
+          - Generated/*.json
+      - path: App/Resources/Localizable.xcstrings
+        buildPhase: resources
+      - path: App/Resources/Fonts
+        type: folder
+        buildPhase: resources
+      - path: App/Resources/Licenses
+        type: folder
+        buildPhase: resources
+      - path: App/Generated/TokenProvenance.json
+        buildPhase: resources
+    # Deployment values: empty defaults, overridden by the untracked
+    # Config/Local.xcconfig (see Config/Local.xcconfig.example).
+    configFiles:
+      Debug: Config/Kodera.xcconfig
+      Release: Config/Kodera.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.kodera.app
+        INFOPLIST_FILE: App/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: "NO"
+    dependencies:
+      - package: KoderaDomain
+      - package: KoderaClient
+      - package: KoderaAuth
+  KoderaAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AppTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.kodera.app.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Kodera.app/Kodera"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+      configs:
+        Debug:
+          ENABLE_TESTABILITY: "YES"
+    dependencies:
+      - target: Kodera
+      - package: KoderaDomain
+      - package: KoderaClient
+      - package: KoderaAuth
+schemes:
+  Kodera:
+    build:
+      targets:
+        Kodera: all
+    run:
+      config: Debug
+  KoderaAppTests:
+    build:
+      targets:
+        Kodera: [test]
+        KoderaAppTests: [test]
+    test:
+      config: Debug
+      targets:
+        - name: KoderaAppTests
+          parallelizable: false

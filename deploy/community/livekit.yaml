@@ -1,0 +1,11 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50060
+  use_external_ip: true
+room:
+  auto_create: false
+  empty_timeout: 30
+logging:
+  level: info

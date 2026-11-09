@@ -1,0 +1,30 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.docs-collab-announcer",
+  "name": "DINUM Docs Collaborative Pad Announcer",
+  "version": "0.1.0",
+  "description": "Annonce les créations, publications et résolutions de commentaires des documents collaboratifs DINUM Docs dans les salons Kodera Espace.",
+  "permissions": [
+    "messages:write",
+    "commands:register",
+    "webhooks:incoming"
+  ],
+  "scopes": [
+    "messages:write",
+    "commands:register",
+    "webhooks:incoming"
+  ],
+  "events": [
+    "command.invoked",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/doc-pad",
+      "name": "/doc-pad",
+      "description": "Partager ou ouvrir un document collaboratif DINUM Docs lié au salon"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.kodera.io/hooks/docs-collab-announcer"
+}

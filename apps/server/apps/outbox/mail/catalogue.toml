@@ -1,0 +1,308 @@
+# Message templates Core sends: docs/specs/OUTBOX_MAIL_SENDER.md §4.
+#
+# French is user-facing product copy. The wording below was approved by the product owner on
+# 2026-10-06, and the set-up paragraph before each link and the set-up link's validity after it on
+# 2026-11-04; French is the approved source and English a faithful translation. Change it only
+# through a pull request the owner approves, setting `approved = false` until then: a remote
+# transport refuses to send an entry whose `approved` is false.
+#
+# One exception to who approves: `support_ticket` goes only to Kodera's own support mailbox and is
+# never shown to a customer, so its copy is internal and the lead approved it, not the product owner.
+#
+# Placeholders are ${name}: the entry's `params`, and `link`, which the sender fills with the
+# link and its secret fragment. Every body carries ${link}.
+
+[owner_claim]
+copy = "approved"
+approved = true
+params = ["organisation_name", "expires_at"]
+
+[owner_claim.fr]
+subject = "Votre espace ${organisation_name} est prêt sur Kodera"
+body = """
+Bonjour,
+
+L'espace de travail de ${organisation_name} est prêt sur Kodera. Pour en devenir le propriétaire, ouvrez ce lien et connectez-vous :
+
+Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour choisir votre mot de passe et activer le code à usage unique. Munissez-vous de votre téléphone, avec une application d'authentification (par exemple FreeOTP ou Google Authenticator). Revenez ensuite à ce lien :
+
+${link}
+
+Le lien de l'e-mail « Configurer votre compte Kodera » est valable 3 jours : s'il a expiré, écrivez-nous à support@kodera.io pour en recevoir un nouveau.
+
+Ce lien est personnel et reste valable jusqu'au ${expires_at}. Si vous n'attendiez pas ce message, ignorez-le ou écrivez-nous à support@kodera.io.
+
+L'équipe Kodera
+"""
+
+[owner_claim.en]
+subject = "Your ${organisation_name} workspace is ready on Kodera"
+body = """
+Hello,
+
+The ${organisation_name} workspace is ready on Kodera. To become its owner, open this link and sign in:
+
+You will also receive an email “Configurer votre compte Kodera” (Set up your Kodera account): open it first to choose your password and turn on the one-time code. Have your phone ready, with an authenticator app (for example FreeOTP or Google Authenticator). Then come back to this link:
+
+${link}
+
+The link in the “Configurer votre compte Kodera” email is valid for 3 days: if it has expired, write to us at support@kodera.io to receive a new one.
+
+This link is personal and stays valid until ${expires_at}. If you were not expecting this message, ignore it or write to us at support@kodera.io.
+
+The Kodera team
+"""
+
+[invitation]
+copy = "approved"
+approved = true
+params = ["organisation_name", "role", "expires_at"]
+
+[invitation.fr]
+subject = "Invitation à rejoindre ${organisation_name} sur Kodera"
+body = """
+Bonjour,
+
+Vous avez reçu une invitation à rejoindre l'espace de travail de ${organisation_name} sur Kodera, avec le rôle ${role}. Pour l'accepter, ouvrez ce lien et connectez-vous :
+
+Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour choisir votre mot de passe et activer le code à usage unique. Munissez-vous de votre téléphone, avec une application d'authentification (par exemple FreeOTP ou Google Authenticator). Revenez ensuite à ce lien :
+
+${link}
+
+Le lien de l'e-mail « Configurer votre compte Kodera » est valable 3 jours : s'il a expiré, demandez à votre administrateur de vous renvoyer l'invitation.
+
+Cette invitation reste valable jusqu'au ${expires_at}. Si vous ne connaissez pas cette organisation, ignorez ce message.
+
+L'équipe Kodera
+"""
+
+[invitation.en]
+subject = "Invitation to join ${organisation_name} on Kodera"
+body = """
+Hello,
+
+You have been invited to join the ${organisation_name} workspace on Kodera, with the role ${role}. To accept, open this link and sign in:
+
+You will also receive an email “Configurer votre compte Kodera” (Set up your Kodera account): open it first to choose your password and turn on the one-time code. Have your phone ready, with an authenticator app (for example FreeOTP or Google Authenticator). Then come back to this link:
+
+${link}
+
+The link in the “Configurer votre compte Kodera” email is valid for 3 days: if it has expired, ask your administrator to send you the invitation again.
+
+This invitation stays valid until ${expires_at}. If you do not know this organisation, ignore this message.
+
+The Kodera team
+"""
+
+# The invitation to a person whose account in the realm is already set up: the realm mails no set-up
+# link, so the mail announces none. The invitation's copy as the owner approved it on 2026-10-06,
+# before the set-up paragraph and its validity were added.
+[invitation_account_ready]
+copy = "approved"
+approved = true
+params = ["organisation_name", "role", "expires_at"]
+
+[invitation_account_ready.fr]
+subject = "Invitation à rejoindre ${organisation_name} sur Kodera"
+body = """
+Bonjour,
+
+Vous avez reçu une invitation à rejoindre l'espace de travail de ${organisation_name} sur Kodera, avec le rôle ${role}. Pour l'accepter, ouvrez ce lien et connectez-vous :
+
+${link}
+
+Cette invitation reste valable jusqu'au ${expires_at}. Si vous ne connaissez pas cette organisation, ignorez ce message.
+
+L'équipe Kodera
+"""
+
+[invitation_account_ready.en]
+subject = "Invitation to join ${organisation_name} on Kodera"
+body = """
+Hello,
+
+You have been invited to join the ${organisation_name} workspace on Kodera, with the role ${role}. To accept, open this link and sign in:
+
+${link}
+
+This invitation stays valid until ${expires_at}. If you do not know this organisation, ignore this message.
+
+The Kodera team
+"""
+
+# The order confirmation (CGV 5.3): the message that forms the contract. Draft copy, held on a
+# remote transport until the product owner approves it. It carries no link and no secret: it names
+# each accepted document's permanent URL, one per line.
+[order_confirmation]
+copy = "draft"
+approved = false
+link = false
+params = ["organisation_name", "order_reference", "documents"]
+lines = ["documents"]
+
+[order_confirmation.fr]
+subject = "Confirmation de votre commande Kodera pour ${organisation_name}"
+body = """
+Bonjour,
+
+Nous confirmons la commande ${order_reference} passée pour ${organisation_name} sur Kodera. Le contrat est formé à l'envoi de ce message.
+
+Vous avez accepté les documents suivants. Chacun reste consultable, dans la version acceptée, à l'adresse indiquée :
+
+${documents}
+
+Conservez ce message : il atteste votre commande et les versions que vous avez acceptées. Pour toute question, écrivez-nous à support@kodera.io.
+
+L'équipe Kodera
+"""
+
+[order_confirmation.en]
+subject = "Confirmation of your Kodera order for ${organisation_name}"
+body = """
+Hello,
+
+We confirm order ${order_reference}, placed for ${organisation_name} on Kodera. The contract is formed when this message is sent.
+
+You accepted the documents below. Each stays available, in the version you accepted, at the address given:
+
+${documents}
+
+Keep this message: it records your order and the versions you accepted. For any question, write to us at support@kodera.io.
+
+The Kodera team
+"""
+
+[order_cancellation]
+copy = "draft"
+approved = false
+link = false
+params = ["organisation_name", "order_reference"]
+
+[order_cancellation.fr]
+subject = "Annulation de votre commande Kodera pour ${organisation_name}"
+body = """
+Bonjour,
+
+La commande ${order_reference} passée pour ${organisation_name} sur Kodera est annulée. Le contrat formé par sa confirmation prend fin avec cette annulation.
+
+Pour toute question, écrivez-nous à support@kodera.io.
+
+L'équipe Kodera
+"""
+
+[order_cancellation.en]
+subject = "Cancellation of your Kodera order for ${organisation_name}"
+body = """
+Hello,
+
+Order ${order_reference}, placed for ${organisation_name} on Kodera, is cancelled. The contract formed by its confirmation ends with this cancellation.
+
+For any question, write to us at support@kodera.io.
+
+The Kodera team
+"""
+
+[credit_note_issued]
+copy = "draft"
+approved = false
+link = false
+params = ["organisation_name", "credit_note_number", "invoice_number", "issued_on", "total_incl_vat", "credit_note_url"]
+
+[credit_note_issued.fr]
+subject = "Avoir ${credit_note_number} pour ${organisation_name}"
+body = """
+Bonjour,
+
+Nous avons émis le ${issued_on} l'avoir ${credit_note_number}, d'un montant de ${total_incl_vat} TTC, qui annule la facture ${invoice_number} de ${organisation_name} sur Kodera.
+
+Le propriétaire, les administrateurs et le rôle facturation de l'organisation peuvent le consulter dans Kodera. Sa référence permanente :
+
+${credit_note_url}
+
+Pour toute question, écrivez-nous à support@kodera.io.
+
+L'équipe Kodera
+"""
+
+[credit_note_issued.en]
+subject = "Credit note ${credit_note_number} for ${organisation_name}"
+body = """
+Hello,
+
+On ${issued_on} we issued credit note ${credit_note_number}, for ${total_incl_vat} including VAT, which cancels invoice ${invoice_number} of ${organisation_name} on Kodera.
+
+The organisation's owner, administrators and billing role can read it in Kodera. Its permanent reference:
+
+${credit_note_url}
+
+For any question, write to us at support@kodera.io.
+
+The Kodera team
+"""
+
+# The support mailbox's copy of a ticket a customer opened (docs/specs/SUPPORT_TICKETS.md §6). It
+# goes to Kodera's own support team, with the requester's address as its Reply-To. Its subject
+# names Core's own values only; the customer's subject and message are in the body, the message
+# verbatim (`text`). Internal copy, never shown to a customer: approved by the lead, as merged.
+[support_ticket]
+copy = "approved"
+approved = true
+link = false
+params = [
+    "ticket_ref",
+    "organisation_name",
+    "organisation_slug",
+    "tenant_slug",
+    "tenant_status",
+    "pack_code",
+    "category",
+    "severity",
+    "requester_email",
+    "contact_email",
+    "customer_locale",
+    "customer_subject",
+    "customer_body",
+]
+text = ["customer_body"]
+
+[support_ticket.fr]
+subject = "[Support Kodera] ${severity} · ${category} · ${organisation_slug} · ticket ${ticket_ref}"
+body = """
+Nouveau ticket de support ${ticket_ref}.
+
+Organisation : ${organisation_name} (${organisation_slug})
+Espace : ${tenant_slug}, état ${tenant_status}, offre ${pack_code}
+Catégorie : ${category}
+Gravité indiquée par le client : ${severity}
+Langue du client : ${customer_locale}
+Demandeur : ${requester_email}, l'adresse que Kodera connaît pour cette personne. Répondre à ce message écrit au demandeur quand Kodera connaît son adresse.
+Autre contact indiqué par le client, non vérifié : ${contact_email}
+
+Objet saisi par le client :
+${customer_subject}
+
+Message du client :
+
+${customer_body}
+"""
+
+[support_ticket.en]
+subject = "[Kodera support] ${severity} · ${category} · ${organisation_slug} · ticket ${ticket_ref}"
+body = """
+New support ticket ${ticket_ref}.
+
+Organisation: ${organisation_name} (${organisation_slug})
+Space: ${tenant_slug}, status ${tenant_status}, pack ${pack_code}
+Category: ${category}
+Severity given by the customer: ${severity}
+Customer language: ${customer_locale}
+Requester: ${requester_email}, the address Kodera holds for this person. Replying to this message writes to the requester when Kodera holds their address.
+Other contact given by the customer, not verified: ${contact_email}
+
+Subject the customer typed:
+${customer_subject}
+
+The customer's message:
+
+${customer_body}
+"""

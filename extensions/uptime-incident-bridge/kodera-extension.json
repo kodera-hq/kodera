@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "kodera.extension.v1",
+  "id": "uptime-incident-bridge",
+  "name": "Uptime & Alerting Incident Bridge",
+  "version": "0.1.0",
+  "description": "Bridges monitoring alerts (incident.opened, incident.acknowledged, incident.resolved) into Kodera incident cards and thread follow-ups with configurable flapping deduplication.",
+  "scopes": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "incident.opened",
+    "incident.acknowledged",
+    "incident.resolved",
+    "command.invoked"
+  ],
+  "webhookUrl": "https://extensions.kodera.io/uptime-incident-bridge/webhook",
+  "commands": [
+    {
+      "name": "/incident-bridge",
+      "description": "Inspect or declare a monitored service incident"
+    }
+  ]
+}

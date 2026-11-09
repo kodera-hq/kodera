@@ -1,0 +1,16 @@
+// Not a source file: the extension keeps it out of the spacing guard's own
+// scan of `src/`, out of the TypeScript projects, and out of the Vitest suite.
+// It exists only to be fed to the scanner by
+// tests/unit/ui/spacing-guard.test.ts, which asserts the guard reports both
+// classes below instead of passing over them.
+//
+// Below: a height utility at step nine, and a weight utility named "normal".
+// Both are real Tailwind names — the height resolves to 36 pixels from
+// Tailwind's own rem scale, the weight to Tailwind's own 400 — off the
+// preset's grid, with no build error either way. Deliberately not spelled out
+// here as a single joined token, so this comment is not itself a second match.
+export const Broken = () => (
+  <div className="h-9">
+    <span className="font-normal">off the grid</span>
+  </div>
+)

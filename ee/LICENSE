@@ -1,0 +1,31 @@
+Kodera Enterprise Edition (EE) Commercial License
+Copyright (c) Samouraï Coop. All rights reserved.
+
+The files inside this `ee/` directory (and any subdirectory thereof) are
+proprietary software owned by Samouraï Coop and are NOT licensed under the
+Apache License 2.0 or the GNU Affero General Public License v3.0
+(AGPL-3.0-or-later).
+
+1. Permitted Inspection & Evaluation
+   You may view, read, and inspect the source code inside `ee/` for security
+   auditing, interoperability review, and evaluation purposes.
+
+2. Commercial Subscription Required for Production Use
+   Running, enabling (`KODERA_EDITION=enterprise`), modifying, or distributing
+   any code from `ee/` in a production, staging, or commercial environment
+   requires an active Kodera Cloud, Business, or Enterprise subscription
+   agreement with Samouraï Coop (https://kodera.io).
+
+3. Restriction on Derivative Works & Re-Hosting
+   You may not remove or bypass license checks, redistribute modified copies of
+   `ee/`, or offer `ee/` functionality as a managed or hosted service to third
+   parties without prior written authorization from Samouraï Coop.
+
+4. Open-Core Guarantee
+   All files outside `ee/` remain governed by their respective open-source
+   licenses (`AGPL-3.0-or-later` for `apps/server` and `packages/synapse-policy`,
+   and `Apache-2.0` for clients, design tokens, contracts, SDKs, extensions,
+   Rust core, and community deploy) as documented in the repository root
+   `LICENSE` and `GOVERNANCE.md`.
+
+For commercial licensing inquiries: enterprise@kodera.io

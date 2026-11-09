@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: the sealed session (filesDir/session) never leaves this device, neither to a cloud
+     backup nor to a new device. Its Keystore key could not follow it anyway. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="session" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="session" />
+    </device-transfer>
+</data-extraction-rules>

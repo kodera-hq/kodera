@@ -1,0 +1,35 @@
+{
+  "name": "kodera-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kodera \u2014 Open-core, sovereign, interoperable real-time workspace.",
+  "packageManager": "npm@10.9.2",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "workspaces": [
+    "apps/web",
+    "apps/desktop",
+    "packages/design-tokens",
+    "packages/api-contract",
+    "packages/extension-sdk",
+    "packages/create-kodera",
+    "extensions/*"
+  ],
+  "overrides": {
+    "glob@>=9 <=14.0.1": "14.0.3",
+    "minimatch@>=9 <11.0.1": "11.0.3"
+  },
+  "scripts": {
+    "dev": "npm --workspace @kodera/web run dev",
+    "build": "npm --workspace @kodera/design-tokens run build && npm --workspace @kodera/web run build",
+    "typecheck": "npm --workspace @kodera/web run typecheck && npm --workspace @kodera/desktop run typecheck",
+    "test:tokens": "npm --workspace @kodera/design-tokens run test",
+    "test:sdk": "npm --workspace @kodera/extension-sdk run test && node --test 'extensions/*/test/*.test.mjs'",
+    "test:web": "npm --workspace @kodera/web run test",
+    "test": "npm run test:tokens && npm run test:sdk && npm run test:web",
+    "lint": "npm --workspace @kodera/web run lint",
+    "check:attribution": "python3 .github/scripts/check-vendor-attribution.py ."
+  },
+  "license": "SEE LICENSE IN LICENSE"
+}

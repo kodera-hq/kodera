@@ -1,0 +1,38 @@
+# Pinned, nonroot provisioning worker image (ADR-0003): `python -m worker run`, no HTTP entrypoint.
+# Its build context is Dockerfile.worker.dockerignore, not .dockerignore: no URL, WSGI or API module
+# and no settings profile but deploy_worker reaches this image (tests/worker, WK-09).
+FROM ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 AS uv
+
+# realm_create runs identity realm tooling's realm-apply.sh (worker/vendor/keycloak/), which drives Keycloak
+# through its admin CLI, kcadm. The CLI comes from the Keycloak image identity realm tooling pins, and runs
+# on a Java runtime cut down to the modules it uses (jdeps on keycloak-admin-cli-26.0.7.jar). This
+# image only: the API image holds no identity-provider client.
+FROM quay.io/keycloak/keycloak@sha256:32d2eb0f84aaf85b3e3afef544d5b25fcd40a791d62374f327a0cb5ca9aa1da5 AS keycloak
+FROM eclipse-temurin:21-jdk@sha256:ebfbb18d11ff163ee83b21258acf12248af48d22a0fdfdc68fa1a1516c05976a AS kcadm
+COPY --from=keycloak /opt/keycloak/bin/kcadm.sh /opt/kcadm/bin/
+COPY --from=keycloak /opt/keycloak/bin/client/ /opt/kcadm/bin/client/
+RUN jlink --add-modules java.base,java.desktop,java.naming,java.security.jgss,java.sql \
+      --strip-debug --no-man-pages --no-header-files --compress=zip-6 --output /opt/kcadm/jre
+
+FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS dependencies
+COPY --from=uv /uv /usr/local/bin/uv
+WORKDIR /build
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --python python3.12
+
+FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
+# realm-apply.sh reads every Keycloak answer with jq and checks the target's issuer with curl.
+RUN apt-get update && apt-get install -y --no-install-recommends jq curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=kcadm /opt/kcadm /opt/kcadm
+ENV PATH="/opt/venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DJANGO_SETTINGS_MODULE=config.settings.deploy_worker \
+    JAVA_HOME=/opt/kcadm/jre KCADM=/opt/kcadm/bin/kcadm.sh
+WORKDIR /app
+COPY --from=dependencies /opt/venv /opt/venv
+COPY config/ ./config/
+COPY core/ ./core/
+COPY apps/ ./apps/
+COPY worker/ ./worker/
+USER 10001:10001
+CMD ["python", "-m", "worker", "run"]

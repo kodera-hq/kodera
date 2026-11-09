@@ -1,0 +1,58 @@
+# Register of realm-per-tenant occurrences this repository still carries.
+#
+# Read by `scripts/ci/check-realm-topology.py`. Not a mute button: an
+# entry has to name the file, the line, the rule that fired and the exact text
+# that fired it, and the check re-proves all four on every run. Fix the line,
+# move it, or point an entry somewhere else, and the entry stops matching and
+# the check goes red. A `reason` comes from a closed vocabulary and carries a
+# structural condition of its own — `deferred-contract` is refused outside
+# `contracts/`, `historical-quotation` is refused outside a history section or
+# `docs/adr/`. The `note` is for the reader; nothing rests on it, because an
+# allowlist that enforces only the presence of a reason key enforces nothing.
+#
+# ## Why there is one entry and not fifteen
+#
+# This register arrived with fifteen entries, fourteen of them `deferred-contract`
+# over `contracts/core-api.openapi.yaml`, on one argument: that correcting the
+# contract's prose belonged to a scheduled **0.5.0 contract polish** rather than
+# to the branch that introduced the check.
+#
+# That argument has expired. `docs/domain/MODEL.md` does record the 0.5.0 polish
+# — twice, at the `ProjectBootstrap` note and in its changelog — but the contract
+# is at **0.9.0**. A deferral whose date passed four minor versions ago is not a
+# deferral; it is the stale excuse this file's own header warns about, and the
+# check exists to make exactly that visible. So the twelve occurrences the
+# contract still carried were corrected instead of re-registered.
+#
+# They were prose, all twelve inside `description:` blocks, and the correction is
+# proven to be prose: with `description`, `summary` and `title` removed, the
+# parsed contract is identical before and after — same keys, same values, nothing
+# added and nothing dropped. No schema, operation, field, enum or example moved.
+#
+# What is NOT corrected here, and is still the owner's: the contract's `Tenant.realm`
+# becoming a read-only projection of `Organisation.realm`. That is a schema change,
+# it is the substance of the overdue 0.5.0 item, and it is not prose. This register
+# does not carry it, because the check does not fire on it — a field name is not a
+# claim about topology, and inventing an entry for it would be an exemption for
+# something nobody refused.
+
+# The one real exemption. `docs/domain/MODEL.md`'s changelog records the round
+# that aligned the model with ADR-0006, and to say what it had NOT yet fixed it
+# quotes the wording it left standing. The scanner matches the shape of a claim
+# and cannot see that a sentence is reporting one rather than making one — which
+# is written into the check as a deliberate limit, not a gap. A changelog is the
+# one place a superseded wording legitimately survives, so `historical-quotation`
+# is the reason, and the check independently verifies the line really does sit
+# under a history heading before it accepts that.
+#
+# This entry dies with the line. Reword the changelog entry, renumber it, or
+# delete it, and the register stops matching and the build goes red until
+# somebody looks.
+
+[[allow]]
+path = "docs/domain/MODEL.md"
+line = 2190
+rule = "tenant-owned-realm"
+match = "tenant's realm"
+reason = "historical-quotation"
+note = "Changelog entry for the ADR-0006 alignment round. It quotes the wording `FederationProvider` still carried at the time in order to record that the federation-scoping question was left to the owner. The wording it quotes is now corrected; the record of its having existed is not rewritten, because a changelog states what was true when it was written."

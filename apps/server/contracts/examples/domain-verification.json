@@ -1,0 +1,30 @@
+{
+  "id": "b3c4d5e6-f708-491a-8b2c-3d4e5f6a7b8c",
+  "tenant_id": "2c9f0e7a-1b3d-4e5f-8a9b-0c1d2e3f4a5b",
+  "fqdn": "visio.acme.fr",
+  "kind": "subdomain",
+  "role": "web",
+  "app": "visio",
+  "state": "dns_pending",
+  "is_canonical": false,
+  "verification": {
+    "record_name": "_kodera-verify.visio.acme.fr",
+    "record_type": "TXT",
+    "record_value": "kodera-verify=00000000000000000000000000000000000000000000fake",
+    "issued_at": "2026-12-03T09:00:00Z",
+    "verified_at": "2026-12-03T09:14:22Z",
+    "checked_at": "2026-12-03T09:31:05Z",
+    "attempts": 3,
+    "failure_code": null,
+    "resolvers_agreeing": 3
+  },
+  "target": {
+    "record_name": "visio.acme.fr",
+    "record_type": "CNAME",
+    "record_value": "acme.visio.kodera.io.",
+    "observed_value": null
+  },
+  "certificate": null,
+  "created_at": "2026-12-03T08:59:58Z",
+  "updated_at": "2026-12-03T09:31:05Z"
+}

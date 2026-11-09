@@ -1,0 +1,131 @@
+name: CI — Server & Synapse Policy
+
+# Called by ci.yml, which decides from the changed paths whether this runs and
+# aggregates every result into the single required check `ci-ok`. Run alone, a
+# path-filtered workflow is never reported on a pull request it skips, so a
+# required check on it would wait forever.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  server-static-and-unit:
+    name: Server Lint, Types, Contracts & Unit Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+        env:
+          POSTGRES_DB: kodera_server
+          POSTGRES_USER: kodera
+          POSTGRES_PASSWORD: kodera
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kodera -d kodera_server"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgres://kodera:kodera@localhost:5432/kodera_server
+      DJANGO_SECRET_KEY: ci-only-not-a-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify OpenAPI contract byte parity across workspaces
+        run: |
+          cmp -s packages/api-contract/core-api.openapi.yaml apps/server/contracts/core-api.openapi.yaml
+          cmp -s packages/api-contract/core-api.openapi.yaml apps/web/contracts/core-api.openapi.yaml
+          cmp -s packages/api-contract/agent-api.openapi.yaml apps/server/contracts/agent-api.openapi.yaml
+          cmp -s packages/api-contract/agent-api.openapi.yaml apps/web/contracts/agent-api.openapi.yaml
+      - name: Community stack and image publishing checks (with self-tests)
+        run: |
+          python3 scripts/ci/check-community-deploy.py --selftest
+          python3 scripts/ci/check-community-deploy.py
+          python3 scripts/ci/check-publish-images-workflow.py --selftest
+          python3 scripts/ci/check-publish-images-workflow.py
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Sync locked Python dependencies
+        working-directory: apps/server
+        run: uv sync --locked
+      - name: Ruff, Mypy & Architectural Policy Gates
+        working-directory: apps/server
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run ruff check .
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run mypy .
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-authz-matrix.py
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-migrations-complete.py --settings config.settings.job_queue
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-realm-topology.py --root .
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-docs-index.py
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-alert-parity.py .
+          bash scripts/ci/check-adr-status.selftest.sh
+          env -i PATH="$PATH" HOME="$HOME" GITHUB_REF_NAME="main" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-adr-status.py .
+          bash scripts/ci/check-uv-lock.selftest.sh
+          bash scripts/ci/check-uv-lock.sh .
+          bash scripts/ci/check-image-dependencies.sh .
+      - name: Configure ephemeral PostgreSQL (fsync = off) and wait for reload
+        env:
+          PGPASSWORD: kodera
+        run: |
+          psql -h localhost -U kodera -d kodera_server -v ON_ERROR_STOP=1             -c "ALTER SYSTEM SET fsync = off" -c "SELECT pg_reload_conf()"
+          for _ in $(seq 1 25); do
+            [ "$(psql -h localhost -U kodera -d kodera_server -XAtc 'SHOW fsync')" = "off" ] && break
+            sleep 0.2
+          done
+          [ "$(psql -h localhost -U kodera -d kodera_server -XAtc 'SHOW fsync')" = "off" ]
+      - name: Run full server test suite
+        working-directory: apps/server
+        run: |
+          env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run pytest
+
+  advisories:
+    name: Server Dependency Advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Install the pinned pip-audit and contract linter
+        working-directory: apps/server
+        run: |
+          uv venv "$RUNNER_TEMP/pip-audit"
+          uv pip install --python "$RUNNER_TEMP/pip-audit/bin/python" --require-hashes --no-deps -r scripts/ci/pip-audit-requirements.txt
+          (cd contracts/lint && npm ci --ignore-scripts --engine-strict)
+      - name: Advisory gate self-test
+        working-directory: apps/server
+        run: bash scripts/ci/check-advisories.selftest.sh
+      - name: Advisory gate (uv.lock, contract linter and its bundled libraries)
+        working-directory: apps/server
+        run: python3 scripts/ci/check-advisories.py --pip-audit "$RUNNER_TEMP/pip-audit/bin/pip-audit"
+
+  synapse-policy:
+    name: Synapse Room Policy Module
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Test kodera-synapse-policy (hash-locked + mutation gate)
+        working-directory: packages/synapse-policy
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python --require-hashes --no-deps -r requirements-test.txt
+          PYTHONPATH=src .venv/bin/python -m pytest -q
+          .venv/bin/python tests/mutate.py

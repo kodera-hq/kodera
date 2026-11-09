@@ -1,0 +1,29 @@
+{
+  "$comment": "Exceptions to the dependency advisory gate (scripts/ci/check-advisories.py, run by the advisory steps of the `baseline` job in CI). The gate audits every package uv.lock pins, the dev group included, with pip-audit, contracts/lint/package-lock.json with npm audit, dev dependencies included, and the libraries compiled into @redocly/cli: from 2.x the linter is one self-contained bundle that declares no npm dependency, so the lockfile holds one package and neither npm audit of it nor Dependabot sees what the bundle carries. The gate reads those libraries' name@version pairs from the installed package's THIRD_PARTY_NOTICES, adds the version stated by the licence banner of a library the notices omit while the shipped JavaScript still carries it (DOMPurify, inside Redoc 3's prebuilt bundles), and audits them with the same npm audit, the same threshold and this same file; an entry for one of them is an `npm` entry like any other, bound the same way. THIRD_PARTY_NOTICES lists third-party libraries only: Redocly's own packages compiled into the bundle (`@redocly/openapi-core`, `@redocly/respect-core` and the like) are not in it, and are covered only by advisories filed against `@redocly/cli` itself, which the lockfile audit sees. A development tool runs in CI with the repository's token, so there is no tier that quietly does not block. npm reports a severity, and an npm advisory at `moderate` or above fails CI; below it, it is printed and does not block. pip-audit reports no severity at all, so every Python advisory fails CI: the gate does not invent a rating the report does not carry. An exception is never silent: it is an entry below, with a written `reason`, BOUND to the finding it excuses. `ecosystem` is `npm` or `pypi`; `advisory` is the identifier the audit prints (for npm the GHSA identifier from the advisory URL, or the numeric `source` when there is none; for pypi the `id` pip-audit reports). An npm entry is bound by `package`, `severity` and `range`; a pypi entry by `package`, `version` (the locked version) and `fix_versions` (sorted, as the gate prints them). Every bound field must equal what the audit reports today, compared exactly: if any moves, the entry no longer describes the finding and the gate FAILS rather than inheriting the old reason. An npm entry whose advisory has dropped below the threshold is to be deleted, not re-bound, and fails until it is. An entry naming an advisory the audit no longer reports fails too, so a stale excuse cannot sit here waiting to cover a finding nobody decided. A field the ecosystem's report cannot bind is refused. Adding an entry is a decision about risk, not a build fix. The same shape guards npm-audit-allowlist.json in kodera-console, with one difference: that file covers one npm tree and its entries carry no `ecosystem`; here the reports share one file, so every entry names its `ecosystem` and is keyed by `ecosystem` and `advisory` together. Keyed by advisory, one advisory reported against two packages of one ecosystem can be excused for only one of them; the other fails, which is a known limitation and fails closed. One advisory against the same package in both the lockfile and the bundle is one finding with one entry.",
+  "advisories": [
+    {
+      "ecosystem": "npm",
+      "advisory": "GHSA-cg2g-xh64-v4q7",
+      "package": "dompurify",
+      "severity": "critical",
+      "range": ">=3.4.4 <=3.4.16",
+      "reason": "dompurify 3.4.16 is compiled into @redocly/cli 2.72.1, our contract linter, inside Redoc 3's prebuilt bundles. The CLI's THIRD_PARTY_NOTICES omits it, so scripts/ci/check-advisories.py reads its version from the licence banner in the shipped JavaScript and audits it with the listed libraries. No @redocly/cli release bundles a fixed DOMPurify yet: 2.72.1 still carries 3.4.16 (checked at this bump). The linter only runs `redocly lint` in CI over our own contracts/*.openapi.yaml: no HTML is rendered, no DOM exists and no untrusted input is sanitised, so the SAFE_FOR_TEMPLATES shadow-root bypass is unreachable. Remove this entry when an @redocly/cli release removes DOMPurify or bundles dompurify >= 3.4.17."
+    },
+    {
+      "ecosystem": "npm",
+      "advisory": "GHSA-mrv2-3pqr-j5jr",
+      "package": "dompurify",
+      "severity": "high",
+      "range": "<=3.4.16",
+      "reason": "dompurify 3.4.16 is compiled into @redocly/cli 2.72.1, our contract linter, inside Redoc 3's prebuilt bundles. The CLI's THIRD_PARTY_NOTICES omits it, so scripts/ci/check-advisories.py reads its version from the licence banner in the shipped JavaScript and audits it with the listed libraries. No @redocly/cli release bundles a fixed DOMPurify yet: 2.72.1 still carries 3.4.16 (checked at this bump). The linter only runs `redocly lint` in CI over our own contracts/*.openapi.yaml: no HTML is rendered, no DOM exists and no IN_PLACE sanitisation hook runs, so the detached-subtree handler issue is unreachable. Remove this entry when an @redocly/cli release removes DOMPurify or bundles dompurify >= 3.4.17."
+    },
+    {
+      "ecosystem": "npm",
+      "advisory": "GHSA-3g3m-2fjr-6pw4",
+      "package": "glob",
+      "severity": "moderate",
+      "range": ">=9.0.0 <=14.0.1",
+      "reason": "glob 13.0.5 is bundled in the integrity-pinned @redocly/cli 2.72.1 contract linter. The reviewed glob importer passes cwd but no AbortSignal; the repository invokes only lint and --version, including its declarative-config lint probes, with no executable plugin or cancellation activity. The advisory's AbortSignal cancellation path is not used by that reviewed activity; this does not claim expensive traversal is impossible. Reassessed by hand at the 2.72.1 bump: it still bundles glob 13.0.5 and the activity is unchanged. Reassess on any @redocly/cli bump (a reviewer check, not gated: nothing enforces this binding), and remove this exception when the CLI removes glob or bundles fixed glob >=14.0.2."
+    }
+  ]
+}

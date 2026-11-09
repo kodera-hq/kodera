@@ -1,0 +1,13 @@
+# Build context for Dockerfile.migrator (paired automatically by BuildKit).
+# Admits Django schema migrations while excluding tests, dev fixtures, docs, and worker/.
+**
+!pyproject.toml
+!uv.lock
+!manage.py
+!config/**
+!core/**
+!apps/**
+!services/**
+**/__pycache__
+**/*.pyc
+**/test*

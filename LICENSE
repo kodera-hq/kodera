@@ -1,0 +1,42 @@
+Kodera Open-Core Repository Licensing Notice
+Copyright (c) Samouraï Coop.
+
+This monorepo contains open-source client, SDK, design, and server components
+alongside an explicitly isolated commercial Enterprise Edition (`ee/`) directory.
+Each directory carries its own `LICENSE` file for unambiguous compliance and SBOM
+scanning:
+
+1. Client Applications, Design Tokens, Rust Core, Contracts, Extension SDK & Community Deploy
+   - Paths:
+     * `apps/web/`
+     * `apps/desktop/`
+     * `apps/ios/`
+     * `apps/android/`
+     * `packages/kodera-rs/`
+     * `packages/design-tokens/`
+     * `packages/api-contract/`
+     * `packages/extension-sdk/`
+     * `extensions/`
+     * `deploy/community/`
+     * Root build/configuration files and documentation (`docs/`)
+   - License: **Apache License, Version 2.0** (`SPDX-License-Identifier: Apache-2.0`)
+   - Full text: [`LICENSE-APACHE`](./LICENSE-APACHE) (so mobile apps are 100% Apple App Store
+     and Google Play compatible, and enterprise developers can build proprietary or
+     open-source extensions freely).
+
+2. Kodera Server & Matrix Synapse Policy Module
+   - Paths:
+     * `apps/server/`
+     * `packages/synapse-policy/`
+   - License: **GNU Affero General Public License v3.0 or later** (`SPDX-License-Identifier: AGPL-3.0-or-later`)
+   - Full text: [`LICENSE-AGPL`](./LICENSE-AGPL)
+
+3. Kodera Enterprise Edition (Commercial)
+   - Path: `ee/`
+   - License: **Kodera Enterprise Edition Commercial License** (`LicenseRef-Kodera-EE`)
+   - Full text: [`ee/LICENSE`](./ee/LICENSE) — strictly excluded from open-source grants;
+     production use requires an active subscription with Samouraï Coop (`https://kodera.io`).
+
+4. Trademarks
+   - None of the software licenses above grant rights to use the **Kodera** name,
+     wordmark, or monogram logo. See [`TRADEMARKS.md`](./TRADEMARKS.md).

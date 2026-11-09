@@ -1,0 +1,378 @@
+"""Catalogue, billing profile, order, subscription and invoice tables, their checks and indexes."""
+
+import core.db.ids
+import django.db.models.deletion
+import django.db.models.expressions
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ('orgs', '0003_organisation_slug_minimum_five'),
+    ]
+
+    operations = [
+        migrations.RunSQL(
+            sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+        migrations.CreateModel(
+            name='CapacityTier',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('code', models.TextField(unique=True)),
+                ('name', models.TextField()),
+                ('description', models.TextField(blank=True, null=True)),
+                ('seats_included', models.IntegerField()),
+                ('concurrent_participants_included', models.IntegerField()),
+                ('storage_included_bytes', models.BigIntegerField()),
+                ('vm_shape', models.TextField()),
+                ('media_ip_dedicated', models.BooleanField(default=True)),
+                ('available', models.BooleanField(default=True)),
+            ],
+            options={
+                'constraints': [models.CheckConstraint(condition=models.Q(('code__in', ('S', 'M', 'L', 'XL'))), name='billing_capacitytier_code_valid'), models.CheckConstraint(condition=models.Q(('seats_included__gte', 1), ('concurrent_participants_included__gte', 1), ('storage_included_bytes__gte', 0)), name='billing_capacitytier_included_valid')],
+            },
+        ),
+        migrations.CreateModel(
+            name='InvoiceNumberCounter',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('series', models.TextField()),
+                ('year', models.IntegerField()),
+                ('last_number', models.IntegerField()),
+            ],
+            options={
+                'constraints': [models.UniqueConstraint(fields=('series', 'year'), name='billing_counter_unique'), models.CheckConstraint(condition=models.Q(('last_number__gte', 1)), name='billing_counter_valid')],
+            },
+        ),
+        migrations.CreateModel(
+            name='Pack',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('code', models.TextField(unique=True)),
+                ('name', models.TextField()),
+                ('description', models.TextField(blank=True, null=True)),
+                ('apps', models.JSONField()),
+                ('profile_ref', models.TextField()),
+                ('available', models.BooleanField(default=True)),
+            ],
+            options={
+                'constraints': [models.CheckConstraint(condition=models.Q(('code__regex', '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$')), name='billing_pack_code_valid')],
+            },
+        ),
+        migrations.CreateModel(
+            name='Plan',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('code', models.TextField()),
+                ('version', models.IntegerField()),
+                ('name', models.TextField()),
+                ('description', models.TextField(blank=True, null=True)),
+                ('state', models.TextField(choices=[('draft', 'Draft'), ('published', 'Published'), ('retired', 'Retired')], default='draft')),
+                ('support_tier', models.TextField(default='standard')),
+                ('price_change_notice_days', models.IntegerField(default=90)),
+                ('published_at', models.DateTimeField(blank=True, null=True)),
+                ('retired_at', models.DateTimeField(blank=True, null=True)),
+            ],
+            options={
+                'constraints': [models.UniqueConstraint(fields=('code', 'version'), name='billing_plan_version_unique'), models.CheckConstraint(condition=models.Q(('code__regex', '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$')), name='billing_plan_code_valid'), models.CheckConstraint(condition=models.Q(('version__gte', 1)), name='billing_plan_version_valid'), models.CheckConstraint(condition=models.Q(('state__in', ('draft', 'published', 'retired'))), name='billing_plan_state_valid'), models.CheckConstraint(condition=models.Q(('support_tier__in', ('standard', 'business', 'critical'))), name='billing_plan_support_tier_valid'), models.CheckConstraint(condition=models.Q(('price_change_notice_days__gte', 0)), name='billing_plan_notice_valid'), models.CheckConstraint(condition=models.Q(('state', 'draft'), ('published_at__isnull', False), _connector='OR'), name='billing_plan_published_at_valid')],
+            },
+        ),
+        migrations.CreateModel(
+            name='Price',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('billing_period', models.TextField()),
+                ('amount_minor', models.BigIntegerField()),
+                ('setup_fee_minor', models.BigIntegerField(blank=True, null=True)),
+                ('currency', models.TextField(default='EUR')),
+                ('valid_from', models.DateTimeField()),
+                ('valid_to', models.DateTimeField(blank=True, null=True)),
+                ('capacity_tier', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='prices', to='billing.capacitytier')),
+                ('pack', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='prices', to='billing.pack')),
+                ('plan', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='prices', to='billing.plan')),
+            ],
+        ),
+        migrations.CreateModel(
+            name='Order',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('plan_code', models.TextField()),
+                ('plan_version', models.IntegerField()),
+                ('pack_code', models.TextField()),
+                ('capacity_tier_code', models.TextField()),
+                ('apps', models.JSONField()),
+                ('billing_period', models.TextField()),
+                ('currency', models.TextField()),
+                ('unit_amount_minor', models.BigIntegerField()),
+                ('quantity', models.IntegerField(default=1)),
+                ('vat_regime', models.TextField()),
+                ('vat_rate_bp', models.IntegerField()),
+                ('total_excl_vat_minor', models.BigIntegerField()),
+                ('vat_amount_minor', models.BigIntegerField()),
+                ('total_incl_vat_minor', models.BigIntegerField()),
+                ('captured_at', models.DateTimeField()),
+                ('idempotency_key', models.TextField()),
+                ('request_sha256', models.TextField()),
+                ('state', models.TextField(default='placed')),
+                ('placed_by', models.UUIDField()),
+                ('dpa_id', models.UUIDField(blank=True, null=True)),
+                ('tenant_id', models.UUIDField(blank=True, null=True)),
+                ('purchase_order_ref', models.TextField(blank=True, null=True)),
+                ('billing_contact_email', models.TextField(blank=True, null=True)),
+                ('billing_contact_name', models.TextField(blank=True, null=True)),
+                ('notes', models.TextField(blank=True, null=True)),
+                ('organisation', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='+', to='orgs.organisation')),
+                ('price', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='+', to='billing.price')),
+            ],
+        ),
+        migrations.CreateModel(
+            name='Subscription',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('plan_code', models.TextField()),
+                ('plan_version', models.IntegerField()),
+                ('pack_code', models.TextField()),
+                ('capacity_tier_code', models.TextField()),
+                ('apps', models.JSONField()),
+                ('billing_period', models.TextField()),
+                ('currency', models.TextField()),
+                ('unit_amount_minor', models.BigIntegerField()),
+                ('quantity', models.IntegerField(default=1)),
+                ('vat_regime', models.TextField()),
+                ('vat_rate_bp', models.IntegerField()),
+                ('total_excl_vat_minor', models.BigIntegerField()),
+                ('vat_amount_minor', models.BigIntegerField()),
+                ('total_incl_vat_minor', models.BigIntegerField()),
+                ('captured_at', models.DateTimeField()),
+                ('tenant_id', models.UUIDField(blank=True, null=True)),
+                ('state', models.TextField(default='pending')),
+                ('current_period_start', models.DateTimeField()),
+                ('current_period_end', models.DateTimeField()),
+                ('cancel_at_period_end', models.BooleanField(default=False)),
+                ('cancelled_at', models.DateTimeField(blank=True, null=True)),
+                ('price_change_notice_days', models.IntegerField()),
+                ('order', models.OneToOneField(on_delete=django.db.models.deletion.RESTRICT, related_name='subscription', to='billing.order')),
+                ('organisation', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='+', to='orgs.organisation')),
+                ('price', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='+', to='billing.price')),
+            ],
+        ),
+        migrations.CreateModel(
+            name='Invoice',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('number', models.TextField(blank=True, null=True, unique=True)),
+                ('state', models.TextField(default='draft')),
+                ('currency', models.TextField(default='EUR')),
+                ('vat_regime', models.TextField()),
+                ('vat_mention', models.TextField(blank=True, null=True)),
+                ('issuer_legal_name', models.TextField()),
+                ('issuer_address', models.TextField()),
+                ('issuer_siren', models.TextField()),
+                ('issuer_vat_number', models.TextField()),
+                ('customer_legal_name', models.TextField()),
+                ('customer_address_line1', models.TextField()),
+                ('customer_address_line2', models.TextField(blank=True, null=True)),
+                ('customer_postal_code', models.TextField()),
+                ('customer_city', models.TextField()),
+                ('customer_country', models.TextField()),
+                ('customer_siren', models.TextField(blank=True, null=True)),
+                ('customer_vat_number', models.TextField(blank=True, null=True)),
+                ('total_excl_vat_minor', models.BigIntegerField(default=0)),
+                ('vat_amount_minor', models.BigIntegerField(default=0)),
+                ('total_incl_vat_minor', models.BigIntegerField(default=0)),
+                ('amount_paid_minor', models.BigIntegerField(default=0)),
+                ('issued_at', models.DateTimeField(blank=True, null=True)),
+                ('due_at', models.DateTimeField(blank=True, null=True)),
+                ('paid_at', models.DateTimeField(blank=True, null=True)),
+                ('external_ref', models.TextField(blank=True, null=True)),
+                ('pdf_ref', models.TextField(blank=True, null=True)),
+                ('organisation', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='+', to='orgs.organisation')),
+                ('order', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.RESTRICT, related_name='invoices', to='billing.order')),
+                ('subscription', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.RESTRICT, related_name='invoices', to='billing.subscription')),
+            ],
+        ),
+        migrations.CreateModel(
+            name='BillingProfile',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('updated_at', models.DateTimeField(auto_now=True)),
+                ('legal_name', models.TextField()),
+                ('address_line1', models.TextField()),
+                ('address_line2', models.TextField(blank=True, null=True)),
+                ('postal_code', models.TextField()),
+                ('city', models.TextField()),
+                ('country', models.TextField()),
+                ('siren', models.TextField(blank=True, null=True)),
+                ('vat_number', models.TextField(blank=True, null=True)),
+                ('vat_number_validated_at', models.DateTimeField(blank=True, null=True)),
+                ('vat_exempt', models.BooleanField(default=False)),
+                ('organisation', models.OneToOneField(on_delete=django.db.models.deletion.RESTRICT, related_name='+', to='orgs.organisation')),
+            ],
+            options={
+                'constraints': [models.CheckConstraint(condition=models.Q(('country__regex', '^[A-Z]{2}$')), name='billing_profile_country_valid'), models.CheckConstraint(condition=models.Q(('siren__isnull', True), ('siren__regex', '^[0-9]{9}$'), _connector='OR'), name='billing_profile_siren_valid'), models.CheckConstraint(condition=models.Q(('vat_number_validated_at__isnull', True), ('vat_number__isnull', False), _connector='OR'), name='billing_profile_validated_valid'), models.CheckConstraint(condition=models.Q(('legal_name__length__range', (1, 200)), ('address_line1__length__range', (1, 200)), ('postal_code__length__range', (1, 20)), ('city__length__range', (1, 100))), name='billing_profile_names_valid')],
+            },
+        ),
+        migrations.CreateModel(
+            name='InvoiceLine',
+            fields=[
+                ('id', models.UUIDField(default=core.db.ids.new_uuid7, editable=False, primary_key=True, serialize=False)),
+                ('position', models.IntegerField()),
+                ('description', models.TextField()),
+                ('plan_code', models.TextField()),
+                ('plan_version', models.IntegerField()),
+                ('pack_code', models.TextField()),
+                ('capacity_tier_code', models.TextField()),
+                ('quantity', models.IntegerField()),
+                ('unit_amount_minor', models.BigIntegerField()),
+                ('total_excl_vat_minor', models.BigIntegerField()),
+                ('vat_rate_bp', models.IntegerField()),
+                ('vat_amount_minor', models.BigIntegerField()),
+                ('period_start', models.DateTimeField(blank=True, null=True)),
+                ('period_end', models.DateTimeField(blank=True, null=True)),
+                ('invoice', models.ForeignKey(on_delete=django.db.models.deletion.RESTRICT, related_name='lines', to='billing.invoice')),
+            ],
+            options={
+                'constraints': [models.UniqueConstraint(fields=('invoice', 'position'), name='billing_line_position_unique'), models.CheckConstraint(condition=models.Q(('quantity__range', (1, 10000)), ('unit_amount_minor__gte', 0), ('total_excl_vat_minor', django.db.models.expressions.CombinedExpression(models.F('unit_amount_minor'), '*', models.F('quantity'))), ('vat_rate_bp__range', (0, 10000)), ('vat_amount_minor__gte', 0)), name='billing_line_amounts_valid')],
+            },
+        ),
+        migrations.AddConstraint(
+            model_name='price',
+            constraint=models.CheckConstraint(condition=models.Q(('billing_period__in', ('monthly', 'yearly'))), name='billing_price_period_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='price',
+            constraint=models.CheckConstraint(condition=models.Q(('currency__in', ('EUR',))), name='billing_price_currency_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='price',
+            constraint=models.CheckConstraint(condition=models.Q(('amount_minor__gte', 0), models.Q(('setup_fee_minor__isnull', True), ('setup_fee_minor__gte', 0), _connector='OR')), name='billing_price_amounts_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='price',
+            constraint=models.CheckConstraint(condition=models.Q(('valid_to__isnull', True), ('valid_to__gt', models.F('valid_from')), _connector='OR'), name='billing_price_window_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='price',
+            constraint=models.UniqueConstraint(fields=('plan', 'pack', 'capacity_tier', 'billing_period', 'valid_from'), name='billing_price_start_unique'),
+        ),
+        migrations.AddIndex(
+            model_name='order',
+            index=models.Index(fields=['organisation', '-created_at', '-id'], name='billing_order_org_idx'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('billing_period__in', ('monthly', 'yearly'))), name='billing_order_period_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('currency__in', ('EUR',))), name='billing_order_currency_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('vat_regime__in', ('fr_standard', 'eu_reverse_charge', 'exempt', 'outside_eu'))), name='billing_order_vat_regime_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('quantity__range', (1, 10000)), ('unit_amount_minor__gte', 0), ('vat_rate_bp__range', (0, 10000)), ('total_excl_vat_minor', django.db.models.expressions.CombinedExpression(models.F('unit_amount_minor'), '*', models.F('quantity'))), ('vat_amount_minor__gte', 0), ('total_incl_vat_minor', django.db.models.expressions.CombinedExpression(models.F('total_excl_vat_minor'), '+', models.F('vat_amount_minor')))), name='billing_order_amounts_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('state__in', ('placed', 'awaiting_payment', 'paid', 'provisioning', 'fulfilled', 'cancelled'))), name='billing_order_state_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('idempotency_key__regex', '^[!-~]{16,255}$')), name='billing_order_idempotency_key_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.CheckConstraint(condition=models.Q(('request_sha256__regex', '^[0-9a-f]{64}$')), name='billing_order_request_sha256_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='order',
+            constraint=models.UniqueConstraint(fields=('organisation', 'idempotency_key'), name='billing_order_key_unique'),
+        ),
+        migrations.AddIndex(
+            model_name='subscription',
+            index=models.Index(fields=['organisation', '-created_at', '-id'], name='billing_subscription_org_idx'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(('billing_period__in', ('monthly', 'yearly'))), name='billing_subscription_period_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(('currency__in', ('EUR',))), name='billing_subscription_currency_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(('vat_regime__in', ('fr_standard', 'eu_reverse_charge', 'exempt', 'outside_eu'))), name='billing_subscription_vat_regime_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(('quantity__range', (1, 10000)), ('unit_amount_minor__gte', 0), ('vat_rate_bp__range', (0, 10000)), ('total_excl_vat_minor', django.db.models.expressions.CombinedExpression(models.F('unit_amount_minor'), '*', models.F('quantity'))), ('vat_amount_minor__gte', 0), ('total_incl_vat_minor', django.db.models.expressions.CombinedExpression(models.F('total_excl_vat_minor'), '+', models.F('vat_amount_minor')))), name='billing_subscription_amounts_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(('state__in', ('pending', 'active', 'past_due', 'suspended', 'cancelled'))), name='billing_subscription_state_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(('current_period_end__gt', models.F('current_period_start'))), name='billing_subscription_period_window_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='subscription',
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('cancelled_at__isnull', False), ('state', 'cancelled')), models.Q(models.Q(('state', 'cancelled'), _negated=True), ('cancelled_at__isnull', True)), _connector='OR'), name='billing_subscription_cancelled_valid'),
+        ),
+        migrations.AddIndex(
+            model_name='invoice',
+            index=models.Index(fields=['organisation', '-issued_at', '-id'], name='billing_invoice_org_idx'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(('state__in', ('draft', 'issued', 'paid', 'overdue', 'void', 'credited'))), name='billing_invoice_state_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(('currency__in', ('EUR',))), name='billing_invoice_currency_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(('vat_regime__in', ('fr_standard', 'eu_reverse_charge', 'exempt', 'outside_eu'))), name='billing_invoice_vat_regime_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('issued_at__isnull', True), ('number__isnull', True), ('state', 'draft')), models.Q(models.Q(('state', 'draft'), _negated=True), ('due_at__isnull', False), ('issued_at__isnull', False), ('number__isnull', False)), _connector='OR'), name='billing_invoice_numbered_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('paid_at__isnull', False), ('state', 'paid')), models.Q(models.Q(('state', 'paid'), _negated=True), ('paid_at__isnull', True)), _connector='OR'), name='billing_invoice_paid_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(('total_excl_vat_minor__gte', 0), ('vat_amount_minor__gte', 0), ('total_incl_vat_minor', django.db.models.expressions.CombinedExpression(models.F('total_excl_vat_minor'), '+', models.F('vat_amount_minor'))), ('amount_paid_minor__gte', 0)), name='billing_invoice_amounts_valid'),
+        ),
+        migrations.AddConstraint(
+            model_name='invoice',
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('state', 'void'), _negated=True), ('amount_paid_minor', 0), _connector='OR'), name='billing_invoice_void_unpaid'),
+        ),
+    ]

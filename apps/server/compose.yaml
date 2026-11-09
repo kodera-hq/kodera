@@ -1,0 +1,226 @@
+# Development stack for kodera-server. Not a deployment artefact: nothing here
+# describes production, and every credential below is a local-only value that
+# also appears in .env.example.
+#
+#     cp .env.example .env && docker compose up -d
+#
+# Services split into sets:
+#   - default profile: the backing services (Postgres, Keycloak, Mailpit). They
+#     run today.
+#   - `test` profile: the disposable Postgres the test suite points at
+#     (`make test-db test`), kept apart from the development database.
+#   - `app` profile: local API probes only, with no business API or worker.
+#   - `worker` profile: the provisioning worker, on an internal network that
+#     holds the database and nothing else. Its job runner is not built yet: it
+#     verifies its boundary, reaches the database and exits saying so.
+
+name: kodera-server
+
+services:
+  # --- Application database ---------------------------------------------------
+  db:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kodera_server}
+      POSTGRES_USER: ${POSTGRES_USER:-kodera}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kodera}
+      # Deterministic collation: an index built under a different one behaves
+      # differently, and that difference shows up as a flaky ordering test.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      # Exposed so pytest and psql can reach it without entering the network.
+      - "127.0.0.1:${CORE_DB_PORT:-5432}:5432"
+    # `worker-db` is the worker's only network; the database is its one peer.
+    networks: [default, worker-db]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      # Without this, everything that depends on the database races it and
+      # fails at a random point instead of waiting.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kodera} -d ${POSTGRES_DB:-kodera_server}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # --- Test database ----------------------------------------------------------
+  # The disposable server `make test` points at, never the development database
+  # above. Every transactional test ends with a TRUNCATE flush under a 2 s
+  # statement_timeout; with fsync on, that flush waits on disk syncs and the
+  # suite fails on disk latency, so this server runs without fsync. That is safe
+  # only because nothing here outlives the container: the data directory is a
+  # tmpfs and there is no volume, so stopping the service discards its data.
+  # tests/test_runtime.py fails on a test server that fsyncs.
+  test-db:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    profiles: ["test"]
+    command: ["postgres", "-c", "fsync=off"]
+    environment:
+      POSTGRES_DB: kodera_server
+      POSTGRES_USER: kodera
+      POSTGRES_PASSWORD: kodera
+      # Deterministic collation, as for db above.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=1g
+    ports:
+      # Its own port so it runs next to db: not 5432 (db), and not 55432 (the
+      # FS-BOOT acceptance database, which removes itself when its run ends).
+      - "127.0.0.1:${CORE_TEST_DB_PORT:-5434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kodera -d kodera_server"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  # --- Keycloak's own database ------------------------------------------------
+  # Separate from the application database on purpose: identity state and
+  # application state have different backup, restore and blast-radius
+  # properties, and the split is the same one production uses.
+  keycloak-db:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # --- Identity ---------------------------------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    restart: unless-stopped
+    # start-dev: HTTP, no hostname strictness, dev-mode caching. Never a
+    # production command. --import-realm reads /opt/keycloak/data/import once
+    # per empty database.
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      # 26.x names: KEYCLOAK_ADMIN/KEYCLOAK_ADMIN_PASSWORD are the old spelling
+      # and are silently ignored, which looks exactly like a broken password.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      # 8081 to leave 8080 free for the API.
+      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:9000:9000"
+    volumes:
+      # Three realms: the staff realm plus two customer-organisation realms.
+      # A realm belongs to an organisation, never to a tenant (ADR-0006).
+      # These are synthetic fixtures, imported once into an empty identity
+      # database. Nothing in the API path consumes them today: the api service
+      # is given no identity variable and depends only on db. Read-only:
+      # the import must never be rewritten by the running container, or a
+      # developer's manual change silently becomes the fixture.
+      - ./dev/realms:/opt/keycloak/data/import:ro
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      # The image has no curl and no wget; its bundled JRE has an HTTP client.
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # --- Mail -------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025" # SMTP
+      - "127.0.0.1:8025:8025" # web UI
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+
+  # --- Local API runtime ------------------------------------------------------
+  api:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
+    # No bulk environment, repository bind, cloud credentials or worker files.
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD:-kodera}@db:5432/${POSTGRES_DB:-kodera_server}
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-local-bootstrap-only-not-a-deployment-key}
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:${CORE_API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The provisioning worker (ADR-0003): no inbound network, no port, and one
+  # network, `worker-db`, which is internal and holds the database alone, so
+  # the worker reaches the database and nothing else (lane decision W2;
+  # production's network policy is deployment profiles's). Its image is
+  # Dockerfile.worker, which carries no URL, WSGI or API module. Until G1.5-C
+  # binds a kind, `run` verifies the boundary, reaches the database and exits
+  # saying it serves no job kind (worker/runner.py, NO_KIND_SERVED).
+  #
+  # The runner is crash-only (worker/runner.py, `serve`): the restart policy is
+  # what brings it back after a crash or a kill, and `init: true` runs an init
+  # as PID 1 that reaps every exited process, a step's escaped grandchildren
+  # among them, which the worker itself does not. Production's equivalents are
+  # deployment profiles's to set (a restart policy, and an init or a reaping PID 1).
+  worker:
+    profiles: [worker]
+    restart: unless-stopped
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: ["python", "-m", "worker", "run"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD:-kodera}@db:5432/${POSTGRES_DB:-kodera_server}
+      DJANGO_SETTINGS_MODULE: config.settings.deploy_worker
+      FAKE_TOFU_FAIL: ${FAKE_TOFU_FAIL:-}
+      FAKE_BIN_LOG: /tmp/kodera-fakebin.log
+      PATH: /fakebin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+    volumes:
+      - ./dev/fakebin:/fakebin:ro
+    # PATH substitution is a test double, not a security boundary.
+    networks: [worker-db]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  worker-db:
+    internal: true
+
+volumes:
+  db-data:
+  keycloak-db-data:

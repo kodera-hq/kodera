@@ -1,0 +1,58 @@
+# gitleaks configuration.
+#
+# The default rule set is extended, never replaced: an allowlist here is the
+# only thing standing between a real credential and a public mirror, so it stays
+# as narrow as the finding that motivated it. Each entry names the exact string
+# and the exact file. "This directory is only fixtures" is not an entry — a path
+# allowlist is how a real secret eventually lands in a fixture directory.
+#
+# Picked up automatically by `gitleaks detect --source .` and by the pre-commit
+# hook, so CI and a laptop judge the same tree by the same rules.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Development-stack service addresses that are not credentials"
+regexTarget = "match"
+regexes = [
+  # `jdbc:postgresql://keycloak-db:5432/keycloak` in compose.yaml. The
+  # generic-api-key heuristic reads host:port/database as key:secret. There is
+  # no credential in this string: Keycloak's development database username and
+  # password are separate variables, and both are the literal `keycloak`.
+  '''jdbc:postgresql://keycloak-db:5432/keycloak''',
+]
+paths = [
+  '''^compose\.yaml$''',
+]
+
+# Self-test. This repository's rule is that a gate ships with a mutation that
+# proves it can still fail — an allowlist that has quietly blinded the scanner
+# looks exactly like a clean tree. This probe now runs on every push and pull
+# request, as the "Prove the allowlist still catches a real shape" step of the
+# `secret-scan` job in `.github/workflows/ci.yml`, not only when a human
+# remembers to run it. Reproduce a CI failure by hand the same way, from a
+# checkout of this repository:
+#
+#   raw="$(head -c 1024 /dev/urandom | LC_ALL=C tr -dc 'A-Z2-7')"
+#   probe="AKIA${raw:0:16}"                     # assembled here, never stored whole
+#   printf 'aws_access_key_id = %s\n' "$probe" > leaktest.env
+#   gitleaks detect --source leaktest.env --no-git --config .gitleaks.toml \
+#     --redact --exit-code 1                    # must FAIL, with exactly one finding
+#   rm leaktest.env
+#
+# Three properties make that probe worth running. It is an AWS access key id
+# shape that the default rules treat as a real finding: the documentation
+# example key and the documentation example secret are both allowlisted
+# upstream on purpose, so a probe built from either exits 0 and reports a
+# healthy scanner that has tested nothing. The sixteen-character suffix is
+# generated fresh from runner entropy on every run rather than written here
+# as a literal — a fixed literal is itself exactly the kind of value a future
+# gitleaks default ruleset could allowlist by name, the same way it already
+# allowlists the documentation key above, which would let this self-test pass
+# without testing anything ever again. And the value never sits whole in a
+# tracked file, where this scanner, or push protection, would flag the very
+# config that documents it.
+#
+# The probe measures the allowlist above, not the tool: widen `paths` to
+# '''.*''' in a scratch copy and the same command exits 0.

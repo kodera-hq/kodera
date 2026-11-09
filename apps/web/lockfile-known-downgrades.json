@@ -1,0 +1,45 @@
+{
+  "$comment": "The explicit allowlist for scripts/check-lockfile-direction.mjs. A package whose version moves BACKWARDS between the base branch and the tree that would land fails the gate unless it is listed here; so does a package that crosses a MAJOR without package.json declaring that crossing. A backwards move is never declared by package.json: a manifest range going backwards is the same regression one level up, so a downgrade has exactly one route through this gate, and it is this file. Each entry is bound to the move it excuses field by field \u2014 `id` is the lockfile path, `kind` is `backwards` or `major`, and `from` and `to` are the two exact versions \u2014 so an entry cannot silently cover a later, different move: a different version on either side, or a move of the other kind, is refused with the mismatch named rather than quietly inheriting the old reason. There is no version range and no wildcard, because a range would let one ruling cover a move nobody decided on. An entry naming a path that makes no move here is stale and fails the gate, unless the base tree already sits at the entry's `to`, in which case the move it describes has landed and the entry is reported spent and can be deleted. An entry that names a move package.json declares is refused too: the declaration is the record, and a second one would outlive it. `reason` is mandatory and is what a reviewer reads; `decision` is mandatory and names what would let the entry be deleted. Adding an entry is a dependency decision, not a build fix: the header of scripts/check-lockfile-direction.mjs says what the gate reads and what it cannot see. Entries below record the exact intentional transitive majors of the Vitest 5, jsdom 30.1.1 and Tailwind 4 migrations; they do not permit backwards moves or unrelated upgrades.",
+  "downgrades": [
+    {
+      "id": "node_modules/@asamuzakjp/css-color",
+      "kind": "major",
+      "from": "6.0.7",
+      "to": "7.1.2",
+      "reason": "jsdom 30.1.1 requires @asamuzakjp/css-color ^7.0.0, replacing the retained 6.x package.",
+      "decision": "Intentional jsdom 30.1.1 migration; remove when the base lockfile includes this exact target. See docs/specs/jsdom-migration.md."
+    },
+    {
+      "id": "node_modules/glob",
+      "kind": "major",
+      "from": "13.0.6",
+      "to": "14.0.3",
+      "reason": "Owner-approved exact transitive major in the glob/minimatch security remediation: replace the affected modern glob/minimatch algorithm and its required path-scurry dependency while preserving callable legacy consumers. Compatibility remains subject to full consumer CI.",
+      "decision": "Remove once the base lockfile contains this exact target. No downgrade, different path, version or unrelated major is covered."
+    },
+    {
+      "id": "node_modules/path-scurry",
+      "kind": "major",
+      "from": "2.0.2",
+      "to": "3.0.0",
+      "reason": "Owner-approved exact transitive major in the glob/minimatch security remediation: replace the affected modern glob/minimatch algorithm and its required path-scurry dependency while preserving callable legacy consumers. Compatibility remains subject to full consumer CI.",
+      "decision": "Remove once the base lockfile contains this exact target. No downgrade, different path, version or unrelated major is covered."
+    },
+    {
+      "id": "node_modules/glob/node_modules/minimatch",
+      "kind": "major",
+      "from": "10.2.6",
+      "to": "11.0.3",
+      "reason": "Owner-approved exact transitive major in the glob/minimatch security remediation: replace the affected modern glob/minimatch algorithm and its required path-scurry dependency while preserving callable legacy consumers. Compatibility remains subject to full consumer CI.",
+      "decision": "Remove once the base lockfile contains this exact target. No downgrade, different path, version or unrelated major is covered."
+    },
+    {
+      "id": "node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch",
+      "kind": "major",
+      "from": "10.2.6",
+      "to": "11.0.3",
+      "reason": "Owner-approved exact transitive major in the glob/minimatch security remediation: replace the affected modern glob/minimatch algorithm and its required path-scurry dependency while preserving callable legacy consumers. Compatibility remains subject to full consumer CI.",
+      "decision": "Remove once the base lockfile contains this exact target. No downgrade, different path, version or unrelated major is covered."
+    }
+  ]
+}

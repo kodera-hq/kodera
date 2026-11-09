@@ -1,0 +1,105 @@
+name: CI
+
+# The one entry point for the monorepo's build and test workflows. Branch
+# protection requires `ci-ok` (and the always-on security workflow), never a
+# path-filtered workflow: GitHub reports nothing for a workflow its filter
+# skipped, so a required check on one waits forever as "Expected".
+#
+# `plan` reads the changed paths and says which areas run. Every area it names
+# is a reusable workflow; `ci-ok` always runs and fails when any area failed or
+# was cancelled. An area the plan did not name is `skipped`, which ci-ok accepts.
+# When the plan cannot tell what changed (a new branch, a force-push, a missing
+# base), it runs everything.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan (changed areas)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      server: ${{ steps.plan.outputs.server }}
+      web: ${{ steps.plan.outputs.web }}
+      rust: ${{ steps.plan.outputs.rust }}
+      mobile: ${{ steps.plan.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Aggregate wiring check (with self-test)
+        run: |
+          uv venv "$RUNNER_TEMP/ci-tools"
+          uv pip install --python "$RUNNER_TEMP/ci-tools/bin/python" --require-hashes --no-deps -r scripts/ci/ci-requirements.txt
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-ci-aggregate.py --selftest
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-ci-aggregate.py
+          python3 scripts/ci/ci-plan.py --selftest
+      - name: Decide which areas run
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then base="$PR_BASE"; else base="$PUSH_BEFORE"; fi
+          python3 scripts/ci/ci-plan.py --base "$base" --head "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  server:
+    needs: plan
+    if: needs.plan.outputs.server == 'true'
+    uses: ./.github/workflows/ci-server.yml
+
+  web:
+    needs: plan
+    if: needs.plan.outputs.web == 'true'
+    uses: ./.github/workflows/ci-web.yml
+
+  rust-desktop:
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    uses: ./.github/workflows/ci-rust-desktop.yml
+
+  mobile:
+    needs: plan
+    if: needs.plan.outputs.mobile == 'true'
+    uses: ./.github/workflows/ci-mobile.yml
+
+  ci-ok:
+    name: ci-ok
+    needs: [plan, server, web, rust-desktop, mobile]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every planned area passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {name: job["result"] for name, job in needs.items()
+                 if job["result"] not in ("success", "skipped")}
+          if needs.get("plan", {}).get("result") != "success":
+              bad["plan"] = needs.get("plan", {}).get("result", "missing")
+          for name, job in sorted(needs.items()):
+              print(name + ": " + job["result"])
+          if bad:
+              sys.exit(f"ci-ok: not green: {bad}")
+          print("ci-ok: every planned area passed")
+          '

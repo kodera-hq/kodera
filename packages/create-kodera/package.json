@@ -1,0 +1,28 @@
+{
+  "name": "create-kodera",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "create-kodera": "bin/create-kodera.mjs",
+    "kodera-deploy": "bin/create-kodera.mjs"
+  },
+  "files": [
+    "bin",
+    "runtime",
+    "src",
+    "assets",
+    "build.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "selftest": "node bin/create-kodera.mjs --selftest",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node build.mjs",
+    "prepack": "node build.mjs"
+  }
+}

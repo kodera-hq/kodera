@@ -1,0 +1,46 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-journey/
+dist-smoke/
+coverage/
+*.tsbuildinfo
+
+# Environment. Everything but the documented example, which carries names and
+# never values.
+.env
+.env.*
+!.env.example
+
+# Test and story artefacts
+playwright-report/
+test-results/
+blob-report/
+e2e-report/
+playwright/.cache/
+storybook-static/
+
+# Local state written by coding assistants and editors. Matched by SHAPE rather
+# than by vendor name: these directories are renamed every few months, and a new
+# one that slips through lands local paths, prompts and sometimes tokens in the
+# history.
+.remember/
+.superpowers/
+.*/settings.local.json
+.*/*.local.json
+.vscode/
+.idea/
+
+# Espace's removal closure (tests/espace/stack/closure.mjs): the tenant agent's local state and
+# the Python it runs with.
+tests/espace/stack/.agent-state/
+tests/espace/stack/.venv/
+tests/espace/stack/__pycache__/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Scratch trees written by scripts/check-e2e-specs.selftest.sh. It cleans up after
+# itself; this catches the run that was interrupted before it could.
+.e2e-selftest-*/

@@ -1,0 +1,137 @@
+{
+  "format": 1,
+  "scenarios": [
+    {
+      "id": "FS-BOOT-01",
+      "description": "**Given** `empty_customer`. **When** staff records intake, the identity worker completes the realm binding and the intended person authenticates with required MFA and claims ownership. **Then** exactly one organization becomes active with one customer owner; the staff actor gains no customer membership; bootstrap and claim each have committed audit evidence"
+    },
+    {
+      "id": "FS-BOOT-02",
+      "description": "**Given** each bootstrap boundary before commit, after commit/before dispatch, and after identity-provider success/before local acknowledgment. **When** the process crashes and resumes with the same intention. **Then** exactly one realm, intended subject and owner claim exist; pending/unknown states are truthful and no manual database insertion is required"
+    },
+    {
+      "id": "FS-BOOT-03",
+      "description": "**Given** `owner_pending`. **When** staff, another subject in the same realm, a subject in another realm, an unknown identity or a person with only a matching email string presents the token. **Then** each is refused, no membership is created and the intended owner can still complete the positive control"
+    },
+    {
+      "id": "FS-BOOT-04",
+      "description": "**Given** an expired, revoked, altered or consumed claim, each separately. **When** it is presented without an independently authorized original-operation replay. **Then** it cannot grant a membership; neither normal authentication nor ordinary invitations expose an owner-grant bypass"
+    },
+    {
+      "id": "FS-BOOT-05",
+      "description": "**Given** two concurrent valid claims or a claim concurrent with revocation. **When** both race at the transactional boundary. **Then** one consistent result commits: one owner claim or revocation wins; no duplicate owner grant and no active ownerless organization"
+    },
+    {
+      "id": "FS-BOOT-06",
+      "description": "**Given** a valid prospective identity. **When** MFA is invalid/missing or browser enrollment storage is forged. **Then** claim fails. **When** actual local provider MFA succeeds and evidence is freshly verified. **Then** the intended claim succeeds; no production simulation path is exercised"
+    },
+    {
+      "id": "FS-BOOT-07",
+      "description": "**Given** an active organization. **When** a staff intake request attempts to sign terms or DPA as its owner, or to nominate staff as customer membership. **Then** the guarded operation refuses it and records the applicable denial; only an authorized customer identity supplies acceptance evidence"
+    },
+    {
+      "id": "FS-LIFE-01",
+      "description": "**Given** `shared_org`. **When** one tenant is removed or suspended. **Then** its resources/access change as specified while the sibling and shared realm remain usable"
+    },
+    {
+      "id": "FS-LIFE-02",
+      "description": "**Given** `retained_records` during the tenant-scoped exit window of at most 90 days, unless a validated controller instruction ends it earlier. **When** the final tenant is removed. **Then** its application access fails; the designated closure principal still authenticates and retrieves the retained invoice/certificate through the approved path; another organization cannot retrieve them"
+    },
+    {
+      "id": "FS-LIFE-03",
+      "description": "**Given** organization closure with a still-required retained-access obligation. **When** identity erasure is attempted without a decision on audited one-time redelivery of legally retained records. **Then** closure completion is blocked. **When** the approved policy's access and erasure preconditions are met. **Then** the explicit closure flow revokes access and cannot resurrect the identity through replay or old bootstrap tokens"
+    },
+    {
+      "id": "FS-ID-01",
+      "description": "**Given** the admitted organization slug rule. **When** valid minimum/maximum lengths and internal hyphens traverse create \u2192 persist \u2192 issuer/discovery \u2192 login. **Then** every accepted case authenticates coherently; the schema, model and UI agree"
+    },
+    {
+      "id": "FS-ID-02",
+      "description": "**Given** too-short/too-long values including the former 21-character counterexample, uppercase, non-ASCII, leading/trailing hyphens and reserved names, each separately. **When** creation is requested. **Then** every invalid value fails before identity-side effects; an ordinary valid slug succeeds"
+    },
+    {
+      "id": "FS-ID-03",
+      "description": "**Given** every proposed organization lifecycle state. **When** its API representation and allowed actions are evaluated. **Then** the closed state/capability mapping is exhaustive and rejects unknown states; `prospect` cannot order and `active` cannot commit without an owner"
+    },
+    {
+      "id": "FS-OP-01",
+      "description": "**Given** one authorized intention. **When** concurrent and delayed identical requests use its same key. **Then** one operation and one external logical effect exist; in-flight and complete responses reference that same operation"
+    },
+    {
+      "id": "FS-OP-02",
+      "description": "**Given** the same principal and client key on two permitted tenant/action targets. **When** both requests run. **Then** two independent operation identities/effects exist; the former principal-plus-key-only digest fails this case"
+    },
+    {
+      "id": "FS-OP-03",
+      "description": "**Given** an existing operation. **When** the same tuple carries altered effect-bearing payload, legal/price reference or precondition. **Then** conflict occurs without a second effect; changes in insignificant supported serialization do not create a new intention"
+    },
+    {
+      "id": "FS-OP-04",
+      "description": "**Given** stored successful output. **When** membership is revoked, organization context changes or the requester loses the necessary capability. **Then** replay is denied before protected output is read. An unchanged authorized requester remains the positive control"
+    },
+    {
+      "id": "FS-OP-05",
+      "description": "**Given** an operation whose ordinary response cache expires while its effect still exists. **When** the original intention is retried. **Then** it resolves to the durable result or an explicit expired-operation refusal, never a second job/invoice"
+    },
+    {
+      "id": "FS-OP-06",
+      "description": "**Given** claim/secret-bearing responses and expiring download links. **When** results, caches, traces and logs are inspected and replayed. **Then** no token/secret plaintext persists in ordinary result storage; fresh links require current authorization; lost token delivery uses the scoped revoke/reissue path"
+    },
+    {
+      "id": "FS-CON-01",
+      "description": "**Given** two provisions in one organization whose realm its own `realm_create` job created. **When** both are held after each creates its own clients and the first then fails with a non-retryable fault. **Then** the first ends failed and compensation removes only its exclusively owned resources, its clients included; the successful sibling's clients and the realm and its settings remain"
+    },
+    {
+      "id": "FS-CON-02",
+      "description": "**Given** a `realm_update`, which holds the organization lock exclusively, and a `provision`, which holds it shared. **When** they are requested in each order, with a realm job in `other_org`. **Then** the first requested holds the lock while the second waits, both are served in request order with no lost claim or update, and a blocked organization does not block `other_org`"
+    },
+    {
+      "id": "FS-CON-03",
+      "description": "**Given** a worker whose claim fence is superseded after its lease expired and the sweep made the job `orphaned`. **When** it resumes and tries to record success or dispatch another effect. **Then** fence validation rejects both; the current worker's legitimate update succeeds"
+    },
+    {
+      "id": "FS-CON-04",
+      "description": "**Given** a running owned subprocess and provider action. **When** database connectivity fails but the external work continues. **Then** lease/heartbeat/advisory-lock absence alone cannot trigger force-unlock or a duplicate action; the job enters reconciliation and records the unresolved operation"
+    },
+    {
+      "id": "FS-CON-05",
+      "description": "**Given** each uncertain-effect outcome: confirmed absent, confirmed complete, confirmed still running and unresolvable. **When** recovery evaluates provider correlation and process evidence. **Then** only the specified safe absent/complete outcomes progress; live/unknown outcomes stop and require the recorded operator path. Test that the old subprocess is reaped where locally controllable"
+    },
+    {
+      "id": "FS-CON-06",
+      "description": "**Given** a job creation transaction, the intake's `realm_create`. **When** a failure is injected between desired state, audit and job writes. **Then** all commit or none do; a post-commit crash leaves a dispatchable durable job"
+    },
+    {
+      "id": "FS-BILL-01",
+      "description": "**Given** a verified owner and current immutable offer/legal references. **When** an accepted order commits and the dispatcher crashes before its adapter call. **Then** order/acceptance/outbox survive and later produce one correlated invoice request; frontend status remains pending until observed confirmation"
+    },
+    {
+      "id": "FS-BILL-02",
+      "description": "**Given** `delivery_unknown`. **When** the dispatcher restarts. **Then** it finds the existing provider object using the correlation identity; no second issuance occurs. If that adapter capability is unavailable, it stops for documented manual reconciliation rather than guessing"
+    },
+    {
+      "id": "FS-BILL-03",
+      "description": "**Given** an issued synthetic provider invoice. **When** local persistence rolls back or its response is lost and delivery resumes. **Then** the same authoritative provider number is recovered; no independent final Core numbering or renumbering occurs"
+    },
+    {
+      "id": "FS-BILL-04",
+      "description": "**Given** repeated, reordered, invalid-signature, wrong-account, wrong-currency/amount and unknown-reference payment events, each separately. **When** the inbox processes them. **Then** valid events converge without duplicate effects, invalid/unknown events cannot mark the wrong order paid, and required evidence is retained without credentials"
+    },
+    {
+      "id": "FS-BILL-05",
+      "description": "**Given** a browser payment-return URL or unauthenticated message claiming success. **When** received. **Then** no verified payment or provisioning job is created. Even a verified payment cannot bypass the separate staff authorization required by this slice"
+    },
+    {
+      "id": "FS-BILL-06",
+      "description": "**Given** an accepted immutable price/legal snapshot. **When** catalogue values change after ordering or a retry requests different values. **Then** existing accepted evidence remains unchanged; a different intention requires a new reviewed operation"
+    },
+    {
+      "id": "FS-JOURNEY-01",
+      "description": "**Given** `empty_customer`, **when** staff intake \u2192 real local customer authentication/MFA \u2192 first-owner claim \u2192 actual API order with accepted evidence \u2192 staff-authorized fake provisioning \u2192 worker/result read completes, **then** one coherent customer/tenant/operation history exists and the application displays observed status. No mock Core handler, preinserted owner, success simulation, real cloud call or manual database repair may satisfy this case. It is an internal synthetic deployment; the full customer-release gate remains closed."
+    },
+    {
+      "id": "FS-HARNESS-01",
+      "description": "**Given** the selected manifest and configured local services, **when** a required scenario is removed/skipped, its identifier is misspelled, a dependency is unavailable, or an external provider endpoint is configured, **then** the runner fails before reporting acceptance. The valid manifest/environment is a positive control."
+    }
+  ]
+}

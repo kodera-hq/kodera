@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "kodera.extension.v1",
+  "id": "frameio-review-bridge",
+  "name": "Frame.io Review Bridge",
+  "version": "0.1.0",
+  "description": "Signed production review events for channel-based post-production.",
+  "scopes": [
+    "messages:write",
+    "commands:register",
+    "webhooks:incoming"
+  ],
+  "events": [
+    "message.created",
+    "command.invoked"
+  ],
+  "commands": [
+    {
+      "name": "/frameio-review",
+      "description": "Share a production review"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.kodera.io/hooks/frameio-review-bridge",
+  "providerEvents": [
+    "asset.ready",
+    "comment.created",
+    "review.status_changed"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "requireAll": [
+    "01-order.md",
+    "02-status.md",
+    "03-people.md",
+    "05-invoices.md",
+    "08-home.md",
+    "10-appearance.md",
+    "11-workspace.md",
+    "order-feedback-accessibility.md"
+  ]
+}

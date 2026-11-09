@@ -1,0 +1,11 @@
+# The advisory gate's own auditor. pip-audit-requirements.txt is compiled from
+# this file with every file's hash, and CI installs it with
+# `uv pip install --require-hashes --no-deps --only-binary :all:` into an
+# environment of its own (.github/workflows/ci.yml, the advisory steps of job `baseline`).
+# Dependabot (.github/dependabot.yml, directory /.github/scripts) regenerates
+# the .txt from the command in its header; by hand, run that same command from
+# this directory. Never edit the .txt itself.
+pip-audit==2.10.1
+certifi==2026.10.23
+# The auditor's cache dependency must include the patched lock implementation.
+filelock==4.2.4

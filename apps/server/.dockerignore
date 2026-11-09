@@ -1,0 +1,248 @@
+# Exclude by default, including .env, Git metadata and worker input.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!manage.py
+!config/*.py
+!config/settings/*.py
+# The test profile permits the job queue's mutant flags; the image never carries it.
+config/settings/test.py
+config/settings/e2e.py
+config/settings/e2e_operator.py
+config/settings/job_queue.py
+config/settings/deploy_operator.py
+config/settings/deploy_worker.py
+!core/__init__.py
+!core/health.py
+!core/api/__init__.py
+!core/api/scopes.py
+# The one answer to a verified token Core holds no identity for (AUTHZ.md §2 step 6).
+!core/api/problems.py
+# The lane guard every customer operation applies before customer resolution.
+!core/api/lanes.py
+# The trusted edge's client address and the caller's request-id namespace (TRUSTED_EDGE.md);
+# config/settings/base.py's first middleware: without it the image does not start.
+!core/api/edge.py
+!core/db/__init__.py
+!core/db/ids.py
+!core/db/models.py
+!core/db/functions.py
+!core/sealing.py
+# The formatter config/settings/base.py's LOGGING names: without it the image does not start.
+!core/logs.py
+# Inert named fault points the intake reaches; arming them is refused outside the test profile.
+!core/faults.py
+# A link's origin: createPaymentLink's return URL is held to the console's (core/links.py).
+!core/links.py
+!core/api/idempotency.py
+!core/idempotency/__init__.py
+!core/idempotency/apps.py
+!core/idempotency/fingerprint.py
+!core/idempotency/models.py
+!core/idempotency/store.py
+!services/__init__.py
+!services/identity/__init__.py
+!services/identity/access_tokens.py
+!services/identity/trusted_issuers.py
+!services/identity/discovery_input.py
+!services/identity/discovery_policy.py
+!services/workspace_policy/__init__.py
+!services/workspace_policy/projection.py
+!apps/__init__.py
+!apps/identity/__init__.py
+!apps/identity/apps.py
+!apps/identity/models.py
+!apps/identity/selectors.py
+!apps/identity/services.py
+!apps/identity/api/__init__.py
+!apps/identity/api/permissions.py
+!apps/identity/api/serializers.py
+!apps/identity/api/views.py
+!apps/identity/api/discovery.py
+!apps/identity/api/discovery_permissions.py
+!apps/identity/discovery.py
+!apps/identity/discovery_db.py
+!apps/identity/discovery_quotas.py
+!apps/identity/staff.py
+!apps/identity/staff_roles.py
+!apps/orgs/__init__.py
+!apps/orgs/apps.py
+!apps/orgs/models.py
+!apps/orgs/selectors.py
+!apps/orgs/detail_selectors.py
+!apps/orgs/detail_services.py
+!apps/orgs/discovery_selectors.py
+!apps/orgs/api/__init__.py
+!apps/orgs/api/detail.py
+!apps/orgs/api/detail_permissions.py
+!apps/orgs/api/detail_serializers.py
+!apps/orgs/membership_selectors.py
+!apps/orgs/membership_services.py
+!apps/orgs/membership_pagination.py
+!apps/orgs/api/memberships.py
+!apps/orgs/api/membership_permissions.py
+!apps/orgs/api/membership_serializers.py
+!apps/orgs/membership_lifecycle.py
+!apps/orgs/member_set_hooks.py
+# The realm access delivery's enqueue only (MEMBERSHIP_LIFECYCLE.md §6.1.1); its run, its admin
+# client and its credential loader stay out of the image (ADR-0003).
+!apps/outbox/__init__.py
+!apps/outbox/realm_enqueue.py
+!apps/orgs/api/membership_detail.py
+# Invitations (docs/specs/INVITATIONS.md): the API writes them and their realm account delivery;
+# the mail and the realm account stay with the operator profile and the realm worker.
+!apps/orgs/invitations.py
+!apps/orgs/api/invitations.py
+!apps/orgs/api/invitation_permissions.py
+!apps/identity/invited.py
+!apps/orgs/notice_contacts.py
+!apps/orgs/api/notice_contacts.py
+!apps/orgs/api/notice_contact_permissions.py
+!apps/orgs/intake_services.py
+!apps/orgs/api/intake.py
+!apps/orgs/api/intake_permissions.py
+!apps/orgs/api/intake_serializers.py
+!apps/orgs/actor_selectors.py
+# Served bootstrap status only; claim commands and secret/delivery writers remain excluded.
+!apps/orgs/bootstrap_selectors.py
+!apps/orgs/bootstrap_services.py
+!apps/orgs/claim_readiness.py
+!apps/orgs/api/bootstrap.py
+!apps/orgs/api/bootstrap_permissions.py
+!apps/orgs/api/bootstrap_serializers.py
+# The queue's enqueue path and the audit record the intake writes (ORGANISATION_INTAKE.md §4),
+# and the realm job, audit record and lock the workspace routes read and write
+# (PILOT_WORKSPACE_ONBOARDING.md).
+!apps/jobs/__init__.py
+!apps/jobs/_enqueue.py
+!apps/jobs/apps.py
+!apps/jobs/keys.py
+!apps/jobs/kinds.py
+!apps/jobs/locks.py
+!apps/jobs/models.py
+!apps/jobs/mutants.py
+!apps/jobs/selectors.py
+!apps/jobs/transactions.py
+!apps/jobs/types.py
+!apps/audit/__init__.py
+!apps/audit/apps.py
+!apps/audit/models.py
+!apps/audit/selectors.py
+!apps/audit/services.py
+!apps/workspaces/__init__.py
+!apps/workspaces/apps.py
+!apps/workspaces/models.py
+!apps/workspaces/setup.py
+!apps/workspaces/structure.py
+!apps/workspaces/initialise.py
+!apps/workspaces/administration.py
+!apps/workspaces/channel_access.py
+!apps/workspaces/channel_sets.py
+!apps/workspaces/api/__init__.py
+!apps/workspaces/api/permissions.py
+!apps/workspaces/api/serializers.py
+!apps/workspaces/api/views.py
+!apps/workspaces/api/administration.py
+!apps/workspaces/api/responses.py
+!apps/billing/__init__.py
+!apps/billing/apps.py
+!apps/billing/callers.py
+!apps/billing/actors.py
+!apps/billing/configuration.py
+!apps/billing/events.py
+!apps/billing/models.py
+!apps/billing/money.py
+!apps/billing/states.py
+!apps/billing/vat.py
+!apps/billing/services.py
+!apps/billing/selectors.py
+!apps/billing/access.py
+!apps/billing/pagination.py
+!apps/billing/representations.py
+!apps/billing/tenant_reads.py
+!apps/billing/switch.py
+!apps/billing/unbilled.py
+!apps/billing/api/__init__.py
+!apps/billing/api/permissions.py
+!apps/billing/api/views.py
+!apps/billing/api/tenants.py
+!apps/billing/api/create_tenant.py
+!apps/legal/__init__.py
+!apps/legal/apps.py
+!apps/legal/models.py
+!apps/legal/services.py
+!apps/legal/api/__init__.py
+!apps/legal/api/permissions.py
+!apps/legal/api/views.py
+!apps/tenancy/__init__.py
+!apps/tenancy/apps.py
+!apps/tenancy/models.py
+!apps/tenancy/services.py
+!apps/tenancy/selectors.py
+!apps/billing/api/order_request.py
+# createPaymentLink: the provider port, its adapters and the link services. The API holds only a
+# restricted key limited to checkout sessions (docs/dev/SETTINGS_AND_SECRETS.md section 2).
+!apps/billing/payments/__init__.py
+!apps/billing/payments/port.py
+!apps/billing/payments/fake.py
+!apps/billing/payments/stripe.py
+!apps/billing/payments/services.py
+# checkSlugAvailability: its view and its reads.
+!apps/billing/slug_availability.py
+!apps/billing/api/slug_availability.py
+!apps/billing/api/membership_count.py
+!apps/billing/membership_count.py
+!apps/billing/api/help_context.py
+# The engine member sets' Agent API command loop (ADR-0016); not its migrations or commands.
+!apps/engine_intents/__init__.py
+!apps/engine_intents/apps.py
+!apps/engine_intents/models.py
+!apps/engine_intents/services.py
+!apps/engine_intents/selectors.py
+!apps/engine_intents/channel_sets.py
+!apps/engine_intents/channel_hooks.py
+!apps/engine_intents/api/__init__.py
+!apps/engine_intents/api/permissions.py
+!apps/engine_intents/api/views.py
+# createSupportTicket (docs/specs/SUPPORT_TICKETS.md): the ticket and its view; not its migrations,
+# its mail run or its command, which are the operator profile's.
+!apps/support/__init__.py
+!apps/support/apps.py
+!apps/support/models.py
+!apps/support/tickets.py
+!apps/support/api/__init__.py
+!apps/support/api/permissions.py
+!apps/support/api/views.py
+
+# Consumption uses pure token primitives; issuance and delivery orchestration stay excluded.
+!apps/orgs/claim_consumption.py
+!apps/orgs/claim_tokens.py
+!apps/orgs/api/owner_claims.py
+!apps/orgs/api/owner_claim_permissions.py
+!apps/orgs/api/owner_claim_serializers.py
+
+# The tenant agent (ADR-0016) ships in the same image: `python -m tenant_agent run`.
+!tenant_agent/__init__.py
+!tenant_agent/__main__.py
+!tenant_agent/agent.py
+!tenant_agent/channels.py
+!tenant_agent/config.py
+!tenant_agent/core_api.py
+!tenant_agent/docker_exec.py
+!tenant_agent/engines.py
+!tenant_agent/guard.py
+!tenant_agent/handlers.py
+!tenant_agent/state.py
+!tenant_agent/synapse.py
+!tenant_agent/webhook.py
+
+# The room-access service of Espace's audio rooms (ADR-0018), a process of its own in the same
+# image: `python -m room_access`.
+!room_access/__init__.py
+!room_access/__main__.py
+!room_access/clients.py
+!room_access/config.py
+!room_access/rooms.py
+!room_access/server.py
+!room_access/service.py

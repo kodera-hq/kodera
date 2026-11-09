@@ -1,0 +1,55 @@
+{
+  "tenant": "acme",
+  "instance_id": "7e8f9a0b-1c2d-4e3f-8a5b-6c7d8e9f0a1b",
+  "agent_version": "0.4.2",
+  "boot_id": "9c1f4a7e2b5d8036",
+  "seq": 84213,
+  "sent_at": "2026-12-03T11:19:42Z",
+  "profile": {
+    "app": "visio-docs",
+    "version": "1.4",
+    "compose_digest": "sha256:3f5a1c7e9b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a",
+    "profile_commit": "9a1c3e5b7d9f0a2c4e6b8d0f2a4c6e8b0d2f4a6c"
+  },
+  "uptime_s": 5054382,
+  "disk_free_bytes": 214748364800,
+  "disk_total_bytes": 644245094400,
+  "cpu_pct": 23.4,
+  "load_avg_1m": 1.82,
+  "mem_used_bytes": 9126805504,
+  "mem_total_bytes": 17179869184,
+  "nic_tx_bps": 48211000,
+  "nic_rx_bps": 12044000,
+  "services": {
+    "edge": "running",
+    "visio-web": "running",
+    "livekit": "running",
+    "docs-web": "running",
+    "y-provider": "unhealthy",
+    "postgres": "running"
+  },
+  "vitals": {
+    "participants": 46,
+    "rooms": 7,
+    "documents_active": 12,
+    "cert_days_left": {
+      "visio.acme.fr": 62,
+      "livekit.acme.fr": 62
+    },
+    "backup_age_s": 7412,
+    "last_preflight": {
+      "at": "2026-12-03T03:12:00Z",
+      "phase": "public",
+      "check_count": 14,
+      "fail_count": 0,
+      "log_ref": "preflight/2026-12-03T03-12-00Z.log"
+    },
+    "storage_used_bytes": 429496729600
+  },
+  "maintenance": false,
+  "commands_in_flight": [],
+  "supported_command_kinds": [
+    "start", "stop", "maintenance", "render", "upgrade",
+    "backup", "restore", "preflight", "rotate", "self_update", "decommission"
+  ]
+}

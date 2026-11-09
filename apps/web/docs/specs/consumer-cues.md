@@ -1,0 +1,13 @@
+# Ordinary text and message detail cues
+
+Status: Bounded consumer compatibility implementation; qualification and General merge remain separate. The dependency stays pinned to v0.4.0. No token release, repin, Home-panel or broad reference acceptance follows.
+
+Non-selected TimelineMessage rows draw the existing muted role on hover and focus-within. A white light page/sunken background must not erase that detail cue. The focused thread, mention bar and selected reactions retain their accent roles. Long-text geometry, message targets and audience/call/draft/leave guards do not change.
+
+Ordinary active link/action text uses ink, including the thread-open and retry actions. Inline links remain underlined at rest. Standalone links/actions underline on hover and keyboard focus and receive the canonical focus ring even when rendered by a native button. Selected navigation, focus core, primary labels, status/danger and inactive colors retain their existing roles. An inverse consumer must use its proper foreground; ordinary light ink is not readable on the light inverse role. Large Home inverse panels are outside this slice.
+
+Acceptance uses actual rendered components and compiled CSS, native anchor destinations/Enter, button keyboard activation, disabled/asChild suppression and retained selection/status/permission tests. Preserve meaningful imported-helper color-conflict refusal and all contrast minima, including separate coverage for still-cobalt Breadcrumb hover. Private lost-inline-underline and lost-row-cue mutations must defeat the actual contracts; no removed guard enters product code.
+
+Representative browser routes cover real login fallback, Home, Applications/status, invoices and help in the production-shaped mock build. All three themes and1440/390/320px require font, wrapping, link/hover/focus/selection and touch-cue inspection. Separately qualify the actual Espace component under controlled store/router fixtures: the workspace.ready placeholder and MessagingDemo cannot prove live Timeline behavior. Keep provider-backed route proof distinct from these fixtures.
+
+Compare actual installed v0.4.0 and canonical qualified token-source CSS/preset with bound hashes and real fonts; the latter is a private compatibility preview, not a product repin. Genuine supported200%enlargement/reflow must be measured separately; DPR, pinch-only and CSS simulation are not substituted for it. If unavailable, retain an explicit open gate and bounded plan. Exact-head CI and independent CTO/SWE/sensitive-flow reviews precede General merge; no deployment/device/provider or full-reference acceptance is implied.

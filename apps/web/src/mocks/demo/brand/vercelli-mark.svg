@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Groupe Vercelli">
+  <!-- FICTIONAL. Groupe Vercelli is the demo organisation invented by the design
+       handoff; this mark exists only to show where a customer's own branding sits
+       beside the maker's. It is not any real company's asset, and it ships in the
+       mock tree, never in the product's brand directory. -->
+  <g fill="#A85B23">
+    <!-- lintel: the portal frame a civil-works group builds under -->
+    <rect x="14" y="8" width="36" height="8" rx="1.5"/>
+    <!-- chevron: two beams meeting at the base, wider than the lintel so the
+         mark sits on the V rather than hanging from the bar -->
+    <path d="M6 22 L32 58 L58 22 L46 22 L32 40 L18 22 Z"/>
+  </g>
+</svg>

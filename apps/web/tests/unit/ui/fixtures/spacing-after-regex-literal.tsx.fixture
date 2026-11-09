@@ -1,0 +1,30 @@
+// Not a source file: the extension keeps it out of the spacing guard's own
+// scan of `src/`, out of the TypeScript projects, and out of the Vitest suite.
+// It exists only to be fed to the scanner by
+// tests/unit/ui/spacing-guard.test.ts, which asserts the guard JUDGES the
+// markup at the bottom rather than passing over it.
+//
+// A regex literal whose character class holds a lone quote character used to
+// desync the string mask. The quote opened a string state that nothing on any
+// later line ever closed, so the mask ran inverted from there on: the markup
+// below read as bare code and was never looked at. Blindness, not approval —
+// and silent, because a guard that matches nothing in one file still clears
+// whole run floors on the strength of the others.
+//
+// Both quote characters are here, on their own lines, because they desync the
+// mask in opposite directions and a regex is where a lone one legitimately
+// appears.
+//
+// Below the regexes: a height utility at step nine, and a weight utility named
+// normal. Spelled out in prose here so this comment is not itself a match.
+
+const DOUBLE_QUOTE = /["]/
+const SINGLE_QUOTE = /[']/
+
+export const quoted = (value: string) => DOUBLE_QUOTE.test(value) || SINGLE_QUOTE.test(value)
+
+export const AfterRegex = () => (
+  <div className="h-9">
+    <span className="font-normal">off the grid</span>
+  </div>
+)

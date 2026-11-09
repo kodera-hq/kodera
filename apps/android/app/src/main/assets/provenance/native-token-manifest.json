@@ -1,0 +1,5597 @@
+{
+  "format": "kodera-native-tokens/1",
+  "source": {
+    "path": "tokens.json",
+    "sha256": "6006e5efe557bc754e6d04ce4601e84cce104dfd1685dd76d43b8867701e8be8"
+  },
+  "mapping": {
+    "colors": "sRGB normalized channels; alpha preserved without compositing",
+    "dimensions": "px numeric magnitude maps to Swift points and Compose dp; font sizes map to points/sp",
+    "scaling": "consumer applies native font scaling; family metadata does not install or select fonts",
+    "numericIdentifiers": "s prefix, including Space.s4 and FontSize.s2xl"
+  },
+  "entries": [
+    {
+      "path": "semantic.theme.light.page",
+      "aliases": [
+        "semantic.theme.light.page",
+        "color.theme-light.page"
+      ],
+      "api": "KoderaTokens.light.page",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.surface",
+      "aliases": [
+        "semantic.theme.light.surface",
+        "color.theme-light.surface"
+      ],
+      "api": "KoderaTokens.light.surface",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.sunken",
+      "aliases": [
+        "semantic.theme.light.sunken",
+        "color.theme-light.sunken"
+      ],
+      "api": "KoderaTokens.light.sunken",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.muted",
+      "aliases": [
+        "semantic.theme.light.muted",
+        "color.theme-light.muted"
+      ],
+      "api": "KoderaTokens.light.muted",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 242,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.muted-2",
+      "aliases": [
+        "semantic.theme.light.muted-2",
+        "color.theme-light.muted-2"
+      ],
+      "api": "KoderaTokens.light.muted2",
+      "type": "color",
+      "value": {
+        "r": 220,
+        "g": 230,
+        "b": 240,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.hairline",
+      "aliases": [
+        "semantic.theme.light.hairline",
+        "color.theme-light.hairline"
+      ],
+      "api": "KoderaTokens.light.hairline",
+      "type": "color",
+      "value": {
+        "r": 242,
+        "g": 246,
+        "b": 250,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.border",
+      "aliases": [
+        "semantic.theme.light.border",
+        "color.theme-light.border"
+      ],
+      "api": "KoderaTokens.light.border",
+      "type": "color",
+      "value": {
+        "r": 217,
+        "g": 225,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.border-soft",
+      "aliases": [
+        "semantic.theme.light.border-soft",
+        "color.theme-light.border-soft"
+      ],
+      "api": "KoderaTokens.light.borderSoft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 234,
+        "b": 241,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.border-strong",
+      "aliases": [
+        "semantic.theme.light.border-strong",
+        "color.theme-light.border-strong"
+      ],
+      "api": "KoderaTokens.light.borderStrong",
+      "type": "color",
+      "value": {
+        "r": 201,
+        "g": 211,
+        "b": 222,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.inverse",
+      "aliases": [
+        "semantic.theme.light.inverse",
+        "color.theme-light.inverse"
+      ],
+      "api": "KoderaTokens.light.inverse",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 24,
+        "b": 39,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.inverse-2",
+      "aliases": [
+        "semantic.theme.light.inverse-2",
+        "color.theme-light.inverse-2"
+      ],
+      "api": "KoderaTokens.light.inverse2",
+      "type": "color",
+      "value": {
+        "r": 29,
+        "g": 37,
+        "b": 53,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.rail-line",
+      "aliases": [
+        "semantic.theme.light.rail-line",
+        "color.theme-light.rail-line"
+      ],
+      "api": "KoderaTokens.light.railLine",
+      "type": "color",
+      "value": {
+        "r": 58,
+        "g": 69,
+        "b": 89,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ink",
+      "aliases": [
+        "semantic.theme.light.ink",
+        "color.theme-light.ink"
+      ],
+      "api": "KoderaTokens.light.ink",
+      "type": "color",
+      "value": {
+        "r": 30,
+        "g": 41,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ink-2",
+      "aliases": [
+        "semantic.theme.light.ink-2",
+        "color.theme-light.ink-2"
+      ],
+      "api": "KoderaTokens.light.ink2",
+      "type": "color",
+      "value": {
+        "r": 86,
+        "g": 98,
+        "b": 110,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ink-3",
+      "aliases": [
+        "semantic.theme.light.ink-3",
+        "color.theme-light.ink-3"
+      ],
+      "api": "KoderaTokens.light.ink3",
+      "type": "color",
+      "value": {
+        "r": 92,
+        "g": 104,
+        "b": 116,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ink-4",
+      "aliases": [
+        "semantic.theme.light.ink-4",
+        "color.theme-light.ink-4"
+      ],
+      "api": "KoderaTokens.light.ink4",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 136,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.on-inverse",
+      "aliases": [
+        "semantic.theme.light.on-inverse",
+        "color.theme-light.on-inverse"
+      ],
+      "api": "KoderaTokens.light.onInverse",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.on-inverse-dim",
+      "aliases": [
+        "semantic.theme.light.on-inverse-dim",
+        "color.theme-light.on-inverse-dim"
+      ],
+      "api": "KoderaTokens.light.onInverseDim",
+      "type": "color",
+      "value": {
+        "r": 180,
+        "g": 191,
+        "b": 204,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.action",
+      "aliases": [
+        "semantic.theme.light.action",
+        "color.theme-light.action"
+      ],
+      "api": "KoderaTokens.light.action",
+      "type": "color",
+      "value": {
+        "r": 43,
+        "g": 75,
+        "b": 219,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.action-hover",
+      "aliases": [
+        "semantic.theme.light.action-hover",
+        "color.theme-light.action-hover"
+      ],
+      "api": "KoderaTokens.light.actionHover",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 64,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.accent-soft",
+      "aliases": [
+        "semantic.theme.light.accent-soft",
+        "color.theme-light.accent-soft"
+      ],
+      "api": "KoderaTokens.light.accentSoft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 233,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.accent-ink",
+      "aliases": [
+        "semantic.theme.light.accent-ink",
+        "color.theme-light.accent-ink"
+      ],
+      "api": "KoderaTokens.light.accentInk",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 64,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ok-on-dark",
+      "aliases": [
+        "semantic.theme.light.ok-on-dark",
+        "color.theme-light.ok-on-dark"
+      ],
+      "api": "KoderaTokens.light.okOnDark",
+      "type": "color",
+      "value": {
+        "r": 168,
+        "g": 229,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.bad-on-dark",
+      "aliases": [
+        "semantic.theme.light.bad-on-dark",
+        "color.theme-light.bad-on-dark"
+      ],
+      "api": "KoderaTokens.light.badOnDark",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 196,
+        "b": 186,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ok",
+      "aliases": [
+        "semantic.theme.light.ok",
+        "color.theme-light.ok"
+      ],
+      "api": "KoderaTokens.light.ok",
+      "type": "color",
+      "value": {
+        "r": 46,
+        "g": 139,
+        "b": 87,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ok-soft",
+      "aliases": [
+        "semantic.theme.light.ok-soft",
+        "color.theme-light.ok-soft"
+      ],
+      "api": "KoderaTokens.light.okSoft",
+      "type": "color",
+      "value": {
+        "r": 227,
+        "g": 243,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ok-ink",
+      "aliases": [
+        "semantic.theme.light.ok-ink",
+        "color.theme-light.ok-ink"
+      ],
+      "api": "KoderaTokens.light.okInk",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 107,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.ok-border",
+      "aliases": [
+        "semantic.theme.light.ok-border",
+        "color.theme-light.ok-border"
+      ],
+      "api": "KoderaTokens.light.okBorder",
+      "type": "color",
+      "value": {
+        "r": 199,
+        "g": 228,
+        "b": 211,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.warn",
+      "aliases": [
+        "semantic.theme.light.warn",
+        "color.theme-light.warn"
+      ],
+      "api": "KoderaTokens.light.warn",
+      "type": "color",
+      "value": {
+        "r": 183,
+        "g": 121,
+        "b": 31,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.warn-soft",
+      "aliases": [
+        "semantic.theme.light.warn-soft",
+        "color.theme-light.warn-soft"
+      ],
+      "api": "KoderaTokens.light.warnSoft",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 241,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.warn-ink",
+      "aliases": [
+        "semantic.theme.light.warn-ink",
+        "color.theme-light.warn-ink"
+      ],
+      "api": "KoderaTokens.light.warnInk",
+      "type": "color",
+      "value": {
+        "r": 138,
+        "g": 90,
+        "b": 16,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.bad",
+      "aliases": [
+        "semantic.theme.light.bad",
+        "color.theme-light.bad"
+      ],
+      "api": "KoderaTokens.light.bad",
+      "type": "color",
+      "value": {
+        "r": 194,
+        "g": 55,
+        "b": 43,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.bad-soft",
+      "aliases": [
+        "semantic.theme.light.bad-soft",
+        "color.theme-light.bad-soft"
+      ],
+      "api": "KoderaTokens.light.badSoft",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 229,
+        "b": 226,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.bad-ink",
+      "aliases": [
+        "semantic.theme.light.bad-ink",
+        "color.theme-light.bad-ink"
+      ],
+      "api": "KoderaTokens.light.badInk",
+      "type": "color",
+      "value": {
+        "r": 181,
+        "g": 50,
+        "b": 31,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.shadow-1",
+      "aliases": [
+        "semantic.theme.light.shadow-1",
+        "color.theme-light.shadow-1"
+      ],
+      "api": "KoderaTokens.light.shadow1",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 58,
+        "b": 69,
+        "a": 0.25
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.shadow-2",
+      "aliases": [
+        "semantic.theme.light.shadow-2",
+        "color.theme-light.shadow-2"
+      ],
+      "api": "KoderaTokens.light.shadow2",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 58,
+        "b": 69,
+        "a": 0.35
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t1-bg",
+      "aliases": [
+        "semantic.theme.light.t1-bg",
+        "color.theme-light.t1-bg"
+      ],
+      "api": "KoderaTokens.light.t1Bg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 233,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t1-fg",
+      "aliases": [
+        "semantic.theme.light.t1-fg",
+        "color.theme-light.t1-fg"
+      ],
+      "api": "KoderaTokens.light.t1Fg",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 64,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t2-bg",
+      "aliases": [
+        "semantic.theme.light.t2-bg",
+        "color.theme-light.t2-bg"
+      ],
+      "api": "KoderaTokens.light.t2Bg",
+      "type": "color",
+      "value": {
+        "r": 227,
+        "g": 243,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t2-fg",
+      "aliases": [
+        "semantic.theme.light.t2-fg",
+        "color.theme-light.t2-fg"
+      ],
+      "api": "KoderaTokens.light.t2Fg",
+      "type": "color",
+      "value": {
+        "r": 31,
+        "g": 122,
+        "b": 69,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t3-bg",
+      "aliases": [
+        "semantic.theme.light.t3-bg",
+        "color.theme-light.t3-bg"
+      ],
+      "api": "KoderaTokens.light.t3Bg",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 241,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t3-fg",
+      "aliases": [
+        "semantic.theme.light.t3-fg",
+        "color.theme-light.t3-fg"
+      ],
+      "api": "KoderaTokens.light.t3Fg",
+      "type": "color",
+      "value": {
+        "r": 138,
+        "g": 90,
+        "b": 16,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t4-bg",
+      "aliases": [
+        "semantic.theme.light.t4-bg",
+        "color.theme-light.t4-bg"
+      ],
+      "api": "KoderaTokens.light.t4Bg",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 229,
+        "b": 226,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t4-fg",
+      "aliases": [
+        "semantic.theme.light.t4-fg",
+        "color.theme-light.t4-fg"
+      ],
+      "api": "KoderaTokens.light.t4Fg",
+      "type": "color",
+      "value": {
+        "r": 181,
+        "g": 50,
+        "b": 31,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t5-bg",
+      "aliases": [
+        "semantic.theme.light.t5-bg",
+        "color.theme-light.t5-bg"
+      ],
+      "api": "KoderaTokens.light.t5Bg",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 242,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t5-fg",
+      "aliases": [
+        "semantic.theme.light.t5-fg",
+        "color.theme-light.t5-fg"
+      ],
+      "api": "KoderaTokens.light.t5Fg",
+      "type": "color",
+      "value": {
+        "r": 86,
+        "g": 98,
+        "b": 110,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t6-bg",
+      "aliases": [
+        "semantic.theme.light.t6-bg",
+        "color.theme-light.t6-bg"
+      ],
+      "api": "KoderaTokens.light.t6Bg",
+      "type": "color",
+      "value": {
+        "r": 220,
+        "g": 230,
+        "b": 240,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.t6-fg",
+      "aliases": [
+        "semantic.theme.light.t6-fg",
+        "color.theme-light.t6-fg"
+      ],
+      "api": "KoderaTokens.light.t6Fg",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 58,
+        "b": 69,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.elevated",
+      "aliases": [
+        "semantic.theme.light.elevated",
+        "color.theme-light.surface"
+      ],
+      "api": "KoderaTokens.light.elevated",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.scrim",
+      "aliases": [
+        "semantic.theme.light.scrim",
+        "color.theme-light.scrim"
+      ],
+      "api": "KoderaTokens.light.scrim",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 58,
+        "b": 69,
+        "a": 0.55
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.border-input",
+      "aliases": [
+        "semantic.theme.light.border-input",
+        "color.slate.500"
+      ],
+      "api": "KoderaTokens.light.borderInput",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 136,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.placeholder",
+      "aliases": [
+        "semantic.theme.light.placeholder",
+        "color.theme-light.ink-3"
+      ],
+      "api": "KoderaTokens.light.placeholder",
+      "type": "color",
+      "value": {
+        "r": 92,
+        "g": 104,
+        "b": 116,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.disabled",
+      "aliases": [
+        "semantic.theme.light.disabled",
+        "color.theme-light.muted"
+      ],
+      "api": "KoderaTokens.light.disabled",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 242,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.on-disabled",
+      "aliases": [
+        "semantic.theme.light.on-disabled",
+        "color.theme-light.ink-3"
+      ],
+      "api": "KoderaTokens.light.onDisabled",
+      "type": "color",
+      "value": {
+        "r": 92,
+        "g": 104,
+        "b": 116,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-1",
+      "aliases": [
+        "semantic.theme.light.cursor-1",
+        "color.theme-light.cursor-1"
+      ],
+      "api": "KoderaTokens.light.cursor1",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 96,
+        "b": 163,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-1-soft",
+      "aliases": [
+        "semantic.theme.light.cursor-1-soft",
+        "color.theme-light.cursor-1-soft"
+      ],
+      "api": "KoderaTokens.light.cursor1Soft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 240,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-2",
+      "aliases": [
+        "semantic.theme.light.cursor-2",
+        "color.theme-light.cursor-2"
+      ],
+      "api": "KoderaTokens.light.cursor2",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 54,
+        "b": 194,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-2-soft",
+      "aliases": [
+        "semantic.theme.light.cursor-2-soft",
+        "color.theme-light.cursor-2-soft"
+      ],
+      "api": "KoderaTokens.light.cursor2Soft",
+      "type": "color",
+      "value": {
+        "r": 239,
+        "g": 233,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-3",
+      "aliases": [
+        "semantic.theme.light.cursor-3",
+        "color.theme-light.cursor-3"
+      ],
+      "api": "KoderaTokens.light.cursor3",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 110,
+        "b": 120,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-3-soft",
+      "aliases": [
+        "semantic.theme.light.cursor-3-soft",
+        "color.theme-light.cursor-3-soft"
+      ],
+      "api": "KoderaTokens.light.cursor3Soft",
+      "type": "color",
+      "value": {
+        "r": 227,
+        "g": 244,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-4",
+      "aliases": [
+        "semantic.theme.light.cursor-4",
+        "color.theme-light.cursor-4"
+      ],
+      "api": "KoderaTokens.light.cursor4",
+      "type": "color",
+      "value": {
+        "r": 168,
+        "g": 36,
+        "b": 104,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-4-soft",
+      "aliases": [
+        "semantic.theme.light.cursor-4-soft",
+        "color.theme-light.cursor-4-soft"
+      ],
+      "api": "KoderaTokens.light.cursor4Soft",
+      "type": "color",
+      "value": {
+        "r": 250,
+        "g": 234,
+        "b": 242,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-5",
+      "aliases": [
+        "semantic.theme.light.cursor-5",
+        "color.theme-light.cursor-5"
+      ],
+      "api": "KoderaTokens.light.cursor5",
+      "type": "color",
+      "value": {
+        "r": 172,
+        "g": 77,
+        "b": 12,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-5-soft",
+      "aliases": [
+        "semantic.theme.light.cursor-5-soft",
+        "color.theme-light.cursor-5-soft"
+      ],
+      "api": "KoderaTokens.light.cursor5Soft",
+      "type": "color",
+      "value": {
+        "r": 253,
+        "g": 240,
+        "b": 228,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-6",
+      "aliases": [
+        "semantic.theme.light.cursor-6",
+        "color.theme-light.cursor-6"
+      ],
+      "api": "KoderaTokens.light.cursor6",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 117,
+        "b": 86,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.cursor-6-soft",
+      "aliases": [
+        "semantic.theme.light.cursor-6-soft",
+        "color.theme-light.cursor-6-soft"
+      ],
+      "api": "KoderaTokens.light.cursor6Soft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 245,
+        "b": 238,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-1-bg",
+      "aliases": [
+        "semantic.theme.light.tag-1-bg",
+        "color.theme-light.tag-1-bg"
+      ],
+      "api": "KoderaTokens.light.tag1Bg",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 238,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-1-fg",
+      "aliases": [
+        "semantic.theme.light.tag-1-fg",
+        "color.theme-light.tag-1-fg"
+      ],
+      "api": "KoderaTokens.light.tag1Fg",
+      "type": "color",
+      "value": {
+        "r": 77,
+        "g": 44,
+        "b": 166,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-2-bg",
+      "aliases": [
+        "semantic.theme.light.tag-2-bg",
+        "color.theme-light.tag-2-bg"
+      ],
+      "api": "KoderaTokens.light.tag2Bg",
+      "type": "color",
+      "value": {
+        "r": 229,
+        "g": 244,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-2-fg",
+      "aliases": [
+        "semantic.theme.light.tag-2-fg",
+        "color.theme-light.tag-2-fg"
+      ],
+      "api": "KoderaTokens.light.tag2Fg",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 94,
+        "b": 106,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-3-bg",
+      "aliases": [
+        "semantic.theme.light.tag-3-bg",
+        "color.theme-light.tag-3-bg"
+      ],
+      "api": "KoderaTokens.light.tag3Bg",
+      "type": "color",
+      "value": {
+        "r": 249,
+        "g": 235,
+        "b": 244,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-3-fg",
+      "aliases": [
+        "semantic.theme.light.tag-3-fg",
+        "color.theme-light.tag-3-fg"
+      ],
+      "api": "KoderaTokens.light.tag3Fg",
+      "type": "color",
+      "value": {
+        "r": 138,
+        "g": 36,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-4-bg",
+      "aliases": [
+        "semantic.theme.light.tag-4-bg",
+        "color.theme-light.tag-4-bg"
+      ],
+      "api": "KoderaTokens.light.tag4Bg",
+      "type": "color",
+      "value": {
+        "r": 230,
+        "g": 241,
+        "b": 250,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-4-fg",
+      "aliases": [
+        "semantic.theme.light.tag-4-fg",
+        "color.theme-light.tag-4-fg"
+      ],
+      "api": "KoderaTokens.light.tag4Fg",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 81,
+        "b": 122,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-5-bg",
+      "aliases": [
+        "semantic.theme.light.tag-5-bg",
+        "color.theme-light.tag-5-bg"
+      ],
+      "api": "KoderaTokens.light.tag5Bg",
+      "type": "color",
+      "value": {
+        "r": 245,
+        "g": 236,
+        "b": 249,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-5-fg",
+      "aliases": [
+        "semantic.theme.light.tag-5-fg",
+        "color.theme-light.tag-5-fg"
+      ],
+      "api": "KoderaTokens.light.tag5Fg",
+      "type": "color",
+      "value": {
+        "r": 110,
+        "g": 40,
+        "b": 137,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-6-bg",
+      "aliases": [
+        "semantic.theme.light.tag-6-bg",
+        "color.theme-light.tag-6-bg"
+      ],
+      "api": "KoderaTokens.light.tag6Bg",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 243,
+        "b": 230,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.light.tag-6-fg",
+      "aliases": [
+        "semantic.theme.light.tag-6-fg",
+        "color.theme-light.tag-6-fg"
+      ],
+      "api": "KoderaTokens.light.tag6Fg",
+      "type": "color",
+      "value": {
+        "r": 63,
+        "g": 87,
+        "b": 27,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.page",
+      "aliases": [
+        "semantic.theme.dark.page",
+        "color.theme-dark.page"
+      ],
+      "api": "KoderaTokens.dark.page",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 14,
+        "b": 20,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.surface",
+      "aliases": [
+        "semantic.theme.dark.surface",
+        "color.theme-dark.surface"
+      ],
+      "api": "KoderaTokens.dark.surface",
+      "type": "color",
+      "value": {
+        "r": 19,
+        "g": 24,
+        "b": 35,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.sunken",
+      "aliases": [
+        "semantic.theme.dark.sunken",
+        "color.theme-dark.sunken"
+      ],
+      "api": "KoderaTokens.dark.sunken",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 18,
+        "b": 25,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.muted",
+      "aliases": [
+        "semantic.theme.dark.muted",
+        "color.theme-dark.muted"
+      ],
+      "api": "KoderaTokens.dark.muted",
+      "type": "color",
+      "value": {
+        "r": 29,
+        "g": 36,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.muted-2",
+      "aliases": [
+        "semantic.theme.dark.muted-2",
+        "color.theme-dark.muted-2"
+      ],
+      "api": "KoderaTokens.dark.muted2",
+      "type": "color",
+      "value": {
+        "r": 38,
+        "g": 46,
+        "b": 62,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.hairline",
+      "aliases": [
+        "semantic.theme.dark.hairline",
+        "color.theme-dark.hairline"
+      ],
+      "api": "KoderaTokens.dark.hairline",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 27,
+        "b": 37,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.border",
+      "aliases": [
+        "semantic.theme.dark.border",
+        "color.theme-dark.border"
+      ],
+      "api": "KoderaTokens.dark.border",
+      "type": "color",
+      "value": {
+        "r": 38,
+        "g": 46,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.border-soft",
+      "aliases": [
+        "semantic.theme.dark.border-soft",
+        "color.theme-dark.border-soft"
+      ],
+      "api": "KoderaTokens.dark.borderSoft",
+      "type": "color",
+      "value": {
+        "r": 29,
+        "g": 36,
+        "b": 48,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.border-strong",
+      "aliases": [
+        "semantic.theme.dark.border-strong",
+        "color.theme-dark.border-strong"
+      ],
+      "api": "KoderaTokens.dark.borderStrong",
+      "type": "color",
+      "value": {
+        "r": 52,
+        "g": 64,
+        "b": 86,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.inverse",
+      "aliases": [
+        "semantic.theme.dark.inverse",
+        "color.theme-dark.inverse"
+      ],
+      "api": "KoderaTokens.dark.inverse",
+      "type": "color",
+      "value": {
+        "r": 7,
+        "g": 9,
+        "b": 13,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.inverse-2",
+      "aliases": [
+        "semantic.theme.dark.inverse-2",
+        "color.theme-dark.inverse-2"
+      ],
+      "api": "KoderaTokens.dark.inverse2",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 27,
+        "b": 38,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.rail-line",
+      "aliases": [
+        "semantic.theme.dark.rail-line",
+        "color.theme-dark.rail-line"
+      ],
+      "api": "KoderaTokens.dark.railLine",
+      "type": "color",
+      "value": {
+        "r": 42,
+        "g": 50,
+        "b": 66,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ink",
+      "aliases": [
+        "semantic.theme.dark.ink",
+        "color.theme-dark.ink"
+      ],
+      "api": "KoderaTokens.dark.ink",
+      "type": "color",
+      "value": {
+        "r": 237,
+        "g": 241,
+        "b": 247,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ink-2",
+      "aliases": [
+        "semantic.theme.dark.ink-2",
+        "color.theme-dark.ink-2"
+      ],
+      "api": "KoderaTokens.dark.ink2",
+      "type": "color",
+      "value": {
+        "r": 184,
+        "g": 194,
+        "b": 209,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ink-3",
+      "aliases": [
+        "semantic.theme.dark.ink-3",
+        "color.theme-dark.ink-3"
+      ],
+      "api": "KoderaTokens.dark.ink3",
+      "type": "color",
+      "value": {
+        "r": 151,
+        "g": 163,
+        "b": 181,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ink-4",
+      "aliases": [
+        "semantic.theme.dark.ink-4",
+        "color.theme-dark.ink-4"
+      ],
+      "api": "KoderaTokens.dark.ink4",
+      "type": "color",
+      "value": {
+        "r": 125,
+        "g": 138,
+        "b": 157,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.on-inverse",
+      "aliases": [
+        "semantic.theme.dark.on-inverse",
+        "color.theme-dark.on-inverse"
+      ],
+      "api": "KoderaTokens.dark.onInverse",
+      "type": "color",
+      "value": {
+        "r": 243,
+        "g": 247,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.on-inverse-dim",
+      "aliases": [
+        "semantic.theme.dark.on-inverse-dim",
+        "color.theme-dark.on-inverse-dim"
+      ],
+      "api": "KoderaTokens.dark.onInverseDim",
+      "type": "color",
+      "value": {
+        "r": 161,
+        "g": 173,
+        "b": 190,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.action",
+      "aliases": [
+        "semantic.theme.dark.action",
+        "color.theme-dark.action"
+      ],
+      "api": "KoderaTokens.dark.action",
+      "type": "color",
+      "value": {
+        "r": 67,
+        "g": 97,
+        "b": 238,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.action-hover",
+      "aliases": [
+        "semantic.theme.dark.action-hover",
+        "color.theme-dark.action-hover"
+      ],
+      "api": "KoderaTokens.dark.actionHover",
+      "type": "color",
+      "value": {
+        "r": 58,
+        "g": 89,
+        "b": 232,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.accent-soft",
+      "aliases": [
+        "semantic.theme.dark.accent-soft",
+        "color.theme-dark.accent-soft"
+      ],
+      "api": "KoderaTokens.dark.accentSoft",
+      "type": "color",
+      "value": {
+        "r": 26,
+        "g": 35,
+        "b": 80,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.accent-ink",
+      "aliases": [
+        "semantic.theme.dark.accent-ink",
+        "color.theme-dark.accent-ink"
+      ],
+      "api": "KoderaTokens.dark.accentInk",
+      "type": "color",
+      "value": {
+        "r": 174,
+        "g": 190,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ok-on-dark",
+      "aliases": [
+        "semantic.theme.dark.ok-on-dark",
+        "color.theme-dark.ok-on-dark"
+      ],
+      "api": "KoderaTokens.dark.okOnDark",
+      "type": "color",
+      "value": {
+        "r": 127,
+        "g": 209,
+        "b": 163,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.bad-on-dark",
+      "aliases": [
+        "semantic.theme.dark.bad-on-dark",
+        "color.theme-dark.bad-on-dark"
+      ],
+      "api": "KoderaTokens.dark.badOnDark",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ok",
+      "aliases": [
+        "semantic.theme.dark.ok",
+        "color.theme-dark.ok"
+      ],
+      "api": "KoderaTokens.dark.ok",
+      "type": "color",
+      "value": {
+        "r": 53,
+        "g": 169,
+        "b": 106,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ok-soft",
+      "aliases": [
+        "semantic.theme.dark.ok-soft",
+        "color.theme-dark.ok-soft"
+      ],
+      "api": "KoderaTokens.dark.okSoft",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 42,
+        "b": 29,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ok-ink",
+      "aliases": [
+        "semantic.theme.dark.ok-ink",
+        "color.theme-dark.ok-ink"
+      ],
+      "api": "KoderaTokens.dark.okInk",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 206,
+        "b": 147,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.ok-border",
+      "aliases": [
+        "semantic.theme.dark.ok-border",
+        "color.theme-dark.ok-border"
+      ],
+      "api": "KoderaTokens.dark.okBorder",
+      "type": "color",
+      "value": {
+        "r": 31,
+        "g": 75,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.warn",
+      "aliases": [
+        "semantic.theme.dark.warn",
+        "color.theme-dark.warn"
+      ],
+      "api": "KoderaTokens.dark.warn",
+      "type": "color",
+      "value": {
+        "r": 216,
+        "g": 155,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.warn-soft",
+      "aliases": [
+        "semantic.theme.dark.warn-soft",
+        "color.theme-dark.warn-soft"
+      ],
+      "api": "KoderaTokens.dark.warnSoft",
+      "type": "color",
+      "value": {
+        "r": 44,
+        "g": 36,
+        "b": 19,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.warn-ink",
+      "aliases": [
+        "semantic.theme.dark.warn-ink",
+        "color.theme-dark.warn-ink"
+      ],
+      "api": "KoderaTokens.dark.warnInk",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 178,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.bad",
+      "aliases": [
+        "semantic.theme.dark.bad",
+        "color.theme-dark.bad"
+      ],
+      "api": "KoderaTokens.dark.bad",
+      "type": "color",
+      "value": {
+        "r": 194,
+        "g": 55,
+        "b": 43,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.bad-soft",
+      "aliases": [
+        "semantic.theme.dark.bad-soft",
+        "color.theme-dark.bad-soft"
+      ],
+      "api": "KoderaTokens.dark.badSoft",
+      "type": "color",
+      "value": {
+        "r": 51,
+        "g": 26,
+        "b": 26,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.bad-ink",
+      "aliases": [
+        "semantic.theme.dark.bad-ink",
+        "color.theme-dark.bad-ink"
+      ],
+      "api": "KoderaTokens.dark.badInk",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.shadow-1",
+      "aliases": [
+        "semantic.theme.dark.shadow-1",
+        "color.theme-dark.shadow-1"
+      ],
+      "api": "KoderaTokens.dark.shadow1",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.5
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.shadow-2",
+      "aliases": [
+        "semantic.theme.dark.shadow-2",
+        "color.theme-dark.shadow-2"
+      ],
+      "api": "KoderaTokens.dark.shadow2",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.62
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t1-bg",
+      "aliases": [
+        "semantic.theme.dark.t1-bg",
+        "color.theme-dark.t1-bg"
+      ],
+      "api": "KoderaTokens.dark.t1Bg",
+      "type": "color",
+      "value": {
+        "r": 28,
+        "g": 37,
+        "b": 64,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t1-fg",
+      "aliases": [
+        "semantic.theme.dark.t1-fg",
+        "color.theme-dark.t1-fg"
+      ],
+      "api": "KoderaTokens.dark.t1Fg",
+      "type": "color",
+      "value": {
+        "r": 169,
+        "g": 187,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t2-bg",
+      "aliases": [
+        "semantic.theme.dark.t2-bg",
+        "color.theme-dark.t2-bg"
+      ],
+      "api": "KoderaTokens.dark.t2Bg",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 42,
+        "b": 29,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t2-fg",
+      "aliases": [
+        "semantic.theme.dark.t2-fg",
+        "color.theme-dark.t2-fg"
+      ],
+      "api": "KoderaTokens.dark.t2Fg",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 206,
+        "b": 147,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t3-bg",
+      "aliases": [
+        "semantic.theme.dark.t3-bg",
+        "color.theme-dark.t3-bg"
+      ],
+      "api": "KoderaTokens.dark.t3Bg",
+      "type": "color",
+      "value": {
+        "r": 44,
+        "g": 36,
+        "b": 19,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t3-fg",
+      "aliases": [
+        "semantic.theme.dark.t3-fg",
+        "color.theme-dark.t3-fg"
+      ],
+      "api": "KoderaTokens.dark.t3Fg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 178,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t4-bg",
+      "aliases": [
+        "semantic.theme.dark.t4-bg",
+        "color.theme-dark.t4-bg"
+      ],
+      "api": "KoderaTokens.dark.t4Bg",
+      "type": "color",
+      "value": {
+        "r": 51,
+        "g": 26,
+        "b": 26,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t4-fg",
+      "aliases": [
+        "semantic.theme.dark.t4-fg",
+        "color.theme-dark.t4-fg"
+      ],
+      "api": "KoderaTokens.dark.t4Fg",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t5-bg",
+      "aliases": [
+        "semantic.theme.dark.t5-bg",
+        "color.theme-dark.t5-bg"
+      ],
+      "api": "KoderaTokens.dark.t5Bg",
+      "type": "color",
+      "value": {
+        "r": 33,
+        "g": 42,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t5-fg",
+      "aliases": [
+        "semantic.theme.dark.t5-fg",
+        "color.theme-dark.t5-fg"
+      ],
+      "api": "KoderaTokens.dark.t5Fg",
+      "type": "color",
+      "value": {
+        "r": 185,
+        "g": 198,
+        "b": 212,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t6-bg",
+      "aliases": [
+        "semantic.theme.dark.t6-bg",
+        "color.theme-dark.t6-bg"
+      ],
+      "api": "KoderaTokens.dark.t6Bg",
+      "type": "color",
+      "value": {
+        "r": 38,
+        "g": 48,
+        "b": 58,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.t6-fg",
+      "aliases": [
+        "semantic.theme.dark.t6-fg",
+        "color.theme-dark.t6-fg"
+      ],
+      "api": "KoderaTokens.dark.t6Fg",
+      "type": "color",
+      "value": {
+        "r": 232,
+        "g": 239,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.elevated",
+      "aliases": [
+        "semantic.theme.dark.elevated",
+        "color.theme-dark.elevated"
+      ],
+      "api": "KoderaTokens.dark.elevated",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 33,
+        "b": 48,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.scrim",
+      "aliases": [
+        "semantic.theme.dark.scrim",
+        "color.theme-dark.scrim"
+      ],
+      "api": "KoderaTokens.dark.scrim",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.6
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.border-input",
+      "aliases": [
+        "semantic.theme.dark.border-input",
+        "color.theme-dark.border-input"
+      ],
+      "api": "KoderaTokens.dark.borderInput",
+      "type": "color",
+      "value": {
+        "r": 110,
+        "g": 125,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.placeholder",
+      "aliases": [
+        "semantic.theme.dark.placeholder",
+        "color.theme-dark.placeholder"
+      ],
+      "api": "KoderaTokens.dark.placeholder",
+      "type": "color",
+      "value": {
+        "r": 143,
+        "g": 155,
+        "b": 174,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.disabled",
+      "aliases": [
+        "semantic.theme.dark.disabled",
+        "color.theme-dark.muted-2"
+      ],
+      "api": "KoderaTokens.dark.disabled",
+      "type": "color",
+      "value": {
+        "r": 38,
+        "g": 46,
+        "b": 62,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.on-disabled",
+      "aliases": [
+        "semantic.theme.dark.on-disabled",
+        "color.theme-dark.ink-3"
+      ],
+      "api": "KoderaTokens.dark.onDisabled",
+      "type": "color",
+      "value": {
+        "r": 151,
+        "g": 163,
+        "b": 181,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-1",
+      "aliases": [
+        "semantic.theme.dark.cursor-1",
+        "color.theme-dark.cursor-1"
+      ],
+      "api": "KoderaTokens.dark.cursor1",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 113,
+        "b": 186,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-1-soft",
+      "aliases": [
+        "semantic.theme.dark.cursor-1-soft",
+        "color.theme-dark.cursor-1-soft"
+      ],
+      "api": "KoderaTokens.dark.cursor1Soft",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 37,
+        "b": 54,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-2",
+      "aliases": [
+        "semantic.theme.dark.cursor-2",
+        "color.theme-dark.cursor-2"
+      ],
+      "api": "KoderaTokens.dark.cursor2",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 82,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-2-soft",
+      "aliases": [
+        "semantic.theme.dark.cursor-2-soft",
+        "color.theme-dark.cursor-2-soft"
+      ],
+      "api": "KoderaTokens.dark.cursor2Soft",
+      "type": "color",
+      "value": {
+        "r": 36,
+        "g": 27,
+        "b": 62,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-3",
+      "aliases": [
+        "semantic.theme.dark.cursor-3",
+        "color.theme-dark.cursor-3"
+      ],
+      "api": "KoderaTokens.dark.cursor3",
+      "type": "color",
+      "value": {
+        "r": 20,
+        "g": 121,
+        "b": 132,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-3-soft",
+      "aliases": [
+        "semantic.theme.dark.cursor-3-soft",
+        "color.theme-dark.cursor-3-soft"
+      ],
+      "api": "KoderaTokens.dark.cursor3Soft",
+      "type": "color",
+      "value": {
+        "r": 15,
+        "g": 38,
+        "b": 44,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-4",
+      "aliases": [
+        "semantic.theme.dark.cursor-4",
+        "color.theme-dark.cursor-4"
+      ],
+      "api": "KoderaTokens.dark.cursor4",
+      "type": "color",
+      "value": {
+        "r": 193,
+        "g": 53,
+        "b": 123,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-4-soft",
+      "aliases": [
+        "semantic.theme.dark.cursor-4-soft",
+        "color.theme-dark.cursor-4-soft"
+      ],
+      "api": "KoderaTokens.dark.cursor4Soft",
+      "type": "color",
+      "value": {
+        "r": 50,
+        "g": 23,
+        "b": 40,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-5",
+      "aliases": [
+        "semantic.theme.dark.cursor-5",
+        "color.theme-dark.cursor-5"
+      ],
+      "api": "KoderaTokens.dark.cursor5",
+      "type": "color",
+      "value": {
+        "r": 177,
+        "g": 83,
+        "b": 16,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-5-soft",
+      "aliases": [
+        "semantic.theme.dark.cursor-5-soft",
+        "color.theme-dark.cursor-5-soft"
+      ],
+      "api": "KoderaTokens.dark.cursor5Soft",
+      "type": "color",
+      "value": {
+        "r": 46,
+        "g": 30,
+        "b": 18,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-6",
+      "aliases": [
+        "semantic.theme.dark.cursor-6",
+        "color.theme-dark.cursor-6"
+      ],
+      "api": "KoderaTokens.dark.cursor6",
+      "type": "color",
+      "value": {
+        "r": 21,
+        "g": 123,
+        "b": 91,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.cursor-6-soft",
+      "aliases": [
+        "semantic.theme.dark.cursor-6-soft",
+        "color.theme-dark.cursor-6-soft"
+      ],
+      "api": "KoderaTokens.dark.cursor6Soft",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 41,
+        "b": 34,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-1-bg",
+      "aliases": [
+        "semantic.theme.dark.tag-1-bg",
+        "color.theme-dark.tag-1-bg"
+      ],
+      "api": "KoderaTokens.dark.tag1Bg",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 27,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-1-fg",
+      "aliases": [
+        "semantic.theme.dark.tag-1-fg",
+        "color.theme-dark.tag-1-fg"
+      ],
+      "api": "KoderaTokens.dark.tag1Fg",
+      "type": "color",
+      "value": {
+        "r": 213,
+        "g": 200,
+        "b": 250,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-2-bg",
+      "aliases": [
+        "semantic.theme.dark.tag-2-bg",
+        "color.theme-dark.tag-2-bg"
+      ],
+      "api": "KoderaTokens.dark.tag2Bg",
+      "type": "color",
+      "value": {
+        "r": 16,
+        "g": 40,
+        "b": 46,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-2-fg",
+      "aliases": [
+        "semantic.theme.dark.tag-2-fg",
+        "color.theme-dark.tag-2-fg"
+      ],
+      "api": "KoderaTokens.dark.tag2Fg",
+      "type": "color",
+      "value": {
+        "r": 159,
+        "g": 224,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-3-bg",
+      "aliases": [
+        "semantic.theme.dark.tag-3-bg",
+        "color.theme-dark.tag-3-bg"
+      ],
+      "api": "KoderaTokens.dark.tag3Bg",
+      "type": "color",
+      "value": {
+        "r": 49,
+        "g": 23,
+        "b": 40,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-3-fg",
+      "aliases": [
+        "semantic.theme.dark.tag-3-fg",
+        "color.theme-dark.tag-3-fg"
+      ],
+      "api": "KoderaTokens.dark.tag3Fg",
+      "type": "color",
+      "value": {
+        "r": 240,
+        "g": 185,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-4-bg",
+      "aliases": [
+        "semantic.theme.dark.tag-4-bg",
+        "color.theme-dark.tag-4-bg"
+      ],
+      "api": "KoderaTokens.dark.tag4Bg",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 38,
+        "b": 56,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-4-fg",
+      "aliases": [
+        "semantic.theme.dark.tag-4-fg",
+        "color.theme-dark.tag-4-fg"
+      ],
+      "api": "KoderaTokens.dark.tag4Fg",
+      "type": "color",
+      "value": {
+        "r": 168,
+        "g": 213,
+        "b": 245,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-5-bg",
+      "aliases": [
+        "semantic.theme.dark.tag-5-bg",
+        "color.theme-dark.tag-5-bg"
+      ],
+      "api": "KoderaTokens.dark.tag5Bg",
+      "type": "color",
+      "value": {
+        "r": 43,
+        "g": 24,
+        "b": 54,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-5-fg",
+      "aliases": [
+        "semantic.theme.dark.tag-5-fg",
+        "color.theme-dark.tag-5-fg"
+      ],
+      "api": "KoderaTokens.dark.tag5Fg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 190,
+        "b": 245,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-6-bg",
+      "aliases": [
+        "semantic.theme.dark.tag-6-bg",
+        "color.theme-dark.tag-6-bg"
+      ],
+      "api": "KoderaTokens.dark.tag6Bg",
+      "type": "color",
+      "value": {
+        "r": 30,
+        "g": 40,
+        "b": 20,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.dark.tag-6-fg",
+      "aliases": [
+        "semantic.theme.dark.tag-6-fg",
+        "color.theme-dark.tag-6-fg"
+      ],
+      "api": "KoderaTokens.dark.tag6Fg",
+      "type": "color",
+      "value": {
+        "r": 199,
+        "g": 222,
+        "b": 160,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.page",
+      "aliases": [
+        "semantic.theme.black.page",
+        "color.theme-black.page"
+      ],
+      "api": "KoderaTokens.black.page",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.surface",
+      "aliases": [
+        "semantic.theme.black.surface",
+        "color.theme-black.surface"
+      ],
+      "api": "KoderaTokens.black.surface",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 12,
+        "b": 14,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.sunken",
+      "aliases": [
+        "semantic.theme.black.sunken",
+        "color.theme-black.sunken"
+      ],
+      "api": "KoderaTokens.black.sunken",
+      "type": "color",
+      "value": {
+        "r": 6,
+        "g": 6,
+        "b": 7,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.muted",
+      "aliases": [
+        "semantic.theme.black.muted",
+        "color.theme-black.muted"
+      ],
+      "api": "KoderaTokens.black.muted",
+      "type": "color",
+      "value": {
+        "r": 21,
+        "g": 23,
+        "b": 26,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.muted-2",
+      "aliases": [
+        "semantic.theme.black.muted-2",
+        "color.theme-black.muted-2"
+      ],
+      "api": "KoderaTokens.black.muted2",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 30,
+        "b": 34,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.hairline",
+      "aliases": [
+        "semantic.theme.black.hairline",
+        "color.theme-black.hairline"
+      ],
+      "api": "KoderaTokens.black.hairline",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 19,
+        "b": 22,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.border",
+      "aliases": [
+        "semantic.theme.black.border",
+        "color.theme-black.border"
+      ],
+      "api": "KoderaTokens.black.border",
+      "type": "color",
+      "value": {
+        "r": 36,
+        "g": 40,
+        "b": 45,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.border-soft",
+      "aliases": [
+        "semantic.theme.black.border-soft",
+        "color.theme-black.border-soft"
+      ],
+      "api": "KoderaTokens.black.borderSoft",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 30,
+        "b": 34,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.border-strong",
+      "aliases": [
+        "semantic.theme.black.border-strong",
+        "color.theme-black.border-strong"
+      ],
+      "api": "KoderaTokens.black.borderStrong",
+      "type": "color",
+      "value": {
+        "r": 52,
+        "g": 58,
+        "b": 65,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.inverse",
+      "aliases": [
+        "semantic.theme.black.inverse",
+        "color.theme-black.inverse"
+      ],
+      "api": "KoderaTokens.black.inverse",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.inverse-2",
+      "aliases": [
+        "semantic.theme.black.inverse-2",
+        "color.theme-black.inverse-2"
+      ],
+      "api": "KoderaTokens.black.inverse2",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 25,
+        "b": 29,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.rail-line",
+      "aliases": [
+        "semantic.theme.black.rail-line",
+        "color.theme-black.rail-line"
+      ],
+      "api": "KoderaTokens.black.railLine",
+      "type": "color",
+      "value": {
+        "r": 46,
+        "g": 52,
+        "b": 59,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ink",
+      "aliases": [
+        "semantic.theme.black.ink",
+        "color.theme-black.ink"
+      ],
+      "api": "KoderaTokens.black.ink",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 244,
+        "b": 248,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ink-2",
+      "aliases": [
+        "semantic.theme.black.ink-2",
+        "color.theme-black.ink-2"
+      ],
+      "api": "KoderaTokens.black.ink2",
+      "type": "color",
+      "value": {
+        "r": 195,
+        "g": 205,
+        "b": 216,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ink-3",
+      "aliases": [
+        "semantic.theme.black.ink-3",
+        "color.theme-black.ink-3"
+      ],
+      "api": "KoderaTokens.black.ink3",
+      "type": "color",
+      "value": {
+        "r": 155,
+        "g": 167,
+        "b": 180,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ink-4",
+      "aliases": [
+        "semantic.theme.black.ink-4",
+        "color.theme-black.ink-4"
+      ],
+      "api": "KoderaTokens.black.ink4",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 135,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.on-inverse",
+      "aliases": [
+        "semantic.theme.black.on-inverse",
+        "color.theme-black.on-inverse"
+      ],
+      "api": "KoderaTokens.black.onInverse",
+      "type": "color",
+      "value": {
+        "r": 247,
+        "g": 250,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.on-inverse-dim",
+      "aliases": [
+        "semantic.theme.black.on-inverse-dim",
+        "color.theme-black.on-inverse-dim"
+      ],
+      "api": "KoderaTokens.black.onInverseDim",
+      "type": "color",
+      "value": {
+        "r": 163,
+        "g": 175,
+        "b": 188,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.action",
+      "aliases": [
+        "semantic.theme.black.action",
+        "color.theme-black.action"
+      ],
+      "api": "KoderaTokens.black.action",
+      "type": "color",
+      "value": {
+        "r": 67,
+        "g": 97,
+        "b": 238,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.action-hover",
+      "aliases": [
+        "semantic.theme.black.action-hover",
+        "color.theme-black.action-hover"
+      ],
+      "api": "KoderaTokens.black.actionHover",
+      "type": "color",
+      "value": {
+        "r": 58,
+        "g": 89,
+        "b": 232,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.accent-soft",
+      "aliases": [
+        "semantic.theme.black.accent-soft",
+        "color.theme-black.accent-soft"
+      ],
+      "api": "KoderaTokens.black.accentSoft",
+      "type": "color",
+      "value": {
+        "r": 20,
+        "g": 26,
+        "b": 46,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.accent-ink",
+      "aliases": [
+        "semantic.theme.black.accent-ink",
+        "color.theme-black.accent-ink"
+      ],
+      "api": "KoderaTokens.black.accentInk",
+      "type": "color",
+      "value": {
+        "r": 174,
+        "g": 190,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ok-on-dark",
+      "aliases": [
+        "semantic.theme.black.ok-on-dark",
+        "color.theme-black.ok-on-dark"
+      ],
+      "api": "KoderaTokens.black.okOnDark",
+      "type": "color",
+      "value": {
+        "r": 127,
+        "g": 209,
+        "b": 163,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.bad-on-dark",
+      "aliases": [
+        "semantic.theme.black.bad-on-dark",
+        "color.theme-black.bad-on-dark"
+      ],
+      "api": "KoderaTokens.black.badOnDark",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ok",
+      "aliases": [
+        "semantic.theme.black.ok",
+        "color.theme-black.ok"
+      ],
+      "api": "KoderaTokens.black.ok",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 158,
+        "b": 99,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ok-soft",
+      "aliases": [
+        "semantic.theme.black.ok-soft",
+        "color.theme-black.ok-soft"
+      ],
+      "api": "KoderaTokens.black.okSoft",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 31,
+        "b": 20,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ok-ink",
+      "aliases": [
+        "semantic.theme.black.ok-ink",
+        "color.theme-black.ok-ink"
+      ],
+      "api": "KoderaTokens.black.okInk",
+      "type": "color",
+      "value": {
+        "r": 95,
+        "g": 203,
+        "b": 144,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.ok-border",
+      "aliases": [
+        "semantic.theme.black.ok-border",
+        "color.theme-black.ok-border"
+      ],
+      "api": "KoderaTokens.black.okBorder",
+      "type": "color",
+      "value": {
+        "r": 23,
+        "g": 58,
+        "b": 39,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.warn",
+      "aliases": [
+        "semantic.theme.black.warn",
+        "color.theme-black.warn"
+      ],
+      "api": "KoderaTokens.black.warn",
+      "type": "color",
+      "value": {
+        "r": 198,
+        "g": 138,
+        "b": 50,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.warn-soft",
+      "aliases": [
+        "semantic.theme.black.warn-soft",
+        "color.theme-black.warn-soft"
+      ],
+      "api": "KoderaTokens.black.warnSoft",
+      "type": "color",
+      "value": {
+        "r": 34,
+        "g": 27,
+        "b": 14,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.warn-ink",
+      "aliases": [
+        "semantic.theme.black.warn-ink",
+        "color.theme-black.warn-ink"
+      ],
+      "api": "KoderaTokens.black.warnInk",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 178,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.bad",
+      "aliases": [
+        "semantic.theme.black.bad",
+        "color.theme-black.bad"
+      ],
+      "api": "KoderaTokens.black.bad",
+      "type": "color",
+      "value": {
+        "r": 194,
+        "g": 55,
+        "b": 43,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.bad-soft",
+      "aliases": [
+        "semantic.theme.black.bad-soft",
+        "color.theme-black.bad-soft"
+      ],
+      "api": "KoderaTokens.black.badSoft",
+      "type": "color",
+      "value": {
+        "r": 37,
+        "g": 18,
+        "b": 15,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.bad-ink",
+      "aliases": [
+        "semantic.theme.black.bad-ink",
+        "color.theme-black.bad-ink"
+      ],
+      "api": "KoderaTokens.black.badInk",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.shadow-1",
+      "aliases": [
+        "semantic.theme.black.shadow-1",
+        "color.theme-black.shadow-1"
+      ],
+      "api": "KoderaTokens.black.shadow1",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.7
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.shadow-2",
+      "aliases": [
+        "semantic.theme.black.shadow-2",
+        "color.theme-black.shadow-2"
+      ],
+      "api": "KoderaTokens.black.shadow2",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.82
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t1-bg",
+      "aliases": [
+        "semantic.theme.black.t1-bg",
+        "color.theme-black.t1-bg"
+      ],
+      "api": "KoderaTokens.black.t1Bg",
+      "type": "color",
+      "value": {
+        "r": 20,
+        "g": 26,
+        "b": 46,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t1-fg",
+      "aliases": [
+        "semantic.theme.black.t1-fg",
+        "color.theme-black.t1-fg"
+      ],
+      "api": "KoderaTokens.black.t1Fg",
+      "type": "color",
+      "value": {
+        "r": 169,
+        "g": 187,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t2-bg",
+      "aliases": [
+        "semantic.theme.black.t2-bg",
+        "color.theme-black.t2-bg"
+      ],
+      "api": "KoderaTokens.black.t2Bg",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 31,
+        "b": 20,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t2-fg",
+      "aliases": [
+        "semantic.theme.black.t2-fg",
+        "color.theme-black.t2-fg"
+      ],
+      "api": "KoderaTokens.black.t2Fg",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 206,
+        "b": 147,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t3-bg",
+      "aliases": [
+        "semantic.theme.black.t3-bg",
+        "color.theme-black.t3-bg"
+      ],
+      "api": "KoderaTokens.black.t3Bg",
+      "type": "color",
+      "value": {
+        "r": 34,
+        "g": 27,
+        "b": 14,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t3-fg",
+      "aliases": [
+        "semantic.theme.black.t3-fg",
+        "color.theme-black.t3-fg"
+      ],
+      "api": "KoderaTokens.black.t3Fg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 178,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t4-bg",
+      "aliases": [
+        "semantic.theme.black.t4-bg",
+        "color.theme-black.t4-bg"
+      ],
+      "api": "KoderaTokens.black.t4Bg",
+      "type": "color",
+      "value": {
+        "r": 37,
+        "g": 18,
+        "b": 15,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t4-fg",
+      "aliases": [
+        "semantic.theme.black.t4-fg",
+        "color.theme-black.t4-fg"
+      ],
+      "api": "KoderaTokens.black.t4Fg",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t5-bg",
+      "aliases": [
+        "semantic.theme.black.t5-bg",
+        "color.theme-black.t5-bg"
+      ],
+      "api": "KoderaTokens.black.t5Bg",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 25,
+        "b": 29,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t5-fg",
+      "aliases": [
+        "semantic.theme.black.t5-fg",
+        "color.theme-black.t5-fg"
+      ],
+      "api": "KoderaTokens.black.t5Fg",
+      "type": "color",
+      "value": {
+        "r": 195,
+        "g": 205,
+        "b": 216,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t6-bg",
+      "aliases": [
+        "semantic.theme.black.t6-bg",
+        "color.theme-black.t6-bg"
+      ],
+      "api": "KoderaTokens.black.t6Bg",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 30,
+        "b": 34,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.t6-fg",
+      "aliases": [
+        "semantic.theme.black.t6-fg",
+        "color.theme-black.t6-fg"
+      ],
+      "api": "KoderaTokens.black.t6Fg",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 244,
+        "b": 248,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.elevated",
+      "aliases": [
+        "semantic.theme.black.elevated",
+        "color.theme-black.elevated"
+      ],
+      "api": "KoderaTokens.black.elevated",
+      "type": "color",
+      "value": {
+        "r": 20,
+        "g": 22,
+        "b": 25,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.scrim",
+      "aliases": [
+        "semantic.theme.black.scrim",
+        "color.theme-black.scrim"
+      ],
+      "api": "KoderaTokens.black.scrim",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.72
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.border-input",
+      "aliases": [
+        "semantic.theme.black.border-input",
+        "color.theme-black.border-input"
+      ],
+      "api": "KoderaTokens.black.borderInput",
+      "type": "color",
+      "value": {
+        "r": 96,
+        "g": 106,
+        "b": 117,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.placeholder",
+      "aliases": [
+        "semantic.theme.black.placeholder",
+        "color.theme-black.ink-4"
+      ],
+      "api": "KoderaTokens.black.placeholder",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 135,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.disabled",
+      "aliases": [
+        "semantic.theme.black.disabled",
+        "color.theme-black.muted-2"
+      ],
+      "api": "KoderaTokens.black.disabled",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 30,
+        "b": 34,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.on-disabled",
+      "aliases": [
+        "semantic.theme.black.on-disabled",
+        "color.theme-black.ink-3"
+      ],
+      "api": "KoderaTokens.black.onDisabled",
+      "type": "color",
+      "value": {
+        "r": 155,
+        "g": 167,
+        "b": 180,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-1",
+      "aliases": [
+        "semantic.theme.black.cursor-1",
+        "color.theme-black.cursor-1"
+      ],
+      "api": "KoderaTokens.black.cursor1",
+      "type": "color",
+      "value": {
+        "r": 24,
+        "g": 115,
+        "b": 188,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-1-soft",
+      "aliases": [
+        "semantic.theme.black.cursor-1-soft",
+        "color.theme-black.cursor-1-soft"
+      ],
+      "api": "KoderaTokens.black.cursor1Soft",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 26,
+        "b": 40,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-2",
+      "aliases": [
+        "semantic.theme.black.cursor-2",
+        "color.theme-black.cursor-2"
+      ],
+      "api": "KoderaTokens.black.cursor2",
+      "type": "color",
+      "value": {
+        "r": 128,
+        "g": 86,
+        "b": 224,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-2-soft",
+      "aliases": [
+        "semantic.theme.black.cursor-2-soft",
+        "color.theme-black.cursor-2-soft"
+      ],
+      "api": "KoderaTokens.black.cursor2Soft",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 19,
+        "b": 48,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-3",
+      "aliases": [
+        "semantic.theme.black.cursor-3",
+        "color.theme-black.cursor-3"
+      ],
+      "api": "KoderaTokens.black.cursor3",
+      "type": "color",
+      "value": {
+        "r": 21,
+        "g": 125,
+        "b": 136,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-3-soft",
+      "aliases": [
+        "semantic.theme.black.cursor-3-soft",
+        "color.theme-black.cursor-3-soft"
+      ],
+      "api": "KoderaTokens.black.cursor3Soft",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 30,
+        "b": 35,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-4",
+      "aliases": [
+        "semantic.theme.black.cursor-4",
+        "color.theme-black.cursor-4"
+      ],
+      "api": "KoderaTokens.black.cursor4",
+      "type": "color",
+      "value": {
+        "r": 197,
+        "g": 56,
+        "b": 126,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-4-soft",
+      "aliases": [
+        "semantic.theme.black.cursor-4-soft",
+        "color.theme-black.cursor-4-soft"
+      ],
+      "api": "KoderaTokens.black.cursor4Soft",
+      "type": "color",
+      "value": {
+        "r": 38,
+        "g": 16,
+        "b": 30,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-5",
+      "aliases": [
+        "semantic.theme.black.cursor-5",
+        "color.theme-black.cursor-5"
+      ],
+      "api": "KoderaTokens.black.cursor5",
+      "type": "color",
+      "value": {
+        "r": 182,
+        "g": 85,
+        "b": 17,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-5-soft",
+      "aliases": [
+        "semantic.theme.black.cursor-5-soft",
+        "color.theme-black.cursor-5-soft"
+      ],
+      "api": "KoderaTokens.black.cursor5Soft",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 21,
+        "b": 11,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-6",
+      "aliases": [
+        "semantic.theme.black.cursor-6",
+        "color.theme-black.cursor-6"
+      ],
+      "api": "KoderaTokens.black.cursor6",
+      "type": "color",
+      "value": {
+        "r": 23,
+        "g": 127,
+        "b": 94,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.cursor-6-soft",
+      "aliases": [
+        "semantic.theme.black.cursor-6-soft",
+        "color.theme-black.cursor-6-soft"
+      ],
+      "api": "KoderaTokens.black.cursor6Soft",
+      "type": "color",
+      "value": {
+        "r": 11,
+        "g": 31,
+        "b": 25,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-1-bg",
+      "aliases": [
+        "semantic.theme.black.tag-1-bg",
+        "color.theme-black.tag-1-bg"
+      ],
+      "api": "KoderaTokens.black.tag1Bg",
+      "type": "color",
+      "value": {
+        "r": 25,
+        "g": 19,
+        "b": 44,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-1-fg",
+      "aliases": [
+        "semantic.theme.black.tag-1-fg",
+        "color.theme-black.tag-1-fg"
+      ],
+      "api": "KoderaTokens.black.tag1Fg",
+      "type": "color",
+      "value": {
+        "r": 223,
+        "g": 212,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-2-bg",
+      "aliases": [
+        "semantic.theme.black.tag-2-bg",
+        "color.theme-black.tag-2-bg"
+      ],
+      "api": "KoderaTokens.black.tag2Bg",
+      "type": "color",
+      "value": {
+        "r": 10,
+        "g": 30,
+        "b": 35,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-2-fg",
+      "aliases": [
+        "semantic.theme.black.tag-2-fg",
+        "color.theme-black.tag-2-fg"
+      ],
+      "api": "KoderaTokens.black.tag2Fg",
+      "type": "color",
+      "value": {
+        "r": 176,
+        "g": 231,
+        "b": 239,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-3-bg",
+      "aliases": [
+        "semantic.theme.black.tag-3-bg",
+        "color.theme-black.tag-3-bg"
+      ],
+      "api": "KoderaTokens.black.tag3Bg",
+      "type": "color",
+      "value": {
+        "r": 37,
+        "g": 16,
+        "b": 30,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-3-fg",
+      "aliases": [
+        "semantic.theme.black.tag-3-fg",
+        "color.theme-black.tag-3-fg"
+      ],
+      "api": "KoderaTokens.black.tag3Fg",
+      "type": "color",
+      "value": {
+        "r": 245,
+        "g": 199,
+        "b": 228,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-4-bg",
+      "aliases": [
+        "semantic.theme.black.tag-4-bg",
+        "color.theme-black.tag-4-bg"
+      ],
+      "api": "KoderaTokens.black.tag4Bg",
+      "type": "color",
+      "value": {
+        "r": 12,
+        "g": 28,
+        "b": 43,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-4-fg",
+      "aliases": [
+        "semantic.theme.black.tag-4-fg",
+        "color.theme-black.tag-4-fg"
+      ],
+      "api": "KoderaTokens.black.tag4Fg",
+      "type": "color",
+      "value": {
+        "r": 184,
+        "g": 221,
+        "b": 248,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-5-bg",
+      "aliases": [
+        "semantic.theme.black.tag-5-bg",
+        "color.theme-black.tag-5-bg"
+      ],
+      "api": "KoderaTokens.black.tag5Bg",
+      "type": "color",
+      "value": {
+        "r": 32,
+        "g": 17,
+        "b": 41,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-5-fg",
+      "aliases": [
+        "semantic.theme.black.tag-5-fg",
+        "color.theme-black.tag-5-fg"
+      ],
+      "api": "KoderaTokens.black.tag5Fg",
+      "type": "color",
+      "value": {
+        "r": 235,
+        "g": 203,
+        "b": 248,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-6-bg",
+      "aliases": [
+        "semantic.theme.black.tag-6-bg",
+        "color.theme-black.tag-6-bg"
+      ],
+      "api": "KoderaTokens.black.tag6Bg",
+      "type": "color",
+      "value": {
+        "r": 21,
+        "g": 29,
+        "b": 13,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.black.tag-6-fg",
+      "aliases": [
+        "semantic.theme.black.tag-6-fg",
+        "color.theme-black.tag-6-fg"
+      ],
+      "api": "KoderaTokens.black.tag6Fg",
+      "type": "color",
+      "value": {
+        "r": 211,
+        "g": 230,
+        "b": 178,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "space.1",
+      "aliases": [
+        "space.1"
+      ],
+      "api": "KoderaTokens.Space.s1",
+      "type": "dimension",
+      "value": 4,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.2",
+      "aliases": [
+        "space.2"
+      ],
+      "api": "KoderaTokens.Space.s2",
+      "type": "dimension",
+      "value": 8,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.3",
+      "aliases": [
+        "space.3"
+      ],
+      "api": "KoderaTokens.Space.s3",
+      "type": "dimension",
+      "value": 12,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.4",
+      "aliases": [
+        "space.4"
+      ],
+      "api": "KoderaTokens.Space.s4",
+      "type": "dimension",
+      "value": 16,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.5",
+      "aliases": [
+        "space.5"
+      ],
+      "api": "KoderaTokens.Space.s5",
+      "type": "dimension",
+      "value": 20,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.6",
+      "aliases": [
+        "space.6"
+      ],
+      "api": "KoderaTokens.Space.s6",
+      "type": "dimension",
+      "value": 24,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.8",
+      "aliases": [
+        "space.8"
+      ],
+      "api": "KoderaTokens.Space.s8",
+      "type": "dimension",
+      "value": 32,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.10",
+      "aliases": [
+        "space.10"
+      ],
+      "api": "KoderaTokens.Space.s10",
+      "type": "dimension",
+      "value": 40,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.12",
+      "aliases": [
+        "space.12"
+      ],
+      "api": "KoderaTokens.Space.s12",
+      "type": "dimension",
+      "value": 48,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-rail-width",
+      "aliases": [
+        "space.shell-rail-width"
+      ],
+      "api": "KoderaTokens.Space.shellRailWidth",
+      "type": "dimension",
+      "value": 76,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-rail-item-width",
+      "aliases": [
+        "space.shell-rail-item-width"
+      ],
+      "api": "KoderaTokens.Space.shellRailItemWidth",
+      "type": "dimension",
+      "value": 68,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-header-height",
+      "aliases": [
+        "space.shell-header-height"
+      ],
+      "api": "KoderaTokens.Space.shellHeaderHeight",
+      "type": "dimension",
+      "value": 56,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-sidebar-width",
+      "aliases": [
+        "space.shell-sidebar-width"
+      ],
+      "api": "KoderaTokens.Space.shellSidebarWidth",
+      "type": "dimension",
+      "value": 264,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-document-max-width",
+      "aliases": [
+        "space.shell-document-max-width"
+      ],
+      "api": "KoderaTokens.Space.shellDocumentMaxWidth",
+      "type": "dimension",
+      "value": 780,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-document-min-width",
+      "aliases": [
+        "space.shell-document-min-width"
+      ],
+      "api": "KoderaTokens.Space.shellDocumentMinWidth",
+      "type": "dimension",
+      "value": 360,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-dock-width",
+      "aliases": [
+        "space.shell-dock-width"
+      ],
+      "api": "KoderaTokens.Space.shellDockWidth",
+      "type": "dimension",
+      "value": 340,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.shell-dock-offset",
+      "aliases": [
+        "space.shell-dock-offset"
+      ],
+      "api": "KoderaTokens.Space.shellDockOffset",
+      "type": "dimension",
+      "value": 24,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "space.control-selection-ring-width",
+      "aliases": [
+        "space.control-selection-ring-width"
+      ],
+      "api": "KoderaTokens.Space.controlSelectionRingWidth",
+      "type": "dimension",
+      "value": 5,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "radius.sm",
+      "aliases": [
+        "radius.sm"
+      ],
+      "api": "KoderaTokens.Radius.sm",
+      "type": "dimension",
+      "value": 6,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "radius.md",
+      "aliases": [
+        "radius.md"
+      ],
+      "api": "KoderaTokens.Radius.md",
+      "type": "dimension",
+      "value": 10,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "radius.lg",
+      "aliases": [
+        "radius.lg"
+      ],
+      "api": "KoderaTokens.Radius.lg",
+      "type": "dimension",
+      "value": 16,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "radius.xl",
+      "aliases": [
+        "radius.xl"
+      ],
+      "api": "KoderaTokens.Radius.xl",
+      "type": "dimension",
+      "value": 20,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "radius.full",
+      "aliases": [
+        "radius.full"
+      ],
+      "api": "KoderaTokens.Radius.full",
+      "type": "dimension",
+      "value": 999,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "dp"
+      }
+    },
+    {
+      "path": "font.size.xs",
+      "aliases": [
+        "font.size.xs"
+      ],
+      "api": "KoderaTokens.FontSize.xs",
+      "type": "dimension",
+      "value": 12,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.sm",
+      "aliases": [
+        "font.size.sm"
+      ],
+      "api": "KoderaTokens.FontSize.sm",
+      "type": "dimension",
+      "value": 13,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.md",
+      "aliases": [
+        "font.size.md"
+      ],
+      "api": "KoderaTokens.FontSize.md",
+      "type": "dimension",
+      "value": 14,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.lg",
+      "aliases": [
+        "font.size.lg"
+      ],
+      "api": "KoderaTokens.FontSize.lg",
+      "type": "dimension",
+      "value": 16,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.xl",
+      "aliases": [
+        "font.size.xl"
+      ],
+      "api": "KoderaTokens.FontSize.xl",
+      "type": "dimension",
+      "value": 20,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.2xl",
+      "aliases": [
+        "font.size.2xl"
+      ],
+      "api": "KoderaTokens.FontSize.s2xl",
+      "type": "dimension",
+      "value": 24,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.3xl",
+      "aliases": [
+        "font.size.3xl"
+      ],
+      "api": "KoderaTokens.FontSize.s3xl",
+      "type": "dimension",
+      "value": 30,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.size.4xl",
+      "aliases": [
+        "font.size.4xl"
+      ],
+      "api": "KoderaTokens.FontSize.s4xl",
+      "type": "dimension",
+      "value": 40,
+      "units": {
+        "source": "px",
+        "swift": "pt",
+        "compose": "sp"
+      }
+    },
+    {
+      "path": "font.weight.regular",
+      "aliases": [
+        "font.weight.regular"
+      ],
+      "api": "KoderaTokens.FontWeight.regular",
+      "type": "fontWeight",
+      "value": 400
+    },
+    {
+      "path": "font.weight.medium",
+      "aliases": [
+        "font.weight.medium"
+      ],
+      "api": "KoderaTokens.FontWeight.medium",
+      "type": "fontWeight",
+      "value": 500
+    },
+    {
+      "path": "font.weight.semibold",
+      "aliases": [
+        "font.weight.semibold"
+      ],
+      "api": "KoderaTokens.FontWeight.semibold",
+      "type": "fontWeight",
+      "value": 600
+    },
+    {
+      "path": "font.weight.bold",
+      "aliases": [
+        "font.weight.bold"
+      ],
+      "api": "KoderaTokens.FontWeight.bold",
+      "type": "fontWeight",
+      "value": 700
+    },
+    {
+      "path": "font.family.sans",
+      "aliases": [
+        "font.family.sans"
+      ],
+      "api": "KoderaTokens.FontFamily.sans",
+      "type": "fontFamily",
+      "value": {
+        "primary": "Plus Jakarta Sans",
+        "fallbacks": [
+          "system-ui",
+          "-apple-system",
+          "Segoe UI",
+          "sans-serif"
+        ]
+      }
+    },
+    {
+      "path": "font.family.mono",
+      "aliases": [
+        "font.family.mono"
+      ],
+      "api": "KoderaTokens.FontFamily.mono",
+      "type": "fontFamily",
+      "value": {
+        "primary": "IBM Plex Mono",
+        "fallbacks": [
+          "ui-monospace",
+          "SF Mono",
+          "Menlo",
+          "monospace"
+        ]
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "path": "color.slate.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.150",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.200",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.300",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.500",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.700",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.slate.900",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.frost.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.frost.200",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.white",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.black",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.cobalt.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.cobalt.500",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.cobalt.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.green.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.green.500",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.green.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.amber.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.amber.500",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.amber.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.red.100",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.red.500",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.red.600",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.page",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "color.theme-light.surface",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.sunken",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.muted",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.muted-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.hairline",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.border-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.border-strong",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.inverse-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.rail-line",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ink-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ink-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ink-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.on-inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.on-inverse-dim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.action",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.action-hover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.accent-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.accent-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ok-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.bad-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ok",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ok-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ok-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.ok-border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.warn",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.warn-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.warn-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.bad",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.bad-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.bad-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.shadow-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.shadow-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.t6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.scrim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-1-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-2-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-3-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-4-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-5",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-5-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-6",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.cursor-6-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-light.tag-6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.page",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "color.theme-dark.surface",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.sunken",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.muted",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.muted-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.hairline",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.border-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.border-strong",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.inverse-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.rail-line",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ink-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ink-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ink-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.on-inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.on-inverse-dim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.action",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.action-hover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.accent-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.accent-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ok-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.bad-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ok",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ok-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ok-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.ok-border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.warn",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.warn-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.warn-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.bad",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.bad-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.bad-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.shadow-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.shadow-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.t6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.elevated",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.border-input",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.placeholder",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.scrim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-1-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-2-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-3-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-4-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-5",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-5-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-6",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.cursor-6-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-dark.tag-6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.page",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "color.theme-black.surface",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.sunken",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.muted",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.muted-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.hairline",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.border-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.border-strong",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.inverse-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.rail-line",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ink-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ink-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ink-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.on-inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.on-inverse-dim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.action",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.action-hover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.accent-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.accent-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ok-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.bad-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ok",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ok-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ok-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.ok-border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.warn",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.warn-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.warn-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.bad",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.bad-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.bad-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.shadow-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.shadow-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.t6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.elevated",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.border-input",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.scrim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-1-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-2-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-3-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-4-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-5",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-5-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-6",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.cursor-6-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-black.tag-6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.surface.page",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.surface.default",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.surface.muted",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.surface.accent",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.surface.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.border.default",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.border.soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.border.hairline",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.border.input",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.primary",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.secondary",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.tertiary",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.placeholder",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.accent",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.success",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.warning",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.text.danger",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.action.primary",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.action.primaryHover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.action.onPrimary",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.action.danger",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.theme.light.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "semantic.theme.dark.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "semantic.theme.black.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.light.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.light.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.light.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.light.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.dark.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.dark.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.dark.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.dark.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.black.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.black.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.black.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.black.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.layout.rail-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.rail-item-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.header-height",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.sidebar-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.document-max-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.document-min-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.dock-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.layout.dock-offset",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.control.selection-ring-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "font.tracking.tight",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "font.tracking.snug",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "font.lineHeight.tight",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "font.lineHeight.snug",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "font.lineHeight.body",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "shadow.card",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.pop",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-light.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-light.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-light.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-light.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-dark.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-dark.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-dark.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-dark.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-black.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-black.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-black.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-black.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "motion.duration.fast",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.duration.base",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.duration.slow",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.easing.out",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "breakpoint.sm",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "breakpoint.md",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "breakpoint.lg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "breakpoint.xl",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "breakpoint.2xl",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.rail-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.rail-item-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.header-height",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.sidebar-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.document-max-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.document-min-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.dock-width",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "component.shell.dock-offset",
+      "reason": "outside the native format 1 surface"
+    }
+  ]
+}

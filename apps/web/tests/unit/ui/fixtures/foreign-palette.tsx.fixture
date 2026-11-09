@@ -1,0 +1,10 @@
+// Not a source file: the extension keeps it out of the token guard's own scan
+// of `src/`, out of the TypeScript projects, and out of the Vitest suite. It
+// exists only to be fed to the scanner by tests/unit/ui/tokens.test.ts, which
+// asserts the guard reports both classes below instead of passing over them.
+//
+// `blue` and `emerald` are Tailwind's own families, and the preset extends the
+// palette rather than replacing it, so both classes emit a real rule. The
+// resolution scanner skips them because it only judges families it recognises
+// as ours — which is exactly why they need a check of their own.
+export const Broken = () => <div className="bg-blue-500 text-emerald-600" />

@@ -1,0 +1,84 @@
+name: Security, Hygiene & CRA SBOM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-sbom-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene-and-sbom:
+    name: Repository Hygiene, Attribution Gate & CycloneDX Inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Verify OpenAPI contract parity
+        run: |
+          cmp -s packages/api-contract/core-api.openapi.yaml apps/server/contracts/core-api.openapi.yaml
+          cmp -s packages/api-contract/core-api.openapi.yaml apps/web/contracts/core-api.openapi.yaml
+          cmp -s packages/api-contract/agent-api.openapi.yaml apps/server/contracts/agent-api.openapi.yaml
+          cmp -s packages/api-contract/agent-api.openapi.yaml apps/web/contracts/agent-api.openapi.yaml
+      - name: Verify vendor-neutrality & required-clauses gates + self-tests
+        run: |
+          python3 .github/scripts/check-vendor-attribution.py .
+          bash .github/scripts/check-vendor-attribution.selftest.sh
+          python3 .github/scripts/check-required-clauses.py .
+          bash .github/scripts/check-required-clauses.selftest.sh
+      - name: Verify non-file PR & commit surfaces carry no vendor attribution
+        env:
+          REF_NAME: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REF_NAME" | python3 .github/scripts/check-vendor-attribution.py --text "branch name"
+          if [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+            git log --format=%B "$BASE_SHA..$HEAD_SHA" | \
+              python3 .github/scripts/check-vendor-attribution.py --text "commit messages"
+          else
+            git log -1 --format=%B | \
+              python3 .github/scripts/check-vendor-attribution.py --text "HEAD commit message"
+          fi
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            printf '%s' "$PR_TITLE" | python3 .github/scripts/check-vendor-attribution.py --text "pull request title"
+            printf '%s' "$PR_BODY" | python3 .github/scripts/check-vendor-attribution.py --text "pull request body" --allow-empty
+          fi
+      - name: Refuse committed .env files or unpinned GitHub Actions
+        run: |
+          python3 scripts/ci/check-workflow-pins.py --selftest
+          python3 scripts/ci/check-workflow-pins.py
+      - name: Install locked npm dependencies & audit production dependency tree
+        run: |
+          npm ci --ignore-scripts
+          npm audit --omit=dev --audit-level=high
+      - name: Generate CRA-ready CycloneDX SBOM & locked component inventory
+        run: |
+          mkdir -p sbom-out
+          npm sbom --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root > sbom-out/kodera-npm.cdx.json
+          python3 -c 'import json; d = json.load(open("sbom-out/kodera-npm.cdx.json")); assert d.get("bomFormat") == "CycloneDX"'
+          cp package-lock.json sbom-out/npm-package-lock.json
+          cargo metadata --locked --format-version 1 > sbom-out/rust-cargo-metadata.json
+          cp Cargo.lock sbom-out/rust-Cargo.lock
+          cp apps/server/uv.lock sbom-out/python-server-uv.lock
+          cp packages/synapse-policy/requirements-test.txt sbom-out/python-synapse-policy-requirements-test.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kodera-cra-dependency-inventory
+          path: sbom-out/
+          retention-days: 14

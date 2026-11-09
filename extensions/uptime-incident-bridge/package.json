@@ -1,0 +1,14 @@
+{
+  "name": "@kodera/ext-uptime-incident-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Reference Kodera extension bridging uptime monitors into incident cards and threaded lifecycle updates with flapping alert deduplication.",
+  "dependencies": {
+    "@kodera/extension-sdk": "0.1.0"
+  },
+  "scripts": {
+    "test": "node --test test/uptime-incident-bridge.test.mjs"
+  }
+}

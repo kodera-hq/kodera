@@ -1,0 +1,9 @@
+{
+  "type": "https://kodera.io/problems/invalid-state-transition",
+  "title": "The tenant is not in a state that allows this job",
+  "status": 409,
+  "detail": "Job kind upgrade requires the tenant to be active; it is provisioning.",
+  "instance": "/api/v1/tenants/2c9f0e7a-1b3d-4e5f-8a9b-0c1d2e3f4a5b/jobs",
+  "request_id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+  "allowed_states": ["active"]
+}

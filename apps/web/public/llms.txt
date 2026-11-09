@@ -1,0 +1,77 @@
+# Kodera
+
+> Open-Core organisation workspace: Web, native clients, signed extensions and operator-owned Community deployment.
+
+This is a source-oriented local pre-cutover reference for kodera-hq/kodera. Linked source URLs identify the target repository; public publication and community.kodera.io availability are not confirmed. Read the linked guides for scope and integration limits.
+
+Core API 0.40.0; Agent API 0.5.0; OpenAPI 3.1. The console calls authenticated Core only. Matrix/Synapse rooms and LiveKit grants are control-plane responsibilities, not local-preview authority.
+
+Community uses Docker Compose and an external operator-owned HTTPS OIDC issuer/public trust registry. It brings no identity provider. No installation-time or memory-footprint claim is made.
+
+The create-kodera package is a local pre-release. Run node packages/create-kodera/bin/create-kodera.mjs --selftest from a checkout. After publication: npx create-kodera --self-host --domain chat.example.org --oidc-issuer https://id.example.org/realms/studio --oidc-client-id console --template audiovisual-production --dry-run. The kodera-deploy executable aliases the same CLI. The repository shell entry is bash deploy/community/kodera-deploy.sh; real generation requires public-trust.json. Configuration generation does not provision live channels or start services.
+
+@kodera/extension-sdk 0.1.0 uses HMAC-SHA256, v1= signatures over timestamp.rawBody, a 300-second window, bounded in-memory signature/delivery replay protection and signed body routing metadata. Native GitHub sha256= signs rawBody and is not wire-compatible. Production needs durable idempotency and resolved-address egress policy; lexical SSRF checks do not pin DNS.
+
+synapse-policy 0.1.4 enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and EmergencyFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.
+
+Clients/Rust/SDK: Apache-2.0. Server and Synapse policy: AGPL-3.0-or-later. Enterprise Edition: separate commercial licence. Never commit environment secrets, private keys or real tenant identifiers. No secrets belong in prompts, example payloads or theme codes.
+
+Exactly ten official connector implementations are indexed below; this is not a list of live connected accounts. Linear, Stripe and Sentry are potential custom SDK integrations, not additional official connectors in this checkout.
+
+## Developer guides
+
+- [Quickstart & self-hosting](/developer-docs/en/quickstart.md): Prepare your workspace. Keep identity and deployment under your control.
+
+- [Extension SDK & 10 connectors](/developer-docs/en/extensions.md): Bring signed events into channels, with explicit trust boundaries.
+
+- [API reference & webhooks](/developer-docs/en/api.md): Read the pinned contracts before sending a request.
+
+- [Architecture & security](/developer-docs/en/security.md): Understand what ships, what is bounded, and what remains an integration seam.
+
+## French guides
+
+- [Quickstart & auto-hébergement](/developer-docs/fr/quickstart.md): Préparez votre espace. Gardez la maîtrise de l’identité et du déploiement.
+
+- [Extension SDK & 10 connecteurs](/developer-docs/fr/extensions.md): Amenez les événements signés dans les salons, avec des frontières de confiance explicites.
+
+- [Référence API & webhooks](/developer-docs/fr/api.md): Lisez les contrats épinglés avant d’envoyer une requête.
+
+- [Architecture & sécurité](/developer-docs/fr/security.md): Comprenez ce qui existe, ce qui est borné et ce qui reste à intégrer.
+
+## Official connectors
+
+- [Hello Webhook](https://github.com/kodera-hq/kodera/blob/main/extensions/hello-webhook/README.md): hello-webhook
+
+- [GitHub Release Notifier](https://github.com/kodera-hq/kodera/blob/main/extensions/github-release-notifier/README.md): github-release-notifier
+
+- [Uptime Incident Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/uptime-incident-bridge/README.md): uptime-incident-bridge
+
+- [Docs Collab Announcer](https://github.com/kodera-hq/kodera/blob/main/extensions/docs-collab-announcer/manifest.json): docs-collab-announcer
+
+- [GitHub Repo Tracker](https://github.com/kodera-hq/kodera/blob/main/extensions/github-repo-tracker/manifest.json): github-repo-tracker
+
+- [Qonto Treasury Feed](https://github.com/kodera-hq/kodera/blob/main/extensions/qonto-treasury-feed/manifest.json): qonto-treasury-feed
+
+- [Notion Workspace Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/notion-workspace-bridge/manifest.json): notion-workspace-bridge
+
+- [GDrive Document Share](https://github.com/kodera-hq/kodera/blob/main/extensions/gdrive-document-share/manifest.json): gdrive-document-share
+
+- [Social Pulse Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/social-pulse-bridge/manifest.json): social-pulse-bridge
+
+- [Frame.io Review Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/frameio-review-bridge/README.md): frameio-review-bridge
+
+## Optional
+
+- [README.md](https://github.com/kodera-hq/kodera/blob/main/README.md): Authoritative repository source.
+
+- [ARCHITECTURE.md](https://github.com/kodera-hq/kodera/blob/main/ARCHITECTURE.md): Authoritative repository source.
+
+- [deploy/community/README.md](https://github.com/kodera-hq/kodera/blob/main/deploy/community/README.md): Authoritative repository source.
+
+- [packages/extension-sdk/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/extension-sdk/README.md): Authoritative repository source.
+
+- [packages/api-contract/core-api.openapi.yaml](https://github.com/kodera-hq/kodera/blob/main/packages/api-contract/core-api.openapi.yaml): Authoritative repository source.
+
+- [packages/api-contract/agent-api.openapi.yaml](https://github.com/kodera-hq/kodera/blob/main/packages/api-contract/agent-api.openapi.yaml): Authoritative repository source.
+
+- [packages/kodera-rs/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/kodera-rs/README.md): Authoritative repository source.

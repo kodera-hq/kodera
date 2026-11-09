@@ -1,0 +1,86 @@
+# PLACEHOLDER LEGAL DOCUMENTS — NOT CONTRACTUAL TEXT.
+#
+# Every title, version and digest below is a stand-in so the order flow can be built and tested
+# while the contractual texts are drafted. None of it may be shown to a customer as a binding
+# document. `load_legal_documents` refuses this file unless it is given `--allow-placeholder`.
+# Each text is a fixed label, not a real text, and each digest is that label's SHA-256.
+
+placeholder = true
+
+[[documents]]
+code = "cgv"
+version = "0.0"
+locale = "fr"
+title = "Conditions générales de vente (placeholder)"
+sha256 = "6a31df3b3b3ff78964d882fb46552d1d25f81d23b8db9c5cc5438f692ed983e8"
+text = "placeholder cgv 0.0 fr"
+published_at = 2026-01-01T00:00:00Z
+
+[[documents]]
+code = "cgv"
+version = "0.0"
+locale = "en"
+title = "General terms of sale (placeholder)"
+sha256 = "083774b8b283728451d91b2c97372f2797bc52130286aec7c0336a17edb36a3c"
+text = "placeholder cgv 0.0 en"
+published_at = 2026-01-01T00:00:00Z
+
+[[documents]]
+code = "dpa"
+version = "0.0"
+locale = "fr"
+title = "Accord de traitement des données (placeholder)"
+sha256 = "1a455eca1fbf92c0cc124a521b8844624f65b0deb5643aefc75f537708abd9cc"
+text = "placeholder dpa 0.0 fr"
+published_at = 2026-01-01T00:00:00Z
+sub_processors = [
+  { name = "Scaleway", role = "Hosting and infrastructure", location = "Paris", country = "FR" },
+]
+
+[[documents]]
+code = "dpa"
+version = "0.0"
+locale = "en"
+title = "Data processing agreement (placeholder)"
+sha256 = "810a4ee077c41987368508710b8dc1da546e3f95d8aa9d80b89a78d0d9645b62"
+text = "placeholder dpa 0.0 en"
+published_at = 2026-01-01T00:00:00Z
+sub_processors = [
+  { name = "Scaleway", role = "Hosting and infrastructure", location = "Paris", country = "FR" },
+]
+
+[[documents]]
+code = "sla"
+version = "0.0"
+locale = "fr"
+title = "Engagements de service (placeholder)"
+sha256 = "346f59cded1bd0fc0cbd96f189d0e33fe00c441d5db5ac28b33b4effcc333817"
+text = "placeholder sla 0.0 fr"
+published_at = 2026-01-01T00:00:00Z
+
+[[documents]]
+code = "sla"
+version = "0.0"
+locale = "en"
+title = "Service level agreement (placeholder)"
+sha256 = "a91a9c9633fc4cd81df4666300676ea9bd15d75d66c46ca171ff03526469ca96"
+text = "placeholder sla 0.0 en"
+published_at = 2026-01-01T00:00:00Z
+
+[[documents]]
+code = "aup"
+version = "0.0"
+locale = "fr"
+title = "Politique d'usage acceptable (placeholder)"
+sha256 = "4604a599ed375f6be13337ae90d20d6c799d4cdf411bfbb3480d8a2321bd44ba"
+text = "placeholder aup 0.0 fr"
+published_at = 2026-01-01T00:00:00Z
+
+[[documents]]
+code = "aup"
+version = "0.0"
+locale = "en"
+title = "Acceptable use policy (placeholder)"
+sha256 = "06655c053af411195540bcd3c3b79a6c1adafcf310fa7e99b7857427a384dc98"
+text = "placeholder aup 0.0 en"
+published_at = 2026-01-01T00:00:00Z

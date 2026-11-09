@@ -1,0 +1,20 @@
+[package]
+name = "kodera-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared Rust core for Kodera Desktop, iOS (SwiftUI), and Android (Compose): UUIDv7 transport seam, crypto provider envelope seam, Ed25519 device signing, and #urgence emergency frame primitives."
+
+[lib]
+name = "kodera_rs"
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[features]
+default = []
+# Optional UniFFI, OpenMLS (RFC 9420), and BLE GATT bindings enabled by mobile/desktop targets.
+uniffi-bindings = []
+openmls-engine = []
+ble-transport = []

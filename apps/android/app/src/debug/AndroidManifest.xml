@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: lets the app reach the local Keycloak and Core over plain HTTP on loopback
+     (adb reverse, see docs/DEVELOPMENT.md). The release manifest names no configuration. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/debug_loopback_cleartext" />
+</manifest>

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability Disclosure (Private)
+    url: https://github.com/kodera-hq/kodera/security/advisories/new
+    about: Please never report security issues in public issues — use Private Vulnerability Reporting or email support@kodera.io.
+  - name: Kodera Cloud & Enterprise Support
+    url: https://kodera.io
+    about: Managed European hosting, Autopilot self-host SLA, and Enterprise licensing.
+  - name: Community Discussions & Self-Host Help
+    url: https://github.com/kodera-hq/kodera/discussions
+    about: Ask setup questions, share extensions, and discuss RFCs.

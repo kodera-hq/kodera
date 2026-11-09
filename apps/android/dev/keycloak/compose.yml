@@ -1,0 +1,43 @@
+# Local development only: a throwaway Keycloak with the kodera-dev realm.
+# Never deploy this file. It runs in dev mode (in-memory database, plain HTTP)
+# and the realm carries a dev-only user whose password is public.
+#
+#   docker compose -f dev/keycloak/compose.yml up -d --wait
+#   curl http://localhost:8080/realms/kodera-dev/.well-known/openid-configuration
+#   adb reverse tcp:8080 tcp:8080     # the emulator's localhost:8080 is this one
+#
+# The realm is the same as kodera-ios dev/keycloak's (only its koderaRealmSource
+# label differs): it carries both the kodera-ios and the kodera-android clients,
+# each with offline_access as its one optional scope. Both bind port 8080: run
+# one at a time.
+# The image matches the version identity realm tooling deploys, pinned by its
+# multi-arch index digest (tag for readers).
+name: kodera-android-dev
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7@sha256:4388e2379b7e870a447adbe7b80bd61f5fbf04e925832b19669fda4957f05a81
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_HTTP_PORT: "8080"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      # Loopback only: nothing outside this machine reaches it. Both address
+      # families, so `localhost` never stalls on an IPv6 attempt first.
+      - "127.0.0.1:8080:8080"
+      - "[::1]:8080:8080"
+    volumes:
+      - ./realm:/opt/keycloak/data/import:ro
+    healthcheck:
+      # The image ships no curl; bash's /dev/tcp reaches the management port.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"status": "UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s

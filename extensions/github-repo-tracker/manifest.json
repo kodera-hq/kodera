@@ -1,0 +1,32 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.github-repo-tracker",
+  "name": "GitHub Repository Activity Tracker",
+  "version": "0.1.0",
+  "description": "Suit en temps réel l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans un salon Kodera Espace.",
+  "permissions": [
+    "messages:write",
+    "commands:register",
+    "webhooks:incoming"
+  ],
+  "scopes": [
+    "messages:write",
+    "commands:register",
+    "webhooks:incoming"
+  ],
+  "events": [
+    "command.invoked",
+    "message.created",
+    "release.published",
+    "ci.workflow_failed"
+  ],
+  "commands": [
+    {
+      "command": "/github-track",
+      "name": "/github-track",
+      "description": "Configurer ou afficher le suivi d'un dépôt GitHub (owner/repo) dans le salon"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.kodera.io/hooks/github-repo-tracker"
+}

@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    // "vite/client" alongside "node": tests/unit imports browser-side src
+    // modules (e.g. src/i18n, which reads import.meta.env.PROD) into this
+    // Node-context program, and each tsconfig type-checks a shared file with
+    // its own settings — without this, `import.meta.env` has no type here
+    // even though tsconfig.json (the browser project) already declares it.
+    "types": ["node", "vite/client"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "vitest.espace.config.ts",
+    "playwright.config.ts",
+    "playwright.visual.config.ts",
+    "playwright.espace.config.ts",
+    "playwright.smoke.config.ts",
+    "tailwind.config.ts",
+    "scripts",
+    "tests/unit",
+    "tests/e2e",
+    "tests/visual",
+    "tests/espace",
+    "tests/smoke",
+    "e2e/staging"
+  ],
+  // The layout harness draws the live view, so it is type-checked with the browser project.
+  "exclude": ["tests/espace/layout/harness.ts"]
+}

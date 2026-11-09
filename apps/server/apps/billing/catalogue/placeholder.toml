@@ -1,0 +1,80 @@
+# PLACEHOLDER CATALOGUE — NOT AN OFFER.
+#
+# Every name, capacity and amount below is a stand-in so the order flow can be built and tested
+# while the offer and its prices are undecided. None of it may be shown to a customer or invoiced.
+# `load_catalogue` refuses this file unless it is given `--allow-placeholder`, and every name
+# carries "(placeholder)" so a screen that shows one says so.
+
+placeholder = true
+
+[[packs]]
+code = "visio"
+name = "Visio (placeholder)"
+apps = ["visio"]
+profile_ref = "visio/0.0"
+
+[[packs]]
+code = "visio-docs"
+name = "Visio + Docs (placeholder)"
+apps = ["visio", "docs"]
+profile_ref = "visio-docs/0.0"
+
+[[capacity_tiers]]
+code = "S"
+name = "S (placeholder)"
+seats_included = 25
+concurrent_participants_included = 10
+storage_included_bytes = 53687091200
+vm_shape = "placeholder"
+
+[[capacity_tiers]]
+code = "M"
+name = "M (placeholder)"
+seats_included = 150
+concurrent_participants_included = 50
+storage_included_bytes = 536870912000
+vm_shape = "placeholder"
+
+[[plans]]
+code = "essentiel"
+version = 1
+name = "Essentiel (placeholder)"
+state = "published"
+published_at = 2026-01-01T00:00:00Z
+
+# Amounts in euro cents, excluding VAT. Round numbers on purpose: they are not prices.
+[[prices]]
+plan = "essentiel"
+plan_version = 1
+pack = "visio"
+capacity_tier = "S"
+billing_period = "monthly"
+amount_minor = 10000
+valid_from = 2026-01-01T00:00:00Z
+
+[[prices]]
+plan = "essentiel"
+plan_version = 1
+pack = "visio"
+capacity_tier = "S"
+billing_period = "yearly"
+amount_minor = 100000
+valid_from = 2026-01-01T00:00:00Z
+
+[[prices]]
+plan = "essentiel"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "M"
+billing_period = "monthly"
+amount_minor = 30000
+valid_from = 2026-01-01T00:00:00Z
+
+[[prices]]
+plan = "essentiel"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "M"
+billing_period = "yearly"
+amount_minor = 300000
+valid_from = 2026-01-01T00:00:00Z

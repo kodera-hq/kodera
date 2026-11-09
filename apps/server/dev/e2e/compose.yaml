@@ -1,0 +1,263 @@
+# Live end-to-end environment for Core: PostgreSQL, Mailpit, Keycloak with a staff realm and one
+# pre-created organisation realm, the migrated schema, and the API image built from this
+# repository's Dockerfile. TEST ONLY: not a deployment artefact, and every key, password and
+# one-time-code seed it uses is derived from a public label by dev/e2e/make_trust.py.
+#
+#     uv run python -m dev.e2e.make_trust selftest
+#     uv run python -m dev.e2e.make_trust render
+#     docker compose -f dev/e2e/compose.yaml --env-file dev/e2e/rendered/compose.env up -d --build --wait
+#
+# dev/e2e/README.md has the rest: the Console side, the probe, the operator commands and the
+# journey. Its own project name and its own loopback ports, so it runs beside the development
+# stack (compose.yaml at the root). No named volume anywhere: every data directory is a tmpfs, so
+# `down` discards everything and cannot reach another project's data.
+#
+# One loopback for the browser, Keycloak, Mailpit and the operator commands. Mailpit owns a network
+# namespace that Keycloak and `ops` join (`network_mode: service:mailpit`), and Keycloak listens in
+# it on the port of its public origin. So `http://localhost:<port>/realms/<realm>` is the same
+# issuer for the browser on the host, for Core's pinned trust and for `complete_realm_bootstrap`'s
+# read of the realm inside `ops`; and Mailpit's SMTP is `localhost:1025` to `ops`, which Core's
+# transport accepts as plaintext because it is loopback. No proxy, no host alias, and no parser of
+# Core's is widened for it. Every published port is still bound to 127.0.0.1 on the host.
+#
+# `--env-file` feeds interpolation only. No service has an env_file: each one receives exactly the
+# variables written under it, as the development stack's boundary test requires of the API.
+
+name: kodera-core-e2e
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+# The operator's checkout, as docs/specs/STAFF_IDENTITY.md section 4 runs its commands: the
+# dependency stage of the same Dockerfile (same pinned interpreter, same locked packages) with the
+# repository mounted read-only, under the profile that installs every application. The API image
+# carries neither the migrations nor the commands, by design (.dockerignore).
+x-operator-environment: &operator-environment
+  DATABASE_URL: postgres://kodera:kodera@db:5432/kodera_server
+  # job_queue, admitting the stack's loopback staff issuer (config/settings/e2e_operator.py).
+  DJANGO_SETTINGS_MODULE: config.settings.e2e_operator
+  DJANGO_DEBUG: "0"
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+  DJANGO_SECRET_KEY: "${E2E_DJANGO_SECRET_KEY:?run python -m dev.e2e.make_trust render first}"
+  KODERA_AUTH_TRUST: "${KODERA_AUTH_TRUST:?run python -m dev.e2e.make_trust render first}"
+  KODERA_STAFF_ISSUER: "${KODERA_STAFF_ISSUER:?run python -m dev.e2e.make_trust render first}"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+x-operator: &operator
+  <<: *hardened
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+    target: dependencies
+  user: "10001:10001"
+  working_dir: /src
+  volumes:
+    - ../..:/src:ro
+  tmpfs: [/tmp]
+  environment: *operator-environment
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  # --- Core's database ---------------------------------------------------------------------------
+  db:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    # Thrown away with the stack, so no durability: fsync on lets disk latency hit the API's 2 s
+    # statement timeout, as it did the test suite (compose.yaml, test-db).
+    command: ["postgres", "-c", "fsync=off"]
+    environment:
+      POSTGRES_DB: kodera_server
+      POSTGRES_USER: kodera
+      POSTGRES_PASSWORD: kodera
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kodera -d kodera_server"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  # --- Schema ------------------------------------------------------------------------------------
+  migrate:
+    <<: *operator
+    command: ["/opt/venv/bin/python", "manage.py", "migrate", "--noinput"]
+    restart: "no"
+
+  # Operator commands, run on demand (python -m dev.e2e.journey runs the pilot's in order):
+  #   docker compose ... run --rm ops bootstrap_staff_roles --operator <sub> <address> ...
+  ops:
+    <<: *operator
+    profiles: [ops]
+    entrypoint: ["/opt/venv/bin/python", "manage.py"]
+    # Mailpit's namespace, which Keycloak shares: `localhost:<keycloak port>` is the issuer the
+    # realm verify reads (FIRST_OWNER_BOOTSTRAP.md section 5.5 step 3), and `localhost:1025` is
+    # Mailpit's SMTP. `db` still resolves through the network's DNS.
+    network_mode: "service:mailpit"
+    environment:
+      <<: *operator-environment
+      # The disposable database admits every operator command (FIRST_OWNER_BOOTSTRAP.md section
+      # 3.8), with the API's own contact seal key, which the binding unseals the intake with.
+      KODERA_INTAKE_ADMITTED: "1"
+      KODERA_CONTACT_SEAL_KEY: "${KODERA_CONTACT_SEAL_KEY:?run python -m dev.e2e.make_trust render first}"
+      # The owner claim's mail (OUTBOX_MAIL_SENDER.md section 6): the seal key its recipient and
+      # link secret are sealed with, the Console origin it may link to and the claim landing.
+      KODERA_OUTBOX_SEAL_KEY: "${KODERA_OUTBOX_SEAL_KEY:?run python -m dev.e2e.make_trust render first}"
+      KODERA_MAIL_LINK_ORIGINS: "${KODERA_MAIL_LINK_ORIGINS:?run python -m dev.e2e.make_trust render first}"
+      KODERA_OWNER_CLAIM_LINK: "${KODERA_OWNER_CLAIM_LINK:?run python -m dev.e2e.make_trust render first}"
+      # Invitations (docs/specs/INVITATIONS.md section 4): the mail's acceptance link, and the
+      # realm worker's credential directory (rendered, inside the read-only checkout) and its
+      # pinned Keycloak origins, which are the browser's.
+      KODERA_INVITATION_LINK: "${KODERA_INVITATION_LINK:?run python -m dev.e2e.make_trust render first}"
+      KODERA_REALM_WORKER_SECRET_DIR: /src/dev/e2e/rendered/realm-workers
+      KODERA_REALM_ISSUER_ORIGIN: "${E2E_KEYCLOAK_ORIGIN:?run python -m dev.e2e.make_trust render first}"
+      KODERA_REALM_ADMIN_ORIGIN: "${E2E_KEYCLOAK_ORIGIN:?run python -m dev.e2e.make_trust render first}"
+      # run_deliveries: Mailpit, plaintext on the shared loopback, no account.
+      KODERA_MAIL_SMTP_URL: "smtp+insecure://localhost:1025"
+      KODERA_MAIL_FROM: "Kodera e2e <no-reply@notify.kodera-e2e.test>"
+    depends_on:
+      db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+  # --- Core API ----------------------------------------------------------------------------------
+  api:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
+    # The profile the image is admitted for, customer_http (the customer reads and the staff
+    # intake, which enqueues the realm job), admitting the stack's loopback issuers as
+    # config.settings.e2e. It connects as the schema owner; the least-privilege reader the image
+    # acceptance proves (dev/accept_customer_http.py) is not reproduced here. This database is
+    # disposable, never a live one, so the intake is admitted (docs/specs/FIRST_OWNER_BOOTSTRAP.md
+    # section 3.8), with a contact seal key derived from a public label.
+    #
+    # The image does not carry config/settings/e2e.py (.dockerignore; the production build context
+    # stays closed). The stack adds that one tracked file, read-only, as the image qualification
+    # does (dev/accept_customer_http.py, qualification_build_context): the explicit test-only
+    # overlay, and the only host file the API container sees (tests/test_e2e_environment.py).
+    volumes:
+      - ../../config/settings/e2e.py:/app/config/settings/e2e.py:ro
+    environment:
+      DATABASE_URL: postgres://kodera:kodera@db:5432/kodera_server
+      DJANGO_SETTINGS_MODULE: config.settings.e2e
+      DJANGO_DEBUG: "0"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      DJANGO_SECRET_KEY: "${E2E_DJANGO_SECRET_KEY:?run python -m dev.e2e.make_trust render first}"
+      KODERA_AUTH_TRUST: "${KODERA_AUTH_TRUST:?run python -m dev.e2e.make_trust render first}"
+      KODERA_STAFF_ISSUER: "${KODERA_STAFF_ISSUER:?run python -m dev.e2e.make_trust render first}"
+      KODERA_MEMBERSHIP_CURSOR_KEY: "${KODERA_MEMBERSHIP_CURSOR_KEY:?run python -m dev.e2e.make_trust render first}"
+      KODERA_CONTACT_SEAL_KEY: "${KODERA_CONTACT_SEAL_KEY:?run python -m dev.e2e.make_trust render first}"
+      KODERA_INTAKE_ADMITTED: "1"
+      # discoverRealm's quota key (32 bytes, canonical standard base64) and the browser origin it
+      # admits, the stack's Console on http://localhost (admitted by config.settings.e2e alone).
+      KODERA_DISCOVERY_HMAC_KEY: "${KODERA_DISCOVERY_HMAC_KEY:?run python -m dev.e2e.make_trust render first}"
+      KODERA_CONSOLE_ORIGINS: "${KODERA_CONSOLE_ORIGINS:?run python -m dev.e2e.make_trust render first}"
+      # The Console's OAuth client: a token whose `azp` is not this carries no registered-factor
+      # fact, and consumeOwnerClaim refuses it (services/identity/access_tokens.py).
+      KODERA_CONSOLE_CLIENT_ID: "${KODERA_CONSOLE_CLIENT_ID:?run python -m dev.e2e.make_trust render first}"
+    tmpfs: [/tmp]
+    ports:
+      - "127.0.0.1:${E2E_API_PORT:-8100}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2).status != 200)",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # --- Identity ----------------------------------------------------------------------------------
+  keycloak-db:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    command: ["postgres", "-c", "fsync=off"]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    tmpfs:
+      - /var/lib/postgresql/data:rw,size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  keycloak:
+    # The digest dev/identity_fixture.py qualified (KEYCLOAK there); a test pins the equality.
+    image: quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54
+    # start-dev: HTTP and dev-mode caching, never a production command. --import-realm reads the
+    # rendered realms once, into the empty database.
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      # Host and database as separate options, not a JDBC URL: no allowlist entry needed.
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_URL_DATABASE: keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      # One issuer whoever asks: the browser, the probe and Core's pinned trust all read
+      # http://localhost:<port>/realms/<realm>.
+      KC_HOSTNAME: "${E2E_KEYCLOAK_ORIGIN:?run python -m dev.e2e.make_trust render first}"
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      # The port of the public origin, inside Mailpit's namespace too: `localhost:<port>` is
+      # Keycloak for whoever shares it (`ops`), as it is for the browser on the host.
+      KC_HTTP_PORT: "${E2E_KEYCLOAK_PORT:?run python -m dev.e2e.make_trust render first}"
+      # The suite's identity-operator steps (execute-actions e-mail) use the admin API.
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${E2E_KEYCLOAK_ADMIN_PASSWORD:?run python -m dev.e2e.make_trust render first}"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Published by Mailpit, whose namespace this is (see the top of this file).
+    network_mode: "service:mailpit"
+    volumes:
+      # Rendered, gitignored, read-only: a missing render fails the realm check below rather than
+      # starting an empty provider.
+      - ./rendered/realms:/opt/keycloak/data/import:ro
+    healthcheck:
+      # No curl or wget in the image. Ready, and both realms imported.
+      test:
+        [
+          "CMD-SHELL",
+          "for r in kodera-staff e2e-pilot; do exec 3<>/dev/tcp/127.0.0.1/${E2E_KEYCLOAK_PORT:?run python -m dev.e2e.make_trust render first} && printf 'GET /realms/%s/.well-known/openid-configuration HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' \"$$r\" >&3 && grep -q '\"issuer\"' <&3 || exit 1; done",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+
+  # --- Mail --------------------------------------------------------------------------------------
+  # Catches every message: Keycloak's actions e-mail and Core's outbox sender (run_deliveries).
+  # SMTP stays inside the network; the HTTP API and UI are published for the suite. It owns the
+  # namespace Keycloak and `ops` share, so it publishes Keycloak's port too.
+  mailpit:
+    image: axllent/mailpit:v1.21@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "127.0.0.1:${E2E_MAILPIT_PORT:-8125}:8025"
+      - "127.0.0.1:${E2E_KEYCLOAK_PORT:?run python -m dev.e2e.make_trust render first}:${E2E_KEYCLOAK_PORT:?run python -m dev.e2e.make_trust render first}"

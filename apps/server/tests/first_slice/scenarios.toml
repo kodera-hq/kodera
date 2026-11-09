@@ -1,0 +1,314 @@
+# First-slice acceptance inventory: every mandatory scenario and its honest state.
+#
+# This file is authoritative for scenario state. The identifiers are transcribed from
+# first-slice acceptance matrix, read at internal commit
+# d5f4e6e2f346be66298d8ebfe257594a8e431919. CI never reads that prose; it compares this file with
+# the tests that are actually collected and with `dev/first_slice_manifest.json`.
+#
+# state = "pass"     the scenario passes against this tree; no gap, no reason.
+# state = "xfail"    what the scenario asserts is specified, the path is not built. Strict: a pass
+#                    turns CI red, and so does a red for any gap other than the one recorded here.
+# state = "blocked"  what the scenario asserts depends on an open decision named in `gap`. Strict in
+#                    the same way; the body checks the decision before anything else.
+#
+# `gap` is the first thing the scenario reaches that does not exist: operation:<operationId>,
+# record:<model>, service:<name>, worker:<name>, adapter:<name>, harness:<name>, contract:<name> or
+# decision:<key>. The conftest binds it at run time, so a scenario red at any other point fails CI.
+# Most gaps are measured and turn into a failure the moment what they measure appears; a few
+# seams are asserted because Core declares nothing to measure yet. The harness module docstring
+# says which are which.
+
+format = 1
+transcribed_from = "first-slice acceptance matrix at d5f4e6e2f346be66298d8ebfe257594a8e431919"
+required_count = 33
+
+# ------------------------------------------------------------------------------ decisions ----
+# The first seven are the rows of FIRST_SLICE_SPEC.md "Completion and open decisions". The last is
+# recorded in this repository's design of record and is not a row of that table; it is decided, and
+# no scenario is red on it: contract 0.10.0 makes placeOrder org_owner only. The organisation
+# slug rule is decided (5-20 for organisations and the owner-claim bootstrap, the minimum the
+# owner's answer set, register SLUG-MIN-ANSWER; 3-32 for tenants) and is no longer listed: FS-ID-01
+# and FS-ID-02 measure the contract against it first, and the contract carries it from 0.11.0.
+
+[decision.organisation-states-and-wire-operations]
+title = "Organization states and the wire operations of the decided intake/claim protocol"
+source = "docs/adr/0019-organisation-lifecycle-states.md; docs/specs/FIRST_SLICE_G1.md"
+status = "decided"
+
+[decision.mfa-contact-proof-and-claim-delivery]
+title = "MFA/contact proof, claim delivery and lifetime"
+source = "docs/specs/REGISTERED_FACTOR_SIGNAL.md; docs/specs/FIRST_SLICE_G1.md"
+status = "decided"
+
+[decision.tenant-scoped-retained-access-window]
+title = "Tenant-scoped retained-record access for at most 90 days, ending earlier on a validated controller deletion instruction"
+source = "first-slice FS-RETAINED-ACCESS-90 and FS-CONTROLLER-EARLY-DELETION; docs/specs/FIRST_SLICE_G1.md"
+status = "decided"
+
+[decision.post-identity-erasure-one-time-redelivery]
+title = "Audited one-time redelivery of legally retained records after identity erasure"
+source = "first-slice FS-D3; docs/specs/FIRST_SLICE_G1.md"
+status = "open"
+
+[decision.operation-scope-and-dedup-retention]
+title = "Canonical operation scope and deduplication retention"
+source = "docs/adr/0020-two-tier-idempotency.md; docs/specs/FIRST_SLICE_G1.md"
+status = "decided"
+
+[decision.invoice-issuer-and-reconciliation]
+title = "Invoice issuer and provider reconciliation capabilities"
+source = "FIRST_SLICE_SPEC.md decision table row 5; its effect column admits local synthetic tests before it"
+status = "open"
+
+[decision.external-execution-stop-evidence]
+title = "External execution stop/reconciliation evidence"
+source = "docs/adr/0021-external-stop-evidence.md; docs/domain/JOB_CATALOGUE.md section 1"
+status = "decided"
+
+[decision.place-order-staff-operator-and-dpa-acceptance]
+title = "Does `placeOrder` keep `staff_operator`, and if so, how is `dpa_acceptance` supplied without staff submitting the customer's signature?"
+source = "docs/specs/FIRST_OWNER_BOOTSTRAP.md §9 OD-1, the design of record, decided in contract 0.10.0: placeOrder is org_owner only; not a row of FIRST_SLICE_SPEC.md's decision table either"
+status = "decided"
+
+# ------------------------------------------------------------ R01 bootstrap and authority ----
+
+[[scenario]]
+id = "FS-BOOT-01"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BOOT-02"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "Core declares the three fault points the scenario crashes at (core/faults.py, fault_points.toml) and the harness arms them; the intake each crash interrupts is the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BOOT-03"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "owner_pending is built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BOOT-04"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "owner_pending is built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BOOT-05"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "owner_pending is built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BOOT-06"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the Core consumer rule is decided; owner_pending first reaches the routed staff intake, which refuses the fixture's staff principal because the admitted local provider supplies no real second factor"
+
+[[scenario]]
+id = "FS-BOOT-07"
+group = "R01 bootstrap and authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "an active organisation is built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+# ----------------------------------------------- R02 and R07 lifetimes and coherent identifiers ----
+
+[[scenario]]
+id = "FS-LIFE-01"
+group = "R02 and R07 lifetimes and coherent identifiers"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-LIFE-02"
+group = "R02 and R07 lifetimes and coherent identifiers"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the 90-day tenant-scoped retained-access rule is decided, but the retained-record fixture first builds its customer through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-LIFE-03"
+group = "R02 and R07 lifetimes and coherent identifiers"
+state = "blocked"
+gap = "decision:post-identity-erasure-one-time-redelivery"
+reason = "audited one-time delivery of legally retained invoices, credit notes and deletion evidence after identity erasure remains an owner and privacy decision"
+
+[[scenario]]
+id = "FS-ID-01"
+group = "R02 and R07 lifetimes and coherent identifiers"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the contract carries the decided 5-20 organisation and 3-32 tenant slug rules and the staff intake is routed; it refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-ID-02"
+group = "R02 and R07 lifetimes and coherent identifiers"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the contract carries the decided 5-20 organisation and 3-32 tenant slug rules and the staff intake is routed; it refuses the fixture's staff principal for want of a second factor before reading any slug, and the unenumerated reserved names come after it"
+
+[[scenario]]
+id = "FS-ID-03"
+group = "R02 and R07 lifetimes and coherent identifiers"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the five-state lifecycle is decided; the prospect and active fixtures reach the routed staff intake first, which refuses the fixture's staff principal for want of a second factor before the exhaustive state mapping runs"
+
+# ------------------------------------------------------ R05 operation identity and replay ----
+
+[[scenario]]
+id = "FS-OP-01"
+group = "R05 operation identity and replay"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the staff intake is routed, its complete and in-flight replies carry the durable realm_create job key as X-Operation-Ref, and Core holds the winning transaction before commit at intake:hold-before-commit; the racing intakes refuse the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-OP-02"
+group = "R05 operation identity and replay"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-OP-03"
+group = "R05 operation identity and replay"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-OP-04"
+group = "R05 operation identity and replay"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-OP-05"
+group = "R05 operation identity and replay"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the durable operation rule is decided; the customer and order fixture reaches the routed staff intake first, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-OP-06"
+group = "R05 operation identity and replay"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the Core consumer and lost-delivery rules are decided; owner_pending first reaches the routed staff intake, which refuses the fixture's staff principal because the admitted local provider supplies no real second factor"
+
+# ------------------------------------------ R03 and R04 shared resources and external execution ----
+
+[[scenario]]
+id = "FS-CON-01"
+group = "R03 and R04 shared resources and external execution"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-CON-02"
+group = "R03 and R04 shared resources and external execution"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-CON-03"
+group = "R03 and R04 shared resources and external execution"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the fenced job is the intake's realm_create operation; the intake is routed and refuses the fixture's staff principal for want of a second factor, and the worker that claims the job comes after it"
+
+[[scenario]]
+id = "FS-CON-04"
+group = "R03 and R04 shared resources and external execution"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-CON-05"
+group = "R03 and R04 shared resources and external execution"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-CON-06"
+group = "R03 and R04 shared resources and external execution"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "Core declares the intake's transaction and after-commit fault points and the harness arms them; the intake they interrupt refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+# ------------------------------------------------ R06 commercial effects and invoice authority ----
+
+[[scenario]]
+id = "FS-BILL-01"
+group = "R06 commercial effects and invoice authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BILL-02"
+group = "R06 commercial effects and invoice authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BILL-03"
+group = "R06 commercial effects and invoice authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BILL-04"
+group = "R06 commercial effects and invoice authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BILL-05"
+group = "R06 commercial effects and invoice authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-BILL-06"
+group = "R06 commercial effects and invoice authority"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+# ------------------------------------------------- Full internal journey and proof quality ----
+
+[[scenario]]
+id = "FS-JOURNEY-01"
+group = "Full internal journey and proof quality"
+state = "xfail"
+gap = "harness:identity-provider-second-factor"
+reason = "the offer is published through the catalogue models; the customer the scenario needs is then built through the staff intake, which refuses the fixture's staff principal for want of a second factor no local identity provider issues here"
+
+[[scenario]]
+id = "FS-HARNESS-01"
+group = "Full internal journey and proof quality"
+state = "xfail"
+gap = "harness:identity-provider-admission"
+reason = "the actual runner's population, identifier, skip, selector, configured-endpoint, public-issuer, unavailable-database and egress refusals run; no local identity provider is admitted in this environment"

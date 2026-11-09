@@ -1,0 +1,202 @@
+# Fault-point inventory: first-slice `h.fault_point(...)` and real-worker `Control.arm(...)` uses.
+#
+# [[site]]    one `faults.reach("<site>")` call in Core: the file and function it must sit in, and
+#             the call it must follow there. core/faults.py derives SITES from its POINTS.
+# [[point]]   a name core/faults.py POINTS declares: its site, its mode, and the scenarios that arm
+#             it. Worker test function node ids also count as scenarios. The harness arms it for real.
+# [[planned]] a name a scenario arms that Core does not declare yet. The harness raises the gap
+#             harness:core-fault-points for it; `*` stands for one segment a scenario fills in at
+#             run time (a tenant or a job identifier).
+#
+# dev/check_first_slice_fault_points.py holds the tree to this file: each site has exactly one
+# reach() and sits where it says, each point matches core/faults.py, and the scenarios that arm a
+# name are exactly the ones listed. dev/mutate_first_slice_fault_points.py proves each rule can fail.
+
+format = 1
+
+# ---------------------------------------------------------------------------- sites ----
+
+[[site]]
+name = "intake:after-desired-state"
+file = "apps/orgs/intake_services.py"
+function = "record_intake"
+follows = "SlugReservation.objects.create"
+
+[[site]]
+name = "intake:after-audit"
+file = "apps/orgs/intake_services.py"
+function = "record_intake.apply_desired_state"
+follows = "record_intake_recorded"
+
+[[site]]
+name = "intake:after-job"
+file = "apps/orgs/intake_services.py"
+function = "record_intake"
+follows = "enqueue_job"
+
+# The last statement of the handler the replay store runs inside its transaction: past every write
+# of the intake, before the IdempotencyRecord insert (lane decision D4).
+[[site]]
+name = "intake:before-commit"
+file = "apps/orgs/api/intake.py"
+function = "_effect"
+follows = "_answer"
+
+[[site]]
+name = "intake:after-commit"
+file = "apps/orgs/api/intake.py"
+function = "organisations"
+follows = "respond_once"
+
+# Worker-only: close_dispatch runs in no process the API image starts. It fires on any `completed`
+# close of a realm_create dispatch, which today is only the step-7 verify close. In-process only:
+# under lane decision D5 it moves to a real process kill, armed from outside the worker, in G1.5.
+[[site]]
+name = "realm_create:after-provider-success-before-acknowledgement"
+file = "apps/jobs/_runner.py"
+function = "close_dispatch"
+follows = "_owned"
+
+[[site]]
+name = "worker:after-failed-dispatch-close-before-step-record"
+file = "worker/runner.py"
+function = "Runner._step"
+follows = "close_dispatch"
+
+[[site]]
+name = "worker:after-recovered-failed-step"
+file = "worker/runner.py"
+function = "Runner._steps"
+follows = "step_statuses"
+
+# --------------------------------------------------------------------------- points ----
+[[site]]
+name = "worker:inside-completed-ack-before-step"
+file = "apps/jobs/_runner.py"
+function = "_acknowledge_completed_dispatch"
+follows = "_one"
+
+[[site]]
+name = "worker:after-completed-ack"
+file = "apps/jobs/_runner.py"
+function = "_acknowledge_completed_dispatch"
+follows = "_end_step"
+
+[[site]]
+name = "worker:after-completion-claim-projection"
+file = "worker/runner.py"
+function = "Runner._steps"
+follows = "step_statuses"
+
+# The site order follows JOB_QUEUE.md §4.1 (job row, the caller's audit, steps, job.created), not
+# FS-CON-06's prose order "desired state, audit, job" (lane decision D3).
+
+[[point]]
+name = "intake:after-desired-state"
+site = "intake:after-desired-state"
+mode = "crash"
+scenarios = ["FS-CON-06"]
+
+[[point]]
+name = "intake:after-audit"
+site = "intake:after-audit"
+mode = "crash"
+scenarios = ["FS-CON-06"]
+
+[[point]]
+name = "intake:after-job"
+site = "intake:after-job"
+mode = "crash"
+scenarios = ["FS-CON-06"]
+
+[[point]]
+name = "intake:before-commit"
+site = "intake:before-commit"
+mode = "crash"
+scenarios = ["FS-BOOT-02"]
+
+[[point]]
+name = "intake:hold-before-commit"
+site = "intake:before-commit"
+mode = "hold"
+scenarios = ["FS-OP-01"]
+
+[[point]]
+name = "intake:after-commit"
+site = "intake:after-commit"
+mode = "crash"
+scenarios = ["FS-CON-06"]
+
+# Lane decision D2: an alias. Dispatch is a worker's claim (ADR-0004), so nothing in process lies
+# between the commit and the dispatch.
+[[point]]
+name = "intake:after-commit-before-dispatch"
+site = "intake:after-commit"
+mode = "crash"
+alias_of = "intake:after-commit"
+scenarios = ["FS-BOOT-02"]
+
+[[point]]
+name = "realm_create:after-provider-success-before-acknowledgement"
+site = "realm_create:after-provider-success-before-acknowledgement"
+mode = "crash"
+scenarios = ["FS-BOOT-02"]
+
+# Worker Control arms these points from outside the process for real SIGKILL acceptance.
+[[point]]
+name = "worker:after-failed-dispatch-close-before-step-record"
+site = "worker:after-failed-dispatch-close-before-step-record"
+mode = "crash"
+scenarios = ["tests/worker/test_failed_dispatch_recovery.py::test_failed_dispatch_survives_worker_deaths", "tests/worker/test_failed_dispatch_recovery.py::test_recovery_removal_mutant_fails_convergence"]
+
+[[point]]
+name = "worker:after-recovered-failed-step"
+site = "worker:after-recovered-failed-step"
+mode = "crash"
+scenarios = ["tests/worker/test_failed_dispatch_recovery.py::test_failed_dispatch_survives_worker_deaths"]
+
+# -------------------------------------------------------------------------- planned ----
+[[point]]
+name = "worker:inside-completed-ack-before-step"
+site = "worker:inside-completed-ack-before-step"
+mode = "crash"
+scenarios = ["tests/worker/test_completed_dispatch_recovery.py::test_sigkill_inside_atomic_ack_leaves_open_dispatch_and_reservation"]
+
+[[point]]
+name = "worker:after-completed-ack"
+site = "worker:after-completed-ack"
+mode = "crash"
+scenarios = ["tests/worker/test_completed_dispatch_recovery.py::test_legacy_completed_dispatch_survives_two_worker_deaths"]
+
+[[point]]
+name = "worker:after-completion-claim-projection"
+site = "worker:after-completion-claim-projection"
+mode = "crash"
+scenarios = ["tests/worker/test_completed_dispatch_recovery.py::test_legacy_completed_dispatch_survives_two_worker_deaths"]
+
+# The worker and dispatcher points. Lane decision D5: these are crashed by a real process kill, as
+# tests/job_queue/queue_harness.py does, once the worker exists.
+
+[[planned]]
+name = "dispatcher:before-adapter-call"
+scenarios = ["FS-BILL-01"]
+
+[[planned]]
+name = "dispatcher:after-adapter-call-before-local-commit"
+scenarios = ["FS-BILL-03"]
+
+[[planned]]
+name = "provision:*:after-clients-created"
+scenarios = ["FS-CON-01"]
+
+[[planned]]
+name = "job:*:after-locks-taken"
+scenarios = ["FS-CON-02"]
+
+[[planned]]
+name = "worker:database-connection-lost"
+scenarios = ["FS-CON-04"]
+
+[[planned]]
+name = "worker:provider-response-lost"
+scenarios = ["FS-CON-05"]

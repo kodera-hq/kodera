@@ -1,0 +1,37 @@
+name: CI — Rust Core & Desktop Shell
+
+# Called by ci.yml, which decides from the changed paths whether this runs and
+# aggregates every result into the single required check `ci-ok`. Run alone, a
+# path-filtered workflow is never reported on a pull request it skips, so a
+# required check on it would wait forever.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-and-desktop:
+    name: Cargo Fmt, Clippy, Tests & Tauri Config
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Ensure stable Rust toolchain with clippy & rustfmt
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+      - name: Check formatting, locked clippy & unit/mutation tests
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
+      - name: Verify Tauri v2 security configuration
+        run: |
+          node apps/desktop/scripts/verify-config.mjs --selftest
+          node apps/desktop/scripts/verify-config.mjs

@@ -1,0 +1,29 @@
+# Dependencies. There are none today — the build and the three checks run on
+# plain Node — but a devDependency landing here must not drag node_modules in.
+node_modules/
+coverage/
+*.tsbuildinfo
+
+# `dist/` is DELIBERATELY NOT IGNORED. Consumers install this package from a git
+# tag until the private registry exists, and npm does not run a build step for a
+# git dependency: an ignored `dist/` would install as an empty package with no
+# error. The drift test is what keeps the committed output honest.
+
+.env
+.env.*
+!.env.example
+
+# Local state written by coding assistants and editors. Matched by SHAPE rather
+# than by vendor name: these directories are renamed every few months, and a new
+# one that slips through lands local paths, prompts and sometimes tokens in the
+# history.
+.remember/
+.superpowers/
+.*/settings.local.json
+.*/*.local.json
+.vscode/
+.idea/
+
+# OS noise
+.DS_Store
+Thumbs.db

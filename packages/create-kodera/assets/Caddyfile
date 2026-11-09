@@ -1,0 +1,39 @@
+{
+	email {$KODERA_ACME_EMAIL}
+}
+
+{$KODERA_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	@api path /api/* /health/* /agent/*
+	handle @api {
+		reverse_proxy server:8000
+	}
+
+	@room_access path /_kodera/rooms/token
+	handle @room_access {
+		rewrite * /token
+		reverse_proxy room-access:8095
+	}
+
+	@matrix path /_matrix/* /_synapse/client/*
+	handle @matrix {
+		reverse_proxy synapse:8008
+	}
+
+	@livekit path /rtc /rtc/*
+	handle @livekit {
+		reverse_proxy livekit:7880
+	}
+
+	handle {
+		reverse_proxy web:8080
+	}
+}

@@ -1,0 +1,11 @@
+---
+pad_id: "team.pad_01:notes"
+channel_id: "room-7"
+title: "--- : \"title\" \\ back"
+revision: 42
+updated_by: "0190f3a2-7b1c-7d4e-8f00-123456789abc"
+---
+
+Accents é, ü and 日本語
+---
+forged: no

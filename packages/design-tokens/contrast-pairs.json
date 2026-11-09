@@ -1,0 +1,4071 @@
+{
+  "$comment": "The accessibility contract as data. The four load-bearing fields of a row — `fg`, `bg`, `label`, `min` — are the same four values kodera-visio/scripts/check-contrast.py carries in the `PAIRINGS` tuples it hardcodes; that script reads no JSON and this file is not an input to it. The shape is deliberate all the same, so a pairing can move from there to here without being reinterpreted. `fg` and `bg` are token paths from tokens.json, or a literal #hex. `min` is 4.5 for text (WCAG 2.1 SC 1.4.3) or 3.0 for a non-text boundary, control edge or focus indicator (SC 1.4.11); the large-text 3:1 exemption is not used anywhere in this system. A translucent foreground is composited over its background before it is measured, always: the alpha travels with the colour and no row can opt out, because a translucent colour measured as if it were opaque reports a ratio no user ever sees. `fg` may also be a `spec:` role rather than a token — `spec:focus-ring.<theme>.indicator` is the ring tone painted against the control and `spec:focus-ring.<theme>.outer` the tone painted onto the background, with `spec:focus-ring-on-inverse.<theme>.*` for the variant a control on an inverse panel is drawn with — which resolves to a colour scripts/lib/spec.mjs composes for the build, at its real alpha. The theme is part of the name because the ring follows `[data-theme]`: a role without one would let a row measure the light ring on a ground the dark ring is what actually paints. That is what keeps these rows measuring the focus ring that ships rather than a token named after it (ADR-0002). `exempt` records a row that is measured and reported but not gated. `expect: \"fail\"` inverts the row: it is a pair the design system forbids, and the gate fails if it ever starts passing, because that means the palette moved under the rule. Additional measurements classify decorative or unsupported capability combinations, and figures this package can compute about a value it ships but does not gate; they are explicitly outside normative contrast acceptance, carry a purpose, and are measured by the theme contract self-test. A measurement may name a `spec:` role in `fg` exactly as a pair can, so a colour the build composes is reported at the geometry that actually ships and moves when that geometry moves. No allowlist entries are created for them, and a measurement never becomes a requirement, a waiver or a threshold.",
+  "pairs": [
+    {
+      "id": "text.primary/surface.default",
+      "fg": "semantic.text.primary",
+      "bg": "semantic.surface.default",
+      "label": "primary text on a card",
+      "min": 4.5
+    },
+    {
+      "id": "text.primary/surface.muted",
+      "fg": "semantic.text.primary",
+      "bg": "semantic.surface.muted",
+      "label": "primary text on the muted surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.primary/surface.page",
+      "fg": "semantic.text.primary",
+      "bg": "semantic.surface.page",
+      "label": "primary text on the page, light end of the gradient (frost.100)",
+      "min": 4.5
+    },
+    {
+      "id": "text.primary/frost.200",
+      "fg": "semantic.text.primary",
+      "bg": "color.frost.200",
+      "label": "primary text on the page, dark end of the gradient (frost.200)",
+      "min": 4.5
+    },
+    {
+      "id": "text.primary/surface.accent",
+      "fg": "semantic.text.primary",
+      "bg": "semantic.surface.accent",
+      "label": "primary text on a tinted accent surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.secondary/surface.default",
+      "fg": "semantic.text.secondary",
+      "bg": "semantic.surface.default",
+      "label": "secondary text on a card",
+      "min": 4.5
+    },
+    {
+      "id": "text.secondary/surface.muted",
+      "fg": "semantic.text.secondary",
+      "bg": "semantic.surface.muted",
+      "label": "secondary text on the muted surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.secondary/surface.page",
+      "fg": "semantic.text.secondary",
+      "bg": "semantic.surface.page",
+      "label": "secondary text on the page, light end of the gradient (frost.100)",
+      "min": 4.5
+    },
+    {
+      "id": "text.secondary/frost.200",
+      "fg": "semantic.text.secondary",
+      "bg": "color.frost.200",
+      "label": "secondary text on the page, dark end of the gradient (frost.200)",
+      "min": 4.5
+    },
+    {
+      "id": "text.secondary/surface.accent",
+      "fg": "semantic.text.secondary",
+      "bg": "semantic.surface.accent",
+      "label": "secondary text on a tinted accent surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.tertiary/surface.default",
+      "fg": "semantic.text.tertiary",
+      "bg": "semantic.surface.default",
+      "label": "tertiary text on a card \u2014 the smallest body colour",
+      "min": 4.5
+    },
+    {
+      "id": "text.tertiary/surface.muted",
+      "fg": "semantic.text.tertiary",
+      "bg": "semantic.surface.muted",
+      "label": "tertiary text on the muted surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.tertiary/surface.page",
+      "fg": "semantic.text.tertiary",
+      "bg": "semantic.surface.page",
+      "label": "tertiary text on the page, light end of the gradient (frost.100)",
+      "min": 4.5
+    },
+    {
+      "id": "text.tertiary/frost.200",
+      "fg": "semantic.text.tertiary",
+      "bg": "color.frost.200",
+      "label": "tertiary text on the page, dark end of the gradient (frost.200)",
+      "min": 4.5
+    },
+    {
+      "id": "text.tertiary/surface.accent",
+      "fg": "semantic.text.tertiary",
+      "bg": "semantic.surface.accent",
+      "label": "tertiary text on a tinted accent surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.placeholder/surface.default",
+      "fg": "semantic.text.placeholder",
+      "bg": "semantic.surface.default",
+      "label": "input placeholder on a white field",
+      "min": 4.5
+    },
+    {
+      "id": "text.placeholder/surface.muted",
+      "fg": "semantic.text.placeholder",
+      "bg": "semantic.surface.muted",
+      "label": "input placeholder on a muted field",
+      "min": 4.5
+    },
+    {
+      "id": "text.accent/surface.default",
+      "fg": "semantic.text.accent",
+      "bg": "semantic.surface.default",
+      "label": "inline link on a card",
+      "min": 4.5
+    },
+    {
+      "id": "text.accent/surface.muted",
+      "fg": "semantic.text.accent",
+      "bg": "semantic.surface.muted",
+      "label": "inline link on the muted surface",
+      "min": 4.5
+    },
+    {
+      "id": "text.accent/surface.page",
+      "fg": "semantic.text.accent",
+      "bg": "semantic.surface.page",
+      "label": "inline link on the page",
+      "min": 4.5
+    },
+    {
+      "id": "text.accent/surface.accent",
+      "fg": "semantic.text.accent",
+      "bg": "semantic.surface.accent",
+      "label": "info pill label on its own tint",
+      "min": 4.5
+    },
+    {
+      "id": "action.onPrimary/action.primary",
+      "fg": "semantic.action.onPrimary",
+      "bg": "semantic.action.primary",
+      "label": "label on the primary button",
+      "min": 4.5
+    },
+    {
+      "id": "action.onPrimary/action.primaryHover",
+      "fg": "semantic.action.onPrimary",
+      "bg": "semantic.action.primaryHover",
+      "label": "label on the primary button, hover",
+      "min": 4.5
+    },
+    {
+      "id": "action.onPrimary/slate.300",
+      "fg": "semantic.action.onPrimary",
+      "bg": "color.slate.300",
+      "label": "the retired white-on-slate.300 disabled button label; the decided rule is text.tertiary on the slate.300 fill (3.87:1). Measured so the white label cannot come back unnoticed",
+      "min": 4.5,
+      "exempt": true
+    },
+    {
+      "id": "text.success/green.100",
+      "fg": "semantic.text.success",
+      "bg": "color.green.100",
+      "label": "success pill label on its tint",
+      "min": 4.5
+    },
+    {
+      "id": "text.success/surface.default",
+      "fg": "semantic.text.success",
+      "bg": "semantic.surface.default",
+      "label": "success text on white",
+      "min": 4.5
+    },
+    {
+      "id": "text.warning/amber.100",
+      "fg": "semantic.text.warning",
+      "bg": "color.amber.100",
+      "label": "warning pill label on its tint",
+      "min": 4.5
+    },
+    {
+      "id": "text.warning/surface.default",
+      "fg": "semantic.text.warning",
+      "bg": "semantic.surface.default",
+      "label": "warning text on white",
+      "min": 4.5
+    },
+    {
+      "id": "text.danger/red.100",
+      "fg": "semantic.text.danger",
+      "bg": "color.red.100",
+      "label": "danger pill label on its tint",
+      "min": 4.5
+    },
+    {
+      "id": "text.danger/surface.default",
+      "fg": "semantic.text.danger",
+      "bg": "semantic.surface.default",
+      "label": "danger text on white",
+      "min": 4.5
+    },
+    {
+      "id": "green.500/green.100",
+      "fg": "color.green.500",
+      "bg": "color.green.100",
+      "label": "success dot on its tint (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "amber.500/amber.100",
+      "fg": "color.amber.500",
+      "bg": "color.amber.100",
+      "label": "warning dot on its tint (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "red.500/red.100",
+      "fg": "color.red.500",
+      "bg": "color.red.100",
+      "label": "incident dot on its tint (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "text.inverse/surface.inverse",
+      "fg": "semantic.text.inverse",
+      "bg": "semantic.surface.inverse",
+      "label": "text on the inverse card and the success toast",
+      "min": 4.5
+    },
+    {
+      "id": "border.input/surface.default",
+      "fg": "semantic.border.input",
+      "bg": "semantic.surface.default",
+      "label": "text-field outline on white (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "border.default/surface.default",
+      "fg": "semantic.border.default",
+      "bg": "semantic.surface.default",
+      "label": "card boundary on white — decorative, the card's extent is carried by shadow.card (non-text, 1.4.11)",
+      "min": 3.0,
+      "exempt": true
+    },
+    {
+      "id": "focus-ring/surface.default",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.surface.default",
+      "label": "focus ring on white — the light ring's innermost tone as the build composes it, which is what a page carrying no [data-theme] paints, and the tone a keyboard user has to find (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "focus-ring/surface.page",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.surface.page",
+      "label": "focus ring on the page (frost.100) — same tone, measured off a card (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "focus-ring-halo/surface.default",
+      "fg": "spec:focus-ring.light.outer",
+      "bg": "semantic.surface.default",
+      "label": "the ring's outermost tone alone on white, at its own alpha — 1.86:1. A single 35 % halo is what COMPONENTS.md delivered as the whole ring, and measuring it is the reason the ring gained an opaque core: a 35 % halo is not an indicator, whatever colour it is mixed from. The row is inverted, so the halo cannot be quietly promoted back to carrying the ring on its own — if it ever clears 3:1 the two-tone construction is doing nothing and someone has to say which tone the indicator is",
+      "min": 3.0,
+      "expect": "fail"
+    },
+    {
+      "id": "focus-ring-halo/surface.page",
+      "fg": "spec:focus-ring.light.outer",
+      "bg": "semantic.surface.page",
+      "label": "the same outermost tone on the page (frost.100) — 1.82:1. Both surfaces stay listed so neither is forgotten when the ring is revisited",
+      "min": 3.0,
+      "expect": "fail"
+    },
+    {
+      "id": "focus-ring-halo/theme.dark.surface",
+      "fg": "spec:focus-ring.dark.outer",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: the ring's outermost tone alone on surface, at its own alpha — 2.27:1. Inverted like the two light rows above, and for the same reason: a 35 % halo is not the indicator, and if it ever clears 3:1 the two-tone construction is doing nothing and someone has to say which tone the indicator is",
+      "min": 3.0,
+      "expect": "fail"
+    },
+    {
+      "id": "focus-ring-halo/theme.black.surface",
+      "fg": "spec:focus-ring.black.outer",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: the ring's outermost tone alone on surface, at its own alpha — 2.20:1. Inverted like the two light rows above, and for the same reason: a 35 % halo is not the indicator, and if it ever clears 3:1 the two-tone construction is doing nothing and someone has to say which tone the indicator is",
+      "min": 3.0,
+      "expect": "fail"
+    },
+    {
+      "id": "theme.light/focus-ring/surface",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: focus ring core on surface — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/sunken",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: focus ring core on sunken — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/page",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.page",
+      "label": "light: focus ring core on page — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/hairline",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.hairline",
+      "label": "light: focus ring core on hairline — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/muted",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: focus ring core on muted — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/muted-2",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.muted-2",
+      "label": "light: focus ring core on muted-2 — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/accent-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.accent-soft",
+      "label": "light: focus ring core on the painted accent-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/ok-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.ok-soft",
+      "label": "light: focus ring core on the painted ok-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/warn-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.warn-soft",
+      "label": "light: focus ring core on the painted warn-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/bad-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.bad-soft",
+      "label": "light: focus ring core on the painted bad-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/t1-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.t1-bg",
+      "label": "light: focus ring core on the painted t1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/t2-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.t2-bg",
+      "label": "light: focus ring core on the painted t2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/t3-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.t3-bg",
+      "label": "light: focus ring core on the painted t3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/t4-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.t4-bg",
+      "label": "light: focus ring core on the painted t4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/t5-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.t5-bg",
+      "label": "light: focus ring core on the painted t5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring/t6-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.t6-bg",
+      "label": "light: focus ring core on the painted t6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring-on-inverse/inverse",
+      "fg": "spec:focus-ring-on-inverse.light.indicator",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: on-inverse focus ring core on inverse — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring-on-inverse/inverse-2",
+      "fg": "spec:focus-ring-on-inverse.light.indicator",
+      "bg": "semantic.theme.light.inverse-2",
+      "label": "light: on-inverse focus ring core on inverse-2 — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/focus-ring-on-inverse/bad",
+      "fg": "spec:focus-ring-on-inverse.light.indicator",
+      "bg": "semantic.theme.light.bad",
+      "label": "light: on-inverse focus ring core on bad — the variant a danger control on an inverse panel (Quitter) or a danger toast action is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/surface",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: focus ring core on surface — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/sunken",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: focus ring core on sunken — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/page",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: focus ring core on page — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/hairline",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.hairline",
+      "label": "dark: focus ring core on hairline — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/muted",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: focus ring core on muted — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/muted-2",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.muted-2",
+      "label": "dark: focus ring core on muted-2 — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/accent-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.accent-soft",
+      "label": "dark: focus ring core on the painted accent-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/ok-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.ok-soft",
+      "label": "dark: focus ring core on the painted ok-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/warn-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.warn-soft",
+      "label": "dark: focus ring core on the painted warn-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/bad-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.bad-soft",
+      "label": "dark: focus ring core on the painted bad-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/t1-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.t1-bg",
+      "label": "dark: focus ring core on the painted t1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/t2-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.t2-bg",
+      "label": "dark: focus ring core on the painted t2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/t3-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.t3-bg",
+      "label": "dark: focus ring core on the painted t3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/t4-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.t4-bg",
+      "label": "dark: focus ring core on the painted t4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/t5-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.t5-bg",
+      "label": "dark: focus ring core on the painted t5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring/t6-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.t6-bg",
+      "label": "dark: focus ring core on the painted t6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring-on-inverse/inverse",
+      "fg": "spec:focus-ring-on-inverse.dark.indicator",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: on-inverse focus ring core on inverse — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring-on-inverse/inverse-2",
+      "fg": "spec:focus-ring-on-inverse.dark.indicator",
+      "bg": "semantic.theme.dark.inverse-2",
+      "label": "dark: on-inverse focus ring core on inverse-2 — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/focus-ring-on-inverse/bad",
+      "fg": "spec:focus-ring-on-inverse.dark.indicator",
+      "bg": "semantic.theme.dark.bad",
+      "label": "dark: on-inverse focus ring core on bad — the variant a danger control on an inverse panel (Quitter) or a danger toast action is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/surface",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: focus ring core on surface — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/sunken",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: focus ring core on sunken — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/page",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.page",
+      "label": "black: focus ring core on page — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/hairline",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.hairline",
+      "label": "black: focus ring core on hairline — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/muted",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: focus ring core on muted — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/muted-2",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.muted-2",
+      "label": "black: focus ring core on muted-2 — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/accent-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.accent-soft",
+      "label": "black: focus ring core on the painted accent-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/ok-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.ok-soft",
+      "label": "black: focus ring core on the painted ok-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/warn-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.warn-soft",
+      "label": "black: focus ring core on the painted warn-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/bad-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.bad-soft",
+      "label": "black: focus ring core on the painted bad-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/t1-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.t1-bg",
+      "label": "black: focus ring core on the painted t1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/t2-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.t2-bg",
+      "label": "black: focus ring core on the painted t2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/t3-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.t3-bg",
+      "label": "black: focus ring core on the painted t3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/t4-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.t4-bg",
+      "label": "black: focus ring core on the painted t4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/t5-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.t5-bg",
+      "label": "black: focus ring core on the painted t5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring/t6-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.t6-bg",
+      "label": "black: focus ring core on the painted t6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring-on-inverse/inverse",
+      "fg": "spec:focus-ring-on-inverse.black.indicator",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: on-inverse focus ring core on inverse — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring-on-inverse/inverse-2",
+      "fg": "spec:focus-ring-on-inverse.black.indicator",
+      "bg": "semantic.theme.black.inverse-2",
+      "label": "black: on-inverse focus ring core on inverse-2 — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/focus-ring-on-inverse/bad",
+      "fg": "spec:focus-ring-on-inverse.black.indicator",
+      "bg": "semantic.theme.black.bad",
+      "label": "black: on-inverse focus ring core on bad — the variant a danger control on an inverse panel (Quitter) or a danger toast action is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+
+    {
+      "id": "gauge.ok/slate.150",
+      "fg": "semantic.action.primary",
+      "bg": "color.slate.150",
+      "label": "capacity gauge fill on its track (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "gauge.warn/slate.150",
+      "fg": "color.amber.500",
+      "bg": "color.slate.150",
+      "label": "capacity gauge fill at 90 % on its track (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "gauge.critical/slate.150",
+      "fg": "color.red.500",
+      "bg": "color.slate.150",
+      "label": "capacity gauge fill at 100 % on its track (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "forbidden:slate.500/surface.default",
+      "fg": "color.slate.500",
+      "bg": "semantic.surface.default",
+      "label": "slate-500 as running text — forbidden by DESIGN_SYSTEM.md §2; slate.500 is the picto and input-border step; the placeholder moved off it to slate.600 so that a hint clears 4.5:1 like running text. This row fails the gate if it ever starts passing",
+      "min": 4.5,
+      "expect": "fail"
+    },
+    {
+      "id": "forbidden:green.500/surface.default",
+      "fg": "color.green.500",
+      "bg": "semantic.surface.default",
+      "label": "a -500 status colour as text on white — forbidden by DESIGN_SYSTEM.md §2; the -500 step is for dots and fills, the -600 step is the text. green.500 at 4.25:1 is the step closest to the line, so it crosses first. This row fails the gate if it ever starts passing",
+      "min": 4.5,
+      "expect": "fail"
+    },
+    {
+      "id": "forbidden:amber.500/surface.default",
+      "fg": "color.amber.500",
+      "bg": "semantic.surface.default",
+      "label": "the same §2 rule on the second of the three status colours: amber.500 as text on white, 3.64:1 today. red.500 is the third and is the one no contrast row can carry — it already clears 4.5:1 at 5.42:1, so an expect-fail row for it would fail on the day it was added. For red, \"the -500 step is not text\" is a semantic rule and needs a lint over product code",
+      "min": 4.5,
+      "expect": "fail"
+    },
+    {
+      "id": "forbidden:cobalt.500/slate.900",
+      "fg": "color.cobalt.500",
+      "bg": "semantic.surface.inverse",
+      "label": "cobalt on slate.900 \u2014 forbidden by DESIGN_SYSTEM.md \u00a72; this row fails the gate if it ever starts passing",
+      "min": 4.5,
+      "expect": "fail"
+    },
+    {
+      "id": "theme.light/ink/page",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.page",
+      "label": "light: ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/page",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.page",
+      "label": "light: ink-2 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/page",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.page",
+      "label": "light: ink-3 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/page",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.page",
+      "label": "light: accent-ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/surface",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/surface",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: ink-2 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/surface",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: ink-3 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/surface",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: accent-ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/sunken",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/sunken",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: ink-2 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/sunken",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: ink-3 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/sunken",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: accent-ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/muted",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/muted",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: ink-2 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/muted",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: ink-3 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/muted",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: accent-ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/muted-2",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.muted-2",
+      "label": "light: ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/muted-2",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.muted-2",
+      "label": "light: ink-2 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/muted-2",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.muted-2",
+      "label": "light: ink-3 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/muted-2",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.muted-2",
+      "label": "light: accent-ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/hairline",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.hairline",
+      "label": "light: ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/hairline",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.hairline",
+      "label": "light: ink-2 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/hairline",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.hairline",
+      "label": "light: ink-3 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/hairline",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.hairline",
+      "label": "light: accent-ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-inverse/inverse",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: on-inverse text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-inverse/inverse-2",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.inverse-2",
+      "label": "light: on-inverse text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-inverse-dim/inverse",
+      "fg": "semantic.theme.light.on-inverse-dim",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: on-inverse-dim text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-inverse-dim/inverse-2",
+      "fg": "semantic.theme.light.on-inverse-dim",
+      "bg": "semantic.theme.light.inverse-2",
+      "label": "light: on-inverse-dim text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ok-on-dark/inverse",
+      "fg": "semantic.theme.light.ok-on-dark",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: ok-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ok-on-dark/inverse-2",
+      "fg": "semantic.theme.light.ok-on-dark",
+      "bg": "semantic.theme.light.inverse-2",
+      "label": "light: ok-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/bad-on-dark/inverse",
+      "fg": "semantic.theme.light.bad-on-dark",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: bad-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/bad-on-dark/inverse-2",
+      "fg": "semantic.theme.light.bad-on-dark",
+      "bg": "semantic.theme.light.inverse-2",
+      "label": "light: bad-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ok/ok-soft",
+      "fg": "semantic.theme.light.ok",
+      "bg": "semantic.theme.light.ok-soft",
+      "label": "light: ok status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.light/ok/surface",
+      "fg": "semantic.theme.light.ok",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: ok status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.light/ok-ink/ok-soft",
+      "fg": "semantic.theme.light.ok-ink",
+      "bg": "semantic.theme.light.ok-soft",
+      "label": "light: ok label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/warn/warn-soft",
+      "fg": "semantic.theme.light.warn",
+      "bg": "semantic.theme.light.warn-soft",
+      "label": "light: warn status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.light/warn/surface",
+      "fg": "semantic.theme.light.warn",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: warn status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.light/warn-ink/warn-soft",
+      "fg": "semantic.theme.light.warn-ink",
+      "bg": "semantic.theme.light.warn-soft",
+      "label": "light: warn label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/bad/surface",
+      "fg": "semantic.theme.light.bad",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: bad status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.light/bad-ink/bad-soft",
+      "fg": "semantic.theme.light.bad-ink",
+      "bg": "semantic.theme.light.bad-soft",
+      "label": "light: bad label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/accent-soft",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.accent-soft",
+      "label": "light: accent text on accent tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/t1-fg/t1-bg",
+      "fg": "semantic.theme.light.t1-fg",
+      "bg": "semantic.theme.light.t1-bg",
+      "label": "light: avatar palette 1 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/t2-fg/t2-bg",
+      "fg": "semantic.theme.light.t2-fg",
+      "bg": "semantic.theme.light.t2-bg",
+      "label": "light: avatar palette 2 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/t3-fg/t3-bg",
+      "fg": "semantic.theme.light.t3-fg",
+      "bg": "semantic.theme.light.t3-bg",
+      "label": "light: avatar palette 3 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/t4-fg/t4-bg",
+      "fg": "semantic.theme.light.t4-fg",
+      "bg": "semantic.theme.light.t4-bg",
+      "label": "light: avatar palette 4 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/t5-fg/t5-bg",
+      "fg": "semantic.theme.light.t5-fg",
+      "bg": "semantic.theme.light.t5-bg",
+      "label": "light: avatar palette 5 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/t6-fg/t6-bg",
+      "fg": "semantic.theme.light.t6-fg",
+      "bg": "semantic.theme.light.t6-bg",
+      "label": "light: avatar palette 6 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/#DCE6F0",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "#DCE6F0",
+      "label": "light: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/#EEF3F8",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "#EEF3F8",
+      "label": "light: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/#FFFFFF",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "#FFFFFF",
+      "label": "light: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/page",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/page",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: ink-2 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/page",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: ink-3 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/page",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: accent-ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/surface",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/surface",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: ink-2 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/surface",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: ink-3 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/surface",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: accent-ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/sunken",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/sunken",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: ink-2 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/sunken",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: ink-3 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/sunken",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: accent-ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/muted",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/muted",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: ink-2 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/muted",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: ink-3 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/muted",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: accent-ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/muted-2",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.muted-2",
+      "label": "dark: ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/muted-2",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.muted-2",
+      "label": "dark: ink-2 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/muted-2",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.muted-2",
+      "label": "dark: ink-3 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/muted-2",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.muted-2",
+      "label": "dark: accent-ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/hairline",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.hairline",
+      "label": "dark: ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/hairline",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.hairline",
+      "label": "dark: ink-2 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/hairline",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.hairline",
+      "label": "dark: ink-3 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/hairline",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.hairline",
+      "label": "dark: accent-ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-inverse/inverse",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: on-inverse text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-inverse/inverse-2",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.inverse-2",
+      "label": "dark: on-inverse text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-inverse-dim/inverse",
+      "fg": "semantic.theme.dark.on-inverse-dim",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: on-inverse-dim text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-inverse-dim/inverse-2",
+      "fg": "semantic.theme.dark.on-inverse-dim",
+      "bg": "semantic.theme.dark.inverse-2",
+      "label": "dark: on-inverse-dim text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ok-on-dark/inverse",
+      "fg": "semantic.theme.dark.ok-on-dark",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: ok-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ok-on-dark/inverse-2",
+      "fg": "semantic.theme.dark.ok-on-dark",
+      "bg": "semantic.theme.dark.inverse-2",
+      "label": "dark: ok-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/bad-on-dark/inverse",
+      "fg": "semantic.theme.dark.bad-on-dark",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: bad-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/bad-on-dark/inverse-2",
+      "fg": "semantic.theme.dark.bad-on-dark",
+      "bg": "semantic.theme.dark.inverse-2",
+      "label": "dark: bad-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ok/ok-soft",
+      "fg": "semantic.theme.dark.ok",
+      "bg": "semantic.theme.dark.ok-soft",
+      "label": "dark: ok status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/ok/surface",
+      "fg": "semantic.theme.dark.ok",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: ok status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/ok-ink/ok-soft",
+      "fg": "semantic.theme.dark.ok-ink",
+      "bg": "semantic.theme.dark.ok-soft",
+      "label": "dark: ok label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/warn/warn-soft",
+      "fg": "semantic.theme.dark.warn",
+      "bg": "semantic.theme.dark.warn-soft",
+      "label": "dark: warn status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/warn/surface",
+      "fg": "semantic.theme.dark.warn",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: warn status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/warn-ink/warn-soft",
+      "fg": "semantic.theme.dark.warn-ink",
+      "bg": "semantic.theme.dark.warn-soft",
+      "label": "dark: warn label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/bad/surface",
+      "fg": "semantic.theme.dark.bad",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: bad status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/bad-ink/bad-soft",
+      "fg": "semantic.theme.dark.bad-ink",
+      "bg": "semantic.theme.dark.bad-soft",
+      "label": "dark: bad label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/accent-soft",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.accent-soft",
+      "label": "dark: accent text on accent tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/t1-fg/t1-bg",
+      "fg": "semantic.theme.dark.t1-fg",
+      "bg": "semantic.theme.dark.t1-bg",
+      "label": "dark: avatar palette 1 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/t2-fg/t2-bg",
+      "fg": "semantic.theme.dark.t2-fg",
+      "bg": "semantic.theme.dark.t2-bg",
+      "label": "dark: avatar palette 2 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/t3-fg/t3-bg",
+      "fg": "semantic.theme.dark.t3-fg",
+      "bg": "semantic.theme.dark.t3-bg",
+      "label": "dark: avatar palette 3 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/t4-fg/t4-bg",
+      "fg": "semantic.theme.dark.t4-fg",
+      "bg": "semantic.theme.dark.t4-bg",
+      "label": "dark: avatar palette 4 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/t5-fg/t5-bg",
+      "fg": "semantic.theme.dark.t5-fg",
+      "bg": "semantic.theme.dark.t5-bg",
+      "label": "dark: avatar palette 5 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/t6-fg/t6-bg",
+      "fg": "semantic.theme.dark.t6-fg",
+      "bg": "semantic.theme.dark.t6-bg",
+      "label": "dark: avatar palette 6 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/#161D25",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "#161D25",
+      "label": "dark: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/#111820",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "#111820",
+      "label": "dark: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/#0C1116",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "#0C1116",
+      "label": "dark: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/page",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.page",
+      "label": "black: ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/page",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.page",
+      "label": "black: ink-2 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/page",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.page",
+      "label": "black: ink-3 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/page",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.page",
+      "label": "black: accent-ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/surface",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/surface",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: ink-2 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/surface",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: ink-3 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/surface",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: accent-ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/sunken",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/sunken",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: ink-2 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/sunken",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: ink-3 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/sunken",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: accent-ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/muted",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/muted",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: ink-2 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/muted",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: ink-3 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/muted",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: accent-ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/muted-2",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.muted-2",
+      "label": "black: ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/muted-2",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.muted-2",
+      "label": "black: ink-2 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/muted-2",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.muted-2",
+      "label": "black: ink-3 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/muted-2",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.muted-2",
+      "label": "black: accent-ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/hairline",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.hairline",
+      "label": "black: ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/hairline",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.hairline",
+      "label": "black: ink-2 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/hairline",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.hairline",
+      "label": "black: ink-3 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/hairline",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.hairline",
+      "label": "black: accent-ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-inverse/inverse",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: on-inverse text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-inverse/inverse-2",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.inverse-2",
+      "label": "black: on-inverse text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-inverse-dim/inverse",
+      "fg": "semantic.theme.black.on-inverse-dim",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: on-inverse-dim text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-inverse-dim/inverse-2",
+      "fg": "semantic.theme.black.on-inverse-dim",
+      "bg": "semantic.theme.black.inverse-2",
+      "label": "black: on-inverse-dim text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ok-on-dark/inverse",
+      "fg": "semantic.theme.black.ok-on-dark",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: ok-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ok-on-dark/inverse-2",
+      "fg": "semantic.theme.black.ok-on-dark",
+      "bg": "semantic.theme.black.inverse-2",
+      "label": "black: ok-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/bad-on-dark/inverse",
+      "fg": "semantic.theme.black.bad-on-dark",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: bad-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/bad-on-dark/inverse-2",
+      "fg": "semantic.theme.black.bad-on-dark",
+      "bg": "semantic.theme.black.inverse-2",
+      "label": "black: bad-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ok/ok-soft",
+      "fg": "semantic.theme.black.ok",
+      "bg": "semantic.theme.black.ok-soft",
+      "label": "black: ok status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.black/ok/surface",
+      "fg": "semantic.theme.black.ok",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: ok status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.black/ok-ink/ok-soft",
+      "fg": "semantic.theme.black.ok-ink",
+      "bg": "semantic.theme.black.ok-soft",
+      "label": "black: ok label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/warn/warn-soft",
+      "fg": "semantic.theme.black.warn",
+      "bg": "semantic.theme.black.warn-soft",
+      "label": "black: warn status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.black/warn/surface",
+      "fg": "semantic.theme.black.warn",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: warn status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.black/warn-ink/warn-soft",
+      "fg": "semantic.theme.black.warn-ink",
+      "bg": "semantic.theme.black.warn-soft",
+      "label": "black: warn label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/bad/surface",
+      "fg": "semantic.theme.black.bad",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: bad status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.black/bad-ink/bad-soft",
+      "fg": "semantic.theme.black.bad-ink",
+      "bg": "semantic.theme.black.bad-soft",
+      "label": "black: bad label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/accent-soft",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.accent-soft",
+      "label": "black: accent text on accent tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/t1-fg/t1-bg",
+      "fg": "semantic.theme.black.t1-fg",
+      "bg": "semantic.theme.black.t1-bg",
+      "label": "black: avatar palette 1 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/t2-fg/t2-bg",
+      "fg": "semantic.theme.black.t2-fg",
+      "bg": "semantic.theme.black.t2-bg",
+      "label": "black: avatar palette 2 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/t3-fg/t3-bg",
+      "fg": "semantic.theme.black.t3-fg",
+      "bg": "semantic.theme.black.t3-bg",
+      "label": "black: avatar palette 3 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/t4-fg/t4-bg",
+      "fg": "semantic.theme.black.t4-fg",
+      "bg": "semantic.theme.black.t4-bg",
+      "label": "black: avatar palette 4 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/t5-fg/t5-bg",
+      "fg": "semantic.theme.black.t5-fg",
+      "bg": "semantic.theme.black.t5-bg",
+      "label": "black: avatar palette 5 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/t6-fg/t6-bg",
+      "fg": "semantic.theme.black.t6-fg",
+      "bg": "semantic.theme.black.t6-bg",
+      "label": "black: avatar palette 6 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/#0B0C0E",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "#0B0C0E",
+      "label": "black: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/#000000",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "#000000",
+      "label": "black: tertiary text at page gradient stop",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-inverse/action",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.action",
+      "label": "light: reference button or badge label on action",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-inverse/action-hover",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.action-hover",
+      "label": "light: reference button or badge label on action-hover",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/action/surface",
+      "fg": "semantic.theme.light.action",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: primary button fill against surface, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/action/page",
+      "fg": "semantic.theme.light.action",
+      "bg": "semantic.theme.light.page",
+      "label": "light: primary button fill against page, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.light/on-inverse/bad",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.bad",
+      "label": "light: reference button or badge label on bad",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-inverse/action",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.action",
+      "label": "dark: reference button or badge label on action",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-inverse/action-hover",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.action-hover",
+      "label": "dark: reference button or badge label on action-hover",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/action/surface",
+      "fg": "semantic.theme.dark.action",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: primary button fill against surface, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/action/page",
+      "fg": "semantic.theme.dark.action",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: primary button fill against page, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.dark/on-inverse/bad",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.bad",
+      "label": "dark: reference button or badge label on bad",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-inverse/action",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.action",
+      "label": "black: reference button or badge label on action",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-inverse/action-hover",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.action-hover",
+      "label": "black: reference button or badge label on action-hover",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/action/surface",
+      "fg": "semantic.theme.black.action",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: primary button fill against surface, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/action/page",
+      "fg": "semantic.theme.black.action",
+      "bg": "semantic.theme.black.page",
+      "label": "black: primary button fill against page, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.black/on-inverse/bad",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.bad",
+      "label": "black: reference button or badge label on bad",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/icon-ink-4/surface",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: informative icon on surface; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.light/icon-ink-4/sunken",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: informative icon on sunken; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.light/icon-ink-4/muted",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: informative icon on muted; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.light/icon-ink-3/accent-soft",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.accent-soft",
+      "label": "light: informative icon on accent-soft; the selected room row, decided ink-3 (unselected rows keep ink-4 on surface, sunken and muted)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/indicator-ok-on-dark/inverse",
+      "fg": "semantic.theme.light.ok-on-dark",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: connected-room status indicator on inverse, reference line 294; decided ok-on-dark (the 4.5:1 text row above covers the same pair)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/icon-ink-4/surface",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: informative icon on surface; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/icon-ink-4/sunken",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: informative icon on sunken; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/icon-ink-4/muted",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: informative icon on muted; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/icon-ink-4/accent-soft",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.accent-soft",
+      "label": "dark: informative icon on accent-soft; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/ok/inverse",
+      "fg": "semantic.theme.dark.ok",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: connected-room status indicator, reference line 294",
+      "min": 3
+    },
+    {
+      "id": "theme.black/icon-ink-4/surface",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: informative icon on surface; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.black/icon-ink-4/sunken",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: informative icon on sunken; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.black/icon-ink-4/muted",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: informative icon on muted; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.black/icon-ink-4/accent-soft",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.accent-soft",
+      "label": "black: informative icon on accent-soft; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.black/ok/inverse",
+      "fg": "semantic.theme.black.ok",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: connected-room status indicator, reference line 294",
+      "min": 3
+    },
+    {
+      "id": "theme.light/focus-ring/elevated",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: focus ring core on elevated — the opaque tone that sits against the control, as [data-theme=\"light\"] paints it (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/ink/elevated",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-2/elevated",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: ink-2 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/elevated",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: ink-3 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/accent-ink/elevated",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: accent-ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/border-input/surface",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: control boundary on surface — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/border-input/sunken",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: control boundary on sunken — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/border-input/muted",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: control boundary on muted — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/border-input/elevated",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: control boundary on elevated — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/placeholder/surface",
+      "fg": "semantic.theme.light.placeholder",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: input placeholder on a field drawn on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/placeholder/sunken",
+      "fg": "semantic.theme.light.placeholder",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: input placeholder on a field drawn on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/placeholder/muted",
+      "fg": "semantic.theme.light.placeholder",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: input placeholder on a field drawn on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/placeholder/elevated",
+      "fg": "semantic.theme.light.placeholder",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: input placeholder on a field drawn on elevated",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/on-disabled/disabled",
+      "fg": "semantic.theme.light.on-disabled",
+      "bg": "semantic.theme.light.disabled",
+      "label": "light: disabled control label on the disabled fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/elevated",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: focus ring core on elevated — the opaque tone that sits against the control, as [data-theme=\"dark\"] paints it (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/ink/elevated",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-2/elevated",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: ink-2 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/elevated",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: ink-3 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/accent-ink/elevated",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: accent-ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/border-input/surface",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: control boundary on surface — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/border-input/sunken",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: control boundary on sunken — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/border-input/muted",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: control boundary on muted — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/border-input/elevated",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: control boundary on elevated — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/placeholder/surface",
+      "fg": "semantic.theme.dark.placeholder",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: input placeholder on a field drawn on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/placeholder/sunken",
+      "fg": "semantic.theme.dark.placeholder",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: input placeholder on a field drawn on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/placeholder/muted",
+      "fg": "semantic.theme.dark.placeholder",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: input placeholder on a field drawn on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/placeholder/elevated",
+      "fg": "semantic.theme.dark.placeholder",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: input placeholder on a field drawn on elevated",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/on-disabled/disabled",
+      "fg": "semantic.theme.dark.on-disabled",
+      "bg": "semantic.theme.dark.disabled",
+      "label": "dark: disabled control label on the disabled fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/elevated",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: focus ring core on elevated — the opaque tone that sits against the control, as [data-theme=\"black\"] paints it (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/ink/elevated",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-2/elevated",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: ink-2 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/elevated",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: ink-3 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/accent-ink/elevated",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: accent-ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/border-input/surface",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: control boundary on surface — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/border-input/sunken",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: control boundary on sunken — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/border-input/muted",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: control boundary on muted — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/border-input/elevated",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: control boundary on elevated — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/placeholder/surface",
+      "fg": "semantic.theme.black.placeholder",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: input placeholder on a field drawn on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/placeholder/sunken",
+      "fg": "semantic.theme.black.placeholder",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: input placeholder on a field drawn on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/placeholder/muted",
+      "fg": "semantic.theme.black.placeholder",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: input placeholder on a field drawn on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/placeholder/elevated",
+      "fg": "semantic.theme.black.placeholder",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: input placeholder on a field drawn on elevated",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/on-disabled/disabled",
+      "fg": "semantic.theme.black.on-disabled",
+      "bg": "semantic.theme.black.disabled",
+      "label": "black: disabled control label on the disabled fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ok-ink/elevated",
+      "fg": "semantic.theme.light.ok-ink",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: ok-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/warn-ink/elevated",
+      "fg": "semantic.theme.light.warn-ink",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: warn-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/bad-ink/elevated",
+      "fg": "semantic.theme.light.bad-ink",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: bad-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/icon-ink-4/elevated",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: ink-4 informative icon on elevated (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/ok-ink/elevated",
+      "fg": "semantic.theme.dark.ok-ink",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: ok-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/warn-ink/elevated",
+      "fg": "semantic.theme.dark.warn-ink",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: warn-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/bad-ink/elevated",
+      "fg": "semantic.theme.dark.bad-ink",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: bad-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/icon-ink-4/elevated",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: ink-4 informative icon on elevated (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/ok-ink/elevated",
+      "fg": "semantic.theme.black.ok-ink",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: ok-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/warn-ink/elevated",
+      "fg": "semantic.theme.black.warn-ink",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: warn-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/bad-ink/elevated",
+      "fg": "semantic.theme.black.bad-ink",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: bad-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/icon-ink-4/elevated",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: ink-4 informative icon on elevated (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/ink/accent-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.accent-soft",
+      "label": "light: ink text on accent-soft — a decision callout, a selected palette option, a focused message",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink-3/accent-soft",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.theme.light.accent-soft",
+      "label": "light: ink-3 text or icon on accent-soft — the time of a focused message, the meta of a selected option, the icon of a selected row",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/warn-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.warn-soft",
+      "label": "light: ink text on warn-soft — a search match highlight, a commented passage, a warning callout",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ok-ink/surface",
+      "fg": "semantic.theme.light.ok-ink",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: ok-ink text on surface — a success hint under a field, a presence label",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ok-ink/muted",
+      "fg": "semantic.theme.light.ok-ink",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: ok-ink text on muted — a room active-speaker label on a hovered row, a presence label on a muted field",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/inverse/on-inverse",
+      "fg": "semantic.theme.light.inverse",
+      "bg": "semantic.theme.light.on-inverse",
+      "label": "light: inverse icon and label on the on-inverse pressed plate — a muted or deafened call toggle",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/accent-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.accent-soft",
+      "label": "dark: ink text on accent-soft — a decision callout, a selected palette option, a focused message",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink-3/accent-soft",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.theme.dark.accent-soft",
+      "label": "dark: ink-3 text or icon on accent-soft — the time of a focused message, the meta of a selected option, the icon of a selected row",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/warn-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.warn-soft",
+      "label": "dark: ink text on warn-soft — a search match highlight, a commented passage, a warning callout",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ok-ink/surface",
+      "fg": "semantic.theme.dark.ok-ink",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: ok-ink text on surface — a success hint under a field, a presence label",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ok-ink/muted",
+      "fg": "semantic.theme.dark.ok-ink",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: ok-ink text on muted — a room active-speaker label on a hovered row, a presence label on a muted field",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/inverse/on-inverse",
+      "fg": "semantic.theme.dark.inverse",
+      "bg": "semantic.theme.dark.on-inverse",
+      "label": "dark: inverse icon and label on the on-inverse pressed plate — a muted or deafened call toggle",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/accent-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.accent-soft",
+      "label": "black: ink text on accent-soft — a decision callout, a selected palette option, a focused message",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink-3/accent-soft",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.theme.black.accent-soft",
+      "label": "black: ink-3 text or icon on accent-soft — the time of a focused message, the meta of a selected option, the icon of a selected row",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/warn-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.warn-soft",
+      "label": "black: ink text on warn-soft — a search match highlight, a commented passage, a warning callout",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ok-ink/surface",
+      "fg": "semantic.theme.black.ok-ink",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: ok-ink text on surface — a success hint under a field, a presence label",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ok-ink/muted",
+      "fg": "semantic.theme.black.ok-ink",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: ok-ink text on muted — a room active-speaker label on a hovered row, a presence label on a muted field",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/inverse/on-inverse",
+      "fg": "semantic.theme.black.inverse",
+      "bg": "semantic.theme.black.on-inverse",
+      "label": "black: inverse icon and label on the on-inverse pressed plate — a muted or deafened call toggle",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/cursor-1/surface",
+      "fg": "semantic.theme.light.cursor-1",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: collaborator 1 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-1/sunken",
+      "fg": "semantic.theme.light.cursor-1",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: collaborator 1 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/on-inverse/cursor-1",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.cursor-1",
+      "label": "light: collaborator 1 cursor name flag label on cursor-1",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/cursor-1-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.cursor-1-soft",
+      "label": "light: ink text on collaborator 1 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/cursor-1-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.cursor-1-soft",
+      "label": "light: focus ring core on the painted cursor-1-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-2/surface",
+      "fg": "semantic.theme.light.cursor-2",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: collaborator 2 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-2/sunken",
+      "fg": "semantic.theme.light.cursor-2",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: collaborator 2 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/on-inverse/cursor-2",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.cursor-2",
+      "label": "light: collaborator 2 cursor name flag label on cursor-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/cursor-2-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.cursor-2-soft",
+      "label": "light: ink text on collaborator 2 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/cursor-2-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.cursor-2-soft",
+      "label": "light: focus ring core on the painted cursor-2-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-3/surface",
+      "fg": "semantic.theme.light.cursor-3",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: collaborator 3 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-3/sunken",
+      "fg": "semantic.theme.light.cursor-3",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: collaborator 3 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/on-inverse/cursor-3",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.cursor-3",
+      "label": "light: collaborator 3 cursor name flag label on cursor-3",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/cursor-3-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.cursor-3-soft",
+      "label": "light: ink text on collaborator 3 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/cursor-3-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.cursor-3-soft",
+      "label": "light: focus ring core on the painted cursor-3-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-4/surface",
+      "fg": "semantic.theme.light.cursor-4",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: collaborator 4 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-4/sunken",
+      "fg": "semantic.theme.light.cursor-4",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: collaborator 4 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/on-inverse/cursor-4",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.cursor-4",
+      "label": "light: collaborator 4 cursor name flag label on cursor-4",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/cursor-4-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.cursor-4-soft",
+      "label": "light: ink text on collaborator 4 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/cursor-4-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.cursor-4-soft",
+      "label": "light: focus ring core on the painted cursor-4-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-5/surface",
+      "fg": "semantic.theme.light.cursor-5",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: collaborator 5 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-5/sunken",
+      "fg": "semantic.theme.light.cursor-5",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: collaborator 5 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/on-inverse/cursor-5",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.cursor-5",
+      "label": "light: collaborator 5 cursor name flag label on cursor-5",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/cursor-5-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.cursor-5-soft",
+      "label": "light: ink text on collaborator 5 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/cursor-5-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.cursor-5-soft",
+      "label": "light: focus ring core on the painted cursor-5-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-6/surface",
+      "fg": "semantic.theme.light.cursor-6",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: collaborator 6 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/cursor-6/sunken",
+      "fg": "semantic.theme.light.cursor-6",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: collaborator 6 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/on-inverse/cursor-6",
+      "fg": "semantic.theme.light.on-inverse",
+      "bg": "semantic.theme.light.cursor-6",
+      "label": "light: collaborator 6 cursor name flag label on cursor-6",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/ink/cursor-6-soft",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.cursor-6-soft",
+      "label": "light: ink text on collaborator 6 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/cursor-6-soft",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.cursor-6-soft",
+      "label": "light: focus ring core on the painted cursor-6-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/tag-1-fg/tag-1-bg",
+      "fg": "semantic.theme.light.tag-1-fg",
+      "bg": "semantic.theme.light.tag-1-bg",
+      "label": "light: non-status categorical tag 1 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/tag-1-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.tag-1-bg",
+      "label": "light: focus ring core on the painted tag-1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/tag-2-fg/tag-2-bg",
+      "fg": "semantic.theme.light.tag-2-fg",
+      "bg": "semantic.theme.light.tag-2-bg",
+      "label": "light: non-status categorical tag 2 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/tag-2-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.tag-2-bg",
+      "label": "light: focus ring core on the painted tag-2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/tag-3-fg/tag-3-bg",
+      "fg": "semantic.theme.light.tag-3-fg",
+      "bg": "semantic.theme.light.tag-3-bg",
+      "label": "light: non-status categorical tag 3 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/tag-3-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.tag-3-bg",
+      "label": "light: focus ring core on the painted tag-3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/tag-4-fg/tag-4-bg",
+      "fg": "semantic.theme.light.tag-4-fg",
+      "bg": "semantic.theme.light.tag-4-bg",
+      "label": "light: non-status categorical tag 4 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/tag-4-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.tag-4-bg",
+      "label": "light: focus ring core on the painted tag-4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/tag-5-fg/tag-5-bg",
+      "fg": "semantic.theme.light.tag-5-fg",
+      "bg": "semantic.theme.light.tag-5-bg",
+      "label": "light: non-status categorical tag 5 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/tag-5-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.tag-5-bg",
+      "label": "light: focus ring core on the painted tag-5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.light/tag-6-fg/tag-6-bg",
+      "fg": "semantic.theme.light.tag-6-fg",
+      "bg": "semantic.theme.light.tag-6-bg",
+      "label": "light: non-status categorical tag 6 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.light/focus-ring/tag-6-bg",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.theme.light.tag-6-bg",
+      "label": "light: focus ring core on the painted tag-6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-1/surface",
+      "fg": "semantic.theme.dark.cursor-1",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: collaborator 1 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-1/sunken",
+      "fg": "semantic.theme.dark.cursor-1",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: collaborator 1 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/on-inverse/cursor-1",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.cursor-1",
+      "label": "dark: collaborator 1 cursor name flag label on cursor-1",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/cursor-1-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.cursor-1-soft",
+      "label": "dark: ink text on collaborator 1 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/cursor-1-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.cursor-1-soft",
+      "label": "dark: focus ring core on the painted cursor-1-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-2/surface",
+      "fg": "semantic.theme.dark.cursor-2",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: collaborator 2 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-2/sunken",
+      "fg": "semantic.theme.dark.cursor-2",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: collaborator 2 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/on-inverse/cursor-2",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.cursor-2",
+      "label": "dark: collaborator 2 cursor name flag label on cursor-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/cursor-2-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.cursor-2-soft",
+      "label": "dark: ink text on collaborator 2 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/cursor-2-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.cursor-2-soft",
+      "label": "dark: focus ring core on the painted cursor-2-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-3/surface",
+      "fg": "semantic.theme.dark.cursor-3",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: collaborator 3 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-3/sunken",
+      "fg": "semantic.theme.dark.cursor-3",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: collaborator 3 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/on-inverse/cursor-3",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.cursor-3",
+      "label": "dark: collaborator 3 cursor name flag label on cursor-3",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/cursor-3-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.cursor-3-soft",
+      "label": "dark: ink text on collaborator 3 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/cursor-3-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.cursor-3-soft",
+      "label": "dark: focus ring core on the painted cursor-3-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-4/surface",
+      "fg": "semantic.theme.dark.cursor-4",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: collaborator 4 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-4/sunken",
+      "fg": "semantic.theme.dark.cursor-4",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: collaborator 4 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/on-inverse/cursor-4",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.cursor-4",
+      "label": "dark: collaborator 4 cursor name flag label on cursor-4",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/cursor-4-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.cursor-4-soft",
+      "label": "dark: ink text on collaborator 4 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/cursor-4-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.cursor-4-soft",
+      "label": "dark: focus ring core on the painted cursor-4-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-5/surface",
+      "fg": "semantic.theme.dark.cursor-5",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: collaborator 5 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-5/sunken",
+      "fg": "semantic.theme.dark.cursor-5",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: collaborator 5 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/on-inverse/cursor-5",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.cursor-5",
+      "label": "dark: collaborator 5 cursor name flag label on cursor-5",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/cursor-5-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.cursor-5-soft",
+      "label": "dark: ink text on collaborator 5 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/cursor-5-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.cursor-5-soft",
+      "label": "dark: focus ring core on the painted cursor-5-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-6/surface",
+      "fg": "semantic.theme.dark.cursor-6",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: collaborator 6 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/cursor-6/sunken",
+      "fg": "semantic.theme.dark.cursor-6",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: collaborator 6 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/on-inverse/cursor-6",
+      "fg": "semantic.theme.dark.on-inverse",
+      "bg": "semantic.theme.dark.cursor-6",
+      "label": "dark: collaborator 6 cursor name flag label on cursor-6",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/ink/cursor-6-soft",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.cursor-6-soft",
+      "label": "dark: ink text on collaborator 6 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/cursor-6-soft",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.cursor-6-soft",
+      "label": "dark: focus ring core on the painted cursor-6-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/tag-1-fg/tag-1-bg",
+      "fg": "semantic.theme.dark.tag-1-fg",
+      "bg": "semantic.theme.dark.tag-1-bg",
+      "label": "dark: non-status categorical tag 1 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/tag-1-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.tag-1-bg",
+      "label": "dark: focus ring core on the painted tag-1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/tag-2-fg/tag-2-bg",
+      "fg": "semantic.theme.dark.tag-2-fg",
+      "bg": "semantic.theme.dark.tag-2-bg",
+      "label": "dark: non-status categorical tag 2 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/tag-2-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.tag-2-bg",
+      "label": "dark: focus ring core on the painted tag-2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/tag-3-fg/tag-3-bg",
+      "fg": "semantic.theme.dark.tag-3-fg",
+      "bg": "semantic.theme.dark.tag-3-bg",
+      "label": "dark: non-status categorical tag 3 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/tag-3-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.tag-3-bg",
+      "label": "dark: focus ring core on the painted tag-3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/tag-4-fg/tag-4-bg",
+      "fg": "semantic.theme.dark.tag-4-fg",
+      "bg": "semantic.theme.dark.tag-4-bg",
+      "label": "dark: non-status categorical tag 4 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/tag-4-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.tag-4-bg",
+      "label": "dark: focus ring core on the painted tag-4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/tag-5-fg/tag-5-bg",
+      "fg": "semantic.theme.dark.tag-5-fg",
+      "bg": "semantic.theme.dark.tag-5-bg",
+      "label": "dark: non-status categorical tag 5 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/tag-5-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.tag-5-bg",
+      "label": "dark: focus ring core on the painted tag-5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.dark/tag-6-fg/tag-6-bg",
+      "fg": "semantic.theme.dark.tag-6-fg",
+      "bg": "semantic.theme.dark.tag-6-bg",
+      "label": "dark: non-status categorical tag 6 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/focus-ring/tag-6-bg",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.theme.dark.tag-6-bg",
+      "label": "dark: focus ring core on the painted tag-6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-1/surface",
+      "fg": "semantic.theme.black.cursor-1",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: collaborator 1 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-1/sunken",
+      "fg": "semantic.theme.black.cursor-1",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: collaborator 1 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/on-inverse/cursor-1",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.cursor-1",
+      "label": "black: collaborator 1 cursor name flag label on cursor-1",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/cursor-1-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.cursor-1-soft",
+      "label": "black: ink text on collaborator 1 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/cursor-1-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.cursor-1-soft",
+      "label": "black: focus ring core on the painted cursor-1-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-2/surface",
+      "fg": "semantic.theme.black.cursor-2",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: collaborator 2 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-2/sunken",
+      "fg": "semantic.theme.black.cursor-2",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: collaborator 2 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/on-inverse/cursor-2",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.cursor-2",
+      "label": "black: collaborator 2 cursor name flag label on cursor-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/cursor-2-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.cursor-2-soft",
+      "label": "black: ink text on collaborator 2 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/cursor-2-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.cursor-2-soft",
+      "label": "black: focus ring core on the painted cursor-2-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-3/surface",
+      "fg": "semantic.theme.black.cursor-3",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: collaborator 3 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-3/sunken",
+      "fg": "semantic.theme.black.cursor-3",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: collaborator 3 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/on-inverse/cursor-3",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.cursor-3",
+      "label": "black: collaborator 3 cursor name flag label on cursor-3",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/cursor-3-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.cursor-3-soft",
+      "label": "black: ink text on collaborator 3 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/cursor-3-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.cursor-3-soft",
+      "label": "black: focus ring core on the painted cursor-3-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-4/surface",
+      "fg": "semantic.theme.black.cursor-4",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: collaborator 4 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-4/sunken",
+      "fg": "semantic.theme.black.cursor-4",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: collaborator 4 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/on-inverse/cursor-4",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.cursor-4",
+      "label": "black: collaborator 4 cursor name flag label on cursor-4",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/cursor-4-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.cursor-4-soft",
+      "label": "black: ink text on collaborator 4 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/cursor-4-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.cursor-4-soft",
+      "label": "black: focus ring core on the painted cursor-4-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-5/surface",
+      "fg": "semantic.theme.black.cursor-5",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: collaborator 5 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-5/sunken",
+      "fg": "semantic.theme.black.cursor-5",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: collaborator 5 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/on-inverse/cursor-5",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.cursor-5",
+      "label": "black: collaborator 5 cursor name flag label on cursor-5",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/cursor-5-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.cursor-5-soft",
+      "label": "black: ink text on collaborator 5 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/cursor-5-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.cursor-5-soft",
+      "label": "black: focus ring core on the painted cursor-5-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-6/surface",
+      "fg": "semantic.theme.black.cursor-6",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: collaborator 6 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/cursor-6/sunken",
+      "fg": "semantic.theme.black.cursor-6",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: collaborator 6 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/on-inverse/cursor-6",
+      "fg": "semantic.theme.black.on-inverse",
+      "bg": "semantic.theme.black.cursor-6",
+      "label": "black: collaborator 6 cursor name flag label on cursor-6",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/ink/cursor-6-soft",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.cursor-6-soft",
+      "label": "black: ink text on collaborator 6 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/cursor-6-soft",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.cursor-6-soft",
+      "label": "black: focus ring core on the painted cursor-6-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/tag-1-fg/tag-1-bg",
+      "fg": "semantic.theme.black.tag-1-fg",
+      "bg": "semantic.theme.black.tag-1-bg",
+      "label": "black: non-status categorical tag 1 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/tag-1-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.tag-1-bg",
+      "label": "black: focus ring core on the painted tag-1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/tag-2-fg/tag-2-bg",
+      "fg": "semantic.theme.black.tag-2-fg",
+      "bg": "semantic.theme.black.tag-2-bg",
+      "label": "black: non-status categorical tag 2 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/tag-2-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.tag-2-bg",
+      "label": "black: focus ring core on the painted tag-2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/tag-3-fg/tag-3-bg",
+      "fg": "semantic.theme.black.tag-3-fg",
+      "bg": "semantic.theme.black.tag-3-bg",
+      "label": "black: non-status categorical tag 3 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/tag-3-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.tag-3-bg",
+      "label": "black: focus ring core on the painted tag-3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/tag-4-fg/tag-4-bg",
+      "fg": "semantic.theme.black.tag-4-fg",
+      "bg": "semantic.theme.black.tag-4-bg",
+      "label": "black: non-status categorical tag 4 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/tag-4-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.tag-4-bg",
+      "label": "black: focus ring core on the painted tag-4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/tag-5-fg/tag-5-bg",
+      "fg": "semantic.theme.black.tag-5-fg",
+      "bg": "semantic.theme.black.tag-5-bg",
+      "label": "black: non-status categorical tag 5 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/tag-5-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.tag-5-bg",
+      "label": "black: focus ring core on the painted tag-5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.black/tag-6-fg/tag-6-bg",
+      "fg": "semantic.theme.black.tag-6-fg",
+      "bg": "semantic.theme.black.tag-6-bg",
+      "label": "black: non-status categorical tag 6 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/focus-ring/tag-6-bg",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.theme.black.tag-6-bg",
+      "label": "black: focus ring core on the painted tag-6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    }
+  ],
+  "measurements": [
+    {
+      "id": "theme.light/ink-4/page",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.page",
+      "label": "light: ink-4 text on page; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/ink-4/surface",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: ink-4 text on surface; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/ink-4/sunken",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.sunken",
+      "label": "light: ink-4 text on sunken; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/ink-4/muted",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.muted",
+      "label": "light: ink-4 text on muted; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/ink-4/muted-2",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.muted-2",
+      "label": "light: ink-4 text on muted-2; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/ink-4/hairline",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.theme.light.hairline",
+      "label": "light: ink-4 text on hairline; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/border/surface",
+      "fg": "semantic.theme.light.border",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: border sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/border-soft/surface",
+      "fg": "semantic.theme.light.border-soft",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: border-soft sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/border-strong/surface",
+      "fg": "semantic.theme.light.border-strong",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: border-strong sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/rail-line/inverse",
+      "fg": "semantic.theme.light.rail-line",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: rail-line sole meaningful boundary capability probe on inverse; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Rail separators, room framing and track; reference lines 147, 355, 365, 381, 1714. Not the sole semantic indication of state.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/shadow-1/surface",
+      "fg": "semantic.theme.light.shadow-1",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: shadow-1 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative elevation color; no foreground content or sole control boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/shadow-2/surface",
+      "fg": "semantic.theme.light.shadow-2",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: shadow-2 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative popover elevation color; reference conversation dock line 1663. Blur is not a solid boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/ok-border/ok-soft",
+      "fg": "semantic.theme.light.ok-border",
+      "bg": "semantic.theme.light.ok-soft",
+      "label": "light: ok-border sole meaningful boundary capability probe on ok-soft; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Status badge decoration; status is carried by visible text; reference line 96.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/bad/bad-soft",
+      "fg": "semantic.theme.light.bad",
+      "bg": "semantic.theme.light.bad-soft",
+      "label": "light: bad status indicator on tint",
+      "kind": "capability",
+      "purpose": "Status dot on a danger tint capability. Observed danger tint text/icons use bad-ink; reference lines 1910, 2063, 2146.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/action/surface",
+      "fg": "semantic.theme.light.action",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: action inline link on surface",
+      "kind": "capability",
+      "purpose": "Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/white/action",
+      "fg": "color.white",
+      "bg": "semantic.theme.light.action",
+      "label": "light: white label on action button",
+      "kind": "capability",
+      "purpose": "Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/action-hover/surface",
+      "fg": "semantic.theme.light.action-hover",
+      "bg": "semantic.theme.light.surface",
+      "label": "light: action-hover inline link on surface",
+      "kind": "capability",
+      "purpose": "Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.light/white/action-hover",
+      "fg": "color.white",
+      "bg": "semantic.theme.light.action-hover",
+      "label": "light: white label on action-hover button",
+      "kind": "capability",
+      "purpose": "Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/ink-4/page",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: ink-4 text on page; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/ink-4/surface",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: ink-4 text on surface; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/ink-4/sunken",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.sunken",
+      "label": "dark: ink-4 text on sunken; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/ink-4/muted",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.muted",
+      "label": "dark: ink-4 text on muted; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/ink-4/muted-2",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.muted-2",
+      "label": "dark: ink-4 text on muted-2; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/ink-4/hairline",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.theme.dark.hairline",
+      "label": "dark: ink-4 text on hairline; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/border/surface",
+      "fg": "semantic.theme.dark.border",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: border sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/border-soft/surface",
+      "fg": "semantic.theme.dark.border-soft",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: border-soft sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/border-strong/surface",
+      "fg": "semantic.theme.dark.border-strong",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: border-strong sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/rail-line/inverse",
+      "fg": "semantic.theme.dark.rail-line",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: rail-line sole meaningful boundary capability probe on inverse; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Rail separators, room framing and track; reference lines 147, 355, 365, 381, 1714. Not the sole semantic indication of state.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/shadow-1/surface",
+      "fg": "semantic.theme.dark.shadow-1",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: shadow-1 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative elevation color; no foreground content or sole control boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/shadow-2/surface",
+      "fg": "semantic.theme.dark.shadow-2",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: shadow-2 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative popover elevation color; reference conversation dock line 1663. Blur is not a solid boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/ok-border/ok-soft",
+      "fg": "semantic.theme.dark.ok-border",
+      "bg": "semantic.theme.dark.ok-soft",
+      "label": "dark: ok-border sole meaningful boundary capability probe on ok-soft; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Status badge decoration; status is carried by visible text; reference line 96.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/bad/bad-soft",
+      "fg": "semantic.theme.dark.bad",
+      "bg": "semantic.theme.dark.bad-soft",
+      "label": "dark: bad status indicator on tint",
+      "kind": "capability",
+      "purpose": "Status dot on a danger tint capability. Observed danger tint text/icons use bad-ink; reference lines 1910, 2063, 2146.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/action/surface",
+      "fg": "semantic.theme.dark.action",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: action inline link on surface",
+      "kind": "capability",
+      "purpose": "Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/white/action",
+      "fg": "color.white",
+      "bg": "semantic.theme.dark.action",
+      "label": "dark: white label on action button",
+      "kind": "capability",
+      "purpose": "Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/action-hover/surface",
+      "fg": "semantic.theme.dark.action-hover",
+      "bg": "semantic.theme.dark.surface",
+      "label": "dark: action-hover inline link on surface",
+      "kind": "capability",
+      "purpose": "Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.dark/white/action-hover",
+      "fg": "color.white",
+      "bg": "semantic.theme.dark.action-hover",
+      "label": "dark: white label on action-hover button",
+      "kind": "capability",
+      "purpose": "Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/ink-4/page",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.page",
+      "label": "black: ink-4 text on page; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/ink-4/surface",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: ink-4 text on surface; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/ink-4/sunken",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.sunken",
+      "label": "black: ink-4 text on sunken; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/ink-4/muted",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.muted",
+      "label": "black: ink-4 text on muted; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/ink-4/muted-2",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.muted-2",
+      "label": "black: ink-4 text on muted-2; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/ink-4/hairline",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.theme.black.hairline",
+      "label": "black: ink-4 text on hairline; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/border/surface",
+      "fg": "semantic.theme.black.border",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: border sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/border-soft/surface",
+      "fg": "semantic.theme.black.border-soft",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: border-soft sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/border-strong/surface",
+      "fg": "semantic.theme.black.border-strong",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: border-strong sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/rail-line/inverse",
+      "fg": "semantic.theme.black.rail-line",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: rail-line sole meaningful boundary capability probe on inverse; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Rail separators, room framing and track; reference lines 147, 355, 365, 381, 1714. Not the sole semantic indication of state.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/shadow-1/surface",
+      "fg": "semantic.theme.black.shadow-1",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: shadow-1 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative elevation color; no foreground content or sole control boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/shadow-2/surface",
+      "fg": "semantic.theme.black.shadow-2",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: shadow-2 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Decorative popover elevation color; reference conversation dock line 1663. Blur is not a solid boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/ok-border/ok-soft",
+      "fg": "semantic.theme.black.ok-border",
+      "bg": "semantic.theme.black.ok-soft",
+      "label": "black: ok-border sole meaningful boundary capability probe on ok-soft; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Status badge decoration; status is carried by visible text; reference line 96.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/bad/bad-soft",
+      "fg": "semantic.theme.black.bad",
+      "bg": "semantic.theme.black.bad-soft",
+      "label": "black: bad status indicator on tint",
+      "kind": "capability",
+      "purpose": "Status dot on a danger tint capability. Observed danger tint text/icons use bad-ink; reference lines 1910, 2063, 2146.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/action/surface",
+      "fg": "semantic.theme.black.action",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: action inline link on surface",
+      "kind": "capability",
+      "purpose": "Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/white/action",
+      "fg": "color.white",
+      "bg": "semantic.theme.black.action",
+      "label": "black: white label on action button",
+      "kind": "capability",
+      "purpose": "Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/action-hover/surface",
+      "fg": "semantic.theme.black.action-hover",
+      "bg": "semantic.theme.black.surface",
+      "label": "black: action-hover inline link on surface",
+      "kind": "capability",
+      "purpose": "Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.black/white/action-hover",
+      "fg": "color.white",
+      "bg": "semantic.theme.black.action-hover",
+      "label": "black: white label on action-hover button",
+      "kind": "capability",
+      "purpose": "Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.light.inverse",
+      "fg": "spec:focus-ring-on-inverse.light.outer",
+      "bg": "semantic.theme.light.inverse",
+      "label": "light: the on-inverse ring's outermost tone alone on the inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.light/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds \u201cthe halo is never the indicator\u201d on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.light.inverse-2",
+      "fg": "spec:focus-ring-on-inverse.light.outer",
+      "bg": "semantic.theme.light.inverse-2",
+      "label": "light: the on-inverse ring's outermost tone alone on the second inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.light/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds \u201cthe halo is never the indicator\u201d on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.light.bad",
+      "fg": "spec:focus-ring-on-inverse.light.outer",
+      "bg": "semantic.theme.light.bad",
+      "label": "light: the on-inverse ring's outermost tone alone on bad, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone on the danger control fill (Quitter). It is not the indicator: the opaque core is, and theme.light/focus-ring-on-inverse/bad gates that core at 3:1.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.dark.inverse",
+      "fg": "spec:focus-ring-on-inverse.dark.outer",
+      "bg": "semantic.theme.dark.inverse",
+      "label": "dark: the on-inverse ring's outermost tone alone on the inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.dark/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds \u201cthe halo is never the indicator\u201d on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.dark.inverse-2",
+      "fg": "spec:focus-ring-on-inverse.dark.outer",
+      "bg": "semantic.theme.dark.inverse-2",
+      "label": "dark: the on-inverse ring's outermost tone alone on the second inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.dark/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds \u201cthe halo is never the indicator\u201d on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.dark.bad",
+      "fg": "spec:focus-ring-on-inverse.dark.outer",
+      "bg": "semantic.theme.dark.bad",
+      "label": "dark: the on-inverse ring's outermost tone alone on bad, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone on the danger control fill (Quitter). It is not the indicator: the opaque core is, and theme.dark/focus-ring-on-inverse/bad gates that core at 3:1.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.black.inverse",
+      "fg": "spec:focus-ring-on-inverse.black.outer",
+      "bg": "semantic.theme.black.inverse",
+      "label": "black: the on-inverse ring's outermost tone alone on the inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.black/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds \u201cthe halo is never the indicator\u201d on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.black.inverse-2",
+      "fg": "spec:focus-ring-on-inverse.black.outer",
+      "bg": "semantic.theme.black.inverse-2",
+      "label": "black: the on-inverse ring's outermost tone alone on the second inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.black/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds \u201cthe halo is never the indicator\u201d on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.black.bad",
+      "fg": "spec:focus-ring-on-inverse.black.outer",
+      "bg": "semantic.theme.black.bad",
+      "label": "black: the on-inverse ring's outermost tone alone on bad, at its own alpha",
+      "kind": "decorative",
+      "purpose": "The outer softening of the on-inverse ring, at 35 %, measured alone on the danger control fill (Quitter). It is not the indicator: the opaque core is, and theme.black/focus-ring-on-inverse/bad gates that core at 3:1.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/scrim/page",
+      "fg": "semantic.theme.light.scrim",
+      "bg": "semantic.theme.light.page",
+      "label": "light: scrim composited over the page, reported only",
+      "kind": "decorative",
+      "purpose": "The overlay behind a dialog dims what it covers and carries no meaning; the dialog itself sits on elevated, whose text rows are normative."
+    },
+    {
+      "id": "theme.dark/scrim/page",
+      "fg": "semantic.theme.dark.scrim",
+      "bg": "semantic.theme.dark.page",
+      "label": "dark: scrim composited over the page, reported only",
+      "kind": "decorative",
+      "purpose": "The overlay behind a dialog dims what it covers and carries no meaning; the dialog itself sits on elevated, whose text rows are normative."
+    },
+    {
+      "id": "theme.black/scrim/page",
+      "fg": "semantic.theme.black.scrim",
+      "bg": "semantic.theme.black.page",
+      "label": "black: scrim composited over the page, reported only",
+      "kind": "decorative",
+      "purpose": "The overlay behind a dialog dims what it covers and carries no meaning; the dialog itself sits on elevated, whose text rows are normative."
+    },
+    {
+      "id": "theme.light/ok/elevated",
+      "fg": "semantic.theme.light.ok",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: ok fill colour as an icon on elevated; capability probe, the decided usage is ok-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws ok-ink, which the 4.5:1 row above gates. The ok fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/warn/elevated",
+      "fg": "semantic.theme.light.warn",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: warn fill colour as an icon on elevated; capability probe, the decided usage is warn-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws warn-ink, which the 4.5:1 row above gates. The warn fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.light/bad/elevated",
+      "fg": "semantic.theme.light.bad",
+      "bg": "semantic.theme.light.elevated",
+      "label": "light: bad fill colour as an icon on elevated; capability probe, the decided usage is bad-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/ok/elevated",
+      "fg": "semantic.theme.dark.ok",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: ok fill colour as an icon on elevated; capability probe, the decided usage is ok-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws ok-ink, which the 4.5:1 row above gates. The ok fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/warn/elevated",
+      "fg": "semantic.theme.dark.warn",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: warn fill colour as an icon on elevated; capability probe, the decided usage is warn-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws warn-ink, which the 4.5:1 row above gates. The warn fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.dark/bad/elevated",
+      "fg": "semantic.theme.dark.bad",
+      "bg": "semantic.theme.dark.elevated",
+      "label": "dark: bad fill colour as an icon on elevated; capability probe, the decided usage is bad-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/ok/elevated",
+      "fg": "semantic.theme.black.ok",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: ok fill colour as an icon on elevated; capability probe, the decided usage is ok-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws ok-ink, which the 4.5:1 row above gates. The ok fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/warn/elevated",
+      "fg": "semantic.theme.black.warn",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: warn fill colour as an icon on elevated; capability probe, the decided usage is warn-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws warn-ink, which the 4.5:1 row above gates. The warn fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.black/bad/elevated",
+      "fg": "semantic.theme.black.bad",
+      "bg": "semantic.theme.black.elevated",
+      "label": "black: bad fill colour as an icon on elevated; capability probe, the decided usage is bad-ink",
+      "kind": "capability",
+      "purpose": "On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    }
+  ]
+}

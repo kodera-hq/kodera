@@ -1,0 +1,9 @@
+// Not a source file: the extension keeps it out of the token guard's own scan
+// of `src/`, out of the TypeScript projects, and out of the Vitest suite. It
+// exists only to be fed to the scanner by tests/unit/ui/tokens.test.ts, which
+// asserts the guard reports the value below instead of passing over it.
+//
+// A colour written straight into a `style` prop is the one form no class
+// scanner can ever see: there is no Tailwind class here to resolve, no family
+// to recognise, and the element renders exactly the colour that was typed.
+export const Broken = () => <div style={{ backgroundColor: '#ff0000' }} />

@@ -1,0 +1,14 @@
+{
+  "name": "@kodera/ext-notion-workspace-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Official Kodera extension sharing and tracking structured Notion workspace pages and database entries alongside DINUM Docs in Espace channels.",
+  "dependencies": {
+    "@kodera/extension-sdk": "0.1.0"
+  },
+  "scripts": {
+    "test": "node --test test/index.test.mjs"
+  }
+}

@@ -1,0 +1,14 @@
+# Canonical policy invariants enforced across kodera-hq/kodera.
+# Format: path/to/file :: verbatim substring (see check-required-clauses.py).
+
+AGENTS.md :: Never add co-author attribution trailers, generator footers, or automated-assistant vendor names anywhere in code, docs, filenames, commits, branches, or PR bodies.
+AGENTS.md :: Run `python3 .github/scripts/check-vendor-attribution.py .` before every push.
+LICENSE :: SPDX-License-Identifier: Apache-2.0
+LICENSE :: SPDX-License-Identifier: AGPL-3.0-or-later
+ee/LICENSE :: proprietary software owned by Samouraï Coop and are NOT licensed under the
+TRADEMARKS.md :: They do not license the Kodera name, wordmark, or monogram logo.
+SECURITY.md :: EU Cyber Resilience Act (Regulation (EU) 2024/2847, Article 14 & Annex I Part II)
+SECURITY.md :: support@kodera.io
+GOVERNANCE.md :: Features already shipped in the open-source tree will **never** be moved into `ee/`.
+.github/CODEOWNERS :: /.github/ @kodera-hq/security @zxxma @louis14448
+.github/CODEOWNERS :: /apps/desktop/src-tauri/ @kodera-hq/security @zxxma @louis14448

@@ -1,0 +1,9 @@
+{
+  "type": "https://kodera.io/problems/owner-claim-consumed",
+  "title": "The owner claim was already consumed",
+  "status": 409,
+  "detail": "This organisation already has its first owner; sign in normally.",
+  "instance": "/api/v1/owner-claims/actions/consume",
+  "request_id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+  "organisation_id": "6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f"
+}

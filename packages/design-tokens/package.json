@@ -1,0 +1,45 @@
+{
+  "name": "@kodera/design-tokens",
+  "version": "0.6.0",
+  "description": "Design tokens of Kodera: DTCG source, generated CSS variables and Tailwind preset, contrast gate",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kodera-hq/kodera.git"
+  },
+  "files": [
+    "dist",
+    "tokens.json",
+    "test/token-test.mjs"
+  ],
+  "exports": {
+    "./native/swift": "./dist/native/KoderaTokens.swift",
+    "./native/compose": "./dist/native/KoderaTokens.kt",
+    "./native/manifest": "./dist/native/manifest.json",
+    "./tokens.json": "./tokens.json",
+    "./tokens.css": "./dist/tokens.css",
+    "./tailwind-preset": {
+      "types": "./dist/tokens.d.ts",
+      "import": "./dist/tailwind.preset.js",
+      "default": "./dist/tailwind.preset.js"
+    },
+    "./token-test": "./test/token-test.mjs",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/tokens.d.ts",
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check:grammar": "node scripts/check-grammar.mjs",
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "check:drift": "node scripts/build.mjs --check",
+    "test": "node test/run.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

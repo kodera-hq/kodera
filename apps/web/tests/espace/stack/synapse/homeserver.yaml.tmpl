@@ -1,0 +1,102 @@
+# Synapse for Espace's tests (docs/dev/ESPACE_STACK.md). Dollar-brace placeholders are filled
+# from the environment by start.sh; no secret is committed. Each setting below is one the pilot
+# relies on (messaging-pilot DESIGN, Core ADR-0018); smoke.mjs checks what a client can see of them.
+server_name: kodera.test
+public_baseurl: ${SYNAPSE_PUBLIC_BASEURL}
+pid_file: /data/homeserver.pid
+signing_key_path: /data/kodera.test.signing.key
+media_store_path: /data/media_store
+report_stats: false
+suppress_key_server_warning: true
+trusted_key_servers: []
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: true
+    bind_addresses: ["0.0.0.0"]
+    resources:
+      # Client API only: no federation listener (DESIGN §2.6b).
+      - names: [client]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: ${POSTGRES_PASSWORD}
+    database: synapse
+    host: postgres
+    cp_min: 2
+    cp_max: 5
+
+# Closed homeserver, as in the pilot: no federation, no open registration. Test users are
+# created through the shared-secret admin API.
+federation_domain_whitelist: []
+enable_registration: false
+registration_shared_secret: ${SYNAPSE_REGISTRATION_SECRET}
+macaroon_secret_key: ${SYNAPSE_MACAROON_SECRET}
+form_secret: ${SYNAPSE_FORM_SECRET}
+
+# Access tokens expire and are refreshed (DESIGN §2.4): the Console keeps them in memory only,
+# and a token left behind by a reload dies on its own.
+refreshable_access_token_lifetime: 5m
+refresh_token_lifetime: 24h
+# And a client that asks for no refresh token still gets one that expires: the rule is the
+# homeserver's, not each client's.
+nonrefreshable_access_token_lifetime: 1h
+
+# A member who leaves cannot page back through the history (DESIGN §2.1 item 4).
+forget_rooms_on_leave: true
+# Media only through the authenticated endpoints (ruling 3).
+enable_authenticated_media: true
+# Workspace channels are not end-to-end encrypted (DESIGN §2.5).
+encryption_enabled_by_default_for_room_type: "off"
+# Profiles are read by members, not by anyone who asks.
+require_auth_for_profile_requests: true
+
+# Tests sign in and post in bursts.
+rc_message: {per_second: 100, burst_count: 200}
+rc_login:
+  address: {per_second: 50, burst_count: 100}
+  account: {per_second: 50, burst_count: 100}
+rc_joins:
+  local: {per_second: 50, burst_count: 100}
+rc_invites:
+  per_room: {per_second: 50, burst_count: 100}
+  per_user: {per_second: 50, burst_count: 100}
+
+# Members sign in through the organisation's Keycloak realm (DESIGN §2.4). Synapse runs in a
+# container: the browser goes to Keycloak on the host, Synapse calls it by its service name, so
+# discovery is off and each endpoint is named. The Matrix ID comes from the stable `sub`, never
+# from the mutable `preferred_username`.
+oidc_providers:
+  - idp_id: keycloak
+    idp_name: Kodera
+    discover: false
+    issuer: http://127.0.0.1:${KEYCLOAK_PORT}/realms/acme-sa
+    authorization_endpoint: http://127.0.0.1:${KEYCLOAK_PORT}/realms/acme-sa/protocol/openid-connect/auth
+    token_endpoint: http://keycloak:8080/realms/acme-sa/protocol/openid-connect/token
+    userinfo_endpoint: http://keycloak:8080/realms/acme-sa/protocol/openid-connect/userinfo
+    jwks_uri: http://keycloak:8080/realms/acme-sa/protocol/openid-connect/certs
+    client_id: synapse
+    client_secret: ${KEYCLOAK_SYNAPSE_SECRET}
+    client_auth_method: client_secret_post
+    # Only because this stack speaks plain HTTP on 127.0.0.1: Synapse otherwise refuses an
+    # endpoint that is not https. A tenant's Synapse never carries it.
+    skip_verification: true
+    pkce_method: always
+    scopes: [openid, profile]
+    user_mapping_provider:
+      config:
+        subject_claim: sub
+        localpart_template: "{{ user.sub }}"
+        display_name_template: "{{ user.given_name }} {{ user.family_name }}"
+
+# The Console gets its login token back without Synapse's "continue to your account" page.
+# Synapse matches by prefix, so the trailing slash is load-bearing: without it,
+# `${CONSOLE_ORIGIN}.elsewhere.example/` would get the token too. Fleet's config must keep it.
+sso:
+  client_whitelist:
+    - ${CONSOLE_ORIGIN}/

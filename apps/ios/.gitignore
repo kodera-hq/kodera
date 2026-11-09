@@ -1,0 +1,51 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive — NEVER commit
+*.p8
+*.p12
+*.keystore
+*.jks
+google-services.json
+GoogleService-Info.plist
+
+# Test
+coverage/
+test-results/
+playwright-report/
+
+# Local Python check caches
+__pycache__/
+
+# Xcode: project.yml is the source; generate Kodera.xcodeproj with xcodegen
+Kodera.xcodeproj/
+xcuserdata/
+DerivedData/
+.build/
+.swiftpm/
+
+# Local deployment values for the app (copy Config/Local.xcconfig.example)
+Config/Local.xcconfig

@@ -1,0 +1,19 @@
+# Local development values for the Kodera app. Copy these lines into the untracked local.properties
+# at the repository root (next to sdk.dir), or into ~/.gradle/gradle.properties. A build without
+# them is unconfigured and says so on screen.
+#
+# Plain-HTTP loopback origins are admitted by debug builds only; a release build refuses them and
+# shows "not configured". The emulator reaches these through `adb reverse` (docs/DEVELOPMENT.md).
+
+# Core from its own repository's docker compose stack (discovery, I-1, pending).
+kodera.coreOrigin=http://localhost:8000
+# dev/keycloak/compose.yml; space-separated when there are several.
+kodera.issuerOrigins=http://localhost:8080
+kodera.clientId=kodera-android
+# The Console's own dev server (npm run dev in its repository).
+kodera.consoleOrigin=http://localhost:5173
+# The local dev realm offers offline_access for development. This example does not qualify
+# organisation realms or release use; the merged-tree, rollout and Android offline proof gates remain.
+kodera.offlineAccess=true
+# Debug builds only: the dev/keycloak realm, reachable without Core discovery.
+kodera.devIssuer=http://localhost:8080/realms/kodera-dev

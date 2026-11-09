@@ -1,0 +1,25 @@
+[package]
+name = "kodera-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Kodera desktop developer preview: Rust backend seams and a local-only self-host preflight"
+
+[lib]
+name = "kodera_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kodera-desktop"
+path = "src/main.rs"
+required-features = ["desktop-app"]
+
+[features]
+default = []
+# Enables native OS WebView windowing (requires system WebKitGTK on Linux; gated so headless CI runs fast).
+desktop-app = []
+
+[dependencies]
+kodera-rs = { path = "../../../packages/kodera-rs" }

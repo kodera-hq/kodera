@@ -1,0 +1,27 @@
+# Everything in this directory is linted and formatted as the rest of the
+# repository is: this file extends the root configuration and changes one rule,
+# the formatter exclusion below.
+#
+# The shared checkers below are byte-for-byte copies of design specification's, and
+# a copy is proven by `cmp` against that source. `ruff format` at this
+# repository's line length would rewrite `check-required-clauses.py`, and then
+# either the format check fails or the copy stops being a copy. So the
+# formatter leaves the shared copies alone; `ruff check` still reads them.
+# A formatting change to one of them belongs in design specification, and reaches
+# this repository by copying the file again.
+extend = "../../pyproject.toml"
+
+# A nested configuration file becomes the project root for the files under it,
+# which moves the first-party source root import sorting classifies against,
+# and the cache. Both are pointed back at the repository root. The root
+# configuration's default `src` also names `src/`, which does not exist here.
+src = ["../.."]
+cache-dir = "../../.ruff_cache"
+
+[format]
+exclude = [
+  "aggregate-result.py",
+  "check-aggregate-covers-jobs.py",
+  "check-required-clauses.py",
+  "check-vendor-attribution.py",
+]

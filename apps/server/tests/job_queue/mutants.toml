@@ -1,0 +1,2594 @@
+# Single-guard mutants of a conforming queue, and the acceptance test and exact assertion message
+# that must catch each: docs/specs/JOB_QUEUE.md §9.1 point 3 and §9.2.
+#
+# A row disables ONE guard or ONE clause of a guard, and nothing else: a lock condition's fence and
+# its lease are two rows, a CHECK over six columns is six, a time order of three comparisons is three,
+# a trigger that holds in two states is two, a mapping of three pairs is three, a re-check made by
+# eight writers is eight, a parent check made by nine writes is nine, a rule the two writers of a
+# dispatch each hold is two, a statement two functions each commit first is two. A row that disabled
+# two would hide that a test probes only one of them.
+#
+# Every row that acts at more than one site, or for more than one writer or caller, is listed below
+# with its reason, and so is every row known to cover several clauses of one check. Two of the lists
+# are derived from the code by the self-test, and say so. The others are kept by hand, from reading
+# each flag's site and the callers of the function that reads it. Where a row leaves a site, a
+# caller or a clause unprobed, the specification's §9.3 names it as owed and says why.
+#
+# Ten rows disable one guard at multiple sites that read it, because either early site is masked by
+# the other in every deterministic test, and a row nothing can catch proves nothing:
+#   sweep_unexpired   the sweep's "the lease expired", in its read of candidates and in its re-check
+#                     under the row lock (the re-check alone: specification §9.3, not covered)
+#   lease_uses_now    the clock of a runner write's lease predicate, in its first statement and in its
+#                     re-check under the lock, for all eight writers at once: probed through
+#                     record_dispatch; the four effect writers also use it after their parent check
+#                     (specification §9.3)
+#   renew_ignores_lease, step_ignores_lease, dispatch_ignores_lease, retarget_ignores_lease,
+#   subjob_start_ignores_lease, close_ignores_lease, hold_ignores_lease, finish_ignores_lease
+#                     one writer's "the lease is live", in its first statement and in its re-check
+#                     under the lock, and for the four effect writers after the parent check too.
+#                     The child-row re-check alone is <writer>_no_recheck_after_lock's row;
+#                     the parent-wait re-check is <writer>_no_recheck_after_parent's row
+# Four rows disable one read of a claim at both of its checks, 1 and 4, because their owning test
+# reads that the claim is refused, which check 4 alone still does and check 1 alone still does:
+#   no_reservation_check  the read of the reservations. Check 4's alone is
+#                     check4_skips_reservations' row; check 1's alone has no row (specification §9.3)
+#   no_delivery_check, delivery_in_flight_only, delivery_check_ignores_changes_realm
+#                     the read of the deliveries, or one clause of it. Neither check's read alone has
+#                     a row: check 4's is not covered by a deterministic test, check 1's is owed
+#                     (specification §9.3)
+# Two rows move one statement, and so read their flag at two places, where the statement leaves and
+# where it goes. This list is derived from the code by the self-test: a flag read at more than one
+# place and not listed here fails it.
+#   audit_second_txn  the job.created audit row, out of enqueue's transaction and into one of its own
+#   steps_after_audit the insert of the steps, from before the audit row to after it
+# Three rows disable a function's clause and the database guard that would refuse what the mutant then
+# writes, because with the guard armed the mutant raises instead of failing an assertion, and a row
+# nothing can catch proves nothing. The first two's database clauses also keep their own marker and
+# their own row, which a test session's direct write owns; no_dedupe's unique key has no row of its
+# own, because enqueue's ON CONFLICT (idempotency_key) needs it: dropping the key alone makes every
+# enqueue raise, which no assertion can catch. This list is derived from the code by the self-test:
+#   orphan_loses_place                 the sweep's update keeping the place, and jobs_job_guard's
+#                                      place_may_be_cleared
+#   decision_rewrites_closed_dispatch  the decision's "closed_at IS NULL", and jobs_jobdispatch_guard's
+#                                      three write-once clauses (closed_at, outcome, evidence)
+#   no_dedupe                          the ON CONFLICT of the one insert enqueue_job and start_sub_job
+#                                      share, and the UNIQUE constraint jobs_job_idempotency_key_unique.
+#                                      Probed through enqueue_job: start_sub_job derives its key from
+#                                      the dispatch it records in the same call, so no test can make
+#                                      it meet a key that exists
+# Five rows disable several clauses of one check and are probed on one, or by one probe that needs
+# them all. None is split in A3; each clause left unprobed is owed (specification §9.3):
+#   structured_evidence_unchecked      the job decision's presence check keeps each piece's provider
+#                                      and drops its resource_id and request_id, four fields: probed
+#                                      on target_read.resource_id
+#   delivery_decision_ignores_compute, delivery_decision_ignores_target
+#                                      the delivery decision's presence check of one piece, three
+#                                      fields: probed on compute_terminated.request_id and on
+#                                      target_read.resource_id
+#   no_clock_tolerance, delivery_no_clock_tolerance
+#                                      the 5-minute tolerance of two comparisons, the start and the
+#                                      decision: one probe needs both
+# A mutant deletes a line where its guard is one: a predicate, a clause, a statement. Where the guard
+# is a choice between two forms there is no line to delete, and the mutant takes the other form. Three
+# groups of such rows are listed here. test_job_queue_selftest.py checks each count against its list,
+# and the two groups a name identifies against the rows.
+# Four rows replace a path, because that is the only form their guard has:
+#   subjob_full_checks          the guard IS the branch "a sub-job runs none of the checks": the
+#                               mutant keeps the parent check and falls through to the ordinary path
+#   delivery_exit_compares_xmin a substitution by design: the rule measured by the row's xmin. The
+#                               trigger writes its same-transaction rule once per measure for it, so
+#                               this marker and delivery_exit_any_transaction's each stand in both
+#                               arms, of which one is live
+#   delivery_decide_no_effect_maps_succeeded, delivery_decide_fail_maps_pending
+#                               the guard IS the mapping of an exit to the delivery's new status:
+#                               each mutant maps one exit to another status
+# Fourteen rows replace a lock mode, every row named <site>_locks_for_update: the guard IS the mode
+# FOR NO KEY UPDATE (JQ-P25; JQ-P14 for the delivery decision), and each mutant takes FOR UPDATE at
+# one site:
+#   claim_locks_for_update, promotion_locks_for_update, renew_locks_for_update,
+#   step_locks_for_update, dispatch_locks_for_update, retarget_locks_for_update,
+#   subjob_start_locks_for_update, close_locks_for_update, hold_locks_for_update,
+#   finish_locks_for_update, sweep_locks_for_update, stranding_locks_for_update,
+#   decide_locks_for_update, delivery_decide_locks_for_update
+# Eight rows swap two checks, every row named <first>_checked_before_<second>: the guard IS the
+# order in which a decision refuses, and each mutant runs one pair of checks in the other order:
+#   role_checked_before_status, role_checked_before_subjobs, evidence_checked_before_role,
+#   order_checked_before_presence, partial_checked_before_order,
+#   delivery_evidence_checked_before_role, delivery_order_checked_before_presence,
+#   delivery_partial_checked_before_order
+# Other rows also put something in the place of what they disable: another status, another operator,
+# or two statements in the other order. exhausted_closes_completed, budget_off_by_one,
+# budget_before_dispatch and decided_at_before_lock are four of them. They are neither listed nor
+# counted here: no name sets them apart from a deletion, so no test could check a list of them. Each
+# row's `mutant` field says what its mutant does.
+# Four rows are clauses of the one promotion statement, which claim_job and sweep_expired_leases each
+# commit first: promotion_ignores_not_before, promotion_instant_per_row, promotion_waits and
+# promotion_locks_for_update. The statement is one site. That each function commits it is a row per
+# function: claim_skips_promotion and no_promotion.
+# Seven rows are read in the one step 5 that a claim of a top-level job and a claim of a sub-job
+# share, and are probed through top-level jobs: started_every_claim, resume_claim_counts_attempt, and
+# the claim's class C completion's claim_ignores_closed_class_c, claim_completes_any_class,
+# claim_completes_across_cycles, claim_cycle_from_first_resume and claim_completion_unaudited.
+#
+# Checked now by test_job_queue_selftest.py, textually and structurally: every property of the
+# specification's §9.3 names its owning tests and has a row; every owning test a property names is
+# used by a row of it; every row's test is an owning test of its property; its message is the
+# literal message of an `assert` that is a statement its test always runs — not after a `return`, a
+# `raise` or a skip, and not where an `AssertionError` is swallowed — testing something other than
+# constants or a fixture, in no other test, and named by no other row. That shows a row is
+# well-formed, never that its mutant is caught. The change that implements A3 builds every row as a
+# committed flag on apps.jobs and runs it in CI (§9.2): that is the gate.
+#
+# [property.JQ-Pnn] tests   the acceptance tests that own the property
+# property  a JQ-Pnn identifier of the specification's §9.3
+# flag      the one guard, or the one clause of a guard, the mutant disables
+# test      the acceptance test that must catch the mutant
+# message   the exact assertion message it must fail with
+# mutant    what the mutant does, for the implementer who builds it
+
+format = 1
+
+[property.JQ-P01]
+tests = ["A3-01"]
+
+[property.JQ-P02]
+tests = ["A3-02"]
+
+[property.JQ-P03]
+tests = ["A3-03"]
+
+[property.JQ-P04]
+tests = ["A3-03", "A3-16"]
+
+[property.JQ-P05]
+tests = ["A3-04"]
+
+[property.JQ-P06]
+tests = ["A3-05", "A3-26"]
+
+[property.JQ-P07]
+tests = ["A3-06"]
+
+[property.JQ-P08]
+tests = ["A3-07"]
+
+[property.JQ-P09]
+tests = ["A3-08", "A3-21"]
+
+[property.JQ-P10]
+tests = ["A3-09"]
+
+[property.JQ-P11]
+tests = ["A3-10"]
+
+[property.JQ-P12]
+tests = ["A3-11"]
+
+[property.JQ-P13]
+tests = ["A3-12"]
+
+[property.JQ-P14]
+tests = ["A3-13"]
+
+[property.JQ-P15]
+tests = ["A3-14"]
+
+[property.JQ-P16]
+tests = ["A3-15", "A3-23", "A3-27"]
+
+[property.JQ-P17]
+tests = ["A3-16"]
+
+[property.JQ-P18]
+tests = ["A3-17", "A3-29"]
+
+[property.JQ-P19]
+tests = ["A3-10", "A3-18"]
+
+[property.JQ-P20]
+tests = ["A3-13", "A3-19"]
+
+[property.JQ-P21]
+tests = ["A3-14", "A3-20"]
+
+[property.JQ-P22]
+tests = ["A3-22"]
+
+[property.JQ-P23]
+tests = ["A3-23"]
+
+[property.JQ-P24]
+tests = ["A3-24"]
+
+[property.JQ-P25]
+tests = ["A3-25"]
+
+[property.JQ-P26]
+tests = ["A3-03"]
+
+[property.JQ-P27]
+tests = ["A3-01", "A3-14", "A3-18"]
+
+[property.JQ-P28]
+tests = ["A3-12", "A3-13", "A3-14"]
+
+[property.JQ-P29]
+tests = ["A3-20"]
+
+[property.JQ-P31]
+tests = ["A3-28"]
+
+[property.JQ-P30]
+tests = ["A3-12"]
+
+[property.JQ-P32]
+tests = ["A3-30"]
+
+[property.JQ-P33]
+tests = ["A3-31"]
+
+[[mutant]]
+property = "JQ-P01"
+flag = "audit_second_txn"
+test = "A3-01"
+message = "killed between the desired-state change and the audit row, the change was committed"
+mutant = "The job.created audit row, and nothing else, is written in a second transaction"
+
+[[mutant]]
+property = "JQ-P01"
+flag = "steps_after_audit"
+test = "A3-01"
+message = "at the audit row, the job, the change and the steps were not already written by the transaction being killed"
+mutant = "The steps are inserted after the audit row, their table only read before it"
+
+[[mutant]]
+property = "JQ-P02"
+flag = "no_dedupe"
+test = "A3-02"
+message = "a duplicate idempotency key returned a different job"
+mutant = "No unique key and no ON CONFLICT: a duplicate inserts a second job"
+
+[[mutant]]
+property = "JQ-P02"
+flag = "reuse_not_refused"
+test = "A3-02"
+message = "a key reused with a different desired state was not refused"
+mutant = "A duplicate key with another desired_spec_hash returns the original job"
+
+[[mutant]]
+property = "JQ-P02"
+flag = "apply_state_on_duplicate"
+test = "A3-02"
+message = "a duplicate idempotency key applied its desired-state change again"
+mutant = "apply_desired_state runs before the key is checked"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "step_ignores_fence"
+test = "A3-03"
+message = "a superseded fence recorded a step"
+mutant = "record_step omits the fence from its row lock"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "dispatch_ignores_fence"
+test = "A3-03"
+message = "a superseded fence recorded a dispatch"
+mutant = "record_dispatch omits the fence, and only the fence, from its row lock"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "subjob_start_ignores_fence"
+test = "A3-03"
+message = "a superseded fence started a sub-job"
+mutant = "start_sub_job omits the fence"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "finish_ignores_fence"
+test = "A3-03"
+message = "a superseded fence finished the job"
+mutant = "finish_job omits the fence, and only the fence, from its row lock"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "renew_ignores_fence"
+test = "A3-03"
+message = "a superseded fence renewed the lease"
+mutant = "renew_lease omits the fence"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "close_ignores_fence"
+test = "A3-03"
+message = "a superseded fence closed a dispatch"
+mutant = "close_dispatch omits the fence"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "hold_ignores_fence"
+test = "A3-03"
+message = "a superseded fence held the job for reconciliation"
+mutant = "hold_for_reconciliation omits the fence"
+
+[[mutant]]
+property = "JQ-P03"
+flag = "retarget_ignores_fence"
+test = "A3-03"
+message = "a superseded fence retargeted a dispatch"
+mutant = "retarget_dispatch does not check the fence"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "step_ignores_lease"
+test = "A3-03"
+message = "an expired lease recorded a step under the current fence"
+mutant = "record_step omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "dispatch_ignores_lease"
+test = "A3-03"
+message = "an expired lease recorded a dispatch under the current fence"
+mutant = "record_dispatch omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "renew_ignores_lease"
+test = "A3-03"
+message = "an expired lease was renewed"
+mutant = "renew_lease omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "subjob_start_ignores_lease"
+test = "A3-03"
+message = "an expired lease started a sub-job under the current fence"
+mutant = "start_sub_job omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "finish_ignores_lease"
+test = "A3-03"
+message = "an expired lease finished the job under the current fence"
+mutant = "finish_job omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "retarget_ignores_lease"
+test = "A3-03"
+message = "an expired lease retargeted a dispatch under the current fence"
+mutant = "retarget_dispatch omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "close_ignores_lease"
+test = "A3-03"
+message = "an expired lease closed a dispatch under the current fence"
+mutant = "close_dispatch omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "hold_ignores_lease"
+test = "A3-03"
+message = "an expired lease held the job for reconciliation under the current fence"
+mutant = "hold_for_reconciliation omits the lease, in its first statement and in its re-check under the lock"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "lease_uses_now"
+test = "A3-16"
+message = "a write committed under a lease that expired while it waited on the job row"
+mutant = "The runner-write lease predicate compares with now(), the start of a transaction that waited"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "dispatch_no_recheck_after_lock"
+test = "A3-16"
+message = "a write committed under a lease that expired while it waited on a row released unchanged"
+mutant = "record_dispatch does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "renew_no_recheck_after_lock"
+test = "A3-16"
+message = "a renewal succeeded under a lease that expired while it waited on a row released unchanged"
+mutant = "renew_lease does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "step_no_recheck_after_lock"
+test = "A3-16"
+message = "a step was recorded under a lease that expired while it waited on a row released unchanged"
+mutant = "record_step does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "retarget_no_recheck_after_lock"
+test = "A3-16"
+message = "a dispatch was retargeted under a lease that expired while it waited on a row released unchanged"
+mutant = "retarget_dispatch does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "subjob_start_no_recheck_after_lock"
+test = "A3-16"
+message = "a sub-job was started under a lease that expired while it waited on a row released unchanged"
+mutant = "start_sub_job does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "close_no_recheck_after_lock"
+test = "A3-16"
+message = "a dispatch was closed under a lease that expired while it waited on a row released unchanged"
+mutant = "close_dispatch does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "hold_no_recheck_after_lock"
+test = "A3-16"
+message = "a job was held under a lease that expired while it waited on a row released unchanged"
+mutant = "hold_for_reconciliation does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P04"
+flag = "finish_no_recheck_after_lock"
+test = "A3-16"
+message = "a job was finished under a lease that expired while it waited on a row released unchanged"
+mutant = "finish_job does not check the lease again once it holds the row"
+
+[[mutant]]
+property = "JQ-P05"
+flag = "no_reservation_check"
+test = "A3-04"
+message = "a conflicting job was claimed after the claiming session ended: the reservation did not outlive the session"
+mutant = "Claims check live locks only, never reservations"
+
+[[mutant]]
+property = "JQ-P05"
+flag = "orphan_loses_place"
+test = "A3-04"
+message = "a later job was claimed ahead of the orphaned job requested before it"
+mutant = "Orphaning resets lock_requested_at, with jobs_job_guard's place_may_be_cleared clause disarmed"
+
+[[mutant]]
+property = "JQ-P06"
+flag = "keep_locks_on_refusal"
+test = "A3-05"
+message = "a refused claim kept a live lock it had taken"
+mutant = "A claim refused at a busy live lock keeps the locks it took"
+
+[[mutant]]
+property = "JQ-P06"
+flag = "interleave_reservation_and_live"
+test = "A3-05"
+message = "the claim reached a live lock before checking every reservation of its set"
+mutant = "Reservations and live locks are checked lock by lock, not the whole set first"
+
+[[mutant]]
+property = "JQ-P06"
+flag = "check4_skips_reservations"
+test = "A3-26"
+message = "a realm job was claimed past a reservation written after its first check"
+mutant = "Check 4 does not read the reservations again; its delivery re-read, a clause of its own, has no row (specification §9.3)"
+
+[[mutant]]
+property = "JQ-P06"
+flag = "check1_reads_deliveries_first"
+test = "A3-26"
+message = "a realm job's claim reached its delivery read before it had read the reservations"
+mutant = "Check 1 reads the organisation's deliveries before the reservations"
+
+[[mutant]]
+property = "JQ-P07"
+flag = "no_request_order"
+test = "A3-06"
+message = "a later exclusive request was claimed ahead of an earlier shared request"
+mutant = "Check 2 is skipped"
+
+[[mutant]]
+property = "JQ-P07"
+flag = "shared_passes_exclusive"
+test = "A3-06"
+message = "a later shared request was claimed ahead of an earlier exclusive request"
+mutant = "Check 2 lets a shared request pass an earlier exclusive one"
+
+[[mutant]]
+property = "JQ-P07"
+flag = "request_order_tenant_only"
+test = "A3-06"
+message = "a later provision was claimed ahead of an earlier realm change on the organisation lock"
+mutant = "Check 2 compares tenant locks only"
+
+[[mutant]]
+property = "JQ-P08"
+flag = "claim_ignores_dependency"
+test = "A3-07"
+message = "a job waiting on its realm job was refused for another reason"
+mutant = "Claims skip the dependency check"
+
+[[mutant]]
+property = "JQ-P08"
+flag = "dependent_gets_request_time"
+test = "A3-07"
+message = "a job waiting on its realm job took a place in request order"
+mutant = "A job with a dependency gets lock_requested_at at creation"
+
+[[mutant]]
+property = "JQ-P08"
+flag = "prerequisite_not_failed"
+test = "A3-07"
+message = "a job whose realm job failed was not refused as prerequisite_failed"
+mutant = "A failed dependency is treated as satisfied"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "rerun_succeeded_step"
+test = "A3-08"
+message = "a resumed job re-ran a step that had already succeeded"
+mutant = "record_step lets a succeeded step run again"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "step_order_unchecked"
+test = "A3-08"
+message = "a resumed job skipped past its first unfinished step"
+mutant = "record_step ignores lower steps"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "started_every_claim"
+test = "A3-08"
+message = "reclaiming an orphaned job emitted job.started again"
+mutant = "Every claim emits job.started"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "skip_any_step"
+test = "A3-21"
+message = "a step the kind does not mark conditional was skipped"
+mutant = "A step is skipped whether or not the kind marks it conditional"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "skip_out_of_order"
+test = "A3-21"
+message = "a conditional step was skipped before every lower step finished"
+mutant = "A conditional step is skipped without every lower step succeeded or skipped"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "skip_any_status"
+test = "A3-21"
+message = "a conditional step that was already running was skipped"
+mutant = "A step that is not pending may be skipped"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "step_accepts_compensated"
+test = "A3-21"
+message = "a step was recorded compensated, which nothing in this item may write"
+mutant = "record_step does not raise for compensated, and records it for a running step"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "step_ends_from_any_status"
+test = "A3-21"
+message = "a step that was not running was recorded succeeded"
+mutant = "record_step records succeeded or failed for a step that is not running"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "sweep_ignores_dispatch"
+test = "A3-09"
+message = "an expired job with an open dispatch was not swept to needs_reconciliation"
+mutant = "The sweep never reads open JobDispatch rows; its non-terminal-sub-job clause is unchanged"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "sweep_ignores_subjob_dispatch"
+test = "A3-09"
+message = "an expired parent whose open dispatch names an ended sub-job was orphaned"
+mutant = "The sweep's open-dispatch read leaves out a dispatch that names a sub-job; its non-terminal-sub-job clause is unchanged"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "sweep_no_step_reset"
+test = "A3-09"
+message = "an orphaned job left its unfinished step running"
+mutant = "Orphaning leaves running steps running"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "sweep_unexpired"
+test = "A3-09"
+message = "the sweep changed a job whose lease had not expired"
+mutant = "The sweep ignores the lease, at both sites that read it: the read of its candidates and the re-check under the row lock. One guard at two sites, because either site alone is masked by the other in every deterministic test (specification §9.3)"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "sweep_completes_closed_step"
+test = "A3-09"
+message = "the sweep marked a running step succeeded"
+mutant = "Orphaning marks succeeded a running step whose latest dispatch closed completed"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "claim_completes_any_class"
+test = "A3-09"
+message = "a claim marked a step that is not class C succeeded from its closed dispatch"
+mutant = "The claim marks succeeded any pending step whose dispatch closed completed, whatever its class"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "claim_ignores_closed_class_c"
+test = "A3-09"
+message = "a claim did not mark succeeded a class C step whose dispatch closed completed"
+mutant = "The claim never marks a class C step succeeded from its closed dispatch"
+
+[[mutant]]
+property = "JQ-P10"
+flag = "claim_completion_unaudited"
+test = "A3-09"
+message = "a claim that completed a class C step emitted no job.step_succeeded for it"
+mutant = "The claim marks a class C step succeeded without emitting job.step_succeeded"
+
+[[mutant]]
+property = "JQ-P11"
+flag = "subjob_full_checks"
+test = "A3-10"
+message = "a sub-job was refused while its parent was running under the fence that started it"
+mutant = "A sub-job's claim, its parent check passed, goes on to the ordinary checks and takes locks instead of taking none"
+
+[[mutant]]
+property = "JQ-P11"
+flag = "subjob_ignores_fence"
+test = "A3-10"
+message = "a sub-job was claimed under a parent fence other than its dispatch's"
+mutant = "The sub-job claim checks the parent's status, not the dispatch fence"
+
+[[mutant]]
+property = "JQ-P11"
+flag = "subjob_key_by_step"
+test = "A3-10"
+message = "a sub-job's key was not derived from its parent and the dispatch that started it"
+mutant = "The sub-job key hashes [\"sub\", parent, seq, kind]: the step, not the dispatch that starts it"
+
+[[mutant]]
+property = "JQ-P11"
+flag = "stranding_ignores_parent"
+test = "A3-10"
+message = "the sweep failed a queued sub-job whose parent was running under its dispatch's fence"
+mutant = "The stranding pass fails every queued or orphaned sub-job"
+
+[[mutant]]
+property = "JQ-P11"
+flag = "stranding_ignores_fence"
+test = "A3-10"
+message = "the sweep left a queued sub-job whose parent runs under another fence than its dispatch's"
+mutant = "The stranding pass accepts an open dispatch at any parent fence"
+
+[[mutant]]
+property = "JQ-P12"
+flag = "budget_off_by_one"
+test = "A3-11"
+message = "an orphaning past a budget of one did not fail the job orphaned_exhausted"
+mutant = "The budget compares attempt > max_attempts"
+
+[[mutant]]
+property = "JQ-P12"
+flag = "budget_before_dispatch"
+test = "A3-11"
+message = "an exhausted job holding an open dispatch was failed instead of held for reconciliation"
+mutant = "The budget is checked before open dispatches"
+
+[[mutant]]
+property = "JQ-P12"
+flag = "exhausted_resets_steps"
+test = "A3-11"
+message = "the sweep changed a step of a job it failed orphaned_exhausted"
+mutant = "The sweep returns the running steps of a job it fails orphaned_exhausted to pending"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "decide_any_status"
+test = "A3-12"
+message = "a decision was recorded on a job not in needs_reconciliation"
+mutant = "The decision ignores the job's status"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "no_effect_marks_succeeded"
+test = "A3-12"
+message = "a resume with no effect did not return its step to pending"
+mutant = "A no_effect resume marks the step succeeded"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "resume_claim_counts_attempt"
+test = "A3-12"
+message = "the claim after a resume counted an attempt"
+mutant = "The claim after a resume increments attempt"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "hold_ends_reservation"
+test = "A3-12"
+message = "a resumed job gave up its reservation before its next claim"
+mutant = "Holding for reconciliation ends the reservation"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "fail_keeps_reservation"
+test = "A3-12"
+message = "a fail decision kept the reservation"
+mutant = "A fail decision leaves the reservation unended"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "decide_leaves_dispatch_open"
+test = "A3-12"
+message = "a resume did not close the unresolved dispatch"
+mutant = "The decision leaves the unresolved dispatch open"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "decide_without_row_lock"
+test = "A3-12"
+message = "a decision committed after the job left needs_reconciliation"
+mutant = "A decision reads the job without locking its row"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "resume_completion_unaudited"
+test = "A3-12"
+message = "a resume that completed a step emitted no job.step_succeeded for it"
+mutant = "A resume with outcome completed marks the step succeeded without emitting job.step_succeeded"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "hold_unaudited"
+test = "A3-12"
+message = "a runner's hold emitted no job.reconciliation_required"
+mutant = "hold_for_reconciliation emits no audit row"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "role_checked_before_status"
+test = "A3-12"
+message = "a decision with two defects was not refused for the job's status before the role"
+mutant = "The decision checks the role before it locks the job row and reads its status"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "decide_closes_always_no_effect"
+test = "A3-12"
+message = "a resume whose operation completed closed its dispatch other than completed"
+mutant = "A decision closes the unresolved dispatch no_effect whatever it decided"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "outcome_at_decision_always"
+test = "A3-12"
+message = "a decision that closed its dispatch itself recorded an earlier outcome for it"
+mutant = "dispatch_outcome_at_decision is written even when the decision itself closed the dispatch"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "job_decision_update_allowed"
+test = "A3-12"
+message = "a recorded job decision was rewritten"
+mutant = "No trigger refuses an UPDATE of jobs_jobreconciliationdecision"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "job_decision_delete_allowed"
+test = "A3-12"
+message = "a recorded job decision was deleted"
+mutant = "No trigger refuses a DELETE of jobs_jobreconciliationdecision"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "no_effect_resume_audited"
+test = "A3-12"
+message = "a resume with no effect was audited as a step's success"
+mutant = "A resume emits job.step_succeeded whatever its outcome"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "decide_closes_always_completed"
+test = "A3-12"
+message = "a resume with no effect closed its dispatch other than no_effect"
+mutant = "A decision closes the unresolved dispatch completed whatever it decided"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "decide_closes_partial_no_effect"
+test = "A3-12"
+message = "a fail decision on a partial effect closed its dispatch other than failed"
+mutant = "A partial outcome closes the unresolved dispatch no_effect instead of failed"
+
+[[mutant]]
+property = "JQ-P13"
+flag = "fail_decision_resets_steps"
+test = "A3-12"
+message = "a fail decision changed a step of the job it failed"
+mutant = "A fail decision returns the job's running steps to pending"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "no_delivery_check"
+test = "A3-13"
+message = "a realm job was claimed while a realm-changing delivery of its organisation was in flight"
+mutant = "Realm job claims ignore outbox deliveries"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_in_flight_only"
+test = "A3-13"
+message = "a realm job was claimed while a realm-changing delivery of its organisation was unresolved"
+mutant = "Only in_flight deliveries block a realm job"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_unguarded"
+test = "A3-13"
+message = "a delivery left needs_reconciliation without a recorded decision"
+mutant = "No trigger guards a delivery's exit"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delete_allowed_in_flight"
+test = "A3-13"
+message = "a delivery in flight was deleted"
+mutant = "The trigger refuses DELETE only of a delivery in needs_reconciliation"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delete_allowed_unresolved"
+test = "A3-13"
+message = "an unresolved delivery was deleted"
+mutant = "The trigger refuses DELETE only of a delivery in flight"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "freeze_skips_changes_realm"
+test = "A3-13"
+message = "a realm-changing delivery in flight stopped changing the realm"
+mutant = "The delivery trigger lets changes_realm change in flight or unresolved"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "freeze_skips_category"
+test = "A3-13"
+message = "a delivery in flight changed its category"
+mutant = "The delivery trigger lets category change in flight or unresolved"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "freeze_skips_organisation"
+test = "A3-13"
+message = "a delivery in flight changed its organisation"
+mutant = "The delivery trigger lets organisation_id change in flight or unresolved"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "freeze_skips_started_at"
+test = "A3-13"
+message = "a delivery in flight had its start moved earlier"
+mutant = "The delivery trigger lets started_at change in flight or unresolved"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decide_any_status"
+test = "A3-13"
+message = "a delivery decision was recorded on a delivery in flight"
+mutant = "The delivery decision function locks the delivery's row and does not check its status"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decision_trigger_ignores_status"
+test = "A3-13"
+message = "a decision row was inserted for a delivery not in needs_reconciliation"
+mutant = "The decision table's insert trigger does not check the delivery's status"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "start_check_skips_in_flight"
+test = "A3-13"
+message = "a delivery that never started was recorded as in flight"
+mutant = "The CHECK outbox_delivery_started_when_in_flight covers needs_reconciliation only"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "start_check_skips_unresolved"
+test = "A3-13"
+message = "a delivery that never started was recorded as unresolved"
+mutant = "The CHECK outbox_delivery_started_when_in_flight covers in_flight only"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_any_transaction"
+test = "A3-13"
+message = "a delivery left needs_reconciliation on a decision committed in an earlier transaction"
+mutant = "The exit trigger does not compare decided_txid: it accepts a decision inserted in an earlier transaction"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_ignores_started_at"
+test = "A3-13"
+message = "a delivery left needs_reconciliation on a decision made before it started"
+mutant = "The exit trigger does not require decided_at >= started_at"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_fail_unbound"
+test = "A3-13"
+message = "a delivery left needs_reconciliation for a status its decision does not map to"
+mutant = "The exit trigger lets a fail decision carry its delivery to any status"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_completed_unbound"
+test = "A3-13"
+message = "a delivery whose decision says its operation completed was returned to pending"
+mutant = "The exit trigger lets a resume with completed carry its delivery to any status"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_no_effect_unbound"
+test = "A3-13"
+message = "a delivery whose decision says its operation had no effect was marked succeeded"
+mutant = "The exit trigger lets a resume with no_effect carry its delivery to any status"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decided_txid_not_forced"
+test = "A3-13"
+message = "a decision row kept the transaction identifier its insert supplied"
+mutant = "The decision table's insert trigger keeps a supplied decided_txid"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "evidence_check_skips_compute_terminated_provider"
+test = "A3-13"
+message = "a decision row whose compute evidence names no provider was inserted"
+mutant = "The decision table's evidence CHECK leaves out compute_terminated_provider"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "evidence_check_skips_compute_terminated_resource_id"
+test = "A3-13"
+message = "a decision row whose compute evidence names no resource was inserted"
+mutant = "The decision table's evidence CHECK leaves out compute_terminated_resource_id"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "evidence_check_skips_compute_terminated_request_id"
+test = "A3-13"
+message = "a decision row whose compute evidence names no request was inserted"
+mutant = "The decision table's evidence CHECK leaves out compute_terminated_request_id"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "evidence_check_skips_target_read_provider"
+test = "A3-13"
+message = "a decision row whose target read names no provider was inserted"
+mutant = "The decision table's evidence CHECK leaves out target_read_provider"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "evidence_check_skips_target_read_resource_id"
+test = "A3-13"
+message = "a decision row whose target read names no resource was inserted"
+mutant = "The decision table's evidence CHECK leaves out target_read_resource_id"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "evidence_check_skips_target_read_request_id"
+test = "A3-13"
+message = "a decision row whose target read names no request was inserted"
+mutant = "The decision table's evidence CHECK leaves out target_read_request_id"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decision_trigger_ignores_start_order"
+test = "A3-13"
+message = "a decision row whose evidence predates the delivery's start was inserted"
+mutant = "The decision table's insert trigger does not compare the compute evidence with started_at"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decision_trigger_target_before_compute"
+test = "A3-13"
+message = "a decision row whose target read predates its compute evidence was inserted"
+mutant = "The decision table's insert trigger does not compare the two observed_at values"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decision_trigger_future"
+test = "A3-13"
+message = "a decision row whose target read is observed after the decision was inserted"
+mutant = "The decision table's insert trigger does not compare the target read with decided_at"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_ignores_target"
+test = "A3-13"
+message = "a delivery decision without a complete target read was accepted"
+mutant = "The delivery decision function does not check the target read's fields"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_ignores_compute"
+test = "A3-13"
+message = "a delivery decision without the compute's request identifier was accepted"
+mutant = "The delivery decision function does not check the compute evidence's fields"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_ignores_start_order"
+test = "A3-13"
+message = "a delivery decision whose evidence predates the delivery's start was accepted"
+mutant = "The delivery decision function does not compare the compute evidence with started_at"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_target_before_compute"
+test = "A3-13"
+message = "a delivery decision whose target read predates its compute evidence was accepted"
+mutant = "The delivery decision function does not compare the two observed_at values"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_future"
+test = "A3-13"
+message = "a delivery decision with evidence observed after the decision was accepted"
+mutant = "The delivery decision function does not compare the target read with decided_at"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_ignores_role"
+test = "A3-13"
+message = "a delivery decision by a role other than staff_operator was accepted"
+mutant = "The delivery decision's grant read does not check the grant's role: a current grant of any staff role decides"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_compares_xmin"
+test = "A3-13"
+message = "a delivery could not leave on a decision inserted under a savepoint of its transaction"
+mutant = "The exit trigger compares the decision row's xmin with the current transaction instead of decided_txid"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_no_clock_tolerance"
+test = "A3-13"
+message = "a delivery decision with both pieces of evidence within the clock tolerance was refused"
+mutant = "The delivery decision function compares evidence with database time without the 5-minute tolerance"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_check_ignores_changes_realm"
+test = "A3-13"
+message = "a realm job was refused for a delivery in flight that does not change the realm"
+mutant = "The claim's delivery read counts every delivery of the organisation, not only those with changes_realm"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "freeze_unresolved_only"
+test = "A3-13"
+message = "a delivery in flight changed its whole identity"
+mutant = "The freeze holds only while the delivery is in needs_reconciliation"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "freeze_in_flight_only"
+test = "A3-13"
+message = "an unresolved delivery changed its whole identity"
+mutant = "The freeze holds only while the delivery is in flight"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_update_allowed"
+test = "A3-13"
+message = "a delivery left needs_reconciliation on a committed decision rewritten to allow it"
+mutant = "No trigger refuses an UPDATE of outbox_deliverydecision"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_delete_allowed"
+test = "A3-13"
+message = "a recorded delivery decision was deleted"
+mutant = "No trigger refuses a DELETE of outbox_deliverydecision"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_accepts_other_delivery"
+test = "A3-13"
+message = "a delivery left needs_reconciliation on a decision recorded for another delivery"
+mutant = "The exit trigger does not require the decision to be for the delivery that leaves"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decided_at_not_forced"
+test = "A3-13"
+message = "a decision row's evidence was checked against the decided_at its insert supplied"
+mutant = "The insert trigger keeps a supplied decided_at and measures the time order against it"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_partial_check_missing"
+test = "A3-13"
+message = "a decision row that resumes a partial effect was inserted"
+mutant = "outbox_deliverydecision has no CHECK that a partial outcome only fails"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_partial_resume"
+test = "A3-13"
+message = "a delivery decision that resumes a partial effect was accepted"
+mutant = "The delivery decision function does not refuse a partial outcome with a resume"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_exit_reuses_reference"
+test = "A3-13"
+message = "a delivery left needs_reconciliation twice on one decision"
+mutant = "The exit trigger accepts the reference the delivery already carried"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "finish_ignores_steps"
+test = "A3-14"
+message = "a job finished succeeded with a step unfinished"
+mutant = "finish_job(succeeded) does not check the steps"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "finish_ignores_open_dispatch"
+test = "A3-14"
+message = "a job finished succeeded with a dispatch open"
+mutant = "finish_job(succeeded) checks steps, not open dispatches"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "close_accepts_blank_evidence"
+test = "A3-14"
+message = "a dispatch was closed without a reference to its terminal proof"
+mutant = "close_dispatch closes a dispatch given an empty or blank evidence_ref"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "close_accepts_any_outcome"
+test = "A3-14"
+message = "close_dispatch did not itself refuse an outcome outside a dispatch's closed set"
+mutant = "close_dispatch does not check the outcome against its closed set, and leaves the refusal to the table's CHECK"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "finish_failed_with_open_dispatch"
+test = "A3-14"
+message = "a job finished failed with a dispatch open"
+mutant = "finish_job(failed) ignores open dispatches"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "finish_accepts_any_status"
+test = "A3-14"
+message = "finish_job did not itself refuse a status other than succeeded or failed"
+mutant = "finish_job does not raise for a status other than succeeded or failed, takes it for the failed path, and writes it"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "step_succeeded_unaudited"
+test = "A3-14"
+message = "a step that succeeded was not audited as job.step_succeeded"
+mutant = "record_step emits no job.step_succeeded"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "output_ref_dropped"
+test = "A3-14"
+message = "a step's output reference was not recorded with its success"
+mutant = "record_step drops output_ref"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "step_failed_unaudited"
+test = "A3-14"
+message = "a step that failed was not audited as job.step_failed"
+mutant = "record_step emits no job.step_failed"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "second_open_dispatch"
+test = "A3-15"
+message = "a second open dispatch was recorded on one job"
+mutant = "record_dispatch allows several open dispatches"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "class_c_unlimited"
+test = "A3-15"
+message = "a class C step was dispatched twice in one resolution cycle"
+mutant = "record_dispatch dispatches a class C step without limit"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "class_c_never_again"
+test = "A3-15"
+message = "a class C step could not be dispatched again after a no-effect resume"
+mutant = "record_dispatch limits a class C step to one dispatch ever, across resolution cycles"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "retarget_noop"
+test = "A3-15"
+message = "retargeting a dispatch did not replace its operation reference"
+mutant = "retarget_dispatch returns True and changes nothing"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "retarget_closed"
+test = "A3-15"
+message = "a closed dispatch was retargeted"
+mutant = "retarget_dispatch accepts a closed dispatch"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "cycle_from_first_resume"
+test = "A3-27"
+message = "a class C step's resolution cycle started at its first no-effect resume, not its latest"
+mutant = "record_dispatch bounds a class C step's resolution cycle by the step's first resume decision with no_effect, not its latest. The claim's completion and start_sub_job read the cycle through rows of their own, claim_cycle_from_first_resume and subjob_start_cycle_from_first_resume"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "subjob_start_second_open_dispatch"
+test = "A3-15"
+message = "a sub-job was started while a dispatch was open on the job"
+mutant = "start_sub_job records its dispatch while another dispatch of the job is open"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "subjob_start_class_c_unlimited"
+test = "A3-15"
+message = "a class C step started a sub-job after its dispatch in the same resolution cycle"
+mutant = "start_sub_job dispatches a class C step without limit"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "subjob_start_class_c_never_again"
+test = "A3-23"
+message = "a class C step could not start its sub-job again in a new cycle"
+mutant = "start_sub_job limits a class C step to one dispatch ever, across resolution cycles"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "subjob_start_cycle_from_first_resume"
+test = "A3-23"
+message = "a class C step could not start its sub-job in the cycle its latest no-effect resume opened"
+mutant = "start_sub_job bounds a class C step's resolution cycle by the step's first resume decision with no_effect, not its latest"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "subjob_start_class_c_cycle_restarts_at_claim"
+test = "A3-15"
+message = "a class C step started a sub-job under a new claim in the same resolution cycle"
+mutant = "For start_sub_job a class C step's resolution cycle also restarts at every claim: only dispatches under the job's current fence count"
+
+[[mutant]]
+property = "JQ-P17"
+flag = "dispatch_without_row_lock"
+test = "A3-16"
+message = "a dispatch committed after the job left the runner's claim"
+mutant = "record_dispatch runs its first statement, and every check after it, without the row lock"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "subjob_gets_request_time"
+test = "A3-17"
+message = "a sub-job took a place in request order"
+mutant = "Sub-jobs get lock_requested_at at creation"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "decide_with_live_subjob"
+test = "A3-17"
+message = "a decision was recorded while a sub-job of the job was not terminal"
+mutant = "The decision ignores sub-jobs"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "subjob_writes_ignore_parent"
+test = "A3-17"
+message = "a sub-job started a step while its parent was not running"
+mutant = "A sub-job's record_step to running does not check the parent. The three other writes that start an effect have rows of their own"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "dispatch_ignores_parent"
+test = "A3-17"
+message = "a sub-job recorded a dispatch while its parent was not running"
+mutant = "A sub-job's record_dispatch does not check the parent"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "retarget_ignores_parent"
+test = "A3-17"
+message = "a sub-job retargeted a dispatch while its parent was not running"
+mutant = "A sub-job's retarget_dispatch does not check the parent"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "subjob_start_ignores_parent"
+test = "A3-17"
+message = "a sub-job started a sub-job of its own while its parent was not running"
+mutant = "A sub-job's start_sub_job does not check the parent"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "stranded_subjob_kept"
+test = "A3-17"
+message = "a stranded sub-job was not failed parent_not_running"
+mutant = "The sweep has no pass for stranded sub-jobs"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "subjob_reports_need_parent"
+test = "A3-17"
+message = "a sub-job could not report a step's end while its parent was not running"
+mutant = "A sub-job's record_step to succeeded, failed or skipped requires its parent running. The four other reports have rows of their own"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "renew_needs_parent"
+test = "A3-17"
+message = "a sub-job could not renew its lease while its parent was not running"
+mutant = "A sub-job's renew_lease requires its parent running"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "close_needs_parent"
+test = "A3-17"
+message = "a sub-job could not close its dispatch while its parent was not running"
+mutant = "A sub-job's close_dispatch requires its parent running"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "hold_needs_parent"
+test = "A3-17"
+message = "a sub-job could not hold its open dispatch for reconciliation while its parent was not running"
+mutant = "A sub-job's hold_for_reconciliation requires its parent running"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "finish_needs_parent"
+test = "A3-17"
+message = "a sub-job could not finish while its parent was not running"
+mutant = "A sub-job's finish_job requires its parent running"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "stranding_leaves_dispatch_open"
+test = "A3-17"
+message = "a terminal sub-job left its parent's dispatch open"
+mutant = "The stranding pass leaves the parent's dispatch open"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "finish_leaves_parent_dispatch_open"
+test = "A3-17"
+message = "a sub-job's own terminal write left its parent's dispatch open"
+mutant = "finish_job on a sub-job leaves the parent's dispatch open"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "subjob_close_always_completed"
+test = "A3-17"
+message = "a failed sub-job closed its parent's dispatch other than failed"
+mutant = "A sub-job's terminal write closes the parent's dispatch completed whatever the outcome"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "exhausted_subjob_leaves_dispatch_open"
+test = "A3-17"
+message = "a sub-job failed orphaned_exhausted left its parent's dispatch open"
+mutant = "The sweep failing a sub-job orphaned_exhausted leaves the parent's dispatch open"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "fail_decision_leaves_parent_dispatch_open"
+test = "A3-17"
+message = "a fail decision on a sub-job left its parent's dispatch open"
+mutant = "A fail decision on a sub-job leaves the parent's dispatch open"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "stranding_closes_completed"
+test = "A3-17"
+message = "the stranding pass closed a parent's dispatch other than failed"
+mutant = "The stranding pass closes the parent's dispatch completed"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "subjob_close_always_failed"
+test = "A3-17"
+message = "a succeeded sub-job closed its parent's dispatch other than completed"
+mutant = "A sub-job's own finish closes the parent's dispatch failed whatever the outcome"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "exhausted_closes_completed"
+test = "A3-17"
+message = "a sub-job failed orphaned_exhausted closed its parent's dispatch other than failed"
+mutant = "The sweep failing a sub-job orphaned_exhausted closes the parent's dispatch completed"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "fail_decision_closes_completed"
+test = "A3-17"
+message = "a fail decision on a sub-job closed its parent's dispatch other than failed"
+mutant = "A fail decision on a sub-job closes the parent's dispatch completed"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "role_checked_before_subjobs"
+test = "A3-17"
+message = "a decision with two defects was not refused for the live sub-job before the role"
+mutant = "The decision checks the role before it looks for a sub-job that is not terminal"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "stranding_closes_without_evidence_ref"
+test = "A3-17"
+message = "the stranding pass closed a parent's dispatch without the reference to the sub-job"
+mutant = "The stranding pass closes the parent's dispatch with no terminal_evidence_ref"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "finish_closes_without_evidence_ref"
+test = "A3-17"
+message = "a sub-job's own terminal write closed its parent's dispatch without the reference to it"
+mutant = "finish_job closes the parent's dispatch with no terminal_evidence_ref"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "exhausted_closes_without_evidence_ref"
+test = "A3-17"
+message = "a sub-job failed orphaned_exhausted closed its parent's dispatch without the reference to it"
+mutant = "The sweep failing a sub-job orphaned_exhausted closes the parent's dispatch with no terminal_evidence_ref"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "fail_decision_closes_without_evidence_ref"
+test = "A3-17"
+message = "a fail decision on a sub-job closed its parent's dispatch without the reference to it"
+mutant = "A fail decision on a sub-job closes the parent's dispatch with no terminal_evidence_ref"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "no_promotion"
+test = "A3-18"
+message = "a scheduled job that became due was not promoted into request order by the sweep"
+mutant = "sweep_expired_leases commits no promotion. claim_job's call has a row of its own, claim_skips_promotion"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "claim_skips_promotion"
+test = "A3-18"
+message = "a claim did not promote a due scheduled job before deciding"
+mutant = "claim_job commits no promotion"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "promotion_ignores_not_before"
+test = "A3-18"
+message = "a claim promoted a scheduled job before it was due"
+mutant = "The promotion ignores not_before"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "none_not_before_not_now"
+test = "A3-18"
+message = "a job enqueued with no not_before did not store the instant it was created"
+mutant = "A request with no not_before stores the epoch instead of the creating transaction's clock_timestamp()"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "promotion_instant_per_row"
+test = "A3-18"
+message = "three jobs one promotion statement promoted did not share one instant"
+mutant = "The promotion writes clock_timestamp() per row instead of one instant per statement"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "claim_ignores_not_before"
+test = "A3-18"
+message = "a placed job whose not_before was moved later was not refused not_claimable"
+mutant = "Claim step 1 does not read not_before"
+
+[[mutant]]
+property = "JQ-P19"
+flag = "subjob_not_before_not_now"
+test = "A3-10"
+message = "a sub-job did not store the instant it was started as its not_before"
+mutant = "start_sub_job stores the epoch, not the creating transaction's clock, as the sub-job's not_before"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "decide_either_evidence"
+test = "A3-19"
+message = "a decision without evidence that the compute terminated was accepted"
+mutant = "Either piece of evidence suffices"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "structured_evidence_unchecked"
+test = "A3-19"
+message = "a decision whose target read names no resource was accepted"
+mutant = "Only the provider field of the evidence is checked"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "evidence_order_unchecked"
+test = "A3-19"
+message = "a decision whose compute evidence predates the dispatch by more than the tolerance was accepted"
+mutant = "Compute evidence may predate the dispatch by any amount"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "target_before_compute_allowed"
+test = "A3-19"
+message = "a decision whose target read predates the compute evidence was accepted"
+mutant = "The target read may predate the compute evidence"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "future_evidence_allowed"
+test = "A3-19"
+message = "a decision with evidence observed after the decision was accepted"
+mutant = "Evidence may be observed any time after the decision"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "any_role"
+test = "A3-19"
+message = "a decision by a role other than staff_operator was accepted"
+mutant = "The decision's grant read does not check the grant's role: a current grant of any staff role decides"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "partial_resume"
+test = "A3-19"
+message = "a resume with a partial outcome was accepted"
+mutant = "A partial outcome may resume"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "no_clock_tolerance"
+test = "A3-19"
+message = "a fail with a partial outcome and evidence within the clock tolerance was refused"
+mutant = "Evidence is compared with database time without the 5-minute tolerance"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "evidence_checked_before_role"
+test = "A3-19"
+message = "a decision with two defects was not refused for the role before the missing evidence"
+mutant = "The decision checks that the evidence is present before it checks the role"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "order_checked_before_presence"
+test = "A3-19"
+message = "a decision with two defects was not refused for the missing evidence before its order"
+mutant = "The decision checks the time order before it checks that the evidence is present"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "partial_checked_before_order"
+test = "A3-19"
+message = "a decision with two defects was not refused for the evidence order before the partial resume"
+mutant = "The decision checks for a partial resume before it checks the time order"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "job_partial_check_missing"
+test = "A3-19"
+message = "a job decision row that resumes a partial effect was inserted"
+mutant = "jobs_jobreconciliationdecision has no CHECK that a partial outcome only fails"
+
+[[mutant]]
+property = "JQ-P21"
+flag = "release_noop"
+test = "A3-20"
+message = "a released claim kept its live locks"
+mutant = "release_live_locks does nothing"
+
+[[mutant]]
+property = "JQ-P21"
+flag = "reentrant_claim"
+test = "A3-20"
+message = "a claim succeeded on a session already holding a lock of its set"
+mutant = "Check 0 is skipped"
+
+[[mutant]]
+property = "JQ-P21"
+flag = "no_finally_release"
+test = "A3-20"
+message = "a claim cancelled after taking its live locks kept them"
+mutant = "A claim that raises keeps the locks it took"
+
+[[mutant]]
+property = "JQ-P21"
+flag = "reentrant_org_unchecked"
+test = "A3-20"
+message = "a claim succeeded on a session already holding its organisation lock"
+mutant = "Check 0 looks only at the tenant lock"
+
+[[mutant]]
+property = "JQ-P22"
+flag = "parent_closes_subjob_dispatch"
+test = "A3-22"
+message = "a parent closed the dispatch naming its live sub-job"
+mutant = "close_dispatch accepts a dispatch naming a sub-job"
+
+[[mutant]]
+property = "JQ-P22"
+flag = "retarget_subjob_dispatch"
+test = "A3-22"
+message = "a parent retargeted the dispatch naming its sub-job"
+mutant = "retarget_dispatch accepts a dispatch naming a sub-job"
+
+[[mutant]]
+property = "JQ-P22"
+flag = "finish_ignores_live_subjob"
+test = "A3-22"
+message = "a parent finished succeeded while its sub-job was not terminal"
+mutant = "finish_job(succeeded) does not check sub-jobs"
+
+[[mutant]]
+property = "JQ-P22"
+flag = "finish_failed_ignores_live_subjob"
+test = "A3-22"
+message = "a parent finished failed while its sub-job was not terminal"
+mutant = "finish_job(failed) does not check sub-jobs"
+
+[[mutant]]
+property = "JQ-P22"
+flag = "sweep_reads_only_dispatch_records"
+test = "A3-22"
+message = "an expired parent was orphaned past its live sub-job because its dispatch was closed"
+mutant = "The sweep counts only open dispatch records, not non-terminal sub-jobs"
+
+[[mutant]]
+property = "JQ-P23"
+flag = "closed_dispatch_governs_step"
+test = "A3-23"
+message = "a decision that contradicted the outcome its dispatch was closed with did not govern the step"
+mutant = "A resume marks the step from the outcome the dispatch was already closed with, not from the decision's"
+
+[[mutant]]
+property = "JQ-P23"
+flag = "decision_rewrites_closed_dispatch"
+test = "A3-23"
+message = "a decision rewrote the outcome a sub-job's terminal write had closed the dispatch with"
+mutant = "The decision closes the unresolved dispatch again although it is already closed, with jobs_jobdispatch_guard's three write-once clauses disarmed"
+
+[[mutant]]
+property = "JQ-P23"
+flag = "decision_omits_closed_outcome"
+test = "A3-23"
+message = "a decision did not record the outcome its dispatch had already been closed with"
+mutant = "The decision leaves dispatch_outcome_at_decision null"
+
+[[mutant]]
+property = "JQ-P23"
+flag = "claim_completes_across_cycles"
+test = "A3-23"
+message = "a claim completed a class C step from a dispatch closed completed in an earlier cycle"
+mutant = "The claim reads a class C step's latest dispatch overall, not the current resolution cycle's"
+
+[[mutant]]
+property = "JQ-P23"
+flag = "claim_cycle_from_first_resume"
+test = "A3-23"
+message = "a claim completed a class C step from a dispatch closed completed before its latest no-effect resume"
+mutant = "The claim's class C completion bounds the resolution cycle by the step's first resume decision with no_effect, not its latest"
+
+[[mutant]]
+property = "JQ-P23"
+flag = "decided_at_before_lock"
+test = "A3-23"
+message = "a decision dated itself before a dispatch that closed while it waited for the job row"
+mutant = "The decision reads decided_at before it waits for the job row"
+
+[[mutant]]
+property = "JQ-P24"
+flag = "scan_skips_subjobs"
+test = "A3-24"
+message = "a scanning claim never read a claimable sub-job"
+mutant = "The scan reads top-level jobs only"
+
+[[mutant]]
+property = "JQ-P24"
+flag = "scan_subjobs_last"
+test = "A3-24"
+message = "a scanning claim served a placed job ahead of a claimable sub-job"
+mutant = "The scan orders sub-jobs after every placed job"
+
+[[mutant]]
+property = "JQ-P24"
+flag = "scan_skips_dependency_failed"
+test = "A3-24"
+message = "a scanning claim never read a job whose dependency had failed"
+mutant = "The scan reads only jobs that hold a place in request order, and sub-jobs"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "sweep_waits"
+test = "A3-25"
+message = "the sweep waited on a job row another transaction held"
+mutant = "The sweep locks each job row without SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "promotion_waits"
+test = "A3-25"
+message = "a claim's promotion waited on a job row another transaction held"
+mutant = "The promotion locks its rows without SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "claim_waits"
+test = "A3-25"
+message = "a claim waited on its job row another transaction held"
+mutant = "The claim locks its own row without SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "stranding_waits"
+test = "A3-25"
+message = "the stranding pass waited on a sub-job row another transaction held"
+mutant = "The stranding pass locks each sub-job row without SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "claim_locks_for_update"
+test = "A3-25"
+message = "a claim was refused because an uncommitted insert referenced its job"
+mutant = "The claim locks its own row FOR UPDATE SKIP LOCKED instead of FOR NO KEY UPDATE SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "promotion_locks_for_update"
+test = "A3-25"
+message = "the promotion passed over a job because an uncommitted insert referenced it"
+mutant = "The promotion locks its rows FOR UPDATE SKIP LOCKED instead of FOR NO KEY UPDATE SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "renew_locks_for_update"
+test = "A3-25"
+message = "a runner's renewal waited on its job row because an uncommitted insert referenced it"
+mutant = "renew_lease locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "stranding_locks_for_update"
+test = "A3-25"
+message = "the stranding pass passed over a sub-job because an uncommitted insert referenced it"
+mutant = "The stranding pass locks FOR UPDATE SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "sweep_locks_for_update"
+test = "A3-25"
+message = "the sweep passed over an expired job because an uncommitted insert referenced it"
+mutant = "The sweep locks FOR UPDATE SKIP LOCKED"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "decide_locks_for_update"
+test = "A3-25"
+message = "a decision waited on its job row because an uncommitted insert referenced it"
+mutant = "record_reconciliation_decision locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P26"
+flag = "renew_always_false"
+test = "A3-03"
+message = "a live claim's renewal was refused"
+mutant = "renew_lease refuses every renewal"
+
+[[mutant]]
+property = "JQ-P26"
+flag = "renew_does_not_extend"
+test = "A3-03"
+message = "a renewal did not move the lease later"
+mutant = "renew_lease returns True and leaves lease_expires_at as it was"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_id"
+test = "A3-01"
+message = "a job's id changed after insert"
+mutant = "jobs_job_guard lets an update change id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_organisation_id"
+test = "A3-01"
+message = "a job's organisation_id changed after insert"
+mutant = "jobs_job_guard lets an update change organisation_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_tenant_id"
+test = "A3-01"
+message = "a job's tenant_id changed after insert"
+mutant = "jobs_job_guard lets an update change tenant_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_kind"
+test = "A3-01"
+message = "a job's kind changed after insert"
+mutant = "jobs_job_guard lets an update change kind; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_idempotency_key"
+test = "A3-01"
+message = "a job's idempotency_key changed after insert"
+mutant = "jobs_job_guard lets an update change idempotency_key; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_desired_spec_hash"
+test = "A3-01"
+message = "a job's desired_spec_hash changed after insert"
+mutant = "jobs_job_guard lets an update change desired_spec_hash; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_max_attempts"
+test = "A3-01"
+message = "a job's max_attempts changed after insert"
+mutant = "jobs_job_guard lets an update change max_attempts; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_actor_type"
+test = "A3-01"
+message = "a job's actor_type changed after insert"
+mutant = "jobs_job_guard lets an update change actor_type; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_actor_id"
+test = "A3-01"
+message = "a job's actor_id changed after insert"
+mutant = "jobs_job_guard lets an update change actor_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_parent_job_id"
+test = "A3-01"
+message = "a job's parent_job_id changed after insert"
+mutant = "jobs_job_guard lets an update change parent_job_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_depends_on_job_id"
+test = "A3-01"
+message = "a job's depends_on_job_id changed after insert"
+mutant = "jobs_job_guard lets an update change depends_on_job_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_request_id"
+test = "A3-01"
+message = "a job's request_id changed after insert"
+mutant = "jobs_job_guard lets an update change request_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_spec_mutable_created_at"
+test = "A3-01"
+message = "a job's created_at changed after insert"
+mutant = "jobs_job_guard lets an update change created_at; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "job_delete_allowed"
+test = "A3-01"
+message = "a job row was deleted"
+mutant = "jobs_job_guard lets a job row be deleted"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_id"
+test = "A3-01"
+message = "a step's id changed after insert"
+mutant = "jobs_jobstep_guard lets an update change id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_job_id"
+test = "A3-01"
+message = "a step's job_id changed after insert"
+mutant = "jobs_jobstep_guard lets an update change job_id; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_seq"
+test = "A3-01"
+message = "a step's seq changed after insert"
+mutant = "jobs_jobstep_guard lets an update change seq; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_name"
+test = "A3-01"
+message = "a step's name changed after insert"
+mutant = "jobs_jobstep_guard lets an update change name; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_retry_class"
+test = "A3-01"
+message = "a step's retry_class changed after insert"
+mutant = "jobs_jobstep_guard lets an update change retry_class; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_conditional"
+test = "A3-01"
+message = "a step's conditional flag changed after insert"
+mutant = "jobs_jobstep_guard lets an update change conditional; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_spec_mutable_timeout_s"
+test = "A3-01"
+message = "a step's timeout_s changed after insert"
+mutant = "jobs_jobstep_guard lets an update change timeout_s; every other column of the specification stays guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "step_delete_allowed"
+test = "A3-01"
+message = "a step row was deleted"
+mutant = "jobs_jobstep_guard lets a step row be deleted"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "audit_update_allowed"
+test = "A3-01"
+message = "an audit row was changed"
+mutant = "audit_auditevent_guard lets an audit row be updated; deletion stays refused"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "audit_delete_allowed"
+test = "A3-01"
+message = "an audit row was deleted"
+mutant = "audit_auditevent_guard lets an audit row be deleted; an update stays refused"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_tenant_check_realm_missing"
+test = "A3-13"
+message = "a realm job was stored with a tenant"
+mutant = "jobs_job_tenant_null_for_realm_kinds is dropped: a realm-kind job may carry a tenant_id"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_tenant_check_tenant_missing"
+test = "A3-13"
+message = "a tenant job was stored without a tenant"
+mutant = "jobs_job_tenant_set_for_tenant_kinds is dropped: a tenant-kind job may have no tenant_id"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_unresolved_step_check_missing"
+test = "A3-12"
+message = "a job in needs_reconciliation lost its unresolved step"
+mutant = "jobs_job_unresolved_step_when_reconciling is dropped: a job in needs_reconciliation may have no unresolved_step_id"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_unresolved_operation_check_missing"
+test = "A3-12"
+message = "a job in needs_reconciliation lost its unresolved operation"
+mutant = "jobs_job_unresolved_operation_when_reconciling is dropped: a job in needs_reconciliation may have no unresolved_operation_ref"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_lease_check_claimed_missing"
+test = "A3-14"
+message = "a running job was left without a lease"
+mutant = "jobs_job_lease_while_claimed is dropped: a leased or running job may have no lease_expires_at"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_lease_check_unclaimed_missing"
+test = "A3-14"
+message = "a succeeded job was given a lease"
+mutant = "jobs_job_no_lease_unless_claimed is dropped: a job neither leased nor running may carry a lease_expires_at"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_error_code_check_failed_missing"
+test = "A3-14"
+message = "a failed job was left without an error code"
+mutant = "jobs_job_error_code_when_failed is dropped: a failed job may have no error_code"
+
+[[mutant]]
+property = "JQ-P28"
+flag = "job_error_code_check_unfailed_missing"
+test = "A3-14"
+message = "a succeeded job was given an error code"
+mutant = "jobs_job_no_error_code_unless_failed is dropped: a job that is not failed may carry an error_code"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "reservation_end_rewritable"
+test = "A3-14"
+message = "an ended reservation's end was rewritten"
+mutant = "jobs_joblockreservation_guard lets an ended reservation's ended_at be written again"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "dispatch_closed_at_rewritable"
+test = "A3-14"
+message = "a closed dispatch's closed_at was rewritten"
+mutant = "jobs_jobdispatch_guard lets a closed dispatch's closed_at be written again; its outcome and evidence stay guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "dispatch_outcome_rewritable"
+test = "A3-14"
+message = "a closed dispatch's outcome was rewritten"
+mutant = "jobs_jobdispatch_guard lets a closed dispatch's terminal_outcome be written again; its closed_at and evidence stay guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "dispatch_evidence_rewritable"
+test = "A3-14"
+message = "a closed dispatch's evidence reference was rewritten"
+mutant = "jobs_jobdispatch_guard lets a closed dispatch's terminal_evidence_ref be written again; its closed_at and outcome stay guarded"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "place_may_be_cleared"
+test = "A3-18"
+message = "a job's place in request order was cleared"
+mutant = "jobs_job_guard lets lock_requested_at be set back to null; moving it earlier stays refused"
+
+[[mutant]]
+property = "JQ-P27"
+flag = "place_may_move_earlier"
+test = "A3-18"
+message = "a job's place in request order moved earlier"
+mutant = "jobs_job_guard lets lock_requested_at move earlier; clearing it stays refused"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decision_trigger_no_start_tolerance"
+test = "A3-13"
+message = "a decision row whose evidence predates the delivery's start within the tolerance was refused"
+mutant = "The decision table's insert trigger compares the compute evidence with the delivery's start with no tolerance"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "decision_trigger_no_future_tolerance"
+test = "A3-13"
+message = "a decision row whose target read is observed within the tolerance after the decision was refused"
+mutant = "The decision table's insert trigger compares the target read with decided_at with no tolerance"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "step_locks_for_update"
+test = "A3-25"
+message = "a step write waited on its job row because an uncommitted insert referenced it"
+mutant = "record_step locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "dispatch_locks_for_update"
+test = "A3-25"
+message = "a dispatch write waited on its job row because an uncommitted insert referenced it"
+mutant = "record_dispatch locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "retarget_locks_for_update"
+test = "A3-25"
+message = "a retarget waited on its job row because an uncommitted insert referenced it"
+mutant = "retarget_dispatch locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "close_locks_for_update"
+test = "A3-25"
+message = "a dispatch close waited on its job row because an uncommitted insert referenced it"
+mutant = "close_dispatch locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "finish_locks_for_update"
+test = "A3-25"
+message = "a finish waited on its job row because an uncommitted insert referenced it"
+mutant = "finish_job locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "subjob_start_locks_for_update"
+test = "A3-25"
+message = "a sub-job start waited on its parent's job row because an uncommitted insert referenced it"
+mutant = "start_sub_job locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P25"
+flag = "hold_locks_for_update"
+test = "A3-25"
+message = "a hold for reconciliation waited on its job row because an uncommitted insert referenced it"
+mutant = "hold_for_reconciliation locks the job row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decide_without_row_lock"
+test = "A3-13"
+message = "a delivery decision committed after the delivery left needs_reconciliation"
+mutant = "record_delivery_reconciliation_decision reads the delivery's status without locking its row"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decide_locks_for_update"
+test = "A3-13"
+message = "a delivery decision waited on its delivery row because an uncommitted insert referenced it"
+mutant = "record_delivery_reconciliation_decision locks the delivery row FOR UPDATE"
+
+[[mutant]]
+property = "JQ-P21"
+flag = "finish_keeps_live_locks"
+test = "A3-14"
+message = "a top-level job that finished failed kept its live locks"
+mutant = "finish_job commits and returns without unlocking the top-level job's live locks"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "claim_inside_transaction_allowed"
+test = "A3-20"
+message = "claim_job ran inside a transaction its caller opened"
+mutant = "claim_job skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "sweep_inside_transaction_allowed"
+test = "A3-20"
+message = "sweep_expired_leases ran inside a transaction its caller opened"
+mutant = "sweep_expired_leases skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "renew_inside_transaction_allowed"
+test = "A3-20"
+message = "renew_lease ran inside a transaction its caller opened"
+mutant = "renew_lease skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "step_inside_transaction_allowed"
+test = "A3-20"
+message = "record_step ran inside a transaction its caller opened"
+mutant = "record_step skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "dispatch_inside_transaction_allowed"
+test = "A3-20"
+message = "record_dispatch ran inside a transaction its caller opened"
+mutant = "record_dispatch skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "retarget_inside_transaction_allowed"
+test = "A3-20"
+message = "retarget_dispatch ran inside a transaction its caller opened"
+mutant = "retarget_dispatch skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "subjob_start_inside_transaction_allowed"
+test = "A3-20"
+message = "start_sub_job ran inside a transaction its caller opened"
+mutant = "start_sub_job skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "close_inside_transaction_allowed"
+test = "A3-20"
+message = "close_dispatch ran inside a transaction its caller opened"
+mutant = "close_dispatch skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "hold_inside_transaction_allowed"
+test = "A3-20"
+message = "hold_for_reconciliation ran inside a transaction its caller opened"
+mutant = "hold_for_reconciliation skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P29"
+flag = "finish_inside_transaction_allowed"
+test = "A3-20"
+message = "finish_job ran inside a transaction its caller opened"
+mutant = "finish_job skips its refusal of a transaction its caller opened"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "delivery_evidence_checked_before_role"
+test = "A3-13"
+message = "a delivery decision with two defects was not refused for the role before the missing evidence"
+mutant = "The delivery decision function checks that the evidence is present before it checks the role"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "delivery_order_checked_before_presence"
+test = "A3-13"
+message = "a delivery decision with two defects was not refused for the missing evidence before its order"
+mutant = "The delivery decision function checks the time order before it checks that the evidence is present"
+
+[[mutant]]
+property = "JQ-P20"
+flag = "delivery_partial_checked_before_order"
+test = "A3-13"
+message = "a delivery decision with two defects was not refused for the evidence order before the partial resume"
+mutant = "The delivery decision function checks for a partial resume before it checks the time order"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decide_no_effect_maps_succeeded"
+test = "A3-13"
+message = "a delivery decision with no effect did not return the delivery to pending"
+mutant = "record_delivery_reconciliation_decision moves a delivery whose decision resumes with no effect to succeeded instead of pending"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decide_fail_maps_pending"
+test = "A3-13"
+message = "a delivery decision that fails the delivery did not mark it failed"
+mutant = "record_delivery_reconciliation_decision moves a delivery whose decision fails it to pending instead of failed"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_exit_unguarded"
+test = "A3-12"
+message = "a job left needs_reconciliation without a recorded decision"
+mutant = "The trigger jobs_job_reconciliation_exit lets any update move a job out of needs_reconciliation"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_exit_any_transaction"
+test = "A3-12"
+message = "a job left needs_reconciliation on a decision committed in an earlier transaction"
+mutant = "The job exit trigger accepts a decision whose decided_txid is not the current transaction's"
+
+[[mutant]]
+property = "JQ-P11"
+flag = "subjob_relation_unguarded"
+test = "A3-10"
+message = "an unlisted production sub-job relation started a job"
+mutant = "start_sub_job accepts a parent-kind, parent-step and child-kind relation absent from the closed production registry"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_exit_accepts_other_job"
+test = "A3-12"
+message = "a job left needs_reconciliation on a decision recorded for another job"
+mutant = "The job exit trigger accepts a decision recorded for another job"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_exit_reuses_reference"
+test = "A3-12"
+message = "a job left needs_reconciliation twice on one decision"
+mutant = "The job exit trigger accepts the decision reference the job already carried"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_exit_resume_unbound"
+test = "A3-12"
+message = "a job whose decision resumes it was failed"
+mutant = "The job exit trigger lets a resume decision move the job to a status other than queued"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_exit_fail_unbound"
+test = "A3-12"
+message = "a job whose decision fails it was returned to queued"
+mutant = "The job exit trigger lets a fail decision move the job to a status other than failed"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_decided_txid_not_forced"
+test = "A3-12"
+message = "a job decision row kept the transaction identifier its insert supplied"
+mutant = "The trigger jobs_jobreconciliationdecision_valid keeps a decided_txid the insert supplied"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_decided_at_future"
+test = "A3-12"
+message = "a job decision row decided after its insert was inserted"
+mutant = "The job decision insert trigger accepts a decided_at later than the insert's clock"
+
+[[mutant]]
+property = "JQ-P30"
+flag = "job_decided_at_before_dispatch"
+test = "A3-12"
+message = "a job decision row decided before its job's latest dispatch was inserted"
+mutant = "The job decision insert trigger accepts a decided_at earlier than the job's latest dispatch"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "stranding_resets_steps"
+test = "A3-17"
+message = "the stranding pass changed a step of the sub-job it failed"
+mutant = "The stranding pass returns the succeeded steps of the sub-job it fails to pending"
+
+[[mutant]]
+property = "JQ-P16"
+flag = "class_c_cycle_restarts_at_claim"
+test = "A3-15"
+message = "a class C step was dispatched again by a new claim in the same resolution cycle"
+mutant = "For record_dispatch a class C step's resolution cycle also restarts at every claim: only dispatches under the job's current fence count"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "output_ref_accepted_with_running"
+test = "A3-14"
+message = "a step was set running with an output reference"
+mutant = "record_step does not raise for an output_ref with running, and ignores it"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "output_ref_accepted_with_skipped"
+test = "A3-21"
+message = "a conditional step was skipped with an output reference"
+mutant = "record_step does not raise for an output_ref with skipped, and ignores it"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "step_failed_audit_drops_output_ref"
+test = "A3-14"
+message = "a failed attempt's output reference was not kept in its job.step_failed metadata"
+mutant = "record_step's job.step_failed audit row carries no output_ref"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "run_skipped_step"
+test = "A3-21"
+message = "a skipped step was set running"
+mutant = "record_step sets a skipped step running"
+
+[[mutant]]
+property = "JQ-P09"
+flag = "step_accepts_unknown_status"
+test = "A3-21"
+message = "record_step did not itself refuse a status it never writes"
+mutant = "record_step does not check the status against the four it writes, and leaves the refusal to the table's CHECK"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "step_error_code_without_failed"
+test = "A3-14"
+message = "a step was recorded succeeded with an error code"
+mutant = "record_step does not raise for an error_code with a status other than failed, and records the step"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "finish_succeeded_with_error_code"
+test = "A3-14"
+message = "finish_job did not itself refuse succeeded with an error code"
+mutant = "finish_job does not raise for succeeded with an error_code, and leaves the refusal to the table's CHECK"
+
+[[mutant]]
+property = "JQ-P15"
+flag = "finish_error_code_outside_set"
+test = "A3-14"
+message = "finish_job did not itself refuse failed with an error code outside its closed set"
+mutant = "finish_job(failed) does not check the error code against models.ERROR_CODES, and leaves the refusal to the table's CHECKs"
+
+[[mutant]]
+property = "JQ-P31"
+test = "A3-28"
+flag = "step_no_recheck_after_parent"
+mutant = "step does not recheck its child lease after the parent-row wait"
+message = "a sub-job started a step after its lease expired while waiting for its parent"
+
+[[mutant]]
+property = "JQ-P31"
+test = "A3-28"
+flag = "dispatch_no_recheck_after_parent"
+mutant = "dispatch does not recheck its child lease after the parent-row wait"
+message = "a sub-job recorded a dispatch after its lease expired while waiting for its parent"
+
+[[mutant]]
+property = "JQ-P31"
+test = "A3-28"
+flag = "retarget_no_recheck_after_parent"
+mutant = "retarget does not recheck its child lease after the parent-row wait"
+message = "a sub-job retargeted a dispatch after its lease expired while waiting for its parent"
+
+[[mutant]]
+property = "JQ-P31"
+test = "A3-28"
+flag = "subjob_start_no_recheck_after_parent"
+mutant = "subjob_start does not recheck its child lease after the parent-row wait"
+message = "a sub-job started another sub-job after its lease expired while waiting for its parent"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_future_start_allowed"
+test = "A3-13"
+message = "a delivery whose start is in the future did not return the evidence-order refusal"
+mutant = "A delivery decision does not refuse a start later than its under-lock database clock"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_unaudited"
+test = "A3-13"
+message = "a delivery decision did not leave one outbox_delivery.reconciliation_decided audit row naming its staff identity, organisation, exit and decision"
+mutant = "record_delivery_reconciliation_decision records the decision and moves the delivery out of needs_reconciliation without writing its outbox_delivery.reconciliation_decided audit row"
+
+[[mutant]]
+property = "JQ-P14"
+flag = "delivery_decision_audit_second_txn"
+test = "A3-13"
+message = "killed at a delivery decision's audit row, the delivery left needs_reconciliation"
+mutant = "The outbox_delivery.reconciliation_decided audit row, and nothing else, is written in a second transaction, after the decision and the delivery's exit commit"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "parent_write_ignores_status"
+test = "A3-29"
+message = "a sub-job effect was accepted under a parent whose status was not running"
+mutant = "The shared runner parent check omits the parent running-status check, retaining all other predicates"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "parent_write_ignores_dispatch_owner"
+test = "A3-29"
+message = "a sub-job effect was accepted under a dispatch owned by another parent"
+mutant = "The shared runner parent check omits only the dispatch job_id equality, retaining all other predicates"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "parent_write_ignores_dispatch_child"
+test = "A3-29"
+message = "a sub-job effect was accepted under a parent dispatch naming another child"
+mutant = "The shared runner parent check omits only the dispatch sub_job_id equality, retaining all other predicates"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "parent_write_ignores_dispatch_open"
+test = "A3-29"
+message = "a sub-job effect was accepted under a closed parent dispatch"
+mutant = "The shared runner parent check omits only the dispatch closed_at IS NULL check, retaining all other predicates"
+
+[[mutant]]
+property = "JQ-P18"
+flag = "parent_write_ignores_dispatch_fence"
+test = "A3-29"
+message = "a sub-job effect was accepted under a dispatch outside its parent's current fence"
+mutant = "The shared runner parent check omits only the dispatch parent-fence equality, retaining all other predicates"
+
+[[mutant]]
+property = "JQ-P32"
+flag = "isolation_unchecked"
+test = "A3-30"
+message = "a queue call accepted unsupported transaction isolation"
+mutant = "The shared transaction preflight omits its actual isolation check"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "role_of_any_identity"
+test = "A3-31"
+message = "a decision by a staff identity holding no grant was accepted while another identity held staff_operator"
+mutant = "The decision's grant read does not check whose grant it is: any identity's current staff_operator grant decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "revoked_role_decides"
+test = "A3-31"
+message = "a decision by a staff identity whose staff_operator grant was revoked was accepted"
+mutant = "The decision's grant read does not check the revocation: a revoked staff_operator grant decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_role_of_any_identity"
+test = "A3-31"
+message = "a delivery decision by a staff identity holding no grant was accepted while another identity held staff_operator"
+mutant = "The delivery decision's grant read does not check whose grant it is: any identity's current staff_operator grant decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_revoked_role_decides"
+test = "A3-31"
+message = "a delivery decision by a staff identity whose staff_operator grant was revoked was accepted"
+mutant = "The delivery decision's grant read does not check the revocation: a revoked staff_operator grant decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "disabled_staff_identity_decides"
+test = "A3-31"
+message = "a decision by a resolved staff principal whose identity was disabled was accepted"
+mutant = "The decision's grant read does not check that the staff identity is enabled: a principal resolved before its identity was disabled still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "deleted_staff_identity_decides"
+test = "A3-31"
+message = "a decision by a resolved staff principal whose identity was deleted was accepted"
+mutant = "The decision's grant read does not check that the staff identity is not deleted: a principal resolved before its identity was deleted still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "disabled_staff_person_decides"
+test = "A3-31"
+message = "a decision by a resolved staff principal whose person was disabled was accepted"
+mutant = "The decision's grant read does not check that the staff person is enabled: a principal resolved before its person was disabled still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "deleted_staff_person_decides"
+test = "A3-31"
+message = "a decision by a resolved staff principal whose person was deleted was accepted"
+mutant = "The decision's grant read does not check that the staff person is not deleted: a principal resolved before its person was deleted still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_disabled_staff_identity_decides"
+test = "A3-31"
+message = "a delivery decision by a resolved staff principal whose identity was disabled was accepted"
+mutant = "The delivery decision's grant read does not check that the staff identity is enabled: a principal resolved before its identity was disabled still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_deleted_staff_identity_decides"
+test = "A3-31"
+message = "a delivery decision by a resolved staff principal whose identity was deleted was accepted"
+mutant = "The delivery decision's grant read does not check that the staff identity is not deleted: a principal resolved before its identity was deleted still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_disabled_staff_person_decides"
+test = "A3-31"
+message = "a delivery decision by a resolved staff principal whose person was disabled was accepted"
+mutant = "The delivery decision's grant read does not check that the staff person is enabled: a principal resolved before its person was disabled still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_deleted_staff_person_decides"
+test = "A3-31"
+message = "a delivery decision by a resolved staff principal whose person was deleted was accepted"
+mutant = "The delivery decision's grant read does not check that the staff person is not deleted: a principal resolved before its person was deleted still decides"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "decision_audit_omits_staff_grant"
+test = "A3-31"
+message = "a decision's audit row did not name the staff_operator grant it relied on"
+mutant = "The job.reconciliation_decided audit row leaves out the staff_operator grant the decision relied on"
+
+[[mutant]]
+property = "JQ-P33"
+flag = "delivery_decision_audit_omits_staff_grant"
+test = "A3-31"
+message = "a delivery decision's audit row did not name the staff_operator grant it relied on"
+mutant = "The outbox_delivery.reconciliation_decided audit row leaves out the staff_operator grant the delivery decision relied on"

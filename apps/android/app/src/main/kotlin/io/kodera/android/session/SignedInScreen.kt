@@ -1,0 +1,284 @@
+package io.kodera.android.session
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import io.kodera.android.R
+import io.kodera.android.client.WorkspaceChannel
+import io.kodera.android.client.EmergencyCheckInSession
+import io.kodera.android.client.DocsWorkspaceSession
+import io.kodera.android.client.ChannelPollSession
+import io.kodera.android.client.WorkspacePreferencesSession
+import io.kodera.android.client.WorkspacePreferencesScope
+import io.kodera.android.client.SoundPreferencesSession
+import io.kodera.android.client.VoiceCallDockSession
+import io.kodera.android.client.WorkspaceChannelLifecycle
+import io.kodera.android.client.WorkspaceSetupState
+import io.kodera.android.client.WorkspaceState
+import io.kodera.android.domain.ChannelKind
+import io.kodera.android.ui.theme.LocalKoderaPalette
+import io.kodera.android.ui.theme.NativeTypography
+import io.kodera.tokens.KoderaTokens
+
+/** Current member and read-only organisation channels, with sign-out before potentially long metadata. */
+@Composable
+fun SignedInScreen(member: MemberState, workspace: WorkspaceViewState, consoleOrigin: String?,
+    onRetry: () -> Unit, onCheckAgain: () -> Unit, onWorkspaceRetry: () -> Unit, onSignOut: () -> Unit,
+    emergencySession: EmergencyCheckInSession? = null, voiceCallSession: VoiceCallDockSession? = null,
+    docsSession: DocsWorkspaceSession? = null, soundPreferencesSession: SoundPreferencesSession? = null, pollSession: ChannelPollSession? = null, workspacePreferencesSession: WorkspacePreferencesSession? = null) {
+    val palette = LocalKoderaPalette.current
+    Surface(modifier = Modifier.fillMaxSize(), color = palette.page, contentColor = palette.ink) {
+        Box(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.TopCenter) {
+            Column(
+                modifier = Modifier.widthIn(max = KoderaTokens.Space.shellDocumentMinWidth).fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = KoderaTokens.Space.s6, vertical = KoderaTokens.Space.s8),
+                verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s8),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s4)) {
+                    Text(stringResource(R.string.brand_name), style = NativeTypography.wordmark, color = palette.action,
+                        modifier = Modifier.semantics { heading() })
+                    Text(stringResource(R.string.session_title), style = NativeTypography.title, modifier = Modifier.semantics { heading() })
+                }
+                Surface(color = palette.surface, shape = RoundedCornerShape(KoderaTokens.Radius.lg)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(KoderaTokens.Space.s5)
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                        verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s4),
+                    ) { MemberCard(member, consoleOrigin, onRetry, onCheckAgain) }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2)) {
+                    OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                        // Ink, not the danger role: bad on page is under 4.5:1 in the dark palettes.
+                        Text(stringResource(R.string.session_sign_out), style = NativeTypography.emphasis, color = palette.ink)
+                    }
+                    Text(stringResource(R.string.session_sign_out_hint), style = NativeTypography.caption, color = palette.ink3)
+                }
+                if (member is MemberState.Loaded && workspace != WorkspaceViewState.Hidden) {
+                    EmergencyCheckInCard(emergencySession?.takeIf {
+                        workspace is WorkspaceViewState.Loaded && it.organisationId == workspace.snapshot.organisationId
+                    }, organisationId = (workspace as? WorkspaceViewState.Loaded)?.snapshot?.organisationId)
+                    WorkspaceSection(workspace, onWorkspaceRetry)
+                    VoiceCallDockCard(voiceCallSession?.takeIf { session ->
+                        workspace is WorkspaceViewState.Loaded && session.scope.organisationId == workspace.snapshot.organisationId &&
+                            (workspace.snapshot.categories.flatMap { it.channels } + workspace.snapshot.uncategorisedChannels).any {
+                                it.id == session.scope.channelId && it.kind == ChannelKind.AUDIO &&
+                                    it.lifecycle == WorkspaceChannelLifecycle.ACTIVE
+                            }
+                    })
+                    DocsWorkspaceCard(docsSession?.takeIf { session ->
+                        workspace is WorkspaceViewState.Loaded && session.scope.organisationId == workspace.snapshot.organisationId &&
+                            (workspace.snapshot.categories.flatMap { it.channels } + workspace.snapshot.uncategorisedChannels).any {
+                                it.id == session.scope.channelId && it.kind == ChannelKind.TEXT &&
+                                    it.lifecycle == WorkspaceChannelLifecycle.ACTIVE
+                            }
+                    })
+                    SoundPreferencesCard(soundPreferencesSession?.takeIf {
+                        workspace is WorkspaceViewState.Loaded && it.scope.organisationId == workspace.snapshot.organisationId
+                    })
+                    ChannelPollCard(pollSession?.takeIf { session ->
+                        workspace is WorkspaceViewState.Loaded && session.scope.organisationId == workspace.snapshot.organisationId &&
+                            (workspace.snapshot.categories.flatMap { it.channels } + workspace.snapshot.uncategorisedChannels).any {
+                                it.id == session.scope.channelId && it.kind == ChannelKind.TEXT &&
+                                    it.lifecycle == WorkspaceChannelLifecycle.ACTIVE
+                            }
+                    })
+                    WorkspacePreferencesCard(workspacePreferencesSession?.takeIf { session ->
+                        workspace is WorkspaceViewState.Loaded && session.scope.organisationId == workspace.snapshot.organisationId &&
+                            (workspace.snapshot.categories.flatMap { it.channels } + workspace.snapshot.uncategorisedChannels).any {
+                                it.id == session.scope.channelId && it.kind == ChannelKind.TEXT &&
+                                    it.lifecycle == WorkspaceChannelLifecycle.ACTIVE
+                            }
+                    }, previewScope = (workspace as? WorkspaceViewState.Loaded)?.snapshot?.let { snapshot ->
+                        (snapshot.categories.flatMap { it.channels } + snapshot.uncategorisedChannels).firstOrNull {
+                            it.kind == ChannelKind.TEXT && it.lifecycle == WorkspaceChannelLifecycle.ACTIVE
+                        }?.let { channel -> runCatching { WorkspacePreferencesScope(snapshot.organisationId, channel.id) }.getOrNull() }
+                    })
+                }
+            }
+        }
+    }
+}
+
+/** Launch, while the sealed session is read back: progress, never a blank screen. */
+@Composable
+fun RestoringScreen() {
+    val palette = LocalKoderaPalette.current
+    Surface(modifier = Modifier.fillMaxSize(), color = palette.page, contentColor = palette.ink) {
+        Box(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier.padding(KoderaTokens.Space.s6).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s4),
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(KoderaTokens.Space.s6).clearAndSetSemantics {},
+                    color = palette.accentInk)
+                Text(stringResource(R.string.session_restoring), style = NativeTypography.body, color = palette.ink2)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemberCard(member: MemberState, consoleOrigin: String?, onRetry: () -> Unit, onCheckAgain: () -> Unit) {
+    val palette = LocalKoderaPalette.current
+    val context = LocalContext.current
+    when (member) {
+        MemberState.Loading -> {
+            // The text says it once; the spinner itself is silent to TalkBack. accentInk, not action:
+            // action on the dark surface is under 3:1.
+            CircularProgressIndicator(modifier = Modifier.size(KoderaTokens.Space.s6).clearAndSetSemantics {},
+                color = palette.accentInk)
+            Text(stringResource(R.string.session_loading), style = NativeTypography.body, color = palette.ink2)
+        }
+        is MemberState.Loaded -> {
+            Column(modifier = Modifier.semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2)) {
+                Text(stringResource(R.string.session_member), style = NativeTypography.caption, color = palette.ink3)
+                Text(member.name, style = NativeTypography.heading)
+            }
+            member.organisation?.let { organisation ->
+                Column(modifier = Modifier.semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2)) {
+                    Text(stringResource(R.string.session_organisation), style = NativeTypography.caption, color = palette.ink3)
+                    Text(organisation, style = NativeTypography.emphasis)
+                }
+            }
+        }
+        MemberState.CoreUnavailable -> {
+            Text(stringResource(R.string.session_core_unavailable), style = NativeTypography.body, color = palette.ink2)
+            OutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                // accentInk, not action: action on surface is under 4.5:1 in the dark palettes.
+                Text(stringResource(R.string.session_retry), style = NativeTypography.emphasis, color = palette.accentInk)
+            }
+        }
+        // A 403 is an answer, not an outage, and never a dead end: the Console, when this build names one, Check
+        // again, and sign-out below. An owner's claim is finished in the Console, never in the app; that changes
+        // Core's answer, so coming back to the app checks again too (the Activity's resume).
+        MemberState.NoOrganisationYet -> {
+            Text(stringResource(R.string.session_no_organisation), style = NativeTypography.body, color = palette.ink2)
+            consoleOrigin?.let { origin ->
+                var consoleUnavailable by remember(origin) { mutableStateOf(false) }
+                OutlinedButton(onClick = { consoleUnavailable = !openConsole(context, origin) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                    // accentInk, not action: action on surface is under 4.5:1 in the dark palettes.
+                    Text(stringResource(R.string.session_open_console), style = NativeTypography.emphasis, color = palette.accentInk)
+                }
+                Text(stringResource(R.string.session_open_console_hint), style = NativeTypography.caption, color = palette.ink3)
+                // Inside the card's polite live region, so TalkBack reads it out.
+                if (consoleUnavailable) {
+                    Text(stringResource(R.string.session_console_unavailable), style = NativeTypography.body, color = palette.ink2)
+                }
+            }
+            OutlinedButton(onClick = onCheckAgain, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                // accentInk, not action: action on surface is under 4.5:1 in the dark palettes.
+                Text(stringResource(R.string.session_check_again), style = NativeTypography.emphasis, color = palette.accentInk)
+            }
+            Text(stringResource(R.string.session_check_again_hint), style = NativeTypography.caption, color = palette.ink3)
+        }
+    }
+}
+
+/** One status-only live region, never the channel list or its surrounding controls. */
+@Composable
+private fun WorkspaceSection(state: WorkspaceViewState, onRetry: () -> Unit) {
+    val palette = LocalKoderaPalette.current
+    Surface(color = palette.surface, shape = RoundedCornerShape(KoderaTokens.Radius.lg)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(KoderaTokens.Space.s5),
+            verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s4)) {
+            Text(stringResource(R.string.workspace_title), style = NativeTypography.heading,
+                modifier = Modifier.semantics { heading() })
+            Text(stringResource(R.string.workspace_readonly_hint), style = NativeTypography.caption, color = palette.ink2)
+            val status = when (state) {
+                WorkspaceViewState.Hidden -> null
+                WorkspaceViewState.Loading -> R.string.workspace_loading
+                is WorkspaceViewState.Unavailable -> state.message
+                is WorkspaceViewState.Loaded -> R.string.workspace_updated
+            }
+            if (state == WorkspaceViewState.Loading) {
+                CircularProgressIndicator(modifier = Modifier.size(KoderaTokens.Space.s6).clearAndSetSemantics {},
+                    color = palette.accentInk)
+            }
+            if (status != null) Text(stringResource(status), style = NativeTypography.body, color = palette.ink2,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            if (state is WorkspaceViewState.Unavailable) {
+                OutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
+                    Text(stringResource(R.string.session_retry), style = NativeTypography.emphasis, color = palette.accentInk)
+                }
+                Text(stringResource(R.string.workspace_retry_hint), style = NativeTypography.caption, color = palette.ink3)
+            }
+            if (state is WorkspaceViewState.Loaded) {
+                val snapshot = state.snapshot
+                val setupLabel = when (snapshot.setup.state) {
+                    WorkspaceSetupState.PENDING -> R.string.workspace_setup_pending
+                    WorkspaceSetupState.RUNNING -> R.string.workspace_setup_running
+                    WorkspaceSetupState.FAILED -> R.string.workspace_setup_failed
+                    WorkspaceSetupState.READY -> null
+                }
+                if (setupLabel != null) Text(stringResource(setupLabel), style = NativeTypography.body, color = palette.ink2)
+                if (snapshot.state == WorkspaceState.NOT_INITIALISED) {
+                    Text(stringResource(R.string.workspace_not_initialised), style = NativeTypography.body)
+                } else {
+                    if (snapshot.categories.all { it.channels.isEmpty() } && snapshot.uncategorisedChannels.isEmpty()) {
+                        Text(stringResource(R.string.workspace_empty), style = NativeTypography.body)
+                    }
+                    for (category in snapshot.categories) {
+                        Text(category.name, style = NativeTypography.emphasis, modifier = Modifier.semantics { heading() })
+                        for (channel in category.channels) ChannelMetadata(channel)
+                    }
+                    if (snapshot.uncategorisedChannels.isNotEmpty()) {
+                        Text(stringResource(R.string.workspace_uncategorised), style = NativeTypography.emphasis,
+                            modifier = Modifier.semantics { heading() })
+                        for (channel in snapshot.uncategorisedChannels) ChannelMetadata(channel)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Plain text only: a linked room is metadata, not a channel action or current provider authority. */
+@Composable
+private fun ChannelMetadata(channel: WorkspaceChannel) {
+    val palette = LocalKoderaPalette.current
+    Column(modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2)) {
+        Text(channel.name, style = NativeTypography.body)
+        Text(stringResource(when (channel.kind) {
+            ChannelKind.TEXT -> R.string.workspace_channel_text
+            ChannelKind.AUDIO -> R.string.workspace_channel_audio
+        }), style = NativeTypography.caption, color = palette.ink2)
+        Text(stringResource(workspaceRoomLabel(channel.roomState)), style = NativeTypography.caption, color = palette.ink2)
+        if (channel.lifecycle == WorkspaceChannelLifecycle.ARCHIVED) {
+            Text(stringResource(R.string.workspace_channel_archived), style = NativeTypography.caption, color = palette.ink3)
+        }
+    }
+}

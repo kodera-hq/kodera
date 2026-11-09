@@ -1,0 +1,23 @@
+{
+  "$comment": "The explicit allowlist. A pair in contrast-pairs.json that falls below its minimum and is NOT listed here fails the gate; a pair listed here that starts passing ALSO fails the gate, so an entry cannot outlive the problem it describes. While the pair is still failing the same rule is enforced field by field: each entry is bound to the pair it excuses — `fg`, `bg` and `min` must equal the pair's, and `ratio` is the value measured when the entry was written, so the gate fails if the pair is re-pointed at other tokens or at another `spec:` role, if its minimum is loosened, or if the measured ratio moves by more than 0.05 in either direction. There is no `fgAlpha` field: compositing is unconditional and the alpha travels with the colour (ADR-0002), so there is nothing there to bind to. `reason` is mandatory and is what a reviewer reads; `decision` is mandatory and names what would let the entry be deleted. Adding an entry is a design decision, not a build fix — see AGENTS.md. Every entry below is decided rather than pending: what is written is the ruling, and the trigger that would reopen it.",
+  "failures": [
+    {
+      "id": "action.onPrimary/slate.300",
+      "fg": "semantic.action.onPrimary",
+      "bg": "color.slate.300",
+      "ratio": 1.52,
+      "min": 4.5,
+      "reason": "Exempt, and the pairing is retired: the disabled primary button keeps its slate.300 fill and its label changes from action.onPrimary to text.tertiary. White on slate.300 is 1.52:1, which is invisible rather than dimmed; tertiary ink on slate.300 is 3.87:1, legible while unmistakably inactive. WCAG 1.4.3 exempts disabled controls, so 4.5:1 was never the bar — being readable was.",
+      "decision": "Decided, not pending. It is not a token change because the disabled button's label colour is a component rule and v0.1 has no component tier: the grammar reserves `component` and v0.1 carries nothing in it but the shell geometry aliases — no component colour token exists (README, What v0.1 is not). The rule belongs in the COMPONENTS.md Button table, and the pairing becomes a token and a pair of its own when button.primary.disabled.label lands. This row stays measured so the white label cannot come back unnoticed."
+    },
+    {
+      "id": "border.default/surface.default",
+      "fg": "semantic.border.default",
+      "bg": "semantic.surface.default",
+      "ratio": 1.32,
+      "min": 3.0,
+      "reason": "Exempt, decorative only: the card's extent is carried by shadow.card (0 8px 24px -16px rgba(47,58,69,.25)), not by the 1 px slate.200 line. SC 1.4.11 applies to a boundary that is the only way to perceive a component; this one is not, and darkening it to 3:1 would put a mid-grey rule around every white card floating on the frost page.",
+      "decision": "Decided, not pending: the card border stays slate.200 and this row is the written record of that. It becomes a hard failure the day a card ships without shadow.card, because then the line is the only boundary there is. border.input took the opposite ruling in the same pass — a control the user has to find is not decorative — which is why the two rows part company here."
+    }
+  ]
+}

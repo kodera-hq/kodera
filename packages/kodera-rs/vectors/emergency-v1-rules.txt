@@ -1,0 +1,37 @@
+# Kodera emergency v1: the bounds and the clock rule every platform is to enforce.
+#
+# Rust (`src/lib.rs`) is the reference and its tests read this file. The Swift tests
+# (`apps/ios/packages/KoderaDomain`) and the Kotlin tests (`apps/android/domain`) read it too and
+# agree with every line, and so do the Web tests (`apps/web/tests/unit/emergency/shared-rules.test.ts`).
+#
+# Grammar, one entry per line, fields separated by single spaces:
+#   bound <name> <value>
+#   rule <name> <value>
+#   case <rule> <case-name> <now_unix_ms> <frame_timestamp_ms> <accept|refuse>
+# Blank lines and lines starting with `#` are ignored. Any other line is an error.
+#
+# Bounds:
+#   queue_capacity       the most frames an outbox may be configured to hold
+#   roster_members       the most device keys an organisation's roster tracks
+#   replay_entries       the most message IDs a replay guard remembers
+#
+# Rule `max_future_skew_ms`: a frame whose UUIDv7 time (`frame_timestamp_ms`) is more than this
+# many milliseconds ahead of the verifier's clock (`now_unix_ms`) is refused before it reaches
+# the roster or the replay guard. A frame exactly at the bound is accepted. Past frames are not
+# refused by this rule. Every value below fits in a signed 64-bit integer.
+
+bound queue_capacity 128
+bound roster_members 4096
+bound replay_entries 4096
+
+rule max_future_skew_ms 300000
+
+case max_future_skew_ms same_instant 1762520100000 1762520100000 accept
+case max_future_skew_ms an_hour_old 1762520100000 1762516500000 accept
+case max_future_skew_ms one_minute_ahead 1762520100000 1762520160000 accept
+case max_future_skew_ms exactly_at_bound 1762520100000 1762520400000 accept
+case max_future_skew_ms one_ms_past_bound 1762520100000 1762520400001 refuse
+case max_future_skew_ms one_day_ahead 1762520100000 1762606500000 refuse
+case max_future_skew_ms largest_uuidv7_time 1762520100000 281474976710655 refuse
+case max_future_skew_ms verifier_clock_at_epoch 0 300000 accept
+case max_future_skew_ms verifier_clock_at_epoch_past_bound 0 300001 refuse

@@ -1,0 +1,47 @@
+# The worker image's build context (BuildKit reads it for Dockerfile.worker in place of
+# .dockerignore). Exclude by default; admit the worker, its one settings profile and the job
+# queue's records. No URL, WSGI or API module, and no other profile (tests/worker, WK-09).
+**
+!pyproject.toml
+!uv.lock
+!config/__init__.py
+!config/environment.py
+!config/deploy_environment.py
+!config/settings/__init__.py
+!config/settings/base.py
+!config/settings/deploy_worker.py
+!core/__init__.py
+!core/db/__init__.py
+!core/db/ids.py
+!core/db/models.py
+!core/db/functions.py
+# Inert outside the test profile: the runner's out-of-process fault control (core/faults.py).
+!core/faults.py
+!apps/__init__.py
+!apps/identity/__init__.py
+!apps/identity/apps.py
+!apps/identity/models.py
+!apps/orgs/__init__.py
+!apps/orgs/apps.py
+!apps/orgs/models.py
+# The queue's library: claims, runner writes, sweeps and their audit (JOB_QUEUE.md); not its
+# commands or migrations.
+!apps/jobs/*.py
+!apps/audit/__init__.py
+!apps/audit/apps.py
+!apps/audit/models.py
+!apps/outbox/__init__.py
+!apps/outbox/apps.py
+!apps/outbox/models.py
+# What the claim and the runner writes import: the job audit writer and the claim's delivery check
+# (G1.5-B; tests/worker proves the runner imports from this tree).
+!apps/audit/services.py
+!apps/outbox/selectors.py
+!worker/**
+# Never a test, a fixture (a W3 test key among them) or bytecode, wherever it lands under worker/.
+worker/**/test*
+# Never the synthetic provider either: test-only, keyed by the test, and run by worker.step only past
+# the test-profile gate (worker/step.py), which this image cannot pass.
+worker/providers/synthetic.py
+worker/**/__pycache__
+worker/**/*.pyc

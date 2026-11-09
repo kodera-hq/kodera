@@ -1,0 +1,14 @@
+{
+  "name": "kodera-server-contracts-lint",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned OpenAPI linter for contracts/*.openapi.yaml. Install with `npm ci --ignore-scripts --engine-strict`; the version lives in the lockfile, and REDOCLY_VERSION in .github/workflows/ci.yml must match it. Since 2.x, @redocly/cli is published as one self-contained bundle with no npm dependencies, so the lockfile holds a single package and neither npm audit of it nor Dependabot sees the libraries compiled into it; the `advisories` CI job audits those from node_modules/@redocly/cli/THIRD_PARTY_NOTICES, plus DOMPurify, which the notices omit, from its licence banner (scripts/ci/check-advisories.py). The two overrides below apply to nothing while the CLI declares no dependency, and are kept so that they take effect again if a later release goes back to declaring them: @faker-js/faker >=10.5.0 for GHSA-qxc2-j82w-r537, and undici >=6.28.1 for GHSA-rfgv-xxqx-mfg5, GHSA-3wwx-pv8p-q78v and GHSA-r53p-7pc4-xj5r.",
+  "license": "AGPL-3.0-or-later",
+  "devDependencies": {
+    "@redocly/cli": "2.72.1"
+  },
+  "overrides": {
+    "@faker-js/faker": "^10.5.0",
+    "undici": "^6.28.1"
+  }
+}

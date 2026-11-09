@@ -1,0 +1,36 @@
+# Kodera Monorepo Code Ownership (GOVERNANCE.md §2)
+# GitHub evaluates top-to-bottom and the LAST matching pattern wins:
+# Default fallback -> Ring 2 -> Ring 1 -> Ring 0 (highest privilege placed last so it is never shadowed).
+
+# Default fallback across the monorepo
+*                                       @kodera-hq/maintainers @zxxma @louis14448
+
+# Ring 2 — Community Extensions (reviewed by Trusted Domain Maintainers)
+/extensions/                            @kodera-hq/maintainers @zxxma @louis14448
+
+# Ring 1 — Client Applications, Design Tokens & Extension SDK
+/apps/web/                              @kodera-hq/maintainers @zxxma @louis14448
+/apps/desktop/                          @kodera-hq/maintainers @zxxma @louis14448
+/apps/ios/                              @kodera-hq/maintainers @zxxma @louis14448
+/apps/android/                          @kodera-hq/maintainers @zxxma @louis14448
+/packages/design-tokens/                @kodera-hq/maintainers @zxxma @louis14448
+/packages/extension-sdk/                @kodera-hq/maintainers @zxxma @louis14448
+
+# Ring 0 — Core Architects & Security Maintainers (Security, CI, Licensing, Server, Rust Core, Contracts, EE)
+/.github/                               @kodera-hq/security @zxxma @louis14448
+/ee/                                    @kodera-hq/security @zxxma @louis14448
+/LICENSE*                               @kodera-hq/security @zxxma @louis14448
+/TRADEMARKS.md                          @kodera-hq/security @zxxma @louis14448
+/SECURITY.md                            @kodera-hq/security @zxxma @louis14448
+/GOVERNANCE.md                          @kodera-hq/security @zxxma @louis14448
+/AGENTS.md                              @kodera-hq/security @zxxma @louis14448
+/Cargo.toml                             @kodera-hq/security @zxxma @louis14448
+/Cargo.lock                             @kodera-hq/security @zxxma @louis14448
+/package.json                           @kodera-hq/security @zxxma @louis14448
+/package-lock.json                      @kodera-hq/security @zxxma @louis14448
+/apps/server/                           @kodera-hq/security @zxxma @louis14448
+/apps/desktop/src-tauri/                @kodera-hq/security @zxxma @louis14448
+/packages/kodera-rs/                    @kodera-hq/security @zxxma @louis14448
+/packages/api-contract/                 @kodera-hq/security @zxxma @louis14448
+/packages/synapse-policy/               @kodera-hq/security @zxxma @louis14448
+/deploy/community/                      @kodera-hq/security @zxxma @louis14448

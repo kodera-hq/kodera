@@ -1,0 +1,23 @@
+// Not a source file: the extension keeps it out of the spacing guard's own
+// scan of `src/`, out of the TypeScript projects, and out of the Vitest suite.
+// It exists only to be fed to the scanner by
+// tests/unit/ui/spacing-guard.test.ts, which asserts the guard reports
+// NOTHING for this file — every class-shaped word below sits in prose, never
+// in a string or template literal, so none of it is markup.
+//
+// A height utility at step nine sits right here, in a line comment: h-9.
+
+/*
+ * The same shape in a block comment: a padding utility naming a value the
+ * preset never declared, px-exact.
+ */
+
+/**
+ * And once more in a JSDoc block, the same shape again on a position
+ * utility: right-side.
+ *
+ * A regex that scans the whole file text, rather than only what is inside
+ * quotes, cannot tell this paragraph apart from a `className` string — that
+ * confusion is exactly the false positive this fixture proves fixed.
+ */
+export const Prose = () => <div className="flex flex-col gap-2">documentation only</div>

@@ -1,0 +1,17 @@
+{
+  "slug": "acme-sa",
+  "name": "ACME",
+  "legal_name": "ACME SAS",
+  "country": "FR",
+  "vat_number": "FR12345678901",
+  "billing_email": "compta@acme.fr",
+  "email_domains": [
+    "acme.fr"
+  ],
+  "locale": "fr",
+  "instruction_ref": "SUP-0418",
+  "intended_owner": {
+    "email": "julie@acme.fr",
+    "display_name": "Julie Marchand"
+  }
+}

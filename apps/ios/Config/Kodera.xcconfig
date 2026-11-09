@@ -1,0 +1,28 @@
+// Deployment settings for the Kodera app. Every value here is empty on purpose:
+// a build that supplies nothing is unconfigured and says so on screen.
+//
+// Values reach the app only as $(KODERA_…) references in App/Info.plist.
+// Supply them in Config/Local.xcconfig (untracked; copy Local.xcconfig.example)
+// or from the CI or release pipeline. Never commit a deployment value here.
+//
+// In an .xcconfig, `//` starts a comment, so a URL is written `https:/$()/host`.
+
+// Core API origin, e.g. https://api.kodera.io (no trailing slash).
+KODERA_CORE_ORIGIN =
+// Space-separated identity origins whose /realms/{slug} issuers this build admits.
+KODERA_ISSUER_ORIGINS =
+// The platform's public OIDC client in every organisation realm.
+KODERA_IOS_CLIENT_ID =
+// Debug builds only: a realm issuer to sign in to without Core discovery.
+KODERA_DEV_ISSUER =
+// Console origin, e.g. https://console.kodera.io (no trailing slash). A member
+// with no organisation yet is offered it in the browser; unset hides that action.
+KODERA_CONSOLE_ORIGIN =
+// YES requests offline_access. Keep release use off until
+// Keycloak #65 merged-tree step-1c proof and the operator rollout are qualified.
+KODERA_OFFLINE_ACCESS =
+
+#include? "Local.xcconfig"
+
+// A release build never carries a development issuer, whatever Local.xcconfig says.
+KODERA_DEV_ISSUER[config=Release] =

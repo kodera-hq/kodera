@@ -1,0 +1,65 @@
+# Kodera Monorepo Root .gitignore
+# Secrets & Local Environment (NEVER commit real .env or private keys)
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.keystore
+*.jks
+*.age
+
+# Local scratch & unversioned developer notes
+.local/
+.agent/
+.agents/
+AGENT_NOTES.md
+.*.local.json
+.*/settings.local.json
+
+# JavaScript / TypeScript / SBOM
+node_modules/
+npm-debug.log*
+*.tsbuildinfo
+dist/
+!packages/design-tokens/dist/
+coverage/
+playwright-report/
+test-results/
+sbom-out/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Rust & Tauri
+target/
+
+# iOS / Xcode / SwiftPM
+DerivedData/
+xcuserdata/
+.build/
+.swiftpm/
+*.xcresult/
+apps/ios/Kodera.xcodeproj/
+apps/ios/Config/Local.xcconfig
+
+# Android / Gradle
+.gradle/
+local.properties
+apps/android/config/local.properties
+
+# OS
+.DS_Store
+Thumbs.db

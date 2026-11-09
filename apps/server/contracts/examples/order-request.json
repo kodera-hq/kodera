@@ -1,0 +1,35 @@
+{
+  "pack_code": "visio-docs",
+  "capacity_tier_code": "M",
+  "billing_period": "yearly",
+  "plan_code": "essentiel",
+  "tenant": {
+    "slug": "acme",
+    "name": "ACME",
+    "locale": "fr"
+  },
+  "dpa_acceptance": {
+    "dpa_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+    "accepted": true,
+    "accepted_by_name": "Julie Marchand",
+    "accepted_by_role": "Présidente"
+  },
+  "billing_contact": {
+    "email": "compta@acme.fr",
+    "name": "Service comptabilité",
+    "purchase_order_ref": "BC-2026-118"
+  },
+  "notes": null,
+  "legal_acceptances": [
+    {
+      "code": "cgv",
+      "version": "2026.11",
+      "locale": "fr"
+    },
+    {
+      "code": "sla",
+      "version": "2026.11",
+      "locale": "fr"
+    }
+  ]
+}

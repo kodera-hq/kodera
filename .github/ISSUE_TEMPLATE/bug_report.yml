@@ -1,0 +1,43 @@
+name: Bug Report
+description: Report a reproducible defect in a Kodera client, SDK, or server component
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue! **Never report security vulnerabilities here** — use [Private Vulnerability Reporting](https://github.com/kodera-hq/kodera/security/advisories/new) or `support@kodera.io`.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected Area
+      options:
+        - apps/web (@kodera/web)
+        - apps/desktop (@kodera/desktop)
+        - apps/ios
+        - apps/android
+        - apps/server
+        - packages/kodera-rs
+        - packages/design-tokens (@kodera/design-tokens)
+        - packages/api-contract (@kodera/api-contract)
+        - packages/extension-sdk (@kodera/extension-sdk)
+        - packages/synapse-policy
+        - extensions/*
+        - deploy/community (Docker Compose)
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs Actual Behaviour
+    validations:
+      required: true

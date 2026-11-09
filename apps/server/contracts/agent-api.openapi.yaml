@@ -1,0 +1,1213 @@
+openapi: 3.1.0
+info:
+  title: Kodera Agent API
+  version: 0.5.0
+  summary: The contract every tenant VM implements, spoken by the agent and served by kodera-server.
+  description: |
+    Contract 2 of the architecture strategy (Appendix A). The agent runs on every tenant VM and is
+    the only thing that touches that VM's Docker stack. It calls **out** to core; core never calls
+    in. There is no inbound port on a tenant VM for this contract.
+
+    Ansible plus cron implement this contract first. `greffer` replaces them when it passes the
+    conformance tests on `lab` (core ADR-0001).
+
+    ## The loop
+
+    1. `POST /agent/v1/heartbeat` every 60 seconds, with a monotonic `seq` and the full vitals.
+       Core marks the tenant `stale` after **three consecutive misses**, that is roughly 180
+       seconds without a heartbeat.
+    2. `GET /agent/v1/commands` returns the commands waiting for this instance. The agent may
+       long-poll (`wait_s`) or poll on the heartbeat tick; both are supported and a server that
+       cannot hold the connection answers immediately with an empty list. Core answers at once
+       and never holds a connection or a worker while waiting (core ADR-0018): it returns
+       `poll_after_s` of 3, so a membership change reaches the tenant in about 3 seconds.
+    3. `POST /agent/v1/commands/{command_id}/ack` as soon as a command is taken, before any work.
+    4. `POST /agent/v1/commands/{command_id}/result` with `running` for progress, then exactly one
+       terminal result, `succeeded` or `failed`.
+
+    Everything is idempotent by `command_id`. A command delivered twice is executed once: the
+    agent keeps a local ledger of `command_id` and replays the stored result rather than acting
+    again. Core, symmetrically, accepts the same terminal result twice and keeps the first.
+
+    ## Secrets
+
+    Secrets never travel in a command. A command that needs configuration carries a `config_ref`;
+    the agent fetches `GET /agent/v1/config/{config_ref}`, renders locally, and writes files mode
+    600 owned by the service user. A `config_ref` is single tenant, short lived and single use in
+    practice, and it is invalidated when the command it belongs to reaches a terminal result.
+
+    ## Clock and ordering
+
+    `seq` is monotonic per agent process and resets to zero on `self_update` or reboot, with
+    `boot_id` changing at the same time. Core orders by `(boot_id, seq)` and answers three cases
+    differently (`docs/api/AUTHZ.md` §7, `docs/domain/TENANT_STATE_MACHINE.md` §6):
+
+    | Case | Answer |
+    |---|---|
+    | Same `boot_id`, `seq` at or below the highest seen for it | `200`, accepted and discarded. An ordinary retried delivery is harmless |
+    | New `boot_id`, any `seq` | `200`, accepted, the counter restarts. This is the reboot case |
+    | Same `boot_id`, `seq` below a higher one already accepted **for that same `boot_id`** | `409 seq-regression`. Stop and wait for re-enrolment |
+
+    Only the third case is a `409`, because only the third cannot be explained by a reboot: one
+    `boot_id` cannot run its counter backwards. It is a replayed capture, a cloned VM or a
+    duplicated credential, and retrying is exactly the wrong response. An agent that treated a
+    dropped packet as the third case would take itself out of service on a lossy network.
+
+    ## Staff side
+
+    The output an agent reports as `log_ref` is read by staff through
+    `GET /instances/{instance_id}/logs?since=` in the Core API
+    (`contracts/core-api.openapi.yaml`, tag `Agents`). It is not part of this contract: an agent
+    never reads another instance's logs.
+  contact:
+    name: kodera-server maintainers
+    url: https://github.com/kodera-hq/kodera
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  x-kodera-contract: agent-api
+  x-kodera-owners:
+    - kodera-hq/core
+
+servers:
+  - url: https://agent.kodera.io
+    description: Production agent endpoint. Separate hostname from the console API so mTLS is terminated on its own listener.
+
+tags:
+  - name: Heartbeat
+    description: The 60-second liveness and vitals report.
+  - name: Commands
+    description: Fetch, acknowledge and report on commands.
+  - name: Config
+    description: Configuration and secrets pulled by reference, never pushed in a command.
+
+security:
+  - agentMtls: []
+  - agentBearer: []
+
+paths:
+  /agent/v1/heartbeat:
+    post:
+      operationId: postHeartbeat
+      summary: Report liveness and vitals
+      description: |
+        Sent every 60 seconds. Carries everything core needs to decide whether the tenant is
+        healthy without ever connecting to the VM: service states, disk, CPU, memory, network,
+        certificate expiry per host, backup age, and the last preflight outcome.
+
+        The response is not empty on purpose: it tells the agent whether commands are waiting, so
+        a healthy fleet needs no polling at all between heartbeats, and it carries the interval
+        core wants the agent to use next, which is how a heartbeat storm is damped.
+
+        Core marks the tenant `stale` after three consecutive missed heartbeats. A heartbeat that
+        arrives late is still recorded; staleness clears on the first heartbeat received.
+
+        `Idempotency-Key` is not used here. The idempotency key of a heartbeat is
+        `(instance_id, boot_id, seq)`: a retried heartbeat with a `seq` already seen **for the
+        current `boot_id`** is accepted with `200` and discarded, and a heartbeat carrying a new
+        `boot_id` is accepted whatever its `seq`, because that is a reboot. Only a `seq` that goes
+        backwards on a `boot_id` that already accepted a higher one is refused — see "Clock and
+        ordering" above.
+      tags: [Heartbeat]
+      x-kodera-authz:
+        roles: [agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Heartbeat' }
+      responses:
+        '200':
+          description: Accepted, with what core wants the agent to do next.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeartbeatAck' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: |
+            The heartbeat contradicts what core knows in a way a reboot cannot explain: a `seq`
+            below one already accepted **for the same `boot_id`**, or an instance that has been
+            decommissioned. The agent stops and waits for re-enrolment rather than retrying.
+
+            A replay within the current `boot_id`, and a restart that brings a new `boot_id` and a
+            `seq` back at zero, both answer `200`. Neither is an error, and treating either as one
+            takes an agent out of service for a dropped packet or a reboot.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /agent/v1/commands:
+    get:
+      operationId: getCommands
+      summary: Fetch the commands waiting for this instance
+      description: |
+        Returns at most `max` commands for the authenticated instance, oldest first, each already
+        marked `dispatched` so a second agent process cannot take the same one.
+
+        Two modes, both valid:
+
+        - **Long poll**: pass `wait_s` between 1 and 55. The server holds the connection until a
+          command appears or the wait elapses, then returns, possibly with an empty list.
+        - **Poll**: omit `wait_s`. The server answers immediately. This is the mode Ansible plus
+          cron uses, driven by the heartbeat tick and by `commands_waiting` in the heartbeat
+          acknowledgement.
+
+        A command already acknowledged by this agent but not yet reported is returned again after
+        `visibility_timeout_s`, so a crash between `ack` and `result` does not lose work. The agent
+        recognises it by `command_id` and replays its stored result rather than executing twice.
+
+        Commands are never returned for another instance, and `instance_id` is taken from the
+        credential, never from a parameter.
+      tags: [Commands]
+      x-kodera-authz:
+        roles: [agent]
+      parameters:
+        - name: wait_s
+          in: query
+          required: false
+          description: Long-poll duration in seconds. Omit or `0` to return immediately.
+          schema: { type: integer, minimum: 0, maximum: 55, default: 0 }
+        - name: max
+          in: query
+          required: false
+          description: Most commands to return in one call.
+          schema: { type: integer, minimum: 1, maximum: 20, default: 5 }
+        - name: kinds
+          in: query
+          required: false
+          description: |
+            Restrict to these kinds. An agent that does not implement a kind lists what it does
+            implement, so core can hold the rest instead of dispatching a command that will fail.
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/CommandKind' }
+          style: form
+          explode: false
+      responses:
+        '200':
+          description: Zero or more commands, oldest first.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommandList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /agent/v1/commands/{command_id}/ack:
+    parameters:
+      - $ref: '#/components/parameters/CommandId'
+    post:
+      operationId: ackCommand
+      summary: Acknowledge a command before starting it
+      description: |
+        Sent as soon as the command is taken and before any work begins. It tells core that a live
+        agent holds the command and starts the execution deadline.
+
+        Idempotent: acknowledging twice is accepted and changes nothing. Acknowledging a command
+        that already has a terminal result answers `409`; the agent should not execute it.
+      tags: [Commands]
+      x-kodera-authz:
+        roles: [agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommandAck' }
+      responses:
+        '200':
+          description: Acknowledged.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommandAckResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The command already has a terminal result, or was cancelled or expired.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /agent/v1/commands/{command_id}/result:
+    parameters:
+      - $ref: '#/components/parameters/CommandId'
+    post:
+      operationId: reportCommandResult
+      summary: Report progress or the terminal result of a command
+      description: |
+        `status: running` may be sent any number of times, with `progress_pct` and `phase`, so a
+        20-minute upgrade shows movement in the console. `succeeded` and `failed` are terminal and
+        may be sent once; a second terminal result with the same status is accepted and discarded,
+        a second terminal result with a different status is refused with `409`.
+
+        `error_code` is required on `failed` and comes from a **closed** enum
+        (`CommandErrorCode`). Prose belongs in `error_detail` and in the log; core switches on
+        `error_code` alone, which is what lets the provisioning worker decide between retrying,
+        restoring the safety snapshot, and paging a human.
+
+        `log_ref` names the output the agent uploaded; staff read it through
+        `GET /instances/{instance_id}/logs` in the Core API. Command output never travels in this
+        body beyond `error_detail`.
+      tags: [Commands]
+      x-kodera-authz:
+        roles: [agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommandResult' }
+      responses:
+        '200':
+          description: Result recorded.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommandResultAck' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: A different terminal result is already recorded for this command.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /agent/v1/config/{config_ref}:
+    parameters:
+      - $ref: '#/components/parameters/ConfigRef'
+    get:
+      operationId: getConfig
+      summary: Pull the configuration and secrets a command needs
+      description: |
+        The only way a secret reaches a tenant VM through this contract. A command carries a
+        `config_ref`; the agent fetches it here, renders the templates locally, and writes the
+        result mode 600 owned by the service user. Nothing from this response is written to a log,
+        echoed in a result, or kept after rendering.
+
+        A `config_ref` is bound to one instance and one command, is short lived, and stops
+        resolving once the command reaches a terminal result. Fetching it more than once before
+        then is allowed, because a retried render must work.
+
+        Response bodies from this endpoint are excluded from request logging and from error
+        reporting on both sides.
+      tags: [Config]
+      x-kodera-authz:
+        roles: [agent]
+      responses:
+        '200':
+          description: |
+            The configuration bundle. Treat every value as a secret.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConfigBundle' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410':
+          description: The reference expired, or the command it belongs to is finished.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    agentMtls:
+      type: mutualTLS
+      description: |
+        The default. The agent presents a client certificate issued by the Kodera agent CA at
+        enrolment, with the instance id in the subject and a lifetime of **90 days, renewed by the
+        agent at two-thirds of life — day 60**. That is `docs/api/AUTHZ.md` §8, and it is one value
+        in both documents. Two-thirds leaves a 30-day window in which a renewal may fail, be
+        retried and be noticed by a human before anything expires; a 30-day certificate renewed
+        "before expiry" gives whoever is on call a window nobody wrote down.
+
+        The edge terminates mTLS on the agent hostname only.
+
+        `instance_id` and `tenant_id` are derived from the certificate. A body that claims a
+        different instance is refused with `403 instance-mismatch`; the credential is the identity
+        and the body is never trusted for it.
+      x-kodera-ca: kodera-agent-ca
+      x-kodera-certificate-days: 90
+      x-kodera-rotation-days: 60
+    agentBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: |
+        Fallback for a host where a client certificate cannot be terminated. A per-tenant,
+        per-instance opaque bearer credential, obtained by exchanging the one-time enrolment token
+        issued by `POST /tenants/{tenant_id}/agent-enrolment-tokens` in the Core API. Rotated on
+        `rotate` and on `self_update`, and revoked by the `decommission` command.
+
+        Weaker than mTLS because it is a bearer: it is accepted only over TLS 1.3, is bound to the
+        instance, and every use is audited.
+
+  headers:
+    XRequestId:
+      description: Correlation id, echoed on every response including errors, and quoted in every problem document.
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 64 }
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      required: false
+      schema: { type: integer, minimum: 0 }
+
+  parameters:
+    CommandId:
+      name: command_id
+      in: path
+      required: true
+      description: The command's identifier. It is also the idempotency key of everything done for that command.
+      schema: { type: string, format: uuid }
+    ConfigRef:
+      name: config_ref
+      in: path
+      required: true
+      description: Opaque reference carried by a command. Never constructed by the agent.
+      schema: { type: string, minLength: 8, maxLength: 200, pattern: '^[A-Za-z0-9._~-]+$' }
+
+  responses:
+    ValidationFailed:
+      description: The body is malformed or violates the schema.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthenticated:
+      description: No credential, an expired certificate, or a revoked bearer.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: A valid credential for a different instance, or one whose tenant is decommissioned.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: No such command or reference for this instance.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnprocessableEntity:
+      description: Well formed but refused; for example `failed` without an `error_code`.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: Too many requests. Back off for `Retry-After` seconds with jitter.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    InternalError:
+      description: Unhandled failure. Retry the heartbeat on the next tick; do not retry a terminal result faster than the backoff.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+
+    Problem:
+      type: object
+      title: Problem
+      description: |
+        RFC 9457 problem document, `application/problem+json`, the same shape as the Core API.
+        `type` values are drawn from `AgentProblemType`.
+      required: [type, title, status, request_id]
+      properties:
+        type: { $ref: '#/components/schemas/AgentProblemType' }
+        title: { type: string, maxLength: 200 }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        detail: { type: string, maxLength: 2000 }
+        instance: { type: string, format: uri-reference }
+        request_id: { type: string, maxLength: 64 }
+        retry_after_s: { type: [integer, 'null'], minimum: 0 }
+      examples:
+        - type: https://kodera.io/problems/agent/seq-regression
+          title: Heartbeat sequence went backwards
+          status: 409
+          detail: seq 84210 is lower than the last seen 84213 for boot_id 9c1f.
+          instance: /agent/v1/heartbeat
+          request_id: 019467a3-0f9b-7cc3-98c2-1fa48f28f562
+          retry_after_s: null
+
+    AgentProblemType:
+      type: string
+      format: uri
+      title: AgentProblemType
+      description: |
+        Registry of the `type` URIs this contract emits.
+
+        | `type` | Status | When |
+        |---|---|---|
+        | `validation-failed` | 400 | body does not match the schema |
+        | `unauthenticated` | 401 | absent, expired or revoked credential |
+        | `instance-mismatch` | 403 | the body names an instance the credential does not own |
+        | `instance-decommissioned` | 403 | the tenant is gone; stop and do not retry |
+        | `not-found` | 404 | no such command or reference for this instance |
+        | `seq-regression` | 409 | `seq` below one already accepted for the same `boot_id`; a new `boot_id` is a reboot and is accepted |
+        | `command-already-terminal` | 409 | a different terminal result is already recorded |
+        | `config-ref-expired` | 410 | the reference expired or its command finished |
+        | `error-code-required` | 422 | `failed` without an `error_code` |
+        | `rate-limited` | 429 | too many requests |
+        | `internal-error` | 500 | unhandled failure |
+      enum:
+        - https://kodera.io/problems/agent/validation-failed
+        - https://kodera.io/problems/agent/unauthenticated
+        - https://kodera.io/problems/agent/instance-mismatch
+        - https://kodera.io/problems/agent/instance-decommissioned
+        - https://kodera.io/problems/agent/not-found
+        - https://kodera.io/problems/agent/seq-regression
+        - https://kodera.io/problems/agent/command-already-terminal
+        - https://kodera.io/problems/agent/config-ref-expired
+        - https://kodera.io/problems/agent/error-code-required
+        - https://kodera.io/problems/agent/rate-limited
+        - https://kodera.io/problems/agent/internal-error
+      examples:
+        - https://kodera.io/problems/agent/seq-regression
+
+    ServiceState:
+      type: string
+      title: ServiceState
+      description: |
+        The state of one compose service as the agent observes it. `unhealthy` means the container
+        runs but its health check fails, which is the distinction that stops core from restarting
+        a service that is merely slow to warm up.
+      enum: [running, unhealthy, stopped, starting, missing]
+      examples: [running]
+
+    ProfileRef:
+      type: object
+      title: ProfileRef
+      description: |
+        The tenant profile the VM is actually running. `compose_digest` is the digest of the
+        rendered compose file, which is what makes a drift check a comparison rather than a
+        diff of prose.
+      required: [app, version, compose_digest]
+      properties:
+        app: { type: string, maxLength: 64 }
+        version: { type: string, maxLength: 50 }
+        compose_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+        profile_commit: { type: [string, 'null'], pattern: '^[0-9a-f]{40}$' }
+      examples:
+        - app: visio-docs
+          version: '1.4'
+          compose_digest: 'sha256:3f5a1c7e9b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a'
+          profile_commit: 9a1c3e5b7d9f0a2c4e6b8d0f2a4c6e8b0d2f4a6c
+
+    Vitals:
+      type: object
+      title: Vitals
+      description: |
+        Product-level health, as opposed to machine-level health. These are the numbers a human
+        asks about: how many people are in a call, when does the certificate expire, how old is
+        the last backup, did the last preflight pass.
+      required: [cert_days_left, backup_age_s, last_preflight]
+      properties:
+        participants:
+          type: [integer, 'null']
+          minimum: 0
+          description: People currently in a call across all rooms. Null on a tenant without calls.
+        rooms:
+          type: [integer, 'null']
+          minimum: 0
+          description: Rooms with at least one participant.
+        documents_active:
+          type: [integer, 'null']
+          minimum: 0
+          description: Documents with a live collaboration session.
+        cert_days_left:
+          type: object
+          description: |
+            Days before expiry per host, keyed by host name. Drives the certificate alert and the
+            cert-sync hook that copies the media host certificate into LiveKit.
+          additionalProperties: { type: integer }
+        backup_age_s:
+          type: [integer, 'null']
+          minimum: 0
+          description: Seconds since the last successful backup finished. Null when no backup has ever run.
+        last_preflight:
+          description: The last preflight run on this host. Null before the first run.
+          oneOf:
+            - type: object
+              required: [at, fail_count]
+              properties:
+                at: { type: string, format: date-time }
+                phase: { type: string, enum: [config, stack, public] }
+                check_count: { type: integer, minimum: 0 }
+                fail_count: { type: integer, minimum: 0 }
+                log_ref: { type: [string, 'null'], maxLength: 200 }
+            - { type: 'null' }
+        storage_used_bytes: { type: [integer, 'null'], format: int64, minimum: 0 }
+      examples:
+        - participants: 46
+          rooms: 7
+          documents_active: 12
+          cert_days_left: { 'visio.acme.fr': 62, 'livekit.acme.fr': 62 }
+          backup_age_s: 7412
+          last_preflight:
+            at: '2026-12-03T03:12:00Z'
+            phase: public
+            check_count: 14
+            fail_count: 0
+            log_ref: preflight/2026-12-03T03-12-00Z.log
+          storage_used_bytes: 429496729600
+
+    Heartbeat:
+      type: object
+      title: Heartbeat
+      description: |
+        Sent every 60 seconds. `tenant` and `instance_id` must match the credential; they are in
+        the body so a heartbeat is self-describing in a log, not so core can trust them.
+      required: [tenant, instance_id, agent_version, boot_id, seq, sent_at, profile, uptime_s, disk_free_bytes, cpu_pct, mem_used_bytes, mem_total_bytes, services, vitals, maintenance]
+      additionalProperties: false
+      properties:
+        tenant:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9](?![\s\S])'
+          description: Tenant slug, the 3-32 character DNS label of the Core API's `Tenant.slug`. Must match the credential.
+        instance_id: { type: string, format: uuid }
+        agent_version: { type: string, maxLength: 50 }
+        boot_id:
+          type: string
+          maxLength: 64
+          description: Changes on reboot and on `self_update`, at the same time as `seq` resets to zero.
+        seq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Monotonic within one `boot_id`, restarting at zero when the process does. Core orders
+            by `(boot_id, seq)`: a value already seen for the current `boot_id` is accepted and
+            discarded, a new `boot_id` is accepted whatever the value, and only a value below one
+            already accepted for the same `boot_id` is `409 seq-regression`.
+        sent_at: { type: string, format: date-time, description: 'The agent''s clock. Core records its own arrival time separately.' }
+        profile: { $ref: '#/components/schemas/ProfileRef' }
+        uptime_s: { type: integer, format: int64, minimum: 0 }
+        disk_free_bytes: { type: integer, format: int64, minimum: 0 }
+        disk_total_bytes: { type: [integer, 'null'], format: int64, minimum: 0 }
+        cpu_pct: { type: number, minimum: 0, maximum: 100, description: 'Mean over the last interval, not an instant sample.' }
+        load_avg_1m: { type: [number, 'null'], minimum: 0 }
+        mem_used_bytes: { type: integer, format: int64, minimum: 0 }
+        mem_total_bytes: { type: integer, format: int64, minimum: 0 }
+        nic_tx_bps: { type: [integer, 'null'], format: int64, minimum: 0, description: 'Mean transmit rate over the last interval, in bits per second.' }
+        nic_rx_bps: { type: [integer, 'null'], format: int64, minimum: 0 }
+        services:
+          type: object
+          description: One entry per compose service, keyed by service name.
+          additionalProperties: { $ref: '#/components/schemas/ServiceState' }
+        vitals: { $ref: '#/components/schemas/Vitals' }
+        maintenance:
+          type: boolean
+          description: True while maintenance mode is held and the edge serves 503 with `Retry-After`.
+        commands_in_flight:
+          type: array
+          description: Commands this agent has acknowledged and not yet reported a terminal result for.
+          items: { type: string, format: uuid }
+        supported_command_kinds:
+          type: array
+          description: |
+            What this agent implements. An agent that does not implement a kind says so here and
+            core holds those commands rather than dispatching a guaranteed failure. This is how an
+            Ansible-and-cron agent and `greffer` coexist in one fleet.
+          items: { $ref: '#/components/schemas/CommandKind' }
+      examples:
+        - tenant: acme
+          instance_id: 7e8f9a0b-1c2d-4e3f-8a5b-6c7d8e9f0a1b
+          agent_version: 0.4.2
+          boot_id: 9c1f4a7e2b5d8036
+          seq: 84213
+          sent_at: '2026-12-03T11:19:42Z'
+          profile:
+            app: visio-docs
+            version: '1.4'
+            compose_digest: 'sha256:3f5a1c7e9b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a'
+            profile_commit: 9a1c3e5b7d9f0a2c4e6b8d0f2a4c6e8b0d2f4a6c
+          uptime_s: 5054382
+          disk_free_bytes: 214748364800
+          disk_total_bytes: 644245094400
+          cpu_pct: 23.4
+          load_avg_1m: 1.82
+          mem_used_bytes: 9126805504
+          mem_total_bytes: 17179869184
+          nic_tx_bps: 48211000
+          nic_rx_bps: 12044000
+          services:
+            edge: running
+            visio-web: running
+            livekit: running
+            docs-web: running
+            y-provider: unhealthy
+            postgres: running
+          vitals:
+            participants: 46
+            rooms: 7
+            documents_active: 12
+            cert_days_left: { 'visio.acme.fr': 62, 'livekit.acme.fr': 62 }
+            backup_age_s: 7412
+            last_preflight:
+              at: '2026-12-03T03:12:00Z'
+              phase: public
+              check_count: 14
+              fail_count: 0
+              log_ref: preflight/2026-12-03T03-12-00Z.log
+            storage_used_bytes: 429496729600
+          maintenance: false
+          commands_in_flight: []
+          supported_command_kinds: [start, stop, maintenance, render, upgrade, backup, restore, preflight, rotate, self_update, decommission]
+
+    HeartbeatAck:
+      type: object
+      title: HeartbeatAck
+      description: |
+        What core wants the agent to do next. `commands_waiting` lets a healthy fleet skip the
+        commands call entirely between heartbeats; `next_interval_s` lets core damp a storm or ask
+        for a faster tick while a job runs.
+      required: [received_at, commands_waiting, next_interval_s]
+      properties:
+        received_at: { type: string, format: date-time }
+        commands_waiting: { type: integer, minimum: 0 }
+        next_interval_s:
+          type: integer
+          minimum: 5
+          maximum: 600
+          default: 60
+          description: Seconds until the next heartbeat. 60 in steady state; lower while a job runs.
+        clock_skew_s:
+          type: integer
+          description: |
+            Core's clock minus the agent's `sent_at`, in seconds. An agent with more than 300
+            seconds of skew should log loudly; certificate and token checks depend on the clock.
+        maintenance_expected:
+          type: boolean
+          description: What core believes maintenance mode should be. A mismatch with the reported value is drift.
+        stale_since:
+          type: [string, 'null']
+          format: date-time
+          description: Set when this heartbeat cleared a stale period, so the agent can log the gap it caused.
+      examples:
+        - received_at: '2026-12-03T11:19:42Z'
+          commands_waiting: 1
+          next_interval_s: 60
+          clock_skew_s: 0
+          maintenance_expected: false
+          stale_since: null
+
+    CommandKind:
+      type: string
+      title: CommandKind
+      description: |
+        The closed set of things core may ask a tenant VM to do (strategy Appendix A, contract 2).
+
+        | Kind | Payload | What it does |
+        |---|---|---|
+        | `start` | none | bring the stack up |
+        | `stop` | none | bring the stack down, leaving volumes intact |
+        | `maintenance` | `mode: on|off` | hold or release maintenance mode; the edge serves 503 with `Retry-After` and y-provider is drained first |
+        | `render` | `profile_version`, `config_ref` | fetch the config bundle, render the profile locally, write mode 600 |
+        | `upgrade` | `to_version`, `safety_snapshot` | maintenance on, hot safety snapshot, pull, up, migrate, preflight, maintenance off; on a red preflight, restore the snapshot |
+        | `backup` | `mode: hot|cold` | take a backup; `hot` keeps the tenant serving, `cold` stops it first |
+        | `restore` | `snapshot_id`, `compose_digest` | restore that snapshot with the compose it was taken under |
+        | `preflight` | `phase: config|stack|public` | run the preflight checks of one phase and report the fail count |
+        | `rotate` | `secret_name` | pull the new value by `config_ref` and reload the service that uses it |
+        | `self_update` | `version`, `signature` | verify the signature, replace the agent, reboot the loop with a new `boot_id` |
+        | `decommission` | none | stop everything, wipe local secrets, revoke the agent credential, stop heartbeating |
+        | `engine_set_member_subjects` | `revision`, `active_subjects`, `inactive_subjects`, `released_subjects`, `erased_subjects` | converge the engines to the organisation's member set (core ADR-0016): deactivate each inactive subject's engine user, ending its sessions and open editors and removing it from live calls; reactivate each released subject; erase the messaging account of each erased subject (core ADR-0018); touch no user outside the lists. Applying a set twice changes nothing; an older revision than the one applied is ignored |
+        | `engine_set_channel_members` | `revision`, `all_members`, `channels` | converge the tenant's Matrix rooms to the organisation's Espace channels (core ADR-0018): each channel's room exists under its alias `#kodera-ch-{channel_id}:{server_name}`, carries its name, topic and `io.kodera.room.policy`, and holds exactly the listed members; power levels follow `read_only` and its exemptions; pending notices are posted once. A room the agent made for a channel no longer listed is emptied. Applying a set twice changes nothing; an older revision than the one applied is ignored |
+      enum: [start, stop, maintenance, render, upgrade, backup, restore, preflight, rotate, self_update, decommission, engine_set_member_subjects, engine_set_channel_members]
+      examples: [upgrade]
+
+    CommandPayload:
+      type: object
+      title: CommandPayload
+      description: |
+        Parameters of a command, discriminated by `kind`. A payload never contains a secret: what a
+        command needs from the vault it names with `config_ref`, and the agent pulls it from
+        `GET /agent/v1/config/{config_ref}`.
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          description: 'maintenance: the strings on or off. backup: hot or cold.'
+          enum: ['on', 'off', hot, cold]
+        profile_version: { type: string, maxLength: 50, description: '`render`: the profile version to render.' }
+        config_ref:
+          type: string
+          maxLength: 200
+          pattern: '^[A-Za-z0-9._~-]+$'
+          description: '`render` and `rotate`: the reference to pull configuration and secrets by.'
+        to_version: { type: string, maxLength: 50, description: '`upgrade`: the profile version to move to.' }
+        safety_snapshot:
+          type: boolean
+          default: true
+          description: '`upgrade`: take a hot snapshot before touching anything. Rollback is loss-free by construction only when this is true.'
+        snapshot_id: { type: string, maxLength: 100, description: '`restore`: the snapshot to restore.' }
+        compose_digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+          description: '`restore`: the rendered compose digest the snapshot was taken under. A mismatch is a refusal, not a warning.'
+        phase: { type: string, enum: [config, stack, public], description: '`preflight`: which phase to run.' }
+        secret_name: { type: string, maxLength: 100, description: '`rotate`: which secret. The value never appears here.' }
+        version: { type: string, maxLength: 50, description: '`self_update`: the agent version to move to.' }
+        signature:
+          type: string
+          maxLength: 1000
+          description: |
+            `self_update`: detached signature of the agent artefact, verified against the pinned
+            release public key before anything is written. An unverified artefact is never
+            executed, and the failure is `signature_invalid`.
+        artefact_url: { type: string, format: uri, description: '`self_update`: where to fetch the signed artefact.' }
+        reason: { type: string, maxLength: 500, description: '`stop`, `decommission`: recorded in the audit event.' }
+        revision:
+          type: integer
+          minimum: 1
+          description: '`engine_set_member_subjects` and `engine_set_channel_members`: the organisation''s revision of that set, strictly increasing per kind. The agent never applies a revision lower than one it has applied.'
+        active_subjects:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: '`engine_set_member_subjects`: the Keycloak subjects of the organisation''s active members, in its realm.'
+        inactive_subjects:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: '`engine_set_member_subjects`: the subjects of members who left or are suspended. A subject stays listed until it is active again.'
+        released_subjects:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: '`engine_set_member_subjects`: the subjects once listed inactive and active again, which the agent reactivates.'
+        erased_subjects:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: '`engine_set_member_subjects`: inactive subjects of people who were erased. The agent erases their messaging account once (Synapse''s erase flag: their messages are no longer served to anyone who joins later), and never reactivates it. Absent or empty when no one was erased.'
+        all_members:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: '`engine_set_channel_members`: the organisation''s Espace members, listed once: its current active memberships with an enabled realm identity. A channel open to them all names only who is denied.'
+        channels:
+          type: array
+          maxItems: 500
+          description: '`engine_set_channel_members`: every channel of the organisation''s workspace that is not deleted. `all_members` plus every channel''s `members`, `denied` and `exempt` number at most 10 000.'
+          items: { $ref: '#/components/schemas/ChannelMembership' }
+      examples:
+        - { to_version: '1.5', safety_snapshot: true }
+        - { mode: 'on' }
+        - { phase: public }
+
+    MemberSubjects:
+      type: array
+      title: MemberSubjects
+      description: Keycloak subjects, sorted, each one identity of the organisation's realm. The lists of one set together hold at most 10 000 subjects.
+      maxItems: 10000
+      uniqueItems: true
+      items: { type: string, minLength: 1, maxLength: 255, pattern: '^[\x21-\x7e]+$' }
+
+    ChannelMembership:
+      type: object
+      title: ChannelMembership
+      description: |
+        One Espace channel as its Matrix room must be (core ADR-0018, `ESPACE_STRUCTURE.md`). A
+        subject is a Matrix user `@{subject}:{server_name}`: Synapse maps the realm's stable `sub`
+        to the localpart. The agent's own account and the room-access account are never members
+        of this list and are never removed.
+      required: [channel_id, kind, name, topic, access_etag, archived, audience, members, denied, read_only, listen_only, exempt, notices]
+      additionalProperties: false
+      properties:
+        channel_id: { type: string, format: uuid }
+        kind: { type: string, enum: [text, audio] }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        topic: { type: string, maxLength: 1024 }
+        access_etag:
+          type: string
+          maxLength: 200
+          description: The channel's access ETag this entry describes. A `succeeded` result means the room is at it.
+        archived: { type: boolean, description: 'An archived text channel is read-only to everyone; an archived audio room admits no one to its call.' }
+        audience:
+          type: string
+          enum: [all, listed]
+          description: '`all`: the room holds `all_members` less `denied`, and `members` is empty. `listed`: the room holds `members`, and `denied` is empty.'
+        members:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: With `audience` `listed`, the room's members, among `all_members`.
+        denied:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: With `audience` `all`, the members of the organisation the room excludes, among `all_members`.
+        read_only: { type: boolean, description: 'Text channels only: members outside `exempt` may react but not post.' }
+        listen_only: { type: boolean, description: 'Audio rooms only: members outside `exempt` may listen but not publish. Enforced by the room-access service from `io.kodera.room.policy`.' }
+        exempt:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: The room's members exempt from `read_only` or `listen_only`, owners and admins (`ESPACE_STRUCTURE.md` §6).
+        notices:
+          type: array
+          maxItems: 20
+          description: Notices to post once in the room as `m.notice` from the agent's account, such as an administrator's self-grant. Acknowledged by a `succeeded` result, never posted twice.
+          items:
+            type: object
+            required: [notice_id, body]
+            additionalProperties: false
+            properties:
+              notice_id: { type: string, format: uuid }
+              body: { type: string, minLength: 1, maxLength: 500 }
+
+    Command:
+      type: object
+      title: Command
+      description: |
+        One instruction for one instance. `command_id` is the idempotency key of everything done
+        for it: the ack, the result, and the agent's own local ledger.
+      required: [command_id, kind, issued_at, expires_at, attempt]
+      properties:
+        command_id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/CommandKind' }
+        payload: { $ref: '#/components/schemas/CommandPayload' }
+        issued_at: { type: string, format: date-time }
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            After this instant the agent must not start the command; it should report `failed` with
+            `expired` if it has already acknowledged it.
+        deadline_s:
+          type: [integer, 'null']
+          minimum: 1
+          description: How long the agent may take once started, before core treats the command as timed out.
+        attempt: { type: integer, minimum: 1, description: '1 on first dispatch; higher after a redelivery.' }
+        job_id: { type: [string, 'null'], format: uuid, description: 'The core job that issued this command, for correlation.' }
+        request_id: { type: [string, 'null'], maxLength: 64 }
+        priority: { type: string, enum: [normal, high], default: normal }
+      examples:
+        - command_id: c0ffee00-1111-4222-8333-444455556666
+          kind: upgrade
+          payload: { to_version: '1.5', safety_snapshot: true }
+          issued_at: '2026-12-06T03:00:00Z'
+          expires_at: '2026-12-06T05:00:00Z'
+          deadline_s: 3600
+          attempt: 1
+          job_id: 8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
+          request_id: 019467a3-0f9b-7cc3-98c2-1fa48f28f562
+          priority: normal
+
+    CommandList:
+      type: object
+      title: CommandList
+      description: |
+        Commands are returned oldest first and are already marked dispatched. An unacknowledged
+        command reappears after `visibility_timeout_s`; the agent recognises it by `command_id`
+        and replays rather than re-executing.
+      required: [commands, visibility_timeout_s]
+      properties:
+        commands:
+          type: array
+          items: { $ref: '#/components/schemas/Command' }
+        visibility_timeout_s: { type: integer, minimum: 1 }
+        poll_after_s:
+          type: [integer, 'null']
+          minimum: 0
+          description: Hint for the next poll when long polling is not in use. Core answers 3.
+      examples:
+        - commands:
+            - command_id: c0ffee00-1111-4222-8333-444455556666
+              kind: preflight
+              payload: { phase: public }
+              issued_at: '2026-12-03T03:11:00Z'
+              expires_at: '2026-12-03T04:11:00Z'
+              deadline_s: 900
+              attempt: 1
+              job_id: 8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
+              request_id: 019467a3-0f9b-7cc3-98c2-1fa48f28f562
+              priority: normal
+          visibility_timeout_s: 300
+          poll_after_s: 60
+
+    CommandAck:
+      type: object
+      title: CommandAck
+      description: Sent before any work begins.
+      required: [accepted_at]
+      additionalProperties: false
+      properties:
+        accepted_at: { type: string, format: date-time }
+        agent_version: { type: string, maxLength: 50 }
+        boot_id: { type: string, maxLength: 64 }
+        estimated_duration_s: { type: [integer, 'null'], minimum: 0 }
+      examples:
+        - { accepted_at: '2026-12-06T03:00:04Z', agent_version: 0.4.2, boot_id: 9c1f4a7e2b5d8036, estimated_duration_s: 900 }
+
+    CommandAckResponse:
+      type: object
+      title: CommandAckResponse
+      required: [command_id, status, deadline_at]
+      properties:
+        command_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/CommandStatus' }
+        deadline_at: { type: string, format: date-time, description: 'When core will treat the command as timed out.' }
+        cancelled: { type: boolean, default: false, description: 'True when core cancelled the command between dispatch and ack. Do not execute.' }
+      examples:
+        - { command_id: c0ffee00-1111-4222-8333-444455556666, status: accepted, deadline_at: '2026-12-06T04:00:04Z', cancelled: false }
+
+    CommandStatus:
+      type: string
+      title: CommandStatus
+      description: |
+        `accepted` is written by the ack. `running` may be reported many times. `succeeded` and
+        `failed` are terminal and may be reported once.
+      enum: [accepted, running, succeeded, failed]
+      examples: [succeeded]
+
+    CommandErrorCode:
+      type: string
+      title: CommandErrorCode
+      description: |
+        Closed enum. Required on `failed`. Core switches on this and nothing else: it decides
+        between retrying, restoring the safety snapshot, and paging a human without reading prose.
+
+        | Code | Meaning | What core does |
+        |---|---|---|
+        | `unsupported_kind` | this agent does not implement the kind | stop dispatching it to this agent |
+        | `invalid_payload` | the payload is missing or contradicts the kind | fail the job, no retry |
+        | `precondition_failed` | the host is not in a state that allows the command | fail the step, re-run from it later |
+        | `already_running` | another command of the same kind is in flight | retry after backoff |
+        | `maintenance_required` | the command needs maintenance mode and it is not held | issue `maintenance` then retry |
+        | `config_fetch_failed` | `config_ref` did not resolve | retry once, then fail the job |
+        | `config_invalid` | the bundle rendered but the result failed validation | fail the job, no retry |
+        | `image_pull_failed` | a pinned image could not be pulled | retry with backoff |
+        | `digest_mismatch` | the rendered compose digest is not the expected one | fail hard; this is drift or tampering |
+        | `signature_invalid` | `self_update` artefact failed signature verification | fail hard, page a human |
+        | `migration_failed` | a database migration failed | restore the safety snapshot |
+        | `preflight_failed` | preflight came back red | restore the safety snapshot on an upgrade, page otherwise |
+        | `snapshot_failed` | the safety snapshot could not be taken | abort before any change |
+        | `restore_failed` | the restore itself failed | page a human immediately |
+        | `backup_failed` | the backup failed | retry, then alert on backup age |
+        | `disk_full` | not enough space to proceed | page a human |
+        | `service_unhealthy` | a service did not become healthy in time | restore on an upgrade, retry otherwise |
+        | `network_unreachable` | the host could not reach a required endpoint | retry with backoff |
+        | `permission_denied` | the agent lacks a local right | fail hard, page a human |
+        | `timeout` | the command exceeded its deadline | fail the step, decide by kind |
+        | `expired` | the command expired before it started | drop it, reissue if still wanted |
+        | `cancelled` | core cancelled it after the ack | nothing |
+        | `interrupted` | the agent restarted mid-command | re-run from the first non-succeeded step |
+        | `internal_error` | anything the agent cannot classify | page a human; a rise here means the enum is missing a case |
+      enum:
+        - unsupported_kind
+        - invalid_payload
+        - precondition_failed
+        - already_running
+        - maintenance_required
+        - config_fetch_failed
+        - config_invalid
+        - image_pull_failed
+        - digest_mismatch
+        - signature_invalid
+        - migration_failed
+        - preflight_failed
+        - snapshot_failed
+        - restore_failed
+        - backup_failed
+        - disk_full
+        - service_unhealthy
+        - network_unreachable
+        - permission_denied
+        - timeout
+        - expired
+        - cancelled
+        - interrupted
+        - internal_error
+      examples: [preflight_failed]
+
+    CommandResult:
+      type: object
+      title: CommandResult
+      description: |
+        Progress or terminal outcome. `error_code` is required when `status` is `failed` and
+        forbidden otherwise. `log_ref` names output uploaded by the agent; the output itself never
+        travels in this body.
+      required: [command_id, status, reported_at]
+      additionalProperties: false
+      properties:
+        command_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/CommandStatus' }
+        reported_at: { type: string, format: date-time }
+        phase: { type: [string, 'null'], maxLength: 100, description: 'Human-readable step, for example `migrate` or `preflight public`.' }
+        progress_pct: { type: [number, 'null'], minimum: 0, maximum: 100 }
+        error_code:
+          oneOf:
+            - { $ref: '#/components/schemas/CommandErrorCode' }
+            - { type: 'null' }
+        error_detail:
+          type: [string, 'null']
+          maxLength: 2000
+          description: Prose for a human. Redacted by the agent before it is sent. Never parsed by core.
+        log_ref:
+          type: [string, 'null']
+          maxLength: 200
+          description: Reference to the uploaded output, read by staff through the Core API instance log endpoint.
+        artefacts:
+          type: object
+          description: |
+            Structured facts produced by the command, by kind: `snapshot_id` from a backup, the new
+            `compose_digest` from a render or an upgrade, `fail_count` from a preflight.
+          additionalProperties: false
+          properties:
+            snapshot_id: { type: string, maxLength: 100 }
+            compose_digest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            profile_version: { type: string, maxLength: 50 }
+            agent_version: { type: string, maxLength: 50 }
+            check_count: { type: integer, minimum: 0 }
+            fail_count: { type: integer, minimum: 0 }
+            restored_from_snapshot_id: { type: string, maxLength: 100 }
+            duration_s: { type: integer, minimum: 0 }
+            revision_applied: { type: integer, minimum: 1, description: '`engine_set_member_subjects` and `engine_set_channel_members`: the revision the engines now match.' }
+            users_deactivated: { type: integer, minimum: 0, description: '`engine_set_member_subjects`: engine users deactivated by this application.' }
+            users_reactivated: { type: integer, minimum: 0, description: '`engine_set_member_subjects`: engine users reactivated by this application.' }
+            documents_kicked: { type: integer, minimum: 0, description: '`engine_set_member_subjects`: documents whose open editors were re-checked.' }
+            participants_removed: { type: integer, minimum: 0, description: '`engine_set_member_subjects`: participants removed from live calls.' }
+            users_erased: { type: integer, minimum: 0, description: '`engine_set_member_subjects`: messaging accounts erased by this application.' }
+            channels_applied: { type: integer, minimum: 0, description: '`engine_set_channel_members`: channels whose room now matches the set.' }
+            failed_channel_ids:
+              type: array
+              maxItems: 500
+              uniqueItems: true
+              items: { type: string, format: uuid }
+              description: '`engine_set_channel_members`, with `failed`: the channels whose room could not be converged; every other channel of the set was. Core marks those `failed` and the others `ready`.'
+            notices_posted: { type: integer, minimum: 0, description: '`engine_set_channel_members`: notices posted by this application.' }
+      allOf:
+        - if:
+            properties:
+              status: { const: failed }
+            required: [status]
+          then:
+            required: [error_code]
+      examples:
+        - command_id: c0ffee00-1111-4222-8333-444455556666
+          status: running
+          reported_at: '2026-12-06T03:12:40Z'
+          phase: migrate
+          progress_pct: 55
+          error_code: null
+          error_detail: null
+          log_ref: commands/c0ffee00/upgrade.log
+          artefacts: { snapshot_id: snap-2026-12-06-0300, duration_s: 760 }
+        - command_id: c0ffee00-1111-4222-8333-444455556666
+          status: failed
+          reported_at: '2026-12-06T03:24:11Z'
+          phase: preflight public
+          progress_pct: 90
+          error_code: preflight_failed
+          error_detail: 2 of 14 checks red, media host certificate not present in LiveKit.
+          log_ref: commands/c0ffee00/upgrade.log
+          artefacts: { check_count: 14, fail_count: 2, duration_s: 1451 }
+
+    CommandResultAck:
+      type: object
+      title: CommandResultAck
+      required: [command_id, recorded, status]
+      properties:
+        command_id: { type: string, format: uuid }
+        recorded: { type: boolean, description: 'False when this was a duplicate of the terminal result already stored.' }
+        status: { $ref: '#/components/schemas/CommandStatus' }
+        next_command_waiting: { type: boolean, description: 'True when another command is already queued, so the agent can fetch without waiting for the tick.' }
+      examples:
+        - { command_id: c0ffee00-1111-4222-8333-444455556666, recorded: true, status: failed, next_command_waiting: true }
+
+    ConfigBundle:
+      type: object
+      title: ConfigBundle
+      description: |
+        Configuration and secrets for one command on one instance. Every value is a secret: render
+        it, write it mode 600, and keep nothing. Not logged, not echoed in a result, not cached.
+      required: [config_ref, tenant, instance_id, generated_at, expires_at, files]
+      properties:
+        config_ref: { type: string, maxLength: 200 }
+        tenant: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9](?![\s\S])' }
+        instance_id: { type: string, format: uuid }
+        command_id: { type: [string, 'null'], format: uuid }
+        generated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        profile:
+          oneOf:
+            - { $ref: '#/components/schemas/ProfileRef' }
+            - { type: 'null' }
+        files:
+          type: array
+          description: |
+            What to write, where, and with what mode. `content` is the rendered value; the agent
+            does not template it further.
+          items:
+            type: object
+            required: [path, mode, content_b64]
+            properties:
+              path: { type: string, maxLength: 500, description: 'Absolute path on the VM.' }
+              mode: { type: string, pattern: '^0[0-7]{3}$', description: 'Octal mode. Secrets are 0600.' }
+              owner: { type: string, maxLength: 64 }
+              group: { type: string, maxLength: 64 }
+              content_b64: { type: string, contentEncoding: base64, description: 'The file content. A secret.' }
+              sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        reload:
+          type: array
+          description: Services to reload or restart once the files are written, in order.
+          items:
+            type: object
+            required: [service, action]
+            properties:
+              service: { type: string, maxLength: 100 }
+              action: { type: string, enum: [reload, restart, none] }
+      examples:
+        - config_ref: cfg_9f2c1a4b7d6e5f8a0b1c2d3e
+          tenant: acme
+          instance_id: 7e8f9a0b-1c2d-4e3f-8a5b-6c7d8e9f0a1b
+          command_id: c0ffee00-1111-4222-8333-444455556666
+          generated_at: '2026-12-06T03:00:02Z'
+          expires_at: '2026-12-06T03:15:02Z'
+          profile:
+            app: visio-docs
+            version: '1.5'
+            compose_digest: 'sha256:8d0f2a4c6e8b0d2f4a6c8e0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f'
+            profile_commit: 1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e
+          files:
+            - path: /srv/kodera/env/visio.env
+              mode: '0600'
+              owner: kodera
+              group: kodera
+              content_b64: S09ERVJBX1JFREFDVEVEPXRydWUK
+              sha256: a031bd9b650dbcc5cea912fe96a49a5c4dfc9f73a3b0930787e5f1a8aae9ceab
+          reload:
+            - { service: visio-web, action: restart }

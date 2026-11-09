@@ -1,0 +1,295 @@
+# Reference billing catalogue fixture (`apps/billing/catalogue/offer.toml`).
+#
+# Amounts are synthetic reference values in euro cents, excluding VAT, used by
+# the open-source control-plane test suite and local evaluation stack. Monthly
+# prices represent list amounts; yearly prices represent a 10 % annual billing
+# discount paid yearly in advance. Enterprise is offered on an annual term.
+#
+# The `workspace` pack (Visio and Espace `messaging`) is the active pack on
+# sale, priced by capacity tier. Legacy `visio` and `visio-docs` packs remain
+# stored with `available = false` so historical order snapshots keep resolving.
+#
+# Loaded via `manage.py load_catalogue apps/billing/catalogue/offer.toml`.
+# Loading never mutates snapshotted order prices: price updates add new rows
+# with their own `valid_from`, and plan changes create new plan versions
+# (`docs/domain/BILLING_MODEL.md`).
+
+[[packs]]
+code = "workspace"
+name = "Kodera"
+description = "Canaux de discussion, salons audio et réunions vidéo pour toute votre organisation, sur votre instance, hébergée dans l’Union européenne."
+apps = ["visio", "messaging"]
+profile_ref = "workspace/1.0"
+
+[[packs]]
+code = "visio"
+name = "Visio"
+description = "Réunions vidéo et salles de réunion permanentes sur votre instance, hébergée dans l’Union européenne."
+apps = ["visio"]
+profile_ref = "visio/1.0"
+available = false
+
+[[packs]]
+code = "visio-docs"
+name = "Visio + Docs"
+description = "Réunions vidéo, salles de réunion permanentes et documents collaboratifs sur votre instance, hébergée dans l’Union européenne."
+apps = ["visio", "docs"]
+profile_ref = "visio-docs/1.0"
+available = false
+
+[[capacity_tiers]]
+code = "S"
+name = "Capacité S"
+seats_included = 80
+concurrent_participants_included = 25
+storage_included_bytes = 50000000000
+vm_shape = "vm-s"
+
+[[capacity_tiers]]
+code = "M"
+name = "Capacité M"
+seats_included = 165
+concurrent_participants_included = 50
+storage_included_bytes = 100000000000
+vm_shape = "vm-m"
+
+[[capacity_tiers]]
+code = "L"
+name = "Capacité L"
+seats_included = 250
+concurrent_participants_included = 75
+storage_included_bytes = 250000000000
+vm_shape = "vm-l"
+
+[[capacity_tiers]]
+code = "XL"
+name = "Capacité XL"
+seats_included = 665
+concurrent_participants_included = 200
+storage_included_bytes = 500000000000
+vm_shape = "vm-xl"
+
+[[plans]]
+code = "team"
+version = 1
+name = "Team"
+description = "Pour une équipe ou une petite organisation. Assistance par e-mail les jours ouvrés ; Docs en option dès sa mise à disposition."
+state = "published"
+published_at = 2026-10-21T00:00:00Z
+
+[[plans]]
+code = "business"
+version = 1
+name = "Business"
+description = "Pour une organisation de taille moyenne, avec plusieurs équipes. Assistance par e-mail les jours ouvrés ; Docs en option dès sa mise à disposition."
+state = "published"
+published_at = 2026-10-21T00:00:00Z
+
+[[plans]]
+code = "business-plus"
+version = 1
+name = "Business Plus"
+description = "Pour une organisation qui tient de grandes réunions et des événements internes. Assistance par e-mail les jours ouvrés ; Docs inclus dès sa mise à disposition."
+state = "published"
+published_at = 2026-10-21T00:00:00Z
+
+[[plans]]
+code = "enterprise"
+version = 1
+name = "Enterprise"
+description = "Pour une grande organisation ou un organisme public. Assistance par e-mail les jours ouvrés ; Docs inclus dès sa mise à disposition."
+state = "published"
+published_at = 2026-10-21T00:00:00Z
+
+# Historical off-sale packs (`visio` and `visio-docs`), synthetic reference amounts.
+
+[[prices]]
+plan = "team"
+plan_version = 1
+pack = "visio"
+capacity_tier = "S"
+billing_period = "monthly"
+amount_minor = 10000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "team"
+plan_version = 1
+pack = "visio"
+capacity_tier = "S"
+billing_period = "yearly"
+amount_minor = 108000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "team"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "S"
+billing_period = "monthly"
+amount_minor = 15000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "team"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "S"
+billing_period = "yearly"
+amount_minor = 162000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 1
+pack = "visio"
+capacity_tier = "M"
+billing_period = "monthly"
+amount_minor = 20000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 1
+pack = "visio"
+capacity_tier = "M"
+billing_period = "yearly"
+amount_minor = 216000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "M"
+billing_period = "monthly"
+amount_minor = 25000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "M"
+billing_period = "yearly"
+amount_minor = 270000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 1
+pack = "visio"
+capacity_tier = "L"
+billing_period = "monthly"
+amount_minor = 40000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 1
+pack = "visio"
+capacity_tier = "L"
+billing_period = "yearly"
+amount_minor = 432000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "L"
+billing_period = "monthly"
+amount_minor = 45000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "L"
+billing_period = "yearly"
+amount_minor = 486000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "enterprise"
+plan_version = 1
+pack = "visio"
+capacity_tier = "XL"
+billing_period = "yearly"
+amount_minor = 960000
+valid_from = 2026-10-21T00:00:00Z
+
+[[prices]]
+plan = "enterprise"
+plan_version = 1
+pack = "visio-docs"
+capacity_tier = "XL"
+billing_period = "yearly"
+amount_minor = 960000
+valid_from = 2026-10-21T00:00:00Z
+
+# Active `workspace` pack (synthetic reference amounts).
+
+[[prices]]
+plan = "team"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "S"
+billing_period = "monthly"
+amount_minor = 10000
+valid_from = 2026-11-05T00:00:00Z
+
+[[prices]]
+plan = "team"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "S"
+billing_period = "yearly"
+amount_minor = 108000
+valid_from = 2026-11-05T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "M"
+billing_period = "monthly"
+amount_minor = 20000
+valid_from = 2026-11-05T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "M"
+billing_period = "yearly"
+amount_minor = 216000
+valid_from = 2026-11-05T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "L"
+billing_period = "monthly"
+amount_minor = 40000
+valid_from = 2026-11-05T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "L"
+billing_period = "yearly"
+amount_minor = 432000
+valid_from = 2026-11-05T00:00:00Z
+
+[[prices]]
+plan = "enterprise"
+plan_version = 1
+pack = "workspace"
+capacity_tier = "XL"
+billing_period = "yearly"
+amount_minor = 960000
+valid_from = 2026-11-05T00:00:00Z

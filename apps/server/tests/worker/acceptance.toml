@@ -1,0 +1,96 @@
+# Worker boundary acceptance (G1.5): every WK test and its honest state.
+#
+# Authoritative for state. tests/worker/worker_acceptance.py binds each row to the one test function
+# that names it, and tests/worker/test_worker_acceptance_selftest.py refuses any disagreement.
+#
+# state = "pass"   passes against this tree; no gap.
+# state = "xfail"  specified, not built. Strict: the only accepted outcome is the gap probe raising
+#                  exactly `gap`, still missing when measured again; a pass or any other failure
+#                  fails the run by name.
+#
+# `gap` is the first thing the test reaches that does not exist, measured by the probe:
+#   worker:runner                   the job runner, `worker.runner`, module or package
+#   worker:synthetic-provider-proof the synthetic provider's authenticated terminal proof (W3)
+# Both exist since G1.5-B, so no row records either; the probe still fails the day one goes.
+#
+# WK-07 proves what compose declares, statically. A live proof that a forbidden peer cannot be
+# reached is out of scope: production isolation is Fleet's network policy, the SRE's evidence (W2).
+# WK-01 and WK-02 hold an accident guard, not a sandbox.
+#
+# WK-11 to WK-13 start a real worker against the test database pytest-django creates.
+#
+# Not here, because it needs Docker: the built worker image starting, holding its files, and
+# reaching its database and nothing else on the internal network. dev/accept_worker_image.py proves
+# those in CI's `images` job.
+
+format = 1
+
+[[test]]
+id = "WK-01"
+function = "test_wk_01_the_booted_worker_refuses_to_bind_a_socket"
+state = "pass"
+
+[[test]]
+id = "WK-02"
+function = "test_wk_02_the_booted_worker_refuses_to_listen"
+state = "pass"
+
+[[test]]
+id = "WK-03"
+function = "test_wk_03_the_worker_starts_with_no_http_surface"
+state = "pass"
+
+[[test]]
+id = "WK-04"
+function = "test_wk_04_the_worker_profile_refuses_to_load_outside_the_worker"
+state = "pass"
+
+[[test]]
+id = "WK-05"
+function = "test_wk_05_the_worker_refuses_a_credential_in_its_environment"
+state = "pass"
+
+[[test]]
+id = "WK-06"
+function = "test_wk_06_the_worker_starts_only_with_its_own_profile"
+state = "pass"
+
+[[test]]
+id = "WK-07"
+function = "test_wk_07_compose_puts_the_worker_on_an_internal_network_with_the_database_alone"
+state = "pass"
+
+[[test]]
+id = "WK-08"
+function = "test_wk_08_the_api_image_carries_no_worker_module"
+state = "pass"
+
+[[test]]
+id = "WK-09"
+function = "test_wk_09_the_worker_image_carries_no_url_or_api_module"
+state = "pass"
+
+[[test]]
+id = "WK-10"
+function = "test_wk_10_the_worker_image_starts_the_worker_from_its_own_files"
+state = "pass"
+
+[[test]]
+id = "WK-11"
+function = "test_wk_11_a_running_worker_holds_no_listening_socket"
+state = "pass"
+
+[[test]]
+id = "WK-12"
+function = "test_wk_12_the_runner_claims_a_queued_job_and_records_its_outcome"
+state = "pass"
+
+[[test]]
+id = "WK-13"
+function = "test_wk_13_no_credential_outlives_its_job"
+state = "pass"
+
+[[test]]
+id = "WK-14"
+function = "test_wk_14_the_synthetic_provider_authenticates_its_terminal_proof"
+state = "pass"

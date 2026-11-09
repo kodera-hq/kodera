@@ -1,0 +1,118 @@
+name: CI — Web, Tokens & Extension SDK
+
+# Called by ci.yml, which decides from the changed paths whether this runs and
+# aggregates every result into the single required check `ci-ok`. Run alone, a
+# path-filtered workflow is never reported on a pull request it skips, so a
+# required check on it would wait forever.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tokens-and-sdk:
+    name: Design Tokens & Extension SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Verify OpenAPI contract byte parity
+        run: |
+          cmp -s packages/api-contract/core-api.openapi.yaml apps/web/contracts/core-api.openapi.yaml
+          cmp -s packages/api-contract/core-api.openapi.yaml apps/server/contracts/core-api.openapi.yaml
+          cmp -s packages/api-contract/agent-api.openapi.yaml apps/web/contracts/agent-api.openapi.yaml
+          cmp -s packages/api-contract/agent-api.openapi.yaml apps/server/contracts/agent-api.openapi.yaml
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify @kodera/design-tokens grammar, contrast, drift & tests
+        working-directory: packages/design-tokens
+        run: node test/run.mjs
+      - name: Verify @kodera/extension-sdk & extensions/*
+        run: |
+          npm --workspace @kodera/extension-sdk run typecheck
+          npm run test:sdk
+
+  web:
+    name: Web Client (@kodera/web)
+    needs: tokens-and-sdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+      - name: Typecheck, Lint, Copy Parity, Unit Tests & Production Bundle
+        run: |
+          python3 apps/web/scripts/check-copy-keys.py
+          npm --workspace @kodera/web run typecheck
+          npm --workspace @kodera/web run lint
+          npm --workspace @kodera/web run i18n:check
+          npm --workspace @kodera/web run spec:check
+          npm --workspace @kodera/web run test
+          npm --workspace @kodera/web run build
+      - name: Production and staging bundles carry no mock identity provider (with self-test)
+        working-directory: apps/web
+        run: |
+          bash scripts/check-production-bundle.selftest.sh
+          npm run build:check
+
+  web-e2e:
+    name: Web End-to-End Suite
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Run full Playwright E2E suite
+        working-directory: apps/web
+        run: KODERA_SKIP_PRECOMPRESS=1 npm run test:e2e
+
+  espace-audio:
+    name: Espace Real-Service Two-Person Audio
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      COMPOSE_PROJECT_NAME: kodera-espace-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install locked workspace dependencies
+        run: npm ci --ignore-scripts
+      - name: Install Playwright Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Verify isolated fixture configuration and refusal mutation
+        run: python3 apps/web/tests/espace/stack/bin/runtime.selftest.py
+      - name: Run real-service audio proof and muted-sender mutation
+        working-directory: apps/web
+        run: bash tests/espace/stack/bin/audio-proof.sh
+      - name: Tear down the test stack after any failure
+        if: always()
+        working-directory: apps/web
+        run: bash tests/espace/stack/bin/down.sh

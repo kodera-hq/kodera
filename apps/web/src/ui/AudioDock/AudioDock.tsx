@@ -1,0 +1,273 @@
+import type { ReactNode, Ref } from 'react'
+import { cx } from '../cx'
+import { EspaceGlyph } from '../icons/EspaceGlyph'
+import type { EspaceGlyphName } from '../icons/EspaceGlyph'
+import { hasLabel } from '../stateLabel'
+import { TOUCH_TARGET } from '../touchTarget'
+import { Tooltip } from '../Tooltip/Tooltip'
+
+/**
+ * The call the member is in, docked at the foot of Espace's sidebar
+ * (`design specification` `design/reference/p02-messages.html`, `.callbar`; the
+ * phone banner is `.mroom`). It stays while the member moves around Kodera.
+ *
+ * A named `region`: the room, its category, the call's state, and three
+ * controls — mute and deafen as toggles (`aria-pressed`), and leave. With
+ * `onOpenCall`, a fourth button beside the room returns to the call's own view.
+ *
+ * The state is `status` (`connected`, `connecting`, `reconnecting`) drawn as a
+ * dot and said by `statusLabel` in the caller's words. The dot is filled only
+ * when connected; while connecting or reconnecting it is a hollow ring, so the
+ * state is a shape and words, never a hue alone.
+ *
+ * Grounds and rings follow the dark workspace reference (owner decision, 2026-11-07;
+ * docs/specs/workspace-dark-roles.md): the dock is `c-inverse`, the rail's ground, with
+ * `focus-ground-inverse` (`src/index.css`), so every ring inside draws the tokens'
+ * on-inverse ring and its offset gap takes `c-inverse`; `inverse-edge` gives it its edge
+ * in dark and black, where `c-inverse` is close to the sidebar's ground. Contrast, light /
+ * dark / black, measured from tokens v0.6.0:
+ * - the room in `c-on-inverse`, 17.74 / 18.51 / 20.03 : 1; the category in
+ *   `c-on-inverse-dim`, 9.52 / 8.76 / 9.42;
+ * - connected, the dot and the state in `c-ok-on-dark`, 12.39 / 10.96 / 11.55; waiting,
+ *   the state in `c-on-inverse-dim`;
+ * - the controls sit on `c-inverse-2`, their glyph 15.35 / 16.01 / 16.82 : 1. Their fill is
+ *   close to the ground (1.16 : 1): the glyph is what identifies each one;
+ * - a pressed toggle turns to the `c-on-inverse` plate with `c-inverse` ink, and its glyph is
+ *   struck through, so "off" is a shape and a luminance change, not a hue;
+ * - leave is `c-bad`, the dock's only red fill (the reference keeps it the page's only red
+ *   control), 3.27 / 3.68 / 3.88 : 1 against the dock, its glyph 5.42 / 5.03 / 5.17 : 1.
+ *   Hovering it adds an on-inverse edge, never a lighter fill.
+ * The ring sits 2 px outside each control (`focus-offset`), so it never touches the control's
+ * own fill.
+ *
+ * `layout="banner"`: the phone's full-width banner, with 52 px round controls.
+ *
+ * Icons only, in both layouts (owner decision, 2026-11-07): each control's label is its accessible name and
+ * shows as a tooltip on hover and on focus, never as text under the glyph (three labels side by
+ * side ran into each other in the sidebar's 264 px).
+ *
+ * With `meterRef`, a thin bar under the call's state draws the member's own
+ * microphone level: the caller sets the fill's `scaleX` transform as the
+ * level moves, frame by frame, without a render. It is decoration
+ * (`aria-hidden`): the mute toggle already says whether the member is heard.
+ * The fill is `c-ok-on-dark` on a `c-inverse-2` track, like the controls.
+ */
+export type AudioDockLayout = 'sidebar' | 'banner'
+
+export type AudioDockStatus = 'connected' | 'connecting' | 'reconnecting'
+
+export interface AudioDockProps {
+  /** The region's accessible name, e.g. « Appel en cours ». */
+  label: string
+  /** The room's name. */
+  room: string
+  /** The room's category, e.g. « Équipe ». */
+  category?: string
+  /** Where the call stands: drawn as the dot. */
+  status: AudioDockStatus
+  /** The same state in words, e.g. « Connecté · 12 min », « Reconnexion… ». */
+  statusLabel: ReactNode
+  /** The viewer's microphone is off. */
+  muted: boolean
+  /** The viewer hears nothing (and, by the usual rule, is muted too). */
+  deafened: boolean
+  onToggleMute: () => void
+  onToggleDeafen: () => void
+  onLeave: () => void
+  /** Back to the call's own view. Needs `labels.openCall`, its accessible name. */
+  onOpenCall?: () => void
+  /**
+   * Each control's short label: its accessible name and its tooltip.
+   * `openCall` names the icon-only button `onOpenCall` draws.
+   */
+  labels: { mute: string; deafen: string; leave: string; openCall?: string }
+  layout?: AudioDockLayout
+  /** The microphone meter's fill: its transform is the caller's to set (see above). */
+  meterRef?: Ref<HTMLSpanElement>
+  /**
+   * The call's audio settings: a control the caller draws (a popover's trigger), set in the
+   * dock's top row beside the call's name, before `onOpenCall`'s button.
+   */
+  settings?: ReactNode
+}
+
+// Filled only when connected; a hollow ring while the call is not yet, or no
+// longer, through. Connected is the tokens' success on a dark ground, the dark
+// workspace reference's state colour (docs/specs/workspace-dark-roles.md).
+const DOT: Record<AudioDockStatus, string> = {
+  connected: 'bg-c-ok-on-dark',
+  connecting: 'border border-c-on-inverse-dim',
+  reconnecting: 'border border-c-on-inverse-dim',
+}
+
+// The state in words takes the dot's colour while connected, and the dim
+// on-inverse ink while it waits.
+const STATUS_INK: Record<AudioDockStatus, string> = {
+  connected: 'text-c-ok-on-dark',
+  connecting: 'text-c-on-inverse-dim',
+  reconnecting: 'text-c-on-inverse-dim',
+}
+
+const DOCK: Record<AudioDockLayout, string> = {
+  sidebar: 'm-2 flex flex-col gap-3 rounded-lg p-3',
+  banner: 'flex w-full items-center gap-3 rounded-lg py-2 pr-2 pl-3',
+}
+
+const CONTROLS: Record<AudioDockLayout, string> = {
+  sidebar: 'grid grid-cols-3 gap-1',
+  banner: 'flex shrink-0 items-center gap-2',
+}
+
+// The sidebar's controls are 40 px tall, icon only, with the 44 px floor on a
+// narrow screen (`TOUCH_TARGET`). The banner's are the reference's 52 px call target, a
+// one-off length that is not a spacing step (src/ui/README.md, bracket values).
+const CONTROL_SHAPE: Record<AudioDockLayout, string> = {
+  sidebar: `h-10 rounded-md ${TOUCH_TARGET}`,
+  banner: 'h-[52px] w-[52px] rounded-full',
+}
+
+const CONTROL_BASE =
+  'focus-offset flex items-center justify-center border-2 border-transparent transition-colors duration-fast focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden'
+
+// On the dock's `c-inverse` ground: controls on `c-inverse-2`, pressed ones
+// reversed, and « Quitter » the dock's only red fill.
+const TONE = {
+  idle: 'bg-c-inverse-2 text-c-on-inverse hover:border-c-on-inverse-dim',
+  pressed: 'bg-c-on-inverse text-c-inverse',
+  leave: 'bg-c-bad text-c-on-inverse hover:border-c-on-inverse',
+} as const
+
+interface ControlProps {
+  layout: AudioDockLayout
+  label: string
+  glyph: EspaceGlyphName
+  tone: keyof typeof TONE
+  pressed?: boolean
+  onClick: () => void
+}
+
+function Control({ layout, label, glyph, tone, pressed, onClick }: ControlProps) {
+  return (
+    <Tooltip content={label} names>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={onClick}
+        {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
+        className={cx(CONTROL_BASE, CONTROL_SHAPE[layout], TONE[tone])}
+      >
+        <EspaceGlyph name={glyph} />
+      </button>
+    </Tooltip>
+  )
+}
+
+export function AudioDock({
+  label,
+  room,
+  category,
+  status,
+  statusLabel,
+  muted,
+  deafened,
+  onToggleMute,
+  onToggleDeafen,
+  onLeave,
+  onOpenCall,
+  labels,
+  layout = 'sidebar',
+  meterRef,
+  settings,
+}: AudioDockProps) {
+  if (onOpenCall !== undefined && !hasLabel(labels.openCall)) {
+    // An icon-only button with no name is a control nobody using a screen
+    // reader can identify; refuse it rather than draw it.
+    throw new Error('AudioDock onOpenCall needs labels.openCall, the button’s accessible name')
+  }
+  return (
+    <section
+      aria-label={label}
+      className={cx(
+        'focus-ground-inverse inverse-edge bg-c-inverse text-c-on-inverse',
+        DOCK[layout]
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span
+          aria-hidden="true"
+          data-status={status}
+          className={cx('h-2 w-2 shrink-0 rounded-full', DOT[status])}
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <p className="truncate text-sm leading-snug font-semibold">{room}</p>
+          {category === undefined ? null : (
+            <p className="truncate text-xs text-c-on-inverse-dim">{category}</p>
+          )}
+          {/* Wraps rather than truncates, as the reference's state does: at 14 px bold
+              « Connecté · écoute seule » is wider than the sidebar dock's text column. */}
+          <p className={cx('text-sm font-bold break-words tabular-nums', STATUS_INK[status])}>
+            {statusLabel}
+          </p>
+          {meterRef === undefined ? null : (
+            <span
+              aria-hidden="true"
+              data-mic-meter=""
+              className="mt-1 block h-1 w-full overflow-hidden rounded-full bg-c-inverse-2"
+            >
+              {/* Scaled, not sized: the caller moves it on every frame without moving layout. The
+                  track's rounded clip keeps its ends round. */}
+              <span
+                ref={meterRef}
+                style={{ transform: 'scaleX(0)' }}
+                className="block h-full w-full origin-left bg-c-ok-on-dark"
+              />
+            </span>
+          )}
+        </div>
+        {settings === undefined ? null : <div className="ml-auto shrink-0">{settings}</div>}
+        {onOpenCall === undefined || labels.openCall === undefined ? null : (
+          <Tooltip content={labels.openCall} names>
+            <button
+              type="button"
+              aria-label={labels.openCall}
+              onClick={onOpenCall}
+              className={cx(
+                // Pushed to the row's end, unless the settings already are, just before it.
+                settings === undefined ? 'ml-auto' : '',
+                'focus-offset flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim hover:text-c-on-inverse focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden',
+                TOUCH_TARGET
+              )}
+            >
+              <EspaceGlyph name="open" />
+            </button>
+          </Tooltip>
+        )}
+      </div>
+      <div className={CONTROLS[layout]}>
+        <Control
+          layout={layout}
+          label={labels.mute}
+          glyph={muted ? 'mic-off' : 'mic'}
+          tone={muted ? 'pressed' : 'idle'}
+          pressed={muted}
+          onClick={onToggleMute}
+        />
+        <Control
+          layout={layout}
+          label={labels.deafen}
+          glyph={deafened ? 'headphones-off' : 'headphones'}
+          tone={deafened ? 'pressed' : 'idle'}
+          pressed={deafened}
+          onClick={onToggleDeafen}
+        />
+        <Control
+          layout={layout}
+          label={labels.leave}
+          glyph="leave"
+          tone="leave"
+          onClick={onLeave}
+        />
+      </div>
+    </section>
+  )
+}
