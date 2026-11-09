@@ -183,6 +183,7 @@ test('console pages remain community-scoped and return to Messages', async ({ pa
 test('a healthy session stays unobstructed after one minute and keyboard focus', async ({
   page,
 }, info) => {
+  test.setTimeout(90_000)
   await login(page)
   await page.waitForTimeout(61_000)
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))

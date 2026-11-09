@@ -238,6 +238,13 @@ export default function WorkspaceSettings({
   const copy = settingsCopy(i18n.resolvedLanguage)
   const [section, setSection] = useState<Section>('profile')
   const [studio, setStudio] = useState(false)
+  const studioTrigger = useRef<HTMLButtonElement>(null)
+  const closeStudio = () => {
+    setStudio(false)
+    requestAnimationFrame(() => {
+      studioTrigger.current?.focus()
+    })
+  }
   const { preference, choose } = useThemePreference()
   const active = useWorkspaceSettingsRuntime()
   const runtime = active?.org === org ? active : undefined
@@ -256,7 +263,13 @@ export default function WorkspaceSettings({
     <Modal.Root
       open
       onOpenChange={(open) => {
-        if (!open) onClose()
+        if (!open) {
+          if (studio) {
+            closeStudio()
+            return
+          }
+          onClose()
+        }
       }}
     >
       <Modal.Portal>
@@ -379,7 +392,11 @@ export default function WorkspaceSettings({
                         ))}
                       </div>
                       <div>
-                        <Button variant="secondary" onClick={() => setStudio(true)}>
+                        <Button
+                          ref={studioTrigger}
+                          variant="secondary"
+                          onClick={() => setStudio(true)}
+                        >
                           {copy.studio}
                         </Button>
                       </div>
@@ -441,7 +458,8 @@ export default function WorkspaceSettings({
             currentThemeMode={preference === 'system' ? 'light' : preference}
             onSelectCoreTheme={choose}
             onShareToChannel={shareTheme}
-            onClose={() => setStudio(false)}
+            returnFocusTo={studioTrigger}
+            onClose={closeStudio}
           />
         </Modal.Content>
       </Modal.Portal>
