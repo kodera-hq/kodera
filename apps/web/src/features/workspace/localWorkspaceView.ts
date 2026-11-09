@@ -8,6 +8,7 @@ const channel = z.object({
   name: z.string().min(1).max(80),
   kind: z.enum(['text', 'audio']),
   topic: z.string(),
+  access: z.enum(['members', 'invite']).optional(),
   template_key: z.string().nullable(),
   lifecycle: z.enum(['active', 'archived']),
   room_state: z.enum(['pending', 'ready', 'failed']),

@@ -1614,7 +1614,7 @@ it('puts community onboarding, connectors, Docs and persisted themes in the rout
   registerInteractiveDemo(communityDemo)
   serve(communityWorkspace())
   renderScreen()
-  expect(await screen.findByTestId('espace-live')).toHaveTextContent('@member:demo.invalid')
+  expect(await screen.findByTestId('espace-live')).toHaveTextContent('@member:community.kodera.io')
   expect(beginMatrixSignIn).not.toHaveBeenCalled()
   act(() => openWorkspaceCommand('extensions'))
   expect(screen.getByRole('dialog')).toHaveTextContent('Frame.io')

@@ -23,10 +23,18 @@ it('validates duplicate names, creates voice rooms and dismisses with Escape', a
   expect(screen.getByRole('alert')).toBeInTheDocument()
   expect(create).not.toHaveBeenCalled()
   await user.clear(name)
-  await user.type(name, 'office')
+  await user.type(name, 'Équipe Office')
+  await user.type(
+    screen.getByRole('textbox', { name: 'Description ou sujet (facultatif)' }),
+    'Weekly planning'
+  )
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Accès au salon' }), 'invite')
   await user.selectOptions(screen.getByRole('combobox', { name: 'Type de salon' }), 'audio')
   await user.click(screen.getByRole('button', { name: 'Créer le salon' }))
-  expect(create).toHaveBeenCalledWith('office', 'audio')
+  expect(create).toHaveBeenCalledWith('equipe-office', 'audio', {
+    topic: 'Weekly planning',
+    access: 'invite',
+  })
   await user.keyboard('{Escape}')
   expect(close).toHaveBeenCalled()
 })

@@ -12,11 +12,7 @@ import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { Select } from '../../ui/Select/Select'
 import { cx } from '../../ui/cx'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
-import {
-  SOUND_PACKS,
-  SOUND_PACK_IDS,
-  translateSoundCopy,
-} from '../sounds/manifest'
+import { SOUND_PACKS, SOUND_PACK_IDS, translateSoundCopy } from '../sounds/manifest'
 import { soundEngine, type SoundEngine } from '../sounds/SoundEngine'
 import type { MasterSoundMode, SoundPackId, SoundPreferences } from '../sounds/types'
 import {
@@ -46,6 +42,7 @@ export interface AudioSettingsCall {
 }
 
 export interface AudioSettingsProps {
+  embedded?: boolean
   call: AudioSettingsCall
   /** The microphone chosen is not plugged in, and the call took the default. */
   inputMissing: boolean
@@ -69,6 +66,7 @@ function watchMediaDevices(listener: () => void): () => void {
 }
 
 export function AudioSettings({
+  embedded = false,
   call,
   inputMissing,
   meterRef,
@@ -80,10 +78,11 @@ export function AudioSettings({
 }: AudioSettingsProps) {
   const { t, i18n } = useTranslation()
   const id = useId()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(embedded)
   const [devices, setDevices] = useState<AudioDevices>(NO_DEVICES)
   const [choice, setChoice] = useState<AudioDeviceChoice>(call.getDeviceChoice)
   const [tone, setTone] = useState<'idle' | 'playing' | 'failed'>('idle')
+  const [deviceError, setDeviceError] = useState(false)
   const [soundPrefs, setSoundPrefs] = useState<SoundPreferences>(() => engine.getPreferences())
 
   function tr(key: string, vars?: Record<string, string>): string {
@@ -146,14 +145,30 @@ export function AudioSettings({
     const picked = value === DEFAULT ? null : value
     setChoice((previous) => ({ ...previous, input: picked }))
     // The call's word once it settles: a microphone that would not start leaves the one it had.
-    void call.chooseInput(picked).then(() => setChoice(call.getDeviceChoice()))
+    setDeviceError(false)
+    void call.chooseInput(picked).then(
+      () => setChoice(call.getDeviceChoice()),
+      () => {
+        setChoice(call.getDeviceChoice())
+        setDeviceError(true)
+      }
+    )
   }
   const chooseOutput = (value: string) => {
     const picked = value === DEFAULT ? null : value
     setChoice((previous) => ({ ...previous, output: picked }))
     setTone('idle')
-    void call.chooseOutput(picked)
-    void engine.setOutputDevice(picked)
+    setDeviceError(false)
+    void call
+      .chooseOutput(picked)
+      .then(async () => {
+        setChoice(call.getDeviceChoice())
+        await engine.setOutputDevice(picked)
+      })
+      .catch(() => {
+        setChoice(call.getDeviceChoice())
+        setDeviceError(true)
+      })
   }
   const handlePackChange = (value: string) => {
     const nextPack = SOUND_PACK_IDS.find((candidate) => candidate === value)
@@ -180,6 +195,131 @@ export function AudioSettings({
   }
 
   const label = t('console.workspace.audio.action-settings')
+  const content = (
+    <div className={embedded ? 'flex flex-col gap-6' : 'flex w-[264px] flex-col gap-4'}>
+      {deviceError ? (
+        <p role="alert" className="text-sm text-c-bad-ink">
+          {t('console.common.error-unavailable')}
+        </p>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        <Select
+          label={t('console.workspace.audio.label-input')}
+          options={options(devices.inputs, 'input')}
+          value={input}
+          onValueChange={chooseInput}
+          {...(inputMissing ? { help: t('console.workspace.audio.label-input-missing') } : {})}
+        />
+        {embedded ? null : (
+          <>
+            <span className="text-sm text-c-ink-2">
+              {t('console.workspace.audio.label-input-level')}
+            </span>
+            <span
+              aria-hidden="true"
+              data-panel-meter=""
+              className="block h-1 w-full overflow-hidden rounded-full bg-c-muted"
+            >
+              <span
+                ref={meterRef}
+                style={{ transform: 'scaleX(0)' }}
+                className="block h-full w-full origin-left bg-c-ok"
+              />
+            </span>
+          </>
+        )}
+      </div>
+      <div className="flex flex-col gap-2">
+        {outputChoosable ? (
+          <Select
+            label={t('console.workspace.audio.label-output')}
+            options={options(devices.outputs, 'output')}
+            value={output}
+            onValueChange={chooseOutput}
+          />
+        ) : (
+          <p className="text-sm text-c-ink-2">
+            {t('console.workspace.audio.label-output-unsupported')}
+          </p>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          loading={tone === 'playing'}
+          onClick={testSound}
+          icon={<EspaceGlyph name="speaker" />}
+        >
+          {t('console.workspace.audio.action-test-sound')}
+        </Button>
+        <p role="status" className="text-sm text-c-ink-3">
+          {tone === 'failed' ? t('console.workspace.audio.problem-test-sound') : null}
+        </p>
+      </div>
+      <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">
+        <div className="flex flex-col gap-2">
+          <span id={`${id}-packs-label`} className="text-sm font-medium text-c-ink">
+            {tr('console.shell.sounds.label-pack-group')}
+          </span>
+          <RadioGroupPrimitive.Root
+            value={soundPrefs.pack}
+            onValueChange={handlePackChange}
+            aria-labelledby={`${id}-packs-label`}
+            className="flex flex-col gap-1"
+          >
+            {SOUND_PACKS.map((pack) => {
+              const chosen = pack.id === soundPrefs.pack
+              const packLabel = tr(pack.labelKey)
+              const packLabelId = `${id}-pack-${pack.id}-label`
+              return (
+                <div
+                  key={pack.id}
+                  className={cx(PACK_CARD_BASE, chosen ? PACK_CARD_CHOSEN : PACK_CARD_IDLE)}
+                >
+                  <RadioGroupPrimitive.Item
+                    value={pack.id}
+                    aria-labelledby={packLabelId}
+                    className={PACK_RADIO_TRIGGER}
+                  >
+                    <span
+                      id={packLabelId}
+                      className={cx(
+                        'text-xs font-semibold',
+                        chosen ? 'text-c-accent-ink' : 'text-c-ink'
+                      )}
+                    >
+                      {packLabel}
+                    </span>
+                  </RadioGroupPrimitive.Item>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    aria-label={tr('console.shell.sounds.action-preview-pack', {
+                      pack: packLabel,
+                    })}
+                    onClick={() => handlePreviewPack(pack.id)}
+                    className="shrink-0"
+                  >
+                    {tr('console.shell.sounds.action-preview')}
+                  </Button>
+                </div>
+              )
+            })}
+          </RadioGroupPrimitive.Root>
+        </div>
+        <RadioGroup
+          label={tr('console.shell.sounds.label-master-mode')}
+          value={soundPrefs.masterMode}
+          onValueChange={handleMasterModeChange}
+          options={MASTER_MODES.map((mode) => ({
+            value: mode,
+            label: tr(`console.shell.sounds.mode-${mode}`),
+          }))}
+        />
+      </div>
+    </div>
+  )
+  if (embedded) return content
   return (
     <Popover
       label={label}
@@ -200,119 +340,7 @@ export function AudioSettings({
         </button>
       }
     >
-      <div className="flex w-[264px] flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Select
-            label={t('console.workspace.audio.label-input')}
-            options={options(devices.inputs, 'input')}
-            value={input}
-            onValueChange={chooseInput}
-            {...(inputMissing ? { help: t('console.workspace.audio.label-input-missing') } : {})}
-          />
-          <span className="text-sm text-c-ink-2">
-            {t('console.workspace.audio.label-input-level')}
-          </span>
-          <span
-            aria-hidden="true"
-            data-panel-meter=""
-            className="block h-1 w-full overflow-hidden rounded-full bg-c-muted"
-          >
-            <span
-              ref={meterRef}
-              style={{ transform: 'scaleX(0)' }}
-              className="block h-full w-full origin-left bg-c-ok"
-            />
-          </span>
-        </div>
-        <div className="flex flex-col gap-2">
-          {outputChoosable ? (
-            <Select
-              label={t('console.workspace.audio.label-output')}
-              options={options(devices.outputs, 'output')}
-              value={output}
-              onValueChange={chooseOutput}
-            />
-          ) : (
-            <p className="text-sm text-c-ink-2">
-              {t('console.workspace.audio.label-output-unsupported')}
-            </p>
-          )}
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={tone === 'playing'}
-            onClick={testSound}
-            icon={<EspaceGlyph name="speaker" />}
-          >
-            {t('console.workspace.audio.action-test-sound')}
-          </Button>
-          <p role="status" className="text-sm text-c-ink-3">
-            {tone === 'failed' ? t('console.workspace.audio.problem-test-sound') : null}
-          </p>
-        </div>
-        <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">
-          <div className="flex flex-col gap-2">
-            <span id={`${id}-packs-label`} className="text-sm font-medium text-c-ink">
-              {tr('console.shell.sounds.label-pack-group')}
-            </span>
-            <RadioGroupPrimitive.Root
-              value={soundPrefs.pack}
-              onValueChange={handlePackChange}
-              aria-labelledby={`${id}-packs-label`}
-              className="flex flex-col gap-1"
-            >
-              {SOUND_PACKS.map((pack) => {
-                const chosen = pack.id === soundPrefs.pack
-                const packLabel = tr(pack.labelKey)
-                const packLabelId = `${id}-pack-${pack.id}-label`
-                return (
-                  <div
-                    key={pack.id}
-                    className={cx(PACK_CARD_BASE, chosen ? PACK_CARD_CHOSEN : PACK_CARD_IDLE)}
-                  >
-                    <RadioGroupPrimitive.Item
-                      value={pack.id}
-                      aria-labelledby={packLabelId}
-                      className={PACK_RADIO_TRIGGER}
-                    >
-                      <span
-                        id={packLabelId}
-                        className={cx(
-                          'text-xs font-semibold',
-                          chosen ? 'text-c-accent-ink' : 'text-c-ink'
-                        )}
-                      >
-                        {packLabel}
-                      </span>
-                    </RadioGroupPrimitive.Item>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      type="button"
-                      aria-label={tr('console.shell.sounds.action-preview-pack', {
-                        pack: packLabel,
-                      })}
-                      onClick={() => handlePreviewPack(pack.id)}
-                      className="shrink-0"
-                    >
-                      {tr('console.shell.sounds.action-preview')}
-                    </Button>
-                  </div>
-                )
-              })}
-            </RadioGroupPrimitive.Root>
-          </div>
-          <RadioGroup
-            label={tr('console.shell.sounds.label-master-mode')}
-            value={soundPrefs.masterMode}
-            onValueChange={handleMasterModeChange}
-            options={MASTER_MODES.map((mode) => ({
-              value: mode,
-              label: tr(`console.shell.sounds.mode-${mode}`),
-            }))}
-          />
-        </div>
-      </div>
+      {content}
     </Popover>
   )
 }

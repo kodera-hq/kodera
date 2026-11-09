@@ -4,6 +4,7 @@ import { Button } from '@/ui/Button/Button'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { StatusPill } from '@/ui/StatusPill/StatusPill'
 import { ModuleGlyph } from '@/ui/icons/ModuleGlyph'
+import { WebhookSignatureTester } from './WebhookSignatureTester'
 import {
   EXTENSION_CATEGORY_FILTERS,
   EXTENSION_SCHEMA_VERSION,
@@ -238,7 +239,10 @@ export function ExtensionsCatalogPanel({
                     id={webhookInputId}
                     type="url"
                     value={webhookUrlInput}
-                    onChange={(event) => setWebhookUrlInput(event.target.value)}
+                    onChange={(event) => {
+                      setWebhookUrlInput(event.target.value)
+                      setValidationResult(null)
+                    }}
                     placeholder={selectedExtension.defaultWebhookExample}
                     className="h-8 flex-1 rounded-md border border-c-border-input bg-c-surface px-3 font-mono text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
                   />
@@ -272,6 +276,7 @@ export function ExtensionsCatalogPanel({
                 </div>
               ) : null}
             </div>
+            <WebhookSignatureTester key={selectedExtension.id} extensionId={selectedExtension.id} />
           </div>
         </CardBody>
       </Card>

@@ -1,0 +1,43 @@
+const messages = {
+  en: {
+    profile: 'Profile',
+    copy: 'Copy Matrix ID',
+    copied: 'Matrix ID copied',
+    copyError: 'Could not copy. Select the ID to copy it.',
+    mention: 'Mention',
+    online: 'Online',
+    focused: 'Focused',
+    dnd: 'Do not disturb',
+    offline: 'Offline',
+    maintainer: 'Maintainer',
+    core: 'Core Team',
+    partner: 'Design Partner',
+    member: 'Member',
+    admin: 'Admin',
+    offlineGroup: 'Offline',
+    onlineGroup: 'Members',
+    close: 'Close profile',
+  },
+  fr: {
+    profile: 'Profil',
+    copy: 'Copier l’ID Matrix',
+    copied: 'ID Matrix copié',
+    copyError: 'Copie impossible. Sélectionnez l’identifiant pour le copier.',
+    mention: 'Mentionner',
+    online: 'En ligne',
+    focused: 'Concentré',
+    dnd: 'Ne pas déranger',
+    offline: 'Hors ligne',
+    maintainer: 'Maintainer',
+    core: 'Core Team',
+    partner: 'Design Partner',
+    member: 'Membre',
+    admin: 'Admin',
+    offlineGroup: 'Hors ligne',
+    onlineGroup: 'Membres',
+    close: 'Fermer le profil',
+  },
+} as const
+export function profileMessages(language: string | undefined) {
+  return language?.startsWith('en') ? messages.en : messages.fr
+}

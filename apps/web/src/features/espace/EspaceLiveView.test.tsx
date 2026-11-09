@@ -4004,11 +4004,13 @@ describe('Matrix channel invitations', () => {
     expect(within(dialog).getByText('#partner-dinum:demo.invalid')).toBeInTheDocument()
     expect(
       within(dialog).getByText(
-        'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=demo.invalid'
+        'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=community.kodera.io'
       )
     ).toBeInTheDocument()
     expect(
-      within(dialog).getByText('matrix:r/partner-dinum:demo.invalid?action=join&via=demo.invalid')
+      within(dialog).getByText(
+        'matrix:r/partner-dinum:demo.invalid?action=join&via=community.kodera.io'
+      )
     ).toBeInTheDocument()
     expect(
       within(dialog).getByText(`${window.location.origin}/community/workspace/${channel.id}`)

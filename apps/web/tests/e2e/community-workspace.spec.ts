@@ -29,15 +29,14 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
     0
   )
   for (const [name, theme] of [
-    ['Clair', 'light'],
-    ['Sombre', 'dark'],
+    ['Clair · Givre', 'light'],
+    ['Sombre · Ardoise', 'dark'],
     ['Noir OLED', 'black'],
   ] as const) {
-    await page
-      .getByRole('button', { name: /changer d’organisation/ })
-      .first()
-      .click()
-    await page.getByRole('menuitemradio', { name, exact: true }).click()
+    await menu(page, 'Réglages de l’espace…', true)
+    await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+    await page.getByRole('button', { name: new RegExp(name) }).click()
+    await page.keyboard.press('Escape')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await page.screenshot({
       path: info.outputPath(`workspace-${theme}.png`),
@@ -49,21 +48,22 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
       .analyze()
     expect(accessibility.violations, `Workspace accessibility in ${theme}`).toEqual([])
   }
-  await menu(page, 'Theme Studio')
-  await expect(page.getByRole('dialog')).toBeVisible()
+  await menu(page, 'Réglages de l’espace…')
+  await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+  await page.getByRole('button', { name: 'Ouvrir Theme Studio', exact: true }).click()
   await expect(page.getByTestId('theme-share-code-input')).toBeVisible()
   await page.getByTestId('theme-share-to-channel-btn').click()
   await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
   await expect(page.getByRole('log')).toContainText('kodera-theme:v1:')
-  await menu(page, 'Connecteurs & Extensions', true)
+  await menu(page, 'Réglages de l’espace…', true)
+  await page.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('Frame.io')
   await page.keyboard.press('Escape')
-  await menu(page, 'Hébergement & Offre')
+  await menu(page, 'Réglages de l’espace…')
+  await page.getByRole('tab', { name: 'Hébergement & administration', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('Mode actuel')
   await page.keyboard.press('Escape')
-  await menu(page, 'Documentation Développeur & API')
-  await expect(page.getByTestId('developer-docs-hub')).toBeVisible()
-  await page.screenshot({ path: info.outputPath('developer-docs.png'), fullPage: true })
 })
 
 test('channels, messages, reactions, threads, invitations and notes work together', async ({
@@ -140,17 +140,12 @@ test('created workspaces switch without losing the previous conversation', async
   await page.getByRole('button', { name: 'Docs', exact: true }).click()
   await page.getByRole('button', { name: 'Nouveau document', exact: true }).click()
   await page.getByLabel('Titre du document', { exact: true }).fill('Retained note')
-  await menu(page, '+ Créer / Configurer un nouvel espace')
+  await menu(page, '+ Créer ou configurer un nouvel espace')
   await page.getByLabel('Nom de l’espace', { exact: true }).fill('QA Studio')
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await page.getByRole('button', { name: 'Ouvrir l’espace', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await page
-    .getByRole('button', { name: /changer d’organisation/ })
-    .last()
-    .click()
-  await page.getByRole('menuitemradio', { name: 'QA Studio qa-studio', exact: true }).click()
   await page.waitForURL(/\/qa-studio\/workspace/)
   await expect(page.getByRole('button', { name: /QA Studio, changer/ }).first()).toBeVisible()
   await page

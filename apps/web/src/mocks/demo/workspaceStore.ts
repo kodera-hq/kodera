@@ -27,12 +27,14 @@ export function createLocalWorkspaceStore(
   persist = false
 ): EspaceStoreLike & { addChannel: (channel: WorkspaceChannel) => void } {
   const copy = workspaceDemoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
-  const viewer = profile === 'community' ? '@member:demo.invalid' : VIEWER
+  const viewer = profile === 'community' ? '@member:community.kodera.io' : VIEWER
   const members =
     profile === 'community'
       ? [
-          { userId: '@maintainer:demo.invalid', name: 'Kodera Maintainer' },
-          { userId: '@contributor:demo.invalid', name: 'SDK Contributor' },
+          { userId: '@maintainer:community.kodera.io', name: 'Kodera Maintainer' },
+          { userId: '@contributor:community.kodera.io', name: 'SDK Contributor' },
+          { userId: '@core:community.kodera.io', name: 'Core Team' },
+          { userId: '@design:community.kodera.io', name: 'Design Partner' },
         ]
       : MEMBERS
   const listeners = new Set<() => void>()
@@ -215,7 +217,18 @@ export function createLocalWorkspaceStore(
       )
       emit()
     },
-    getMemberRole: () => 'member',
+    getMemberRole: (_roomId, userId) =>
+      profile === 'community' && userId === '@maintainer:community.kodera.io' ? 'admin' : 'member',
+    getProfileRole: (_roomId, userId) =>
+      profile === 'community'
+        ? userId === '@maintainer:community.kodera.io'
+          ? 'maintainer'
+          : userId === '@core:community.kodera.io'
+            ? 'core'
+            : userId === '@design:community.kodera.io'
+              ? 'partner'
+              : 'member'
+        : 'member',
     isOnline: () => true,
     getReadMarker: (roomId) => markers.get(roomId) ?? null,
     async markRead(roomId) {

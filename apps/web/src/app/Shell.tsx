@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { WorkspaceSettingsHost } from '../features/workspace/WorkspaceSettingsHost'
 import type { MessageKey } from '../i18n'
 import { Button } from '../ui/Button/Button'
 import { Tooltip } from '../ui/Tooltip/Tooltip'
@@ -80,6 +81,15 @@ export function Shell({
   const { t } = useTranslation()
   const narrow = useNarrowViewport()
   const [sidebarVisible, setSidebarVisible] = useState(true)
+  const settings = (
+    <WorkspaceSettingsHost
+      org={org}
+      organisationId={organisationId}
+      organisationName={organisation.name}
+      displayName={user.displayName}
+      role={role}
+    />
+  )
   const toggleName = t(
     sidebarVisible
       ? 'console.shell.header.action-hide-navigation'
@@ -96,6 +106,7 @@ export function Shell({
     return (
       <OrganisationSwitchContext.Provider value={organisationSwitch}>
         <div className="flex min-h-screen flex-col">
+          {settings}
           <a href="#main-content" className={SKIP_LINK}>
             {t('console.shell.nav.action-skip-to-content')}
           </a>
@@ -158,6 +169,7 @@ export function Shell({
     return (
       <OrganisationSwitchContext.Provider value={organisationSwitch}>
         <div className="flex min-h-screen">
+          {settings}
           <a href="#main-content" className={SKIP_LINK}>
             {t('console.shell.nav.action-skip-to-content')}
           </a>
@@ -178,6 +190,7 @@ export function Shell({
 
   return (
     <div className="flex min-h-screen">
+      {settings}
       <a href="#main-content" className={SKIP_LINK}>
         {t('console.shell.nav.action-skip-to-content')}
       </a>

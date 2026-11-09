@@ -109,26 +109,14 @@ describe('module rail', () => {
     expect(visio).toHaveAttribute('rel', 'noreferrer')
   })
 
-  it('marks « Réglages », the console, current programmatically, not with colour alone', () => {
-    fixture.apps = [VISIO, DOCS]
-    renderRail()
-
-    const console_ = screen.getByRole('link', { name: 'Réglages' })
-    expect(console_).toHaveAttribute('aria-current', 'page')
-    expect(console_).toHaveTextContent('')
-    expect(console_.querySelector('span[aria-hidden]')).toHaveClass('bg-c-on-inverse')
-
-    // And it is the ONLY current MODULE: an application the person is not on
-    // must not claim to be the current page. Scoped to the list rather than to
-    // the landmark because the maker's mark is a link to the organisation home
-    // and the router marks it current on that route, exactly as it does the
-    // sidebar's own "Accueil" — see `ModuleRail`'s note.
-    const current = screen
-      .getAllByRole('list')
-      .flatMap((list) => within(list).getAllByRole('link'))
-      .filter((link) => link.getAttribute('aria-current') === 'page')
-    expect(current).toHaveLength(1)
-    expect(current[0]).toHaveAccessibleName('Réglages')
+  it('opens unified settings without navigating away from the active room', async () => {
+    const listener = vi.fn()
+    window.addEventListener('kodera:workspace-command', listener)
+    renderRail('workspace')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Réglages' }))
+    expect(listener.mock.calls[0]?.[0].detail).toBe('settings')
+    expect(screen.getByRole('link', { name: 'Messages' })).toHaveAttribute('aria-current', 'page')
+    window.removeEventListener('kodera:workspace-command', listener)
   })
 
   it('gives every icon-only item an accessible name', () => {
@@ -163,8 +151,8 @@ describe('module rail', () => {
     // SH-07: `c-inverse-2` against the rail is 1.16 / 1.16 / 1.19 : 1;
     // the mock's `c-action` is 2.65 / 3.97 / 4.18.
     fixture.apps = [VISIO]
-    renderRail()
-    const current = screen.getByRole('link', { name: 'Réglages' })
+    renderRail('workspace')
+    const current = screen.getByRole('link', { name: 'Messages' })
     expect(current).toHaveClass('bg-c-action', 'text-c-on-inverse')
     expect(current).not.toHaveClass('bg-c-inverse-2')
     const idle = screen.getByRole('link', { name: /^Visio/ })
@@ -180,11 +168,11 @@ describe('module rail', () => {
       renderRail()
 
       expect(screen.getByRole('link', { name: 'Accueil de Groupe Vercelli' })).toBeInTheDocument()
-      expect(screen.getByRole('link', { name: 'Réglages' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Réglages' })).toBeInTheDocument()
       // Messages is not a constant: it is drawn once the tenant is known to have it.
       expect(screen.queryByRole('link', { name: 'Messages' })).toBeNull()
       const rail = screen.getByRole('navigation', { name: 'Modules' })
-      expect(within(rail).getAllByRole('link')).toHaveLength(2)
+      expect(within(rail).getAllByRole('link')).toHaveLength(1)
     }
   )
 
@@ -281,18 +269,21 @@ describe('module rail', () => {
     const names = within(rail)
       .getAllByRole('link')
       .map((link) => link.getAttribute('aria-label'))
-    expect(names.slice(-2)).toEqual(['Messages', 'Réglages'])
+    expect(names.at(-1)).toBe('Messages')
+    expect(
+      within(screen.getAllByRole('list')[1]!).getByRole('button', { name: 'Réglages' })
+    ).toBeInTheDocument()
   })
 
   it('does not call the console current on the workspace', () => {
     renderRail('workspace')
-    expect(screen.getByRole('link', { name: 'Réglages' })).not.toHaveAttribute('aria-current')
+    expect(screen.getByRole('button', { name: 'Réglages' })).not.toHaveAttribute('aria-current')
   })
-  it('offers no « Réglages » to a member: a member has no settings to change', () => {
+  it('offers personal settings to a member', () => {
     fixture.apps = [VISIO, ESPACE]
     renderRail('workspace', 'org_member')
     const rail = screen.getByRole('navigation', { name: 'Modules' })
-    expect(within(rail).queryByRole('link', { name: 'Réglages' })).toBeNull()
+    expect(within(rail).getByRole('button', { name: 'Réglages' })).toBeInTheDocument()
     expect(
       within(rail).getByRole('button', { name: 'Groupe Vercelli, changer d’organisation' })
     ).toBeInTheDocument()
@@ -304,11 +295,8 @@ describe('module rail', () => {
       fixture.apps = [VISIO, ESPACE]
       renderRail('workspace', role)
       const [modules, foot] = screen.getAllByRole('list')
-      expect(within(modules!).queryByRole('link', { name: 'Réglages' })).toBeNull()
-      expect(within(foot!).getByRole('link', { name: 'Réglages' })).toHaveAttribute(
-        'href',
-        '/$org/home'
-      )
+      expect(within(modules!).queryByRole('button', { name: 'Réglages' })).toBeNull()
+      expect(within(foot!).getByRole('button', { name: 'Réglages' })).toBeInTheDocument()
     }
   )
 
@@ -317,7 +305,7 @@ describe('module rail', () => {
     renderRail()
     for (const link of [
       screen.getByRole('link', { name: /^Visio/ }),
-      screen.getByRole('link', { name: 'Réglages' }),
+      screen.getByRole('button', { name: 'Réglages' }),
     ]) {
       expect(link).toHaveClass('h-12', 'w-12')
       // A title would draw the browser's own tooltip over the rail's.
@@ -329,7 +317,7 @@ describe('module rail', () => {
     const user = userEvent.setup()
     fixture.apps = [VISIO]
     renderRail()
-    const settings = screen.getByRole('link', { name: 'Réglages' })
+    const settings = screen.getByRole('button', { name: 'Réglages' })
     settings.focus()
     await user.keyboard('{Shift>}{Tab}{/Shift}{Tab}')
     expect(settings).toHaveFocus()
@@ -363,7 +351,7 @@ describe('module rail', () => {
     expect(messages.querySelector('svg')).toHaveAttribute('data-glyph', 'messaging')
   })
 
-  it('draws no « Réglages » while the role is not known', () => {
+  it('keeps personal settings available while the role is not known', () => {
     fixture.apps = [VISIO]
     render(
       <ModuleRail
@@ -373,7 +361,7 @@ describe('module rail', () => {
         user={{ displayName: 'Claire Mercier', role: 'member' }}
       />
     )
-    expect(screen.queryByRole('link', { name: 'Réglages' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Réglages' })).toBeInTheDocument()
   })
 })
 

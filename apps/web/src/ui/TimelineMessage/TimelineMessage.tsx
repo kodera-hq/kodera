@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import type { MouseEvent, ReactNode } from 'react'
+import type { MouseEvent, ReactNode, ReactElement } from 'react'
 import { Avatar } from '../Avatar/Avatar'
 import { cx } from '../cx'
 import { EspaceGlyph } from '../icons/EspaceGlyph'
@@ -78,6 +78,8 @@ export type TimelineDelivery =
 
 export interface TimelineMessageProps {
   author: string
+  /** Optional accessible profile disclosure around the avatar and author name. */
+  profileTrigger?: ((trigger: ReactElement) => ReactNode) | undefined
   avatarIdentity?: string
   avatarOnlineLabel?: string | undefined
   /** The author's photo; initials otherwise. */
@@ -116,6 +118,7 @@ const ROOT =
 
 export function TimelineMessage({
   author,
+  profileTrigger,
   avatarIdentity,
   avatarOnlineLabel,
   avatarSrc,
@@ -155,6 +158,16 @@ export function TimelineMessage({
   const showAddReaction = !isDeleted && addReaction !== undefined
   const faces = thread?.participants?.slice(0, 3) ?? []
 
+  const avatar = (
+    <Avatar
+      name={author}
+      identity={avatarIdentity}
+      onlineLabel={avatarOnlineLabel}
+      size="lg"
+      aria-hidden="true"
+      {...(avatarSrc === undefined ? {} : { src: avatarSrc })}
+    />
+  )
   return (
     <article
       aria-labelledby={labelledBy}
@@ -182,15 +195,18 @@ export function TimelineMessage({
           >
             {timeLabel}
           </time>
+        ) : profileTrigger ? (
+          profileTrigger(
+            <button
+              type="button"
+              aria-label={author}
+              className="rounded-full focus-visible:ring focus-visible:outline-hidden"
+            >
+              {avatar}
+            </button>
+          )
         ) : (
-          <Avatar
-            name={author}
-            identity={avatarIdentity}
-            onlineLabel={avatarOnlineLabel}
-            size="lg"
-            aria-hidden="true"
-            {...(avatarSrc === undefined ? {} : { src: avatarSrc })}
-          />
+          avatar
         )}
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -209,7 +225,16 @@ export function TimelineMessage({
         ) : (
           <div className="flex flex-wrap items-baseline gap-2">
             <span id={authorId} className="font-semibold">
-              {author}
+              {profileTrigger
+                ? profileTrigger(
+                    <button
+                      type="button"
+                      className="rounded-sm text-left hover:underline focus-visible:ring focus-visible:outline-hidden"
+                    >
+                      {author}
+                    </button>
+                  )
+                : author}
               {avatarOnlineLabel === undefined ? null : (
                 <span className="sr-only">{`, ${avatarOnlineLabel}`}</span>
               )}

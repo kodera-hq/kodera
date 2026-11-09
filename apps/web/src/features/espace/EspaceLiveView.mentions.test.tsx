@@ -417,10 +417,7 @@ describe('a message that mentions the viewer', () => {
 
       // 3. Live non-mention message from a peer must NOT trigger msg_mention
       act(() => {
-        publishTimeline([
-          ...currentTimeline,
-          message('$m4', ALICE, 'Simple message sans mention'),
-        ])
+        publishTimeline([...currentTimeline, message('$m4', ALICE, 'Simple message sans mention')])
       })
       expect(playSpy).not.toHaveBeenCalled()
 
@@ -441,5 +438,40 @@ describe('a message that mentions the viewer', () => {
       playSpy.mockRestore()
       soundEngine.resetCooldowns()
     }
+  })
+})
+
+describe('member profile cards', () => {
+  it('opens a timeline author, copies the complete Matrix ID and mentions them in the active composer', async () => {
+    const user = userEvent.setup()
+    const store = makeStore({
+      timeline: [message('$profile', ALICE, 'Hello', { senderName: 'Marina Loiseau' })],
+    })
+    const composer = renderView(store)
+    await user.type(composer, 'Hello ')
+    await user.click(
+      within(screen.getByRole('log')).getAllByRole('button', { name: 'Marina Loiseau' })[0]!
+    )
+    const card = screen.getByRole('dialog', { name: 'Marina Loiseau' })
+    expect(within(card).getByText(ALICE)).toBeVisible()
+    await user.click(within(card).getByRole('button', { name: 'Copier l’ID Matrix' }))
+    expect(await navigator.clipboard.readText()).toBe(ALICE)
+    await user.click(within(card).getByRole('button', { name: 'Mentionner' }))
+    expect(composer).toHaveValue('Hello @Marina Loiseau ')
+    expect(composer).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(store.send).toHaveBeenCalledWith(ROOM, 'Hello @Marina Loiseau', { mentions: [ALICE] })
+  })
+
+  it('opens member cards and keeps the members panel open when Escape dismisses a profile', async () => {
+    const user = userEvent.setup()
+    renderView(makeStore())
+    await user.click(screen.getByRole('button', { name: /^Membres$/ }))
+    const panel = screen.getByRole('complementary', { name: 'Membres' })
+    await user.click(within(panel).getByRole('button', { name: /Bob Dupont/ }))
+    expect(screen.getByRole('dialog', { name: 'Bob Dupont' })).toBeVisible()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Bob Dupont' })).not.toBeInTheDocument()
+    expect(panel).toBeVisible()
   })
 })

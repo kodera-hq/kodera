@@ -2,11 +2,11 @@ import * as Menu from '@radix-ui/react-dropdown-menu'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useOrganisationSwitch } from '../../app/organisationSwitch'
-import { useThemePreference } from '../../theme/useThemePreference'
 import { workspaceMenuCopy } from './workspaceMenuMessages'
-import { applyCustomTokensToDocument } from '../appearance/themeOverrides'
+import { initialsOf } from '../../ui/Avatar/Avatar'
 
-export type WorkspaceCommand = 'configure' | 'extensions' | 'studio' | 'hosting' | 'developer'
+export type WorkspaceCommand =
+  'configure' | 'settings' | 'extensions' | 'studio' | 'hosting' | 'developer'
 export const WORKSPACE_COMMAND_EVENT = 'kodera:workspace-command'
 export function openWorkspaceCommand(command: WorkspaceCommand) {
   window.dispatchEvent(new CustomEvent(WORKSPACE_COMMAND_EVENT, { detail: command }))
@@ -28,7 +28,6 @@ export function WorkspaceMenu({
   const copy = workspaceMenuCopy(i18n.resolvedLanguage)
   const organisationSwitch = useOrganisationSwitch()
   const memberships = organisationSwitch?.memberships ?? [{ name, slug, current: true }]
-  const { preference, choose } = useThemePreference()
   return (
     <Menu.Root>
       <Menu.Trigger asChild>{trigger}</Menu.Trigger>
@@ -50,8 +49,11 @@ export function WorkspaceMenu({
           >
             {memberships.map((entry) => (
               <Menu.RadioItem key={entry.slug} value={entry.slug} className={ITEM}>
-                <span aria-hidden="true" className="w-4 shrink-0">
-                  {entry.slug === slug ? '✓' : ''}
+                <span
+                  aria-hidden="true"
+                  className="logo-tile-black flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-xs font-bold"
+                >
+                  {initialsOf(entry.name)}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{entry.name}</span>
@@ -59,6 +61,9 @@ export function WorkspaceMenu({
                     {entry.slug === 'community' ? 'community.kodera.io' : entry.slug}
                   </span>
                 </span>
+                <Menu.ItemIndicator aria-hidden="true" className="w-4 shrink-0 text-c-accent-ink">
+                  ✓
+                </Menu.ItemIndicator>
               </Menu.RadioItem>
             ))}
           </Menu.RadioGroup>
@@ -66,40 +71,8 @@ export function WorkspaceMenu({
           <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('configure')}>
             {copy.create}
           </Menu.Item>
-          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('extensions')}>
-            {copy.extensions}
-          </Menu.Item>
-          <Menu.Separator className="my-1 h-px bg-c-border-soft" />
-          <Menu.Label className="px-3 py-2 text-xs font-semibold text-c-ink-3">
-            {copy.appearance}
-          </Menu.Label>
-          <Menu.RadioGroup aria-label={copy.appearance} value={preference}>
-            {(['light', 'dark', 'black'] as const).map((mode) => (
-              <Menu.RadioItem
-                key={mode}
-                value={mode}
-                className={ITEM}
-                onSelect={() => {
-                  applyCustomTokensToDocument(null)
-                  choose(mode)
-                }}
-              >
-                <span aria-hidden="true" className="w-4">
-                  {preference === mode ? '✓' : ''}
-                </span>
-                {copy[mode]}
-              </Menu.RadioItem>
-            ))}
-          </Menu.RadioGroup>
-          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('studio')}>
-            {copy.studio}
-          </Menu.Item>
-          <Menu.Separator className="my-1 h-px bg-c-border-soft" />
-          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('hosting')}>
-            {copy.hosting}
-          </Menu.Item>
-          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('developer')}>
-            {copy.developer}
+          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('settings')}>
+            {copy.settings}
           </Menu.Item>
         </Menu.Content>
       </Menu.Portal>

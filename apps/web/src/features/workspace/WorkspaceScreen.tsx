@@ -467,12 +467,13 @@ function LiveWorkspace({
             category.channels.map((item) => item.name)
           )}
           onClose={() => setCreateCategory(null)}
-          onCreate={(name, kind) => {
-            const created: WorkspaceChannel = {
+          onCreate={(name, kind, options) => {
+            const created: WorkspaceChannel & { access: 'members' | 'invite' } = {
               id: `local-${crypto.randomUUID()}`,
               name,
               kind,
-              topic: '',
+              topic: options.topic,
+              access: options.access,
               template_key: null,
               lifecycle: 'active',
               room_state: 'ready',
@@ -750,7 +751,13 @@ export function WorkspaceScreen() {
           onClaimed={(workspace) => {
             if (addCreatedDemoWorkspace(workspace)) {
               void queryClient.invalidateQueries()
-              void router.invalidate()
+              void router.invalidate().then(() =>
+                router.navigate({
+                  to: '/$org/workspace',
+                  params: { org: workspace.payload.slug },
+                })
+              )
+              setOnboardingOpen(false)
             }
             choose(
               workspace.payload.themeId === 'real-black'

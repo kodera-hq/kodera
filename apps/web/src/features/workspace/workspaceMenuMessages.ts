@@ -1,7 +1,8 @@
 const messages = {
   en: {
     workspaces: 'Workspaces',
-    create: '+ Create / configure a workspace',
+    create: '+ Create or configure a workspace',
+    settings: 'Workspace settings…',
     extensions: 'Connectors & extensions',
     appearance: 'Theme & appearance',
     light: 'Light',
@@ -13,7 +14,8 @@ const messages = {
   },
   fr: {
     workspaces: 'Espaces de travail',
-    create: '+ Créer / Configurer un nouvel espace',
+    create: '+ Créer ou configurer un nouvel espace',
+    settings: 'Réglages de l’espace…',
     extensions: 'Connecteurs & Extensions',
     appearance: 'Thème & Apparence',
     light: 'Clair',

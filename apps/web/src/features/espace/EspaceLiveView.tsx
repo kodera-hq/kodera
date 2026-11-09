@@ -31,6 +31,17 @@ import { AudioDock } from '../../ui/AudioDock/AudioDock'
 import { audioPreviewMessages } from './audio/previewMessages'
 import { Avatar } from '../../ui/Avatar/Avatar'
 import { ChannelInviteDialog } from './ChannelInviteDialog'
+import { useLocalProfile } from '../profile/localProfile'
+import {
+  UserProfilePopover,
+  type MemberProfile,
+  type MemberProfileRole,
+} from '../profile/UserProfilePopover'
+import { profileMessages } from '../profile/profileMessages'
+import {
+  getWorkspaceSettingsEpoch,
+  registerWorkspaceSettingsRuntime,
+} from '../workspace/settingsRuntime'
 import { PersonIcon } from '../../ui/icons/Person'
 import { CloseIcon } from '../../ui/icons/Close'
 import { ChannelRow } from '../../ui/ChannelRow/ChannelRow'
@@ -196,6 +207,7 @@ export interface EspaceStoreLike {
   /** The room's members but the signed-in one, whom the composer offers to mention. */
   getRoster?: (roomId: string) => readonly MemberView[]
   getMemberRole?: (roomId: string, userId: string) => 'admin' | 'member'
+  getProfileRole?: (roomId: string, userId: string) => MemberProfileRole
   isOnline?: (userId: string) => boolean
   getMembers?: (roomId: string) => readonly MemberView[]
   /** Loads the room's whole member list, once. */
@@ -511,6 +523,8 @@ function uniqueThreadParticipants(replies: readonly MessageView[]): ThreadPartic
 }
 
 interface LiveMessageRowProps {
+  profileRole: MemberProfileRole
+  onMention: ((member: MemberProfile) => void) | undefined
   onlineLabel?: string | undefined
   message: MessageView
   placement: 'timeline' | 'thread'
@@ -531,6 +545,8 @@ interface LiveMessageRowProps {
 /** One mounted message; only activation reports a timeline opener to the view. */
 function LiveMessageRow({
   message: msg,
+  profileRole,
+  onMention,
   onlineLabel,
   placement,
   viewerId,
@@ -550,14 +566,33 @@ function LiveMessageRow({
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
   const actionsTrigger = useRef<HTMLButtonElement | null>(null)
   const inThread = placement === 'thread'
-  const authorName = nameOf(msg)
+  const { profile, hasProfile } = useLocalProfile(viewerId)
+  const copy = profileMessages(i18n.resolvedLanguage)
+  const authorName =
+    msg.sender === viewerId && profile.displayName ? profile.displayName : nameOf(msg)
+  const presence =
+    msg.sender === viewerId && hasProfile ? profile.presence : onlineLabel ? 'online' : 'offline'
+  const member: MemberProfile = {
+    userId: msg.sender,
+    name: authorName,
+    presence,
+    role: profileRole,
+    ...(msg.sender === viewerId ? { status: profile.status } : {}),
+  }
   const isoTime = new Date(msg.ts).toISOString()
   const isOwn = msg.sender === viewerId
   return (
     <TimelineMessage
       author={authorName}
       avatarIdentity={msg.sender}
-      avatarOnlineLabel={onlineLabel}
+      avatarOnlineLabel={presence === 'offline' ? undefined : copy[presence]}
+      profileTrigger={(trigger) => (
+        <UserProfilePopover
+          member={member}
+          trigger={trigger}
+          onMention={isOwn ? undefined : onMention}
+        />
+      )}
       dateTime={isoTime}
       timeLabel={formatTime(isoTime, locale)}
       focused={!inThread && expanded}
@@ -844,6 +879,10 @@ function MountedEspaceLiveView({
     throw new Error('EspaceLiveView requires either a store or a MatrixSession')
   }
   const activeStore: EspaceStoreLike = resolvedStore
+  const settingsEpoch = useMemo(() => {
+    void activeStore
+    return getWorkspaceSettingsEpoch()
+  }, [activeStore])
 
   const snapshot = useSyncExternalStore(activeStore.subscribe, activeStore.getSnapshot)
   useTabTitle(snapshot.rooms)
@@ -1005,9 +1044,90 @@ function MountedEspaceLiveView({
     window.addEventListener('mousemove', handleMove)
     window.addEventListener('mouseup', handleUp)
   }
-  const roomMembers = activeRoomId === null ? undefined : activeStore.getMembers?.(activeRoomId)
+  const viewerId = activeStore.getUserId()
+  const { profile: localProfile, hasProfile } = useLocalProfile(viewerId)
+  const profileCopy = profileMessages(i18n.resolvedLanguage)
+  const roomMembers = useMemo(() => {
+    void snapshot
+    return activeRoomId === null ? undefined : activeStore.getMembers?.(activeRoomId)
+  }, [activeRoomId, activeStore, snapshot])
+  const rawRoster = useMemo(() => {
+    void snapshot
+    return activeRoomId === null ? [] : (activeStore.getRoster?.(activeRoomId) ?? roomMembers ?? [])
+  }, [activeRoomId, activeStore, roomMembers, snapshot])
   const roster =
-    activeRoomId === null ? [] : (activeStore.getRoster?.(activeRoomId) ?? roomMembers ?? [])
+    rawRoster.some((member) => member.userId === viewerId) || !hasProfile
+      ? rawRoster
+      : [
+          ...rawRoster,
+          { userId: viewerId, name: localProfile.displayName || displayNameOf(viewerId) },
+        ]
+  function memberProfile(member: MemberView): MemberProfile {
+    return {
+      userId: member.userId,
+      name:
+        member.userId === viewerId && localProfile.displayName
+          ? localProfile.displayName
+          : (member.name ?? displayNameOf(member.userId)),
+      presence:
+        member.userId === viewerId && hasProfile
+          ? localProfile.presence
+          : activeStore.isOnline?.(member.userId)
+            ? 'online'
+            : 'offline',
+      role:
+        activeRoomId === null
+          ? 'member'
+          : (activeStore.getProfileRole?.(activeRoomId, member.userId) ??
+            activeStore.getMemberRole?.(activeRoomId, member.userId) ??
+            'member'),
+      ...(member.userId === viewerId ? { status: localProfile.status } : {}),
+    }
+  }
+  useEffect(
+    () =>
+      registerWorkspaceSettingsRuntime(
+        {
+          org,
+          userId: viewerId,
+          displayName:
+            localProfile.displayName ||
+            roomMembers?.find((member) => member.userId === viewerId)?.name ||
+            displayNameOf(viewerId),
+          members: [
+            ...rawRoster.filter((member) => member.userId !== viewerId),
+            {
+              userId: viewerId,
+              name:
+                localProfile.displayName ||
+                rawRoster.find((member) => member.userId === viewerId)?.name ||
+                displayNameOf(viewerId),
+            },
+          ],
+          call: deviceSettings,
+          invite:
+            activeRoomId !== null && activeStore.inviteToRoom
+              ? (userId) => activeStore.inviteToRoom!(activeRoomId, userId)
+              : undefined,
+          memberRole: (userId) =>
+            activeRoomId === null
+              ? 'member'
+              : (activeStore.getMemberRole?.(activeRoomId, userId) ?? 'member'),
+        },
+        settingsEpoch
+      ),
+    [
+      org,
+      viewerId,
+      localProfile.displayName,
+      roomMembers,
+      rawRoster,
+      settingsEpoch,
+      deviceSettings,
+      activeRoomId,
+      activeStore,
+    ]
+  )
   useEffect(() => {
     if (membersOpen && activeRoomId !== null) activeStore.loadMembers?.(activeRoomId)
   }, [membersOpen, activeRoomId, activeStore])
@@ -1025,7 +1145,6 @@ function MountedEspaceLiveView({
     [roomMembers]
   )
 
-  const viewerId = activeStore.getUserId()
   const viewEpoch = memory?.getViewEpoch()
   const draftOrganisationId = workspace.organisation_id
   const [committedLease] = useState(() => createCommittedValue<DraftLease | null>(null))
@@ -1074,6 +1193,15 @@ function MountedEspaceLiveView({
         ...(typeof patch === 'function' ? patch(previous.get(key) ?? EMPTY_DRAFT) : patch),
       })
     )
+  }
+  function mentionMember(member: MemberProfile) {
+    activeStore.loadMembers?.(activeRoomId!)
+    const input = document.getElementById(composerInputId) as HTMLInputElement | null
+    const needsSpace =
+      input !== null &&
+      (input.selectionStart ?? 0) > 0 &&
+      !/\s$/.test(input.value.slice(0, input.selectionStart ?? 0))
+    insertInComposer.current?.(`${needsSpace ? ' ' : ''}@${member.name} `)
   }
   function command(effect: () => unknown, patch?: Partial<ChannelDraft>) {
     if (memory !== null) return lease?.command(effect, patch) ?? false
@@ -2157,6 +2285,10 @@ function MountedEspaceLiveView({
                       </TimelineDivider>
                     ) : (
                       <LiveMessageRow
+                        profileRole={memberProfile({ userId: row.message.sender }).role}
+                        onMention={
+                          isArchivedChannel || navigationUnsettled ? undefined : mentionMember
+                        }
                         key={row.key}
                         onlineLabel={
                           activeStore.isOnline?.(row.message.sender)
@@ -2415,69 +2547,82 @@ function MountedEspaceLiveView({
           >
             <span className="text-c-ok-ink">
               {t('console.workspace.members.online-count', {
-                count: roster.filter((m) => Boolean(activeStore.isOnline?.(m.userId))).length,
+                count: roster.filter((member) => memberProfile(member).presence !== 'offline')
+                  .length,
               })}
             </span>
             <span className="text-c-ink-3">
-              Hors ligne ({roster.filter((m) => !activeStore.isOnline?.(m.userId)).length})
+              {profileCopy.offline} (
+              {roster.filter((member) => memberProfile(member).presence === 'offline').length})
             </span>
           </div>
-          {(['admin', 'member'] as const).map((role) => {
-            const members = roster.filter(
-              (member) =>
-                (activeStore.getMemberRole?.(activeRoomId, member.userId) ?? 'member') === role
-            )
-            if (members.length === 0) return null
-            const label = t(
-              role === 'admin'
-                ? 'console.workspace.members.admins'
-                : 'console.workspace.members.title'
-            )
-            return (
-              <section key={role} aria-label={label} className="flex flex-col gap-2">
-                <h3 className="text-xs font-semibold text-c-ink-3">{label}</h3>
-                <ul className="flex flex-col gap-3">
-                  {members.map((member) => {
-                    const memberOnline = Boolean(activeStore.isOnline?.(member.userId))
-                    return (
-                      <li
-                        key={member.userId}
-                        className="flex min-w-0 items-center justify-between gap-2"
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Avatar
-                            name={member.name ?? displayNameOf(member.userId)}
-                            anonymous={member.name === undefined}
-                            identity={member.userId}
-                            size="lg"
-                            presenceGround="sunken"
-                            onlineLabel={
-                              memberOnline ? t('console.workspace.presence.online') : undefined
-                            }
-                          />
-                          <span className="truncate text-sm text-c-ink-2">
-                            {member.name ?? displayNameOf(member.userId)}
-                          </span>
-                        </div>
-                        <span
-                          className={cx(
-                            'shrink-0 rounded-sm px-2 py-1 font-mono text-xs font-medium',
-                            memberOnline ? 'bg-c-ok-soft text-c-ok-ink' : 'bg-c-muted text-c-ink-3'
-                          )}
-                        >
-                          {t(
-                            memberOnline
-                              ? 'console.workspace.members.state-online'
-                              : 'console.workspace.members.state-offline'
-                          )}
-                        </span>
+          {(['maintainer', 'core', 'admin', 'partner', 'member', 'offline'] as const).map(
+            (group) => {
+              const members = roster
+                .map(memberProfile)
+                .filter((member) =>
+                  group === 'offline'
+                    ? member.presence === 'offline'
+                    : member.presence !== 'offline' && member.role === group
+                )
+              if (members.length === 0) return null
+              const label =
+                group === 'offline'
+                  ? profileCopy.offlineGroup
+                  : group === 'admin'
+                    ? t('console.workspace.members.admins')
+                    : profileCopy[group]
+              return (
+                <section key={group} aria-label={label} className="flex flex-col gap-2">
+                  <h3 className="text-xs font-semibold text-c-ink-3">
+                    {label} · {members.length}
+                  </h3>
+                  <ul className="flex flex-col gap-1">
+                    {members.map((member) => (
+                      <li key={member.userId}>
+                        <UserProfilePopover
+                          member={member}
+                          onMention={
+                            isArchivedChannel || navigationUnsettled || member.userId === viewerId
+                              ? undefined
+                              : mentionMember
+                          }
+                          trigger={
+                            <button
+                              type="button"
+                              className="flex w-full min-w-0 items-center gap-3 rounded-lg p-2 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
+                            >
+                              <Avatar
+                                name={member.name}
+                                identity={member.userId}
+                                size="lg"
+                                presenceGround="sunken"
+                                onlineLabel={
+                                  member.presence === 'offline'
+                                    ? undefined
+                                    : member.presence === 'online'
+                                      ? t('console.workspace.presence.online')
+                                      : profileCopy[member.presence]
+                                }
+                              />
+                              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                <span className="truncate text-sm font-medium text-c-ink-2">
+                                  {member.name}
+                                </span>
+                                <span className="truncate text-xs text-c-ink-3">
+                                  {member.status || profileCopy[member.presence]}
+                                </span>
+                              </span>
+                            </button>
+                          }
+                        />
                       </li>
-                    )
-                  })}
-                </ul>
-              </section>
-            )
-          })}
+                    ))}
+                  </ul>
+                </section>
+              )
+            }
+          )}
         </aside>
       ) : null}
       {threadRootMessage !== undefined && activeChannel !== null && activeChannel !== undefined ? (
@@ -2492,6 +2637,8 @@ function MountedEspaceLiveView({
             returnFocusTo={threadFocusTarget}
             parent={
               <LiveMessageRow
+                profileRole={memberProfile({ userId: threadRootMessage.sender }).role}
+                onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
                 key={threadRootMessage.key}
                 onlineLabel={
                   activeStore.isOnline?.(threadRootMessage.sender)
@@ -2552,6 +2699,8 @@ function MountedEspaceLiveView({
           >
             {activeThreadReplies.map((reply) => (
               <LiveMessageRow
+                profileRole={memberProfile({ userId: reply.sender }).role}
+                onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
                 key={reply.key}
                 onlineLabel={
                   activeStore.isOnline?.(reply.sender)

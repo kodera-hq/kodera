@@ -10,6 +10,7 @@ import {
   createRouter,
 } from '@tanstack/react-router'
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { TenantApp } from '../features/status/AppsCard'
@@ -70,7 +71,7 @@ describe("the workspace's tab bar on a phone (G11)", () => {
 
     const links = within(bar).getAllByRole('link')
     expect(links.map((link) => link.textContent)).toEqual(['Accueil', 'Messages', 'Visio', 'Docs'])
-    expect(within(bar).getByRole('list')).toHaveClass('grid-cols-4')
+    expect(within(bar).getByRole('list')).toHaveClass('grid-cols-5')
   })
 
   it('leads « Accueil » to the console home, and marks « Messages » current on a channel', async () => {
@@ -98,7 +99,7 @@ describe("the workspace's tab bar on a phone (G11)", () => {
     expect(visio.querySelector('svg')).toHaveAttribute('data-glyph', 'visio')
   })
 
-  it('draws two places when the tenant runs nothing but Espace', async () => {
+  it('draws home, messages, and settings when the tenant runs only Espace', async () => {
     tenant.apps = [app('messaging', 'Espace')]
     const bar = await openAt('/acme-sa/workspace')
 
@@ -107,10 +108,10 @@ describe("the workspace's tab bar on a phone (G11)", () => {
         .getAllByRole('link')
         .map((link) => link.textContent)
     ).toEqual(['Accueil', 'Messages'])
-    expect(within(bar).getByRole('list')).toHaveClass('grid-cols-2')
+    expect(within(bar).getByRole('list')).toHaveClass('grid-cols-3')
   })
 
-  it('gives every application a column, six with all four', async () => {
+  it('gives every application and settings a column', async () => {
     tenant.apps = [
       app('visio', 'Visio'),
       app('docs', 'Docs'),
@@ -120,7 +121,7 @@ describe("the workspace's tab bar on a phone (G11)", () => {
     const bar = await openAt('/acme-sa/workspace')
 
     expect(within(bar).getAllByRole('link')).toHaveLength(6)
-    expect(within(bar).getByRole('list')).toHaveClass('grid-cols-6')
+    expect(within(bar).getByRole('list')).toHaveClass('grid-cols-7')
   })
 
   it("draws every glyph at the tab's size, beside the console tab bar's", async () => {
@@ -131,7 +132,7 @@ describe("the workspace's tab bar on a phone (G11)", () => {
       expect(glyph).toHaveAttribute('width', '17')
       expect(glyph).toHaveAttribute('stroke-width', '1.8')
     }
-    expect(bar.querySelectorAll('svg')).toHaveLength(3)
+    expect(bar.querySelectorAll('svg')).toHaveLength(4)
   })
 
   it('publishes its height for the toasts and focused controls to clear', async () => {
@@ -139,4 +140,17 @@ describe("the workspace's tab bar on a phone (G11)", () => {
 
     expect(document.documentElement.style.getPropertyValue('--shell-tab-bar-block')).not.toBe('')
   })
+})
+
+it('opens unified settings from the mobile module bar without changing the current room', async () => {
+  const listener = vi.fn()
+  window.addEventListener('kodera:workspace-command', listener)
+  const bar = await openAt('/acme-sa/workspace/room-1')
+  await userEvent.setup().click(within(bar).getByRole('button', { name: 'Réglages' }))
+  expect(listener.mock.calls[0]?.[0].detail).toBe('settings')
+  expect(within(bar).getByRole('link', { name: 'Messages' })).toHaveAttribute(
+    'aria-current',
+    'page'
+  )
+  window.removeEventListener('kodera:workspace-command', listener)
 })
