@@ -1,10 +1,9 @@
 import { http, HttpResponse } from 'msw'
-import { communityMe, isCommunityDemoRequest } from '../demo/community'
+import { communityMe } from '../demo/community'
 
 /** The interactive community demo with ordinary member authority for settings acceptance. */
 export const handlers = [
-  http.get('*/api/v1/me', ({ request }) => {
-    if (!isCommunityDemoRequest(request)) return
+  http.get('*/api/v1/me', () => {
     const me = communityMe(new Date())
     return HttpResponse.json({
       ...me,
