@@ -53,6 +53,7 @@ COMMANDS = [
     "load_legal_documents",
     # The support ticket mails (SUPPORT_TICKETS.md §6).
     "send_support_tickets",
+    "triage_support_tickets",
     # The pilot's operator override of a tenant's status (QUICK_WORKSPACE.md §5).
     "tenant_status",
     # The tenant agent's credential (ADR-0016), and the read-only lag report that comes with it.
