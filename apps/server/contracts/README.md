@@ -531,3 +531,7 @@ The reusable server workflow is required by the root `ci-ok` aggregate.
 With oasdiff 1.37.0, requiring authentication on an anonymous operation is the built-in ERR
 `api-security-anonymous-access-removed`. The obsolete `api-security-added` override is removed;
 the `security-added` failure proof still requires the breaking-change label refusal.
+
+`response-required-property-became-write-only` is also a built-in ERR in this release.
+Its redundant override is removed, while a dedicated real-contract-pair self-test retains
+the error and label-refusal assertions. Every remaining override has a deletion mutation.

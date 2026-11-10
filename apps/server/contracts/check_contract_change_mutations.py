@@ -442,8 +442,7 @@ def severity_mutations() -> list[Mutation]:
             f"{line}\n",
             "",
             f"override-{line.split()[0]}",
-            (f"missing 'ERR  {line.split()[0]}'"
-             if line.split()[0] == "response-required-property-became-write-only" else REFUSED),
+            REFUSED,
         )
         for line in lines
     ]

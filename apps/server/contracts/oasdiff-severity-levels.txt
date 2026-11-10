@@ -20,5 +20,4 @@ api-removed-with-deprecation err
 request-parameter-removed-with-deprecation err
 response-optional-property-became-write-only err
 response-optional-write-only-property-removed err
-response-required-property-became-write-only err
 response-required-write-only-property-removed err

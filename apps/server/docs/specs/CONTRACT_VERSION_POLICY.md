@@ -190,11 +190,11 @@ silently on a version bump.
 |---|---|
 | An enum member is added in a minor only where the contract says the enum is open, and neither contract says so | `request-parameter-enum-value-added`, `request-parameter-property-enum-value-added`, `request-property-enum-value-added`; an added response member is already ERR |
 | A removed enum member | `response-property-enum-value-removed`, `response-mediatype-enum-value-removed` |
-| A removed or renamed field | `response-optional-property-removed`; and a field removed in two steps, `response-optional-property-became-write-only` then `response-optional-write-only-property-removed`, or for a required field `response-required-property-became-write-only` then `response-required-write-only-property-removed` |
+| A removed or renamed field | `response-optional-property-removed`; and a field removed in two steps, `response-optional-property-became-write-only` then `response-optional-write-only-property-removed`, or for a required field the built-in ERR `response-required-property-became-write-only` then the override `response-required-write-only-property-removed` |
 | A changed status code | `response-non-success-status-removed` |
 | A changed default | `-default-value-changed` and `-default-value-removed` for request parameters, request and response bodies, and request and response properties |
 | Anything a client can break on: an endpoint, path or parameter removed after its deprecation | `api-path-removed-with-deprecation`, `api-removed-with-deprecation`, `request-parameter-removed-with-deprecation` |
-| Anything a client can break on: security required where the operation had none | `api-security-added` |
+| Anything a client can break on: security required where the operation had none | Built-in ERR `api-security-anonymous-access-removed` in oasdiff 1.37.0; no override required |
 
 ### Labels
 

@@ -64,3 +64,12 @@ fbe7ebe0224f8b921d5a17a39fe4a716467031eb:packages/extension-sdk/test/sdk.test.mj
 fbe7ebe0224f8b921d5a17a39fe4a716467031eb:packages/synapse-policy/tests/integration/scenario.py:generic-api-key:20
 # Synthetic encrypted Matrix event sender public key; no private key.
 fbe7ebe0224f8b921d5a17a39fe4a716467031eb:packages/synapse-policy/tests/test_policy.py:generic-api-key:189
+
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/android/scripts/ci/check-app-resources.py:generic-api-key:66
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/android/scripts/ci/check-app-resources.py:generic-api-key:67
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:46
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:47

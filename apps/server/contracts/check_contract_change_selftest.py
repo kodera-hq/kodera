@@ -418,7 +418,6 @@ def _remove_required_note(d: dict[str, Any]) -> None:
 
 # check id -> (edit to the probe before the base commit, or None; edit that makes the head)
 OVERRIDE_PAIRS: dict[str, tuple[Edit | None, Edit]] = {
-    "response-required-property-became-write-only": (_require_note, _write_only_note),
     "response-required-write-only-property-removed": (
         _required_write_only_note,
         _remove_required_note,
@@ -1195,8 +1194,8 @@ def _policy_without_verdict(f: Fixture) -> Run:
     return Run(head, PR, 2, ("without a verdict",), extra=("--policy", stub))
 
 
-def override_case(check: str) -> Callable[[Fixture], Run]:
-    setup, change = OVERRIDE_PAIRS[check]
+def override_case(check: str, pair: tuple[Edit | None, Edit]) -> Callable[[Fixture], Run]:
+    setup, change = pair
 
     def build(f: Fixture) -> Run:
         base = probe_document()
@@ -1216,7 +1215,13 @@ def override_case(check: str) -> Callable[[Fixture], Run]:
 
 
 for _check in OVERRIDE_PAIRS:
-    case(f"override-{_check}")(override_case(_check))
+    case(f"override-{_check}")(override_case(_check, OVERRIDE_PAIRS[_check]))
+
+
+# This rule is ERR in the pinned release without an override. Keep its real-pair proof.
+case("builtin-response-required-property-became-write-only")(
+    override_case("response-required-property-became-write-only", (_require_note, _write_only_note))
+)
 
 
 def verify(
