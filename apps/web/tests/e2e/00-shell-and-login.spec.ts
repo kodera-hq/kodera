@@ -298,7 +298,7 @@ test('shell/session: sends a refused session to sign in again once, then offers 
     page.getByRole('heading', { level: 1, name: "Nous n'avons pas pu rétablir votre session" })
   ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Se reconnecter' })).toHaveCount(0)
-  await expect(page.getByText(/écrivez-nous à hello@kodera\.io/)).toBeVisible()
+  await expect(page.getByText(/écrivez-nous à support@kodera\.io/)).toBeVisible()
   await page.getByRole('button', { name: 'Se déconnecter' }).click()
   await page.waitForURL((url) => url.pathname === '/login')
 })
