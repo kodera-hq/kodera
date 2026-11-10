@@ -19,7 +19,7 @@ describe('DocsWorkspacePanel', () => {
     expect(
       screen.getByRole('heading', { name: 'Docs — Documents collaboratifs' })
     ).toBeInTheDocument()
-    expect(screen.getByText('Notes — Général & Équipe')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Notes — Général & Équipe' })).toBeInTheDocument()
 
     const openLink = screen.getByRole('link', {
       name: /Ouvrir Notes — Général & Équipe dans Docs/i,
@@ -90,9 +90,7 @@ describe('DocsWorkspacePanel', () => {
     await user.click(copyBtn)
 
     expect(onCopyPadLink).toHaveBeenCalledWith(pads[1]!.url)
-    expect(screen.getByRole('button', { name: /Copier le lien/i })).toHaveTextContent(
-      'Lien copié'
-    )
+    expect(screen.getByRole('button', { name: /Copier le lien/i })).toHaveTextContent('Lien copié')
   })
 
   it('falls back to the canonical channel pad URL if a provided pad URL targets an untrusted origin', () => {
@@ -159,7 +157,9 @@ describe('DocsWorkspacePanel', () => {
       <DocsWorkspacePanel tenantSlug="acme-fr" channelId="chan-ops" channelName="Opérations" />
     )
 
-    expect(container.textContent).not.toMatch(/Yjs|CRDT|temps réel|Instance dédiée|Modifié en direct/i)
+    expect(container.textContent).not.toMatch(
+      /Yjs|CRDT|temps réel|Instance dédiée|Modifié en direct/i
+    )
     expect(screen.getByText('En développement')).toBeInTheDocument()
     expect(screen.getByTestId('docs-inline-notice')).toHaveTextContent(
       'La co-édition en direct est en développement'
@@ -168,14 +168,14 @@ describe('DocsWorkspacePanel', () => {
       'Brouillon local, non partagé'
     )
 
-    await user.click(screen.getByRole('button', { name: 'Titre H2' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Style de titre' }), 'h3')
+    expect((screen.getByTestId('docs-inline-textarea') as HTMLTextAreaElement).value).toContain(
+      '### '
+    )
     expect(screen.getByTestId('docs-inline-save-badge')).toHaveTextContent(
       'Brouillon modifié, non partagé'
     )
-    await user.click(screen.getByRole('button', { name: 'Conserver le brouillon' }))
-    expect(screen.getByTestId('docs-inline-save-badge')).toHaveTextContent(
-      'Brouillon conservé pour Notes — Opérations, non partagé'
-    )
+    expect(screen.getByRole('button', { name: 'Partager' })).toBeDisabled()
     expect(container.textContent).not.toMatch(/Yjs|CRDT/i)
   })
 })

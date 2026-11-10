@@ -1,3 +1,4 @@
+import { MarkdownDraftEditor } from './MarkdownDraftEditor'
 import { cx } from '@/ui/cx'
 import { TOUCH_TARGET } from '@/ui/touchTarget'
 import { useId, useMemo, useState, type ReactNode } from 'react'
@@ -174,19 +175,19 @@ export function DocsWorkspacePanel({
   return (
     <section
       aria-label={copy.workspace}
-      className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4"
+      className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto"
     >
       <div
         role="group"
         aria-label={copy.views}
-        className="flex flex-wrap gap-2 border-b border-c-border-soft pb-4"
+        className="flex flex-wrap gap-2 border-b border-c-border-soft pb-2"
       >
         {(['team', 'developer'] as const).map((next) => (
           <button
             key={next}
             type="button"
             className={cx(
-              'inline-flex min-h-10 max-w-full items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold focus-visible:ring focus-visible:outline-hidden',
+              'inline-flex min-h-10 max-w-full items-center justify-center rounded-md border px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden',
               TOUCH_TARGET,
               selectedView === next
                 ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
@@ -288,68 +289,16 @@ export function DocsWorkspacePanel({
                     {t('console.docs.panel.editor-notice')}
                   </p>
 
-                  <div className="flex flex-wrap items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setInlineContent(
-                          (prev) => `${prev}\n## ${t('console.docs.panel.snippet-heading')}`
-                        )
-                        setInlineSavedLabel(t('console.docs.panel.draft-edited'))
-                      }}
-                    >
-                      {t('console.docs.panel.action-insert-heading')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setInlineContent(
-                          (prev) => `${prev}\n- [ ] ${t('console.docs.panel.snippet-action')}`
-                        )
-                        setInlineSavedLabel(t('console.docs.panel.draft-edited'))
-                      }}
-                    >
-                      {t('console.docs.panel.action-insert-action')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setInlineContent(
-                          (prev) => `${prev}\n> ${t('console.docs.panel.snippet-decision')}`
-                        )
-                        setInlineSavedLabel(t('console.docs.panel.draft-edited'))
-                      }}
-                    >
-                      {t('console.docs.panel.action-insert-decision')}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      data-testid="docs-inline-save-btn"
-                      onClick={() =>
-                        setInlineSavedLabel(
-                          t('console.docs.panel.draft-kept', { title: currentPad.title })
-                        )
-                      }
-                    >
-                      {t('console.docs.panel.action-keep-draft')}
-                    </Button>
-                  </div>
-
-                  <textarea
-                    aria-label={t('console.docs.panel.editor-label')}
-                    data-testid="docs-inline-textarea"
-                    value={inlineContent}
-                    onChange={(event) => {
-                      setInlineContent(event.target.value)
+                  <MarkdownDraftEditor
+                    title={currentPad.title}
+                    channelName={channelName}
+                    content={inlineContent}
+                    onChange={(content) => {
+                      setInlineContent(content)
                       setInlineSavedLabel(t('console.docs.panel.draft-edited'))
                     }}
-                    maxLength={65_536}
-                    rows={5}
-                    className="w-full rounded-md border border-c-border-input bg-c-sunken p-2 font-mono text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                    sourceLabel={t('console.docs.panel.editor-label')}
+                    sourceTestId="docs-inline-textarea"
                   />
                 </div>
               </div>

@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT. kodera-native-tokens/1
 // Public source checksum (SHA-256)
-// 6006e5efe557bc754e6d04ce4601e84cce104dfd1685dd76d43b8867701e8be8
+// f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a
 // Source file: tokens.json
 
 package io.kodera.tokens
@@ -374,6 +374,7 @@ public object KoderaTokens {
         public val medium = ComposeFontWeight(500)
         public val semibold = ComposeFontWeight(600)
         public val bold = ComposeFontWeight(700)
+        public val extrabold = ComposeFontWeight(800)
     }
     public object FontFamily {
         public val sans = Family(primary = "Plus Jakarta Sans", fallbacks = listOf("system-ui", "-apple-system", "Segoe UI", "sans-serif"))

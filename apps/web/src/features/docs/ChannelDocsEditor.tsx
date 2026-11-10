@@ -1,3 +1,4 @@
+import { MarkdownDraftEditor } from './MarkdownDraftEditor'
 import { useId, useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
@@ -35,7 +36,6 @@ export function ChannelDocsEditor({
   const { i18n } = useTranslation()
   const copy = channelDocsMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const titleId = useId()
-  const bodyId = useId()
   const templateId = useId()
   const [template, setTemplate] = useState<'blank' | 'meeting' | 'decision'>('blank')
   const [status, setStatus] = useState<string | null>(null)
@@ -86,30 +86,13 @@ export function ChannelDocsEditor({
       setPublishing(false)
     }
   }
-  const download = () => {
-    if (!current) return
-    const url = URL.createObjectURL(
-      new Blob([current.content], { type: 'text/markdown;charset=utf-8' })
-    )
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `${current.id}.md`
-    anchor.click()
-    URL.revokeObjectURL(url)
-  }
   return (
-    <section
-      aria-label={copy.title}
-      className="flex min-h-0 flex-col gap-4 rounded-lg border border-c-border bg-c-surface p-4"
-    >
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-c-ink">
-            {copy.title} · #{channelName}
-          </h2>
-          <p className="text-xs text-c-ink-3">{copy.local}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <section aria-label={copy.title} className="flex min-h-0 flex-col bg-c-surface">
+      <details open={!current} className="border-b border-c-border-soft p-3">
+        <summary className="cursor-pointer text-sm font-bold text-c-ink focus-visible:ring">
+          {copy.documents}
+        </summary>
+        <div className="flex flex-wrap items-center gap-3 py-3">
           <label htmlFor={templateId} className="text-sm text-c-ink-2">
             {copy.template}
           </label>
@@ -129,91 +112,66 @@ export function ChannelDocsEditor({
             {copy.new}
           </Button>
         </div>
-      </header>
-      {current ? (
-        <>
-          <nav aria-label={copy.documents} className="flex flex-wrap gap-2">
-            {docs.map((doc) => (
-              <button
-                type="button"
-                key={doc.id}
-                aria-pressed={doc.id === current.id}
-                onClick={() => {
-                  onWorkspaceChange((prev) => ({
-                    ...prev,
-                    selectedByChannel: { ...prev.selectedByChannel, [channelId]: doc.id },
-                  }))
-                  setStatus(null)
-                }}
-                className={cx(
-                  'min-h-10 rounded-md border px-3 py-2 text-sm focus-visible:ring',
-                  doc.id === current.id
-                    ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
-                    : 'border-c-border bg-c-surface text-c-ink'
-                )}
-              >
-                {doc.title}
-              </button>
-            ))}
-          </nav>
-          <label htmlFor={titleId} className="text-sm font-medium text-c-ink">
-            {copy.documentTitle}
-          </label>
-          <input
-            id={titleId}
-            value={current.title}
-            maxLength={120}
-            onChange={(event) => update({ title: event.target.value })}
-            className="h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-c-ink focus-visible:ring"
-          />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="flex flex-col gap-2">
-              <label htmlFor={bodyId} className="text-sm font-medium text-c-ink">
-                {copy.body}
-              </label>
-              <textarea
-                id={bodyId}
-                value={current.content}
-                rows={12}
-                onChange={(event) => update({ content: event.target.value })}
-                className="w-full flex-1 rounded-md border border-c-border-input bg-c-surface p-3 font-mono text-sm text-c-ink focus-visible:ring"
+        {current ? (
+          <>
+            <nav aria-label={copy.documents} className="flex flex-wrap gap-2 pb-3">
+              {docs.map((doc) => (
+                <button
+                  type="button"
+                  key={doc.id}
+                  aria-pressed={doc.id === current.id}
+                  onClick={() => {
+                    onWorkspaceChange((prev) => ({
+                      ...prev,
+                      selectedByChannel: { ...prev.selectedByChannel, [channelId]: doc.id },
+                    }))
+                    setStatus(null)
+                  }}
+                  className={cx(
+                    'min-h-10 rounded-md border px-3 py-2 text-sm focus-visible:ring',
+                    doc.id === current.id
+                      ? 'border-c-border bg-c-ok-soft font-bold text-c-ink'
+                      : 'border-c-border bg-c-surface text-c-ink'
+                  )}
+                >
+                  {doc.title}
+                </button>
+              ))}
+            </nav>
+            <label htmlFor={titleId} className="flex flex-col gap-2 text-sm text-c-ink">
+              {copy.documentTitle}
+              <input
+                id={titleId}
+                value={current.title}
+                maxLength={120}
+                onChange={(event) => update({ title: event.target.value })}
+                className="h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-c-ink focus-visible:ring"
               />
-            </div>
-            <section
-              aria-label={copy.preview}
-              className="flex flex-col gap-2 rounded-md border border-c-border-soft bg-c-sunken p-3"
-            >
-              <h3 className="text-sm font-semibold text-c-ink">{copy.preview}</h3>
-              {current.content.split('\n').map((line, index) =>
-                line.startsWith('## ') ? (
-                  <h4 key={index} className="text-md font-semibold text-c-ink">
-                    {line.slice(3)}
-                  </h4>
-                ) : (
-                  <p key={index} className="text-sm whitespace-pre-wrap text-c-ink-2">
-                    {line || '\u00a0'}
-                  </p>
-                )
-              )}
-            </section>
-          </div>
-          <div className="flex flex-wrap gap-2">
+            </label>
+          </>
+        ) : (
+          <p className="text-sm text-c-ink-2">{copy.empty}</p>
+        )}
+      </details>
+      {current ? (
+        <MarkdownDraftEditor
+          key={current.id}
+          title={current.title}
+          channelName={channelName}
+          content={current.content}
+          onChange={(content) => update({ content })}
+          shareAction={
             <Button
               disabled={publishing || !current.title.trim() || !current.content.trim()}
               onClick={() => void publish()}
             >
               {copy.publish}
             </Button>
-            <Button variant="secondary" onClick={download}>
-              {copy.exporting}
-            </Button>
-          </div>
-        </>
-      ) : (
-        <p className="text-sm text-c-ink-2">{copy.empty}</p>
-      )}
+          }
+        />
+      ) : null}
       {status ? (
-        <p role="status" className="text-sm text-c-ink-2">
+        <p role="status" className="p-3 text-sm text-c-ink-2">
           {status}
         </p>
       ) : null}

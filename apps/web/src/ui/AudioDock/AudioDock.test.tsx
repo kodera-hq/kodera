@@ -254,3 +254,24 @@ describe('AudioDock', () => {
     }
   })
 })
+
+it('renders four named audio participants without fabricating video tracks', () => {
+  setup({
+    layout: 'studio',
+    participantsLabel: 'Participants',
+    cameraUnavailable: 'Video unavailable',
+    participants: ['Ari', 'Bo', 'Cam', 'Dee'].map((name, index) => ({
+      id: `fixture-${index}`,
+      name,
+      speaking: index === 1,
+    })),
+  })
+  expect(
+    within(screen.getByRole('list', { name: 'Participants' })).getAllByRole('listitem')
+  ).toHaveLength(4)
+  expect(screen.getByRole('button', { name: 'Video unavailable' })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  expect(document.querySelectorAll('video')).toHaveLength(0)
+})

@@ -1,3 +1,5 @@
+import { StudioNavigation } from '../workspace/StudioNavigation'
+import { studioMessages } from '../workspace/studioMessages'
 import {
   Fragment,
   useEffect,
@@ -1880,7 +1882,7 @@ function MountedEspaceLiveView({
   const guardCall = LIVE_CALL.has(callSnapshot.status) && !signedOut
 
   const channelNavigation = (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {/* On a phone the column is the whole screen: the top bar already carries the
               organisation and its switch, and a touch screen has no shortcut to show. */}
       <div className="flex flex-col gap-3">
@@ -1890,9 +1892,27 @@ function MountedEspaceLiveView({
           {t('console.workspace.sidebar.title')}
         </h2>
         <ChannelSearch entries={searchEntries} onChoose={openFromSearch} shortcut={!narrow} />
+        <StudioNavigation
+          compact={narrow}
+          section="primary"
+          mode={activeCanvasMode ?? 'chat'}
+          onChange={
+            onChangeCanvasMode
+              ? (mode) => {
+                  onChangeCanvasMode(mode)
+                  if (narrow) {
+                    channelChooserReturnFocus.current = headingRef.current
+                    setChannelsOpen(false)
+                  }
+                }
+              : undefined
+          }
+          rooms={searchEntries.filter((entry) => entry.kind === 'audio')}
+          onChoose={openFromSearch}
+        />
         {sidebarActionSlot ?? null}
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {workspace.uncategorised_channels.length > 0 ? (
           <ul className="flex flex-col gap-1 border-b border-c-border-soft pb-2">
             {workspace.uncategorised_channels.map((channel) =>
@@ -1958,6 +1978,20 @@ function MountedEspaceLiveView({
             </p>
           ) : null}
           <AudioDock
+            layout="studio"
+            participants={callSnapshot.participants.map((id) => ({
+              id,
+              name:
+                snapshot.rooms.find((room) => room.roomId === callSnapshot.roomId)?.names?.[id] ??
+                displayNameOf(id),
+              speaking: dockStatus === 'connected' && callSnapshot.speakers.includes(id),
+            }))}
+            participantsLabel={
+              studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr'].participants
+            }
+            cameraUnavailable={
+              studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr'].cameraGap
+            }
             label={t('console.workspace.audio.label-dock')}
             room={callChannel.roomName}
             {...(callChannel.categoryName === undefined
@@ -2000,734 +2034,745 @@ function MountedEspaceLiveView({
     <nav
       aria-labelledby={sidebarHeadingId}
       style={narrow ? undefined : { width: `${leftSidebarWidth}px` }}
-      className="order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-y-auto border-r border-c-border-soft bg-c-sunken p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0"
+      className="order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft bg-c-sunken p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0"
     >
-      {channelNavigation}
-      {narrow ? null : callControls}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {channelNavigation}
+        <StudioNavigation
+          compact={narrow}
+          section="tools"
+          mode={activeCanvasMode ?? 'chat'}
+          onChange={
+            onChangeCanvasMode
+              ? (mode) => {
+                  onChangeCanvasMode(mode)
+                  if (narrow) {
+                    channelChooserReturnFocus.current = headingRef.current
+                    setChannelsOpen(false)
+                  }
+                }
+              : undefined
+          }
+          rooms={searchEntries.filter((entry) => entry.kind === 'audio')}
+          onChoose={openFromSearch}
+        />
+      </div>
       {sidebarFooterSlot ?? null}
     </nav>
   )
 
   return (
-    <div className="flex min-h-0 flex-1 narrow:flex-col">
-      {narrow ? (
-        <div className="order-first flex shrink-0 flex-col gap-3 border-b border-c-border-soft pb-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <OrganisationHeader name={organisationName} slug={org} />
-            </div>
-            <Drawer
-              open={channelsOpen}
-              onOpenChange={changeChannelChooser}
-              side="bottom"
-              title={t('console.workspace.sidebar.title')}
-              closeLabel={t('console.common.action-close')}
-              returnFocusTo={channelChooserReturnFocus}
-              trigger={
-                <Button variant="secondary" size="sm" className="shrink-0">
-                  {t('console.workspace.sidebar.title')}
-                </Button>
-              }
-            >
-              {sidebar}
-            </Drawer>
-          </div>
-          {callControls}
-        </div>
-      ) : null}
-      {inRouter ? <LeaveCallGuard live={guardCall} /> : null}
-      {narrow ? null : (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-        <div
-          data-testid="espace-sidebar-primary-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('console.workspace.layout.resize-channels')}
-          aria-valuenow={leftSidebarWidth}
-          aria-valuemin={180}
-          aria-valuemax={420}
-          // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-          tabIndex={0}
-          onMouseDown={startLeftSidebarResize}
-          onDoubleClick={() => setLeftSidebarWidth(256)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') {
-              event.preventDefault()
-              setLeftSidebarWidth((w) => Math.max(180, w - 16))
-            } else if (event.key === 'ArrowRight') {
-              event.preventDefault()
-              setLeftSidebarWidth((w) => Math.min(420, w + 16))
-            }
-          }}
-          className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
-        />
-      )}
-      {/* `Escape` from anything in the column that did not use it (spec « Keyboard shortcuts »). */}
-      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-      <section
-        ref={channelColumn}
-        onKeyDown={columnKeyDown}
-        className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:overflow-visible narrow:bg-transparent narrow:p-0"
-      >
-        <p aria-live="polite" aria-atomic="true" className="sr-only">
-          {announcement.count === 0 ? null : (
-            <span key={announcement.count}>{announcement.text}</span>
-          )}
-        </p>
-        <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap">
-          <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
-            {activeChannel === null || activeChannel === undefined ? (
-              <h1
-                ref={headingRef}
-                tabIndex={-1}
-                data-route-heading=""
-                className="text-lg font-semibold text-c-ink"
-              >
-                {t(
-                  activeChannel === null
-                    ? 'console.workspace.channel.title-not-found'
-                    : 'console.workspace._.title'
-                )}
-              </h1>
-            ) : (
-              <h1
-                ref={headingRef}
-                tabIndex={-1}
-                data-route-heading=""
-                className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
-              >
-                <span aria-hidden="true" className="text-c-ink-3">
-                  {isEmergencyChannel(activeChannel, emergencyChannelIds) ? <AntennaIcon /> : '#'}
-                </span>
-                <span className="min-w-0 truncate">{activeChannelName}</span>
-              </h1>
-            )}
-            {headerLine.length > 0 ? (
-              <div className="flex min-w-0 items-center gap-2">
-                <p className="min-w-0 text-sm text-c-ink-3">
-                  {headerLine.map((part, index) => (
-                    <Fragment key={part.key}>
-                      {index > 0 ? (
-                        <>
-                          {' '}
-                          <span aria-hidden="true">·</span>{' '}
-                        </>
-                      ) : null}
-                      <span>{part.text}</span>
-                    </Fragment>
-                  ))}
-                </p>
-                {/* Reference screen p02: who is here, at a glance, beside the count that says it
-                    in words, so the faces are not read. Someone with no name gets a person
-                    glyph, never a character of their id. */}
-                {memberCount !== null && faces.length > 0 ? (
-                  <span className="flex shrink-0 gap-1 narrow:hidden">
-                    {faces.map((face) => (
-                      <Avatar
-                        key={face.userId}
-                        name={face.name ?? displayNameOf(face.userId)}
-                        identity={face.userId}
-                        onlineLabel={
-                          activeStore.isOnline?.(face.userId)
-                            ? t('console.workspace.presence.online')
-                            : undefined
-                        }
-                        anonymous={face.name === undefined}
-                        size="xs"
-                        className="ring-2 ring-c-surface"
-                      />
-                    ))}
-                  </span>
-                ) : null}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="studio-workspace">
+      <div className="flex min-h-0 flex-1 narrow:flex-col">
+        {narrow ? (
+          <div className="order-first flex shrink-0 flex-col gap-3 border-b border-c-border-soft pb-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <OrganisationHeader name={organisationName} slug={org} />
               </div>
-            ) : null}
-          </div>
-          {activeRoom !== undefined && activeChannel != null && !focusedDocs ? (
-            <ChannelInviteDialog
-              key={`${org}:${activeRoom.roomId}`}
-              org={org}
-              channel={activeChannel}
-              room={activeRoom}
-              store={activeStore}
-              unavailable={navigationUnsettled || signedOut}
-            />
-          ) : null}
-          {activeRoomId === null || focusedDocs ? null : (
-            <Button
-              variant="tertiary"
-              size="sm"
-              icon={<PersonIcon />}
-              iconOnly
-              aria-label={t('console.workspace.members.title')}
-              ref={membersTrigger}
-              aria-controls={membersPanelId}
-              aria-expanded={membersOpen}
-              onClick={() => setMembersOpen((open) => !open)}
-            />
-          )}
-          {onChangeCanvasMode !== undefined ? (
-            <div
-              role="group"
-              aria-label={t('console.workspace.canvas.mode-label')}
-              className="flex items-center gap-1 rounded-md border border-c-border-soft bg-c-sunken p-1"
-            >
-              <button
-                type="button"
-                data-testid="espace-canvas-mode-chat"
-                aria-pressed={activeCanvasMode !== 'docs'}
-                onClick={() => onChangeCanvasMode('chat')}
-                className={cx(
-                  'rounded-sm px-3 py-1 text-xs font-semibold transition-colors focus-visible:ring focus-visible:outline-hidden',
-                  activeCanvasMode !== 'docs'
-                    ? 'bg-c-surface text-c-ink shadow-xs'
-                    : 'text-c-ink-3 hover:text-c-ink'
-                )}
+              <Drawer
+                open={channelsOpen}
+                onOpenChange={changeChannelChooser}
+                side="bottom"
+                title={t('console.workspace.sidebar.title')}
+                closeLabel={t('console.common.action-close')}
+                returnFocusTo={channelChooserReturnFocus}
+                trigger={
+                  <Button variant="secondary" size="sm" className="shrink-0">
+                    {t('console.workspace.sidebar.title')}
+                  </Button>
+                }
               >
-                {t('console.workspace.canvas.mode-chat')}
-              </button>
-              <button
-                type="button"
-                data-testid="workspace-docs-editor-toggle"
-                aria-pressed={activeCanvasMode === 'docs'}
-                onClick={() => onChangeCanvasMode(activeCanvasMode === 'docs' ? 'chat' : 'docs')}
-                className={cx(
-                  'rounded-sm px-3 py-1 text-xs font-semibold transition-colors focus-visible:ring focus-visible:outline-hidden',
-                  activeCanvasMode === 'docs'
-                    ? 'bg-c-accent-soft text-c-accent-ink'
-                    : 'text-c-ink-3 hover:text-c-ink'
-                )}
-              >
-                {t('console.workspace.canvas.mode-docs')}
-              </button>
+                {sidebar}
+              </Drawer>
             </div>
-          ) : null}
-        </header>
-
-        {snapshot.status === 'signed-out' ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <InlineAlert kind="warning">
-              {t('console.workspace.message.session-expired')}
-            </InlineAlert>
-            {onReconnect === undefined ? null : (
-              <Button variant="secondary" size="sm" onClick={onReconnect}>
-                {t('console.workspace.message.action-reconnect')}
-              </Button>
-            )}
           </div>
         ) : null}
-
-        {activeChannel === null || activeChannel === undefined ? null : activeCanvasMode ===
-            'docs' && docsCanvasSlot !== undefined ? (
-          <div data-testid="espace-inline-docs-canvas" className="flex min-h-0 flex-1 flex-col">
-            {docsCanvasSlot}
-          </div>
-        ) : (
-          <>
-            {isEmergencyChannel(activeChannel, emergencyChannelIds) &&
-            renderEmergencyPanel !== undefined ? (
-              <div data-testid="espace-emergency-room-surface" className="flex flex-col gap-3">
-                <div data-testid="emergency-room-panel">{renderEmergencyPanel(activeChannel)}</div>
-              </div>
-            ) : null}
-            <div
-              ref={logRef}
-              onScroll={onLogScroll}
-              role="log"
-              aria-label={t('console.workspace.channel.log-label', { channel: activeChannelName })}
-              aria-busy={history === 'loading' ? true : undefined}
-              // The first row's top margin takes the space a short log leaves, so the messages
-              // rest on the composer. An auto margin gives way once the log overflows; a
-              // `justify-end` would push the oldest rows out of scrolling reach instead.
-              className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto py-2 [&>:first-child]:mt-auto"
-            >
-              {history === undefined || (history === 'start' && timeline.length === 0) ? null : (
-                <HistoryEdge
-                  history={history}
-                  channel={activeChannelName}
-                  onLoadOlder={showOlder}
-                />
-              )}
-              {history === 'start' || (timeline.length === 0 && history === undefined) ? (
-                <div className="flex flex-col gap-2 py-8">
-                  <span
-                    aria-hidden="true"
-                    className="flex h-12 w-12 items-center justify-center rounded-full bg-c-muted text-xl text-c-ink-3"
-                  >
-                    #
+        {inRouter ? <LeaveCallGuard live={guardCall} /> : null}
+        {narrow ? null : (
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+          <div
+            data-testid="espace-sidebar-primary-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('console.workspace.layout.resize-channels')}
+            aria-valuenow={leftSidebarWidth}
+            aria-valuemin={180}
+            aria-valuemax={420}
+            // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+            onMouseDown={startLeftSidebarResize}
+            onDoubleClick={() => setLeftSidebarWidth(256)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft') {
+                event.preventDefault()
+                setLeftSidebarWidth((w) => Math.max(180, w - 16))
+              } else if (event.key === 'ArrowRight') {
+                event.preventDefault()
+                setLeftSidebarWidth((w) => Math.min(420, w + 16))
+              }
+            }}
+            className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
+          />
+        )}
+        {/* `Escape` from anything in the column that did not use it (spec « Keyboard shortcuts »). */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
+        <section
+          ref={channelColumn}
+          onKeyDown={columnKeyDown}
+          className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:overflow-visible narrow:bg-transparent narrow:p-0"
+        >
+          <p aria-live="polite" aria-atomic="true" className="sr-only">
+            {announcement.count === 0 ? null : (
+              <span key={announcement.count}>{announcement.text}</span>
+            )}
+          </p>
+          <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap">
+            <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
+              {activeChannel === null || activeChannel === undefined ? (
+                <h1
+                  ref={headingRef}
+                  tabIndex={-1}
+                  data-route-heading=""
+                  className="text-lg font-semibold text-c-ink"
+                >
+                  {t(
+                    activeChannel === null
+                      ? 'console.workspace.channel.title-not-found'
+                      : 'console.workspace._.title'
+                  )}
+                </h1>
+              ) : (
+                <h1
+                  ref={headingRef}
+                  tabIndex={-1}
+                  data-route-heading=""
+                  className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
+                >
+                  <span aria-hidden="true" className="text-c-ink-3">
+                    {isEmergencyChannel(activeChannel, emergencyChannelIds) ? <AntennaIcon /> : '#'}
                   </span>
-                  <h2 className="text-xl font-bold text-c-ink">
-                    {t('console.workspace.channel.welcome-title', { channel: activeChannelName })}
-                  </h2>
-                  {timeline.length === 0 ? (
-                    <p className="text-sm text-c-ink-3">
-                      {t('console.workspace.channel.live-empty', { channel: activeChannelName })}
-                    </p>
+                  <span className="min-w-0 truncate">{activeChannelName}</span>
+                </h1>
+              )}
+              {headerLine.length > 0 ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="min-w-0 text-sm text-c-ink-3">
+                    {headerLine.map((part, index) => (
+                      <Fragment key={part.key}>
+                        {index > 0 ? (
+                          <>
+                            {' '}
+                            <span aria-hidden="true">·</span>{' '}
+                          </>
+                        ) : null}
+                        <span>{part.text}</span>
+                      </Fragment>
+                    ))}
+                  </p>
+                  {/* Reference screen p02: who is here, at a glance, beside the count that says it
+                    in words, so the faces are not read. Someone with no name gets a person
+                    glyph, never a character of their id. */}
+                  {memberCount !== null && faces.length > 0 ? (
+                    <span className="flex shrink-0 gap-1 narrow:hidden">
+                      {faces.map((face) => (
+                        <Avatar
+                          key={face.userId}
+                          name={face.name ?? displayNameOf(face.userId)}
+                          identity={face.userId}
+                          onlineLabel={
+                            activeStore.isOnline?.(face.userId)
+                              ? t('console.workspace.presence.online')
+                              : undefined
+                          }
+                          anonymous={face.name === undefined}
+                          size="xs"
+                          className="ring-2 ring-c-surface"
+                        />
+                      ))}
+                    </span>
                   ) : null}
                 </div>
               ) : null}
-              {(timeline.length === 0 ? [] : rows).length === 0 &&
-              (timelineInserts ?? []).length === 0
-                ? null
-                : mergeTimelineInserts(
-                    timeline.length === 0 ? [] : rows,
-                    timelineInserts ?? []
-                  ).map((row) =>
-                    row.kind === 'insert' ? (
-                      <div key={row.key} data-testid="espace-timeline-insert">
-                        {row.node}
-                      </div>
-                    ) : row.kind === 'day' ? (
-                      <TimelineDivider key={row.key}>{dayLabel(row.day, row.ts)}</TimelineDivider>
-                    ) : row.kind === 'new' ? (
-                      <TimelineDivider key={row.key} tone="new">
-                        {t('console.workspace.channel.label-new-messages')}
-                      </TimelineDivider>
-                    ) : (
-                      <LiveMessageRow
-                        profileRole={memberProfile({ userId: row.message.sender }).role}
-                        onMention={
-                          isArchivedChannel || navigationUnsettled ? undefined : mentionMember
-                        }
-                        key={row.key}
-                        onlineLabel={
-                          activeStore.isOnline?.(row.message.sender)
-                            ? t('console.workspace.presence.online')
-                            : undefined
-                        }
-                        message={row.message}
-                        placement="timeline"
-                        viewerId={viewerId}
-                        archived={isArchivedChannel}
-                        expanded={openThreadRootId === row.message.eventId}
-                        repliedMessage={
-                          row.message.replyTo === null
-                            ? undefined
-                            : timeline.find(
-                                (candidate) => candidate.eventId === row.message.replyTo
-                              )
-                        }
-                        threadReplies={
-                          activeRoomId === null
-                            ? []
-                            : activeStore.getThread(activeRoomId, row.message.eventId)
-                        }
-                        menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${row.message.key}`}
-                        onRetry={retryMessage}
-                        onReaction={reactToMessage}
-                        onReply={replyToMessage}
-                        onEdit={editMessage}
-                        onRemove={removeMessage}
-                        onOpenThread={openThread}
-                      />
-                    )
-                  )}
             </div>
+            {activeRoom !== undefined && activeChannel != null && !focusedDocs ? (
+              <ChannelInviteDialog
+                key={`${org}:${activeRoom.roomId}`}
+                org={org}
+                channel={activeChannel}
+                room={activeRoom}
+                store={activeStore}
+                unavailable={navigationUnsettled || signedOut}
+              />
+            ) : null}
+            {activeRoomId === null || focusedDocs ? null : (
+              <Button
+                variant="tertiary"
+                size="sm"
+                icon={<PersonIcon />}
+                iconOnly
+                aria-label={t('console.workspace.members.title')}
+                ref={membersTrigger}
+                aria-controls={membersPanelId}
+                aria-expanded={membersOpen}
+                onClick={() => setMembersOpen((open) => !open)}
+              />
+            )}
+            <StudioNavigation
+              compact={narrow}
+              section="call-entry"
+              mode={activeCanvasMode ?? 'chat'}
+              rooms={searchEntries.filter((entry) => entry.kind === 'audio')}
+              onChoose={(entry) => {
+                if (narrow) {
+                  setChannelsOpen(true)
+                  return null
+                }
+                return openFromSearch(entry)
+              }}
+            />
+            {activeCanvasMode === 'docs' ? (
+              <span className="text-sm font-bold text-c-ink">
+                {t('console.workspace.canvas.mode-docs')}
+              </span>
+            ) : null}
+          </header>
 
-            {!canWrite ? (
-              paneNotice === undefined ? null : (
-                <p className="border-t border-c-border-soft pt-3 text-sm text-c-ink-3">
-                  {paneNotice}
-                </p>
-              )
-            ) : (
-              <>
-                {/* Where one can write, so where others may be writing. Its own polite region,
+          {snapshot.status === 'signed-out' ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <InlineAlert kind="warning">
+                {t('console.workspace.message.session-expired')}
+              </InlineAlert>
+              {onReconnect === undefined ? null : (
+                <Button variant="secondary" size="sm" onClick={onReconnect}>
+                  {t('console.workspace.message.action-reconnect')}
+                </Button>
+              )}
+            </div>
+          ) : null}
+
+          {activeChannel != null && docsCanvasSlot !== undefined ? (
+            <div
+              hidden={activeCanvasMode !== 'docs'}
+              data-testid="espace-inline-docs-canvas"
+              className={activeCanvasMode === 'docs' ? 'flex min-h-0 flex-1 flex-col' : ''}
+            >
+              {docsCanvasSlot}
+            </div>
+          ) : null}
+          {activeChannel == null || activeCanvasMode === 'docs' ? null : (
+            <>
+              {isEmergencyChannel(activeChannel, emergencyChannelIds) &&
+              renderEmergencyPanel !== undefined ? (
+                <div data-testid="espace-emergency-room-surface" className="flex flex-col gap-3">
+                  <div data-testid="emergency-room-panel">
+                    {renderEmergencyPanel(activeChannel)}
+                  </div>
+                </div>
+              ) : null}
+              <div
+                ref={logRef}
+                onScroll={onLogScroll}
+                role="log"
+                aria-label={t('console.workspace.channel.log-label', {
+                  channel: activeChannelName,
+                })}
+                aria-busy={history === 'loading' ? true : undefined}
+                // Conversation history begins under the header, matching the document canvas.
+                className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto py-2"
+              >
+                {history === undefined || (history === 'start' && timeline.length === 0) ? null : (
+                  <HistoryEdge
+                    history={history}
+                    channel={activeChannelName}
+                    onLoadOlder={showOlder}
+                  />
+                )}
+                {history === 'start' || (timeline.length === 0 && history === undefined) ? (
+                  <div className="flex flex-col gap-2 py-8">
+                    <span
+                      aria-hidden="true"
+                      className="flex h-12 w-12 items-center justify-center rounded-full bg-c-muted text-xl text-c-ink-3"
+                    >
+                      #
+                    </span>
+                    <h2 className="text-xl font-bold text-c-ink">
+                      {t('console.workspace.channel.welcome-title', { channel: activeChannelName })}
+                    </h2>
+                    {timeline.length === 0 ? (
+                      <p className="text-sm text-c-ink-3">
+                        {t('console.workspace.channel.live-empty', { channel: activeChannelName })}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {(timeline.length === 0 ? [] : rows).length === 0 &&
+                (timelineInserts ?? []).length === 0
+                  ? null
+                  : mergeTimelineInserts(
+                      timeline.length === 0 ? [] : rows,
+                      timelineInserts ?? []
+                    ).map((row) =>
+                      row.kind === 'insert' ? (
+                        <div key={row.key} data-testid="espace-timeline-insert">
+                          {row.node}
+                        </div>
+                      ) : row.kind === 'day' ? (
+                        <TimelineDivider key={row.key}>{dayLabel(row.day, row.ts)}</TimelineDivider>
+                      ) : row.kind === 'new' ? (
+                        <TimelineDivider key={row.key} tone="new">
+                          {t('console.workspace.channel.label-new-messages')}
+                        </TimelineDivider>
+                      ) : (
+                        <LiveMessageRow
+                          profileRole={memberProfile({ userId: row.message.sender }).role}
+                          onMention={
+                            isArchivedChannel || navigationUnsettled ? undefined : mentionMember
+                          }
+                          key={row.key}
+                          onlineLabel={
+                            activeStore.isOnline?.(row.message.sender)
+                              ? t('console.workspace.presence.online')
+                              : undefined
+                          }
+                          message={row.message}
+                          placement="timeline"
+                          viewerId={viewerId}
+                          archived={isArchivedChannel}
+                          expanded={openThreadRootId === row.message.eventId}
+                          repliedMessage={
+                            row.message.replyTo === null
+                              ? undefined
+                              : timeline.find(
+                                  (candidate) => candidate.eventId === row.message.replyTo
+                                )
+                          }
+                          threadReplies={
+                            activeRoomId === null
+                              ? []
+                              : activeStore.getThread(activeRoomId, row.message.eventId)
+                          }
+                          menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${row.message.key}`}
+                          onRetry={retryMessage}
+                          onReaction={reactToMessage}
+                          onReply={replyToMessage}
+                          onEdit={editMessage}
+                          onRemove={removeMessage}
+                          onOpenThread={openThread}
+                        />
+                      )
+                    )}
+              </div>
+
+              {!canWrite ? (
+                paneNotice === undefined ? null : (
+                  <p className="border-t border-c-border-soft pt-3 text-sm text-c-ink-3">
+                    {paneNotice}
+                  </p>
+                )
+              ) : (
+                <>
+                  {/* Where one can write, so where others may be writing. Its own polite region,
                   apart from the log's: a name typing is said once, and a message arriving is not
                   held behind it. */}
-                <p aria-live="polite" aria-atomic="true" className="min-h-5 text-xs text-c-ink-3">
-                  {typingLine(typing, t)}
-                </p>
-                <form
-                  onSubmit={submitChannelComposer}
-                  className="flex flex-col gap-2 border-t border-c-border-soft pt-3"
-                >
-                  {replyBannerTarget !== undefined ? (
-                    <div className="flex items-center justify-between gap-2 rounded-md bg-c-sunken px-3 py-2 text-xs text-c-ink-2">
-                      <span>
-                        <Trans
-                          i18nKey="console.workspace.message.reply-banner"
-                          components={{
-                            author: <strong>{nameOf(replyBannerTarget)}</strong>,
-                          }}
-                        />
-                      </span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => updateDraft({ replyTo: null })}
-                      >
-                        {t('console.workspace.composer.reply-cancel')}
-                      </Button>
-                    </div>
-                  ) : null}
-                  {editingEventId !== null ? (
-                    <div className="flex items-center justify-between gap-2 rounded-md bg-c-sunken px-3 py-2 text-xs text-c-ink-2">
-                      <span>{t('console.workspace.composer.edit-label')}</span>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => updateDraft({ editing: null, text: '' })}
-                      >
-                        {t('console.workspace.composer.edit-cancel')}
-                      </Button>
-                    </div>
-                  ) : null}
-                  {/* Reference screen p02: the field above its tools, one bordered box, which greys
+                  <p aria-live="polite" aria-atomic="true" className="min-h-5 text-xs text-c-ink-3">
+                    {typingLine(typing, t)}
+                  </p>
+                  <form
+                    onSubmit={submitChannelComposer}
+                    className="flex flex-col gap-2 border-t border-c-border-soft pt-3"
+                  >
+                    {replyBannerTarget !== undefined ? (
+                      <div className="flex items-center justify-between gap-2 rounded-md bg-c-sunken px-3 py-2 text-xs text-c-ink-2">
+                        <span>
+                          <Trans
+                            i18nKey="console.workspace.message.reply-banner"
+                            components={{
+                              author: <strong>{nameOf(replyBannerTarget)}</strong>,
+                            }}
+                          />
+                        </span>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => updateDraft({ replyTo: null })}
+                        >
+                          {t('console.workspace.composer.reply-cancel')}
+                        </Button>
+                      </div>
+                    ) : null}
+                    {editingEventId !== null ? (
+                      <div className="flex items-center justify-between gap-2 rounded-md bg-c-sunken px-3 py-2 text-xs text-c-ink-2">
+                        <span>{t('console.workspace.composer.edit-label')}</span>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => updateDraft({ editing: null, text: '' })}
+                        >
+                          {t('console.workspace.composer.edit-cancel')}
+                        </Button>
+                      </div>
+                    ) : null}
+                    {/* Reference screen p02: the field above its tools, one bordered box, which greys
                     and rings as a whole, as TextField does. The dark workspace reference sets it
                     in a muted well (docs/specs/workspace-dark-roles.md); its input edge stays, at
                     3.21 / 3.71 / 3.26 : 1 on that well, since a text field needs a boundary
                     (WCAG 1.4.11). */}
-                  <div
-                    ref={composerBox}
-                    className={cx(
-                      'composer-frame-focus flex items-center gap-1 rounded-lg border px-2 focus-within:ring',
-                      navigationUnsettled
-                        ? 'border-c-border bg-c-disabled'
-                        : 'border-c-border-input bg-c-muted focus-within:border-c-accent-ink'
-                    )}
-                  >
-                    <label htmlFor={composerInputId} className="sr-only">
-                      {t('console.workspace.composer.label-message', {
-                        channel: activeChannelName,
-                      })}
+                    <div
+                      ref={composerBox}
+                      className={cx(
+                        'composer-frame-focus flex items-center gap-1 rounded-lg border px-2 focus-within:ring',
+                        navigationUnsettled
+                          ? 'border-c-border bg-c-disabled'
+                          : 'border-c-border-input bg-c-muted focus-within:border-c-accent-ink'
+                      )}
+                    >
+                      <label htmlFor={composerInputId} className="sr-only">
+                        {t('console.workspace.composer.label-message', {
+                          channel: activeChannelName,
+                        })}
+                      </label>
+                      <MentionInput
+                        id={composerInputId}
+                        value={composerText}
+                        onValueChange={(text) => {
+                          updateDraft({
+                            text,
+                            ...(staleEdit ? { editing: null } : {}),
+                          })
+                          // A new message being written, not an edit of a sent one.
+                          if (activeRoomId !== null)
+                            activeStore.setTyping?.(
+                              activeRoomId,
+                              text.trim() !== '' && editingEventId === null
+                            )
+                        }}
+                        members={mentionCandidates}
+                        listLabel={t('console.workspace.composer.label-mention-list')}
+                        emojiListLabel={t('console.workspace.composer.label-emoji-list')}
+                        onMentionStart={loadMembers}
+                        mentionRef={startMention}
+                        insertRef={insertInComposer}
+                        onKeyDown={composerKeyDown}
+                        {...(narrow
+                          ? {}
+                          : {
+                              'aria-keyshortcuts':
+                                'Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown',
+                            })}
+                        placeholder={t('console.workspace.composer.placeholder-message', {
+                          channel: activeChannelName,
+                        })}
+                        // Read-only, not `disabled`, while the address is undecided: a disabled
+                        // field drops the focus to the page, and a channel shortcut pressed while
+                        // writing must leave it in the field. Sending is refused at submit.
+                        readOnly={navigationUnsettled}
+                        aria-disabled={navigationUnsettled || undefined}
+                        className={cx(
+                          'min-w-0 flex-1 bg-transparent px-1 py-2 text-md outline-hidden',
+                          navigationUnsettled
+                            ? 'text-c-on-disabled placeholder:text-c-on-disabled'
+                            : 'text-c-ink placeholder:text-c-placeholder',
+                          'aria-disabled:cursor-not-allowed',
+                          TOUCH_TARGET_HEIGHT
+                        )}
+                      />
+                      <div className="flex shrink-0 items-center gap-1">
+                        {/* p02's `.icon-btn`, drawn as the thread panel's close button is. */}
+                        <Tooltip content={t('console.workspace.composer.action-mention')} names>
+                          <button
+                            type="button"
+                            aria-label={t('console.workspace.composer.action-mention')}
+                            disabled={navigationUnsettled}
+                            onClick={() => startMention.current?.()}
+                            className={cx(
+                              'flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-c-ink-3',
+                              'hover:bg-c-sunken hover:text-c-ink',
+                              'disabled:cursor-not-allowed disabled:text-c-on-disabled disabled:hover:bg-transparent',
+                              TOUCH_TARGET,
+                              'focus-visible:ring focus-visible:outline-hidden'
+                            )}
+                          >
+                            <MentionIcon />
+                          </button>
+                        </Tooltip>
+                        <EmojiPalette
+                          disabled={navigationUnsettled}
+                          anchorRef={composerBox}
+                          onPick={(emoji) => insertInComposer.current?.(emoji)}
+                        />
+                        {/* Icons only (owner decision): the name, « Envoyer » or « Enregistrer »
+                          while editing, is the accessible name and the tooltip. Enter still sends. */}
+                        <Button
+                          type="submit"
+                          variant="primary"
+                          size="sm"
+                          icon={<SendIcon />}
+                          iconOnly
+                          aria-label={t(
+                            editingEventId !== null
+                              ? 'console.workspace.composer.action-save'
+                              : 'console.workspace.composer.action-send'
+                          )}
+                          disabled={navigationUnsettled}
+                          className="ml-auto"
+                        />
+                      </div>
+                    </div>
+                  </form>
+                </>
+              )}
+            </>
+          )}
+        </section>
+
+        {!narrow && !focusedDocs && membersOpen && activeRoomId !== null ? (
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+          <div
+            data-testid="espace-sidebar-secondary-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('console.workspace.layout.resize-side-panel')}
+            aria-valuenow={rightSidebarWidth}
+            aria-valuemin={220}
+            aria-valuemax={560}
+            // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
+            // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+            tabIndex={0}
+            onMouseDown={startRightSidebarResize}
+            onDoubleClick={() => setRightSidebarWidth(280)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft') {
+                event.preventDefault()
+                setRightSidebarWidth((w) => Math.min(560, w + 16))
+              } else if (event.key === 'ArrowRight') {
+                event.preventDefault()
+                setRightSidebarWidth((w) => Math.max(220, w - 16))
+              }
+            }}
+            className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
+          />
+        ) : null}
+
+        {!focusedDocs && membersOpen && activeRoomId !== null ? (
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+          <aside
+            id={membersPanelId}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !event.defaultPrevented) {
+                event.preventDefault()
+                closeMembers()
+              }
+            }}
+            aria-label={t('console.workspace.members.title')}
+            style={narrow ? undefined : { width: `${rightSidebarWidth}px` }}
+            className="flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft bg-c-sunken p-4 narrow:w-full"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-c-ink">
+                {t('console.workspace.members.title')}
+              </h2>
+              <Button
+                variant="tertiary"
+                size="sm"
+                icon={<CloseIcon />}
+                iconOnly
+                aria-label={t('console.common.action-close')}
+                onClick={closeMembers}
+              />
+            </div>
+            <div
+              data-testid="espace-members-presence-summary"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs font-medium text-c-ink-2"
+            >
+              <span className="text-c-ok-ink">
+                {t('console.workspace.members.online-count', {
+                  count: roster.filter((member) => memberProfile(member).presence !== 'offline')
+                    .length,
+                })}
+              </span>
+              <span className="text-c-ink-3">
+                {profileCopy.offline} (
+                {roster.filter((member) => memberProfile(member).presence === 'offline').length})
+              </span>
+            </div>
+            {(['maintainer', 'core', 'admin', 'partner', 'member', 'offline'] as const).map(
+              (group) => {
+                const members = roster
+                  .map(memberProfile)
+                  .filter((member) =>
+                    group === 'offline'
+                      ? member.presence === 'offline'
+                      : member.presence !== 'offline' && member.role === group
+                  )
+                if (members.length === 0) return null
+                const label =
+                  group === 'offline'
+                    ? profileCopy.offlineGroup
+                    : group === 'admin'
+                      ? t('console.workspace.members.admins')
+                      : profileCopy[group]
+                return (
+                  <section key={group} aria-label={label} className="flex flex-col gap-2">
+                    <h3 className="text-xs font-semibold text-c-ink-3">
+                      {label} · {members.length}
+                    </h3>
+                    <ul className="flex flex-col gap-1">
+                      {members.map((member) => (
+                        <li key={member.userId}>
+                          <UserProfilePopover
+                            member={member}
+                            onMention={
+                              isArchivedChannel || navigationUnsettled || member.userId === viewerId
+                                ? undefined
+                                : mentionMember
+                            }
+                            trigger={
+                              <button
+                                type="button"
+                                className="flex w-full min-w-0 items-center gap-3 rounded-lg p-2 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
+                              >
+                                <Avatar
+                                  name={member.name}
+                                  identity={member.userId}
+                                  size="lg"
+                                  presenceGround="sunken"
+                                  onlineLabel={
+                                    member.presence === 'offline'
+                                      ? undefined
+                                      : member.presence === 'online'
+                                        ? t('console.workspace.presence.online')
+                                        : profileCopy[member.presence]
+                                  }
+                                />
+                                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                                  <span className="truncate text-sm font-medium text-c-ink-2">
+                                    {member.name}
+                                  </span>
+                                  <span className="truncate text-xs text-c-ink-3">
+                                    {member.status || profileCopy[member.presence]}
+                                  </span>
+                                </span>
+                              </button>
+                            }
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )
+              }
+            )}
+          </aside>
+        ) : null}
+        {threadRootMessage !== undefined &&
+        activeChannel !== null &&
+        activeChannel !== undefined ? (
+          <>
+            <p className="text-xs text-c-ink-2">{t('console.onboarding.studio.thread-poll')}</p>
+            <ThreadPanel
+              label={t('console.workspace.thread.title')}
+              title={t('console.workspace.thread.title')}
+              channel={`# ${activeChannelName}`}
+              closeLabel={t('console.common.action-close')}
+              onClose={() => updateDraft({ threadRoot: null })}
+              returnFocusTo={threadFocusTarget}
+              parent={
+                <LiveMessageRow
+                  profileRole={memberProfile({ userId: threadRootMessage.sender }).role}
+                  onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
+                  key={threadRootMessage.key}
+                  onlineLabel={
+                    activeStore.isOnline?.(threadRootMessage.sender)
+                      ? t('console.workspace.presence.online')
+                      : undefined
+                  }
+                  message={threadRootMessage}
+                  placement="thread"
+                  viewerId={viewerId}
+                  archived={isArchivedChannel}
+                  expanded={false}
+                  repliedMessage={undefined}
+                  threadReplies={[]}
+                  menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${threadRootMessage.key}`}
+                  onRetry={retryMessage}
+                  onReaction={reactToMessage}
+                  onReply={replyToMessage}
+                  onEdit={editMessage}
+                  onRemove={removeMessage}
+                  onOpenThread={openThread}
+                />
+              }
+              repliesLabel={t('console.workspace.thread.label-replies')}
+              composer={
+                isArchivedChannel ? undefined : (
+                  <form onSubmit={submitThreadComposer} className="flex items-center gap-2 pt-2">
+                    <label htmlFor={threadInputId} className="sr-only">
+                      {t('console.workspace.thread.composer-label')}
                     </label>
                     <MentionInput
-                      id={composerInputId}
-                      value={composerText}
-                      onValueChange={(text) => {
-                        updateDraft({
-                          text,
-                          ...(staleEdit ? { editing: null } : {}),
-                        })
-                        // A new message being written, not an edit of a sent one.
-                        if (activeRoomId !== null)
-                          activeStore.setTyping?.(
-                            activeRoomId,
-                            text.trim() !== '' && editingEventId === null
-                          )
-                      }}
+                      id={threadInputId}
+                      value={threadText}
+                      onValueChange={(text) => updateDraft({ threadText: text })}
                       members={mentionCandidates}
                       listLabel={t('console.workspace.composer.label-mention-list')}
                       emojiListLabel={t('console.workspace.composer.label-emoji-list')}
                       onMentionStart={loadMembers}
-                      mentionRef={startMention}
-                      insertRef={insertInComposer}
-                      onKeyDown={composerKeyDown}
-                      {...(narrow
-                        ? {}
-                        : {
-                            'aria-keyshortcuts':
-                              'Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown',
-                          })}
-                      placeholder={t('console.workspace.composer.placeholder-message', {
-                        channel: activeChannelName,
-                      })}
-                      // Read-only, not `disabled`, while the address is undecided: a disabled
-                      // field drops the focus to the page, and a channel shortcut pressed while
-                      // writing must leave it in the field. Sending is refused at submit.
-                      readOnly={navigationUnsettled}
-                      aria-disabled={navigationUnsettled || undefined}
+                      placeholder={t('console.workspace.thread.composer-placeholder')}
+                      disabled={navigationUnsettled}
                       className={cx(
-                        'min-w-0 flex-1 bg-transparent px-1 py-2 text-md outline-hidden',
-                        navigationUnsettled
-                          ? 'text-c-on-disabled placeholder:text-c-on-disabled'
-                          : 'text-c-ink placeholder:text-c-placeholder',
-                        'aria-disabled:cursor-not-allowed',
-                        TOUCH_TARGET_HEIGHT
+                        'min-w-0 flex-1 rounded-lg border border-c-border-input bg-c-muted px-3 py-2 text-md text-c-ink',
+                        'focus-visible:ring focus-visible:outline-hidden',
+                        'disabled:cursor-not-allowed disabled:bg-c-disabled disabled:text-c-on-disabled'
                       )}
                     />
-                    <div className="flex shrink-0 items-center gap-1">
-                      {/* p02's `.icon-btn`, drawn as the thread panel's close button is. */}
-                      <Tooltip content={t('console.workspace.composer.action-mention')} names>
-                        <button
-                          type="button"
-                          aria-label={t('console.workspace.composer.action-mention')}
-                          disabled={navigationUnsettled}
-                          onClick={() => startMention.current?.()}
-                          className={cx(
-                            'flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-c-ink-3',
-                            'hover:bg-c-sunken hover:text-c-ink',
-                            'disabled:cursor-not-allowed disabled:text-c-on-disabled disabled:hover:bg-transparent',
-                            TOUCH_TARGET,
-                            'focus-visible:ring focus-visible:outline-hidden'
-                          )}
-                        >
-                          <MentionIcon />
-                        </button>
-                      </Tooltip>
-                      <EmojiPalette
-                        disabled={navigationUnsettled}
-                        anchorRef={composerBox}
-                        onPick={(emoji) => insertInComposer.current?.(emoji)}
-                      />
-                      {/* Icons only (owner decision): the name, « Envoyer » or « Enregistrer »
-                          while editing, is the accessible name and the tooltip. Enter still sends. */}
-                      <Button
-                        type="submit"
-                        variant="primary"
-                        size="sm"
-                        icon={<SendIcon />}
-                        iconOnly
-                        aria-label={t(
-                          editingEventId !== null
-                            ? 'console.workspace.composer.action-save'
-                            : 'console.workspace.composer.action-send'
-                        )}
-                        disabled={navigationUnsettled}
-                        className="ml-auto"
-                      />
-                    </div>
-                  </div>
-                </form>
-              </>
-            )}
-          </>
-        )}
-      </section>
-
-      {!narrow && !focusedDocs && membersOpen && activeRoomId !== null ? (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-        <div
-          data-testid="espace-sidebar-secondary-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('console.workspace.layout.resize-side-panel')}
-          aria-valuenow={rightSidebarWidth}
-          aria-valuemin={220}
-          aria-valuemax={560}
-          // A focusable splitter (role="separator" with a value) is interactive in WAI-ARIA.
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-          tabIndex={0}
-          onMouseDown={startRightSidebarResize}
-          onDoubleClick={() => setRightSidebarWidth(280)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') {
-              event.preventDefault()
-              setRightSidebarWidth((w) => Math.min(560, w + 16))
-            } else if (event.key === 'ArrowRight') {
-              event.preventDefault()
-              setRightSidebarWidth((w) => Math.max(220, w - 16))
-            }
-          }}
-          className="w-1 shrink-0 cursor-col-resize bg-c-border-soft transition-colors hover:bg-c-action focus-visible:bg-c-action focus-visible:outline-hidden"
-        />
-      ) : null}
-
-      {!focusedDocs && membersOpen && activeRoomId !== null ? (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-        <aside
-          id={membersPanelId}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape' && !event.defaultPrevented) {
-              event.preventDefault()
-              closeMembers()
-            }
-          }}
-          aria-label={t('console.workspace.members.title')}
-          style={narrow ? undefined : { width: `${rightSidebarWidth}px` }}
-          className="flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft bg-c-sunken p-4 narrow:w-full"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-c-ink">
-              {t('console.workspace.members.title')}
-            </h2>
-            <Button
-              variant="tertiary"
-              size="sm"
-              icon={<CloseIcon />}
-              iconOnly
-              aria-label={t('console.common.action-close')}
-              onClick={closeMembers}
-            />
-          </div>
-          <div
-            data-testid="espace-members-presence-summary"
-            className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs font-medium text-c-ink-2"
-          >
-            <span className="text-c-ok-ink">
-              {t('console.workspace.members.online-count', {
-                count: roster.filter((member) => memberProfile(member).presence !== 'offline')
-                  .length,
-              })}
-            </span>
-            <span className="text-c-ink-3">
-              {profileCopy.offline} (
-              {roster.filter((member) => memberProfile(member).presence === 'offline').length})
-            </span>
-          </div>
-          {(['maintainer', 'core', 'admin', 'partner', 'member', 'offline'] as const).map(
-            (group) => {
-              const members = roster
-                .map(memberProfile)
-                .filter((member) =>
-                  group === 'offline'
-                    ? member.presence === 'offline'
-                    : member.presence !== 'offline' && member.role === group
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      size="sm"
+                      icon={<SendIcon />}
+                      iconOnly
+                      aria-label={t('console.workspace.thread.action-reply')}
+                      disabled={navigationUnsettled}
+                    />
+                  </form>
                 )
-              if (members.length === 0) return null
-              const label =
-                group === 'offline'
-                  ? profileCopy.offlineGroup
-                  : group === 'admin'
-                    ? t('console.workspace.members.admins')
-                    : profileCopy[group]
-              return (
-                <section key={group} aria-label={label} className="flex flex-col gap-2">
-                  <h3 className="text-xs font-semibold text-c-ink-3">
-                    {label} · {members.length}
-                  </h3>
-                  <ul className="flex flex-col gap-1">
-                    {members.map((member) => (
-                      <li key={member.userId}>
-                        <UserProfilePopover
-                          member={member}
-                          onMention={
-                            isArchivedChannel || navigationUnsettled || member.userId === viewerId
-                              ? undefined
-                              : mentionMember
-                          }
-                          trigger={
-                            <button
-                              type="button"
-                              className="flex w-full min-w-0 items-center gap-3 rounded-lg p-2 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
-                            >
-                              <Avatar
-                                name={member.name}
-                                identity={member.userId}
-                                size="lg"
-                                presenceGround="sunken"
-                                onlineLabel={
-                                  member.presence === 'offline'
-                                    ? undefined
-                                    : member.presence === 'online'
-                                      ? t('console.workspace.presence.online')
-                                      : profileCopy[member.presence]
-                                }
-                              />
-                              <span className="flex min-w-0 flex-1 flex-col gap-1">
-                                <span className="truncate text-sm font-medium text-c-ink-2">
-                                  {member.name}
-                                </span>
-                                <span className="truncate text-xs text-c-ink-3">
-                                  {member.status || profileCopy[member.presence]}
-                                </span>
-                              </span>
-                            </button>
-                          }
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )
-            }
-          )}
-        </aside>
-      ) : null}
-      {threadRootMessage !== undefined && activeChannel !== null && activeChannel !== undefined ? (
-        <>
-          <p className="text-xs text-c-ink-2">{t('console.onboarding.studio.thread-poll')}</p>
-          <ThreadPanel
-            label={t('console.workspace.thread.title')}
-            title={t('console.workspace.thread.title')}
-            channel={`# ${activeChannelName}`}
-            closeLabel={t('console.common.action-close')}
-            onClose={() => updateDraft({ threadRoot: null })}
-            returnFocusTo={threadFocusTarget}
-            parent={
-              <LiveMessageRow
-                profileRole={memberProfile({ userId: threadRootMessage.sender }).role}
-                onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
-                key={threadRootMessage.key}
-                onlineLabel={
-                  activeStore.isOnline?.(threadRootMessage.sender)
-                    ? t('console.workspace.presence.online')
-                    : undefined
-                }
-                message={threadRootMessage}
-                placement="thread"
-                viewerId={viewerId}
-                archived={isArchivedChannel}
-                expanded={false}
-                repliedMessage={undefined}
-                threadReplies={[]}
-                menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${threadRootMessage.key}`}
-                onRetry={retryMessage}
-                onReaction={reactToMessage}
-                onReply={replyToMessage}
-                onEdit={editMessage}
-                onRemove={removeMessage}
-                onOpenThread={openThread}
-              />
-            }
-            repliesLabel={t('console.workspace.thread.label-replies')}
-            composer={
-              isArchivedChannel ? undefined : (
-                <form onSubmit={submitThreadComposer} className="flex items-center gap-2 pt-2">
-                  <label htmlFor={threadInputId} className="sr-only">
-                    {t('console.workspace.thread.composer-label')}
-                  </label>
-                  <MentionInput
-                    id={threadInputId}
-                    value={threadText}
-                    onValueChange={(text) => updateDraft({ threadText: text })}
-                    members={mentionCandidates}
-                    listLabel={t('console.workspace.composer.label-mention-list')}
-                    emojiListLabel={t('console.workspace.composer.label-emoji-list')}
-                    onMentionStart={loadMembers}
-                    placeholder={t('console.workspace.thread.composer-placeholder')}
-                    disabled={navigationUnsettled}
-                    className={cx(
-                      'min-w-0 flex-1 rounded-lg border border-c-border-input bg-c-muted px-3 py-2 text-md text-c-ink',
-                      'focus-visible:ring focus-visible:outline-hidden',
-                      'disabled:cursor-not-allowed disabled:bg-c-disabled disabled:text-c-on-disabled'
-                    )}
-                  />
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    size="sm"
-                    icon={<SendIcon />}
-                    iconOnly
-                    aria-label={t('console.workspace.thread.action-reply')}
-                    disabled={navigationUnsettled}
-                  />
-                </form>
-              )
-            }
-          >
-            {activeThreadReplies.map((reply) => (
-              <LiveMessageRow
-                profileRole={memberProfile({ userId: reply.sender }).role}
-                onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
-                key={reply.key}
-                onlineLabel={
-                  activeStore.isOnline?.(reply.sender)
-                    ? t('console.workspace.presence.online')
-                    : undefined
-                }
-                message={reply}
-                placement="thread"
-                viewerId={viewerId}
-                archived={isArchivedChannel}
-                expanded={false}
-                repliedMessage={undefined}
-                threadReplies={[]}
-                menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${reply.key}`}
-                onRetry={retryMessage}
-                onReaction={reactToMessage}
-                onReply={replyToMessage}
-                onEdit={editMessage}
-                onRemove={removeMessage}
-                onOpenThread={openThread}
-              />
-            ))}
-          </ThreadPanel>
-        </>
-      ) : null}
+              }
+            >
+              {activeThreadReplies.map((reply) => (
+                <LiveMessageRow
+                  profileRole={memberProfile({ userId: reply.sender }).role}
+                  onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
+                  key={reply.key}
+                  onlineLabel={
+                    activeStore.isOnline?.(reply.sender)
+                      ? t('console.workspace.presence.online')
+                      : undefined
+                  }
+                  message={reply}
+                  placement="thread"
+                  viewerId={viewerId}
+                  archived={isArchivedChannel}
+                  expanded={false}
+                  repliedMessage={undefined}
+                  threadReplies={[]}
+                  menuContextKey={`${draftContext.generation}:${viewerId}:${activeRoomId}:${reply.key}`}
+                  onRetry={retryMessage}
+                  onReaction={reactToMessage}
+                  onReply={replyToMessage}
+                  onEdit={editMessage}
+                  onRemove={removeMessage}
+                  onOpenThread={openThread}
+                />
+              ))}
+            </ThreadPanel>
+          </>
+        ) : null}
 
-      {narrow ? null : sidebar}
+        {narrow ? null : sidebar}
+      </div>
+      <div className="shrink-0">{callControls}</div>
     </div>
   )
 }

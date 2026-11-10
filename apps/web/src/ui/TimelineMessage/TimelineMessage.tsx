@@ -224,7 +224,7 @@ export function TimelineMessage({
           </span>
         ) : (
           <div className="flex flex-wrap items-baseline gap-2">
-            <span id={authorId} className="font-semibold">
+            <span id={authorId} className="text-sm font-bold">
               {profileTrigger
                 ? profileTrigger(
                     <button

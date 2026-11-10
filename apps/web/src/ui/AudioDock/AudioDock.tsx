@@ -1,3 +1,5 @@
+import { Avatar } from '../Avatar/Avatar'
+import { StudioGlyph } from '../icons/StudioGlyph'
 import type { ReactNode, Ref } from 'react'
 import { cx } from '../cx'
 import { EspaceGlyph } from '../icons/EspaceGlyph'
@@ -52,12 +54,15 @@ import { Tooltip } from '../Tooltip/Tooltip'
  * (`aria-hidden`): the mute toggle already says whether the member is heard.
  * The fill is `c-ok-on-dark` on a `c-inverse-2` track, like the controls.
  */
-export type AudioDockLayout = 'sidebar' | 'banner'
+export type AudioDockLayout = 'sidebar' | 'banner' | 'studio'
 
 export type AudioDockStatus = 'connected' | 'connecting' | 'reconnecting'
 
 export interface AudioDockProps {
   /** The region's accessible name, e.g. « Appel en cours ». */
+  participants?: readonly { id: string; name: string; speaking: boolean }[]
+  participantsLabel?: string
+  cameraUnavailable?: string
   label: string
   /** The room's name. */
   room: string
@@ -109,11 +114,14 @@ const STATUS_INK: Record<AudioDockStatus, string> = {
 }
 
 const DOCK: Record<AudioDockLayout, string> = {
+  studio:
+    'm-2 flex flex-wrap items-center gap-4 rounded-lg p-4 narrow:flex-col narrow:items-stretch',
   sidebar: 'm-2 flex flex-col gap-3 rounded-lg p-3',
   banner: 'flex w-full items-center gap-3 rounded-lg py-2 pr-2 pl-3',
 }
 
 const CONTROLS: Record<AudioDockLayout, string> = {
+  studio: 'flex shrink-0 items-center justify-center gap-2',
   sidebar: 'grid grid-cols-3 gap-1',
   banner: 'flex shrink-0 items-center gap-2',
 }
@@ -122,6 +130,7 @@ const CONTROLS: Record<AudioDockLayout, string> = {
 // narrow screen (`TOUCH_TARGET`). The banner's are the reference's 52 px call target, a
 // one-off length that is not a spacing step (src/ui/README.md, bracket values).
 const CONTROL_SHAPE: Record<AudioDockLayout, string> = {
+  studio: 'h-12 w-12 rounded-md',
   sidebar: `h-10 rounded-md ${TOUCH_TARGET}`,
   banner: 'h-[52px] w-[52px] rounded-full',
 }
@@ -178,6 +187,9 @@ export function AudioDock({
   layout = 'sidebar',
   meterRef,
   settings,
+  participants,
+  participantsLabel,
+  cameraUnavailable,
 }: AudioDockProps) {
   if (onOpenCall !== undefined && !hasLabel(labels.openCall)) {
     // An icon-only button with no name is a control nobody using a screen
@@ -192,7 +204,12 @@ export function AudioDock({
         DOCK[layout]
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div
+        className={cx(
+          'flex min-w-0 flex-1 items-center gap-2',
+          layout === 'studio' ? 'basis-full' : ''
+        )}
+      >
         <span
           aria-hidden="true"
           data-status={status}
@@ -243,7 +260,44 @@ export function AudioDock({
           </Tooltip>
         )}
       </div>
+      {layout === 'studio' && participants && participants.length > 0 ? (
+        <ul
+          aria-label={participantsLabel}
+          className="grid max-h-shell-dock-width min-w-0 flex-1 grid-cols-4 gap-2 overflow-y-auto narrow:grid-cols-2"
+        >
+          {participants.map((person) => (
+            <li
+              key={person.id}
+              className="flex min-w-0 flex-col items-center gap-3 rounded-md bg-c-inverse-2 p-3"
+            >
+              <Avatar name={person.name} identity={person.id} size="md" />
+              <span className="flex max-w-full items-center gap-2 text-xs font-bold">
+                <span
+                  aria-hidden="true"
+                  className={cx(
+                    'h-2 w-2 shrink-0 rounded-full',
+                    person.speaking ? 'bg-c-ok-on-dark' : 'border border-c-on-inverse-dim'
+                  )}
+                />
+                <span className="truncate">{person.name}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className={CONTROLS[layout]}>
+        {cameraUnavailable ? (
+          <Tooltip content={cameraUnavailable}>
+            <button
+              type="button"
+              aria-disabled="true"
+              aria-label={cameraUnavailable}
+              className="flex h-12 w-12 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim focus-visible:ring"
+            >
+              <StudioGlyph name="camera" />
+            </button>
+          </Tooltip>
+        ) : null}
         <Control
           layout={layout}
           label={labels.mute}

@@ -306,7 +306,7 @@ describe('the workspace, once it exists', () => {
     // The dark workspace reference's current channel (docs/specs/workspace-dark-roles.md): the
     // accent row and its 3 px accent bar, with no edge.
     const current = screen.getByRole('link', { name: 'général' })
-    expect(current).toHaveClass('bg-c-accent-soft', 'border-transparent', 'before:bg-c-accent-ink')
+    expect(current).toHaveClass('bg-c-ok-soft', 'border-transparent', 'before:bg-c-accent-ink')
     expect(current).not.toHaveClass('border-c-accent-ink')
     expect(within(current).getByText('#')).toHaveClass('text-c-accent-ink')
     // One class at a time: `not.toHaveClass(a, b)` passes when either one is missing.
