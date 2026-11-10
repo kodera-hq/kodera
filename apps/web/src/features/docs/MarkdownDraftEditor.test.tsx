@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import '../../i18n'
 import { studioMessages } from '../workspace/studioMessages'
 import type { DocumentComment } from './documentComments'
@@ -93,16 +93,39 @@ it('anchors comments to the selected quote and can resolve and reopen them witho
 })
 
 it('inserts a channel member at the selection, restores focus and supports undo', async () => {
+  // Exercise the ordering where editor animation frames precede popover close cleanup.
+  const animationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    callback(0)
+    return 0
+  })
+  try {
+    const user = userEvent.setup()
+    render(<ReviewEditor />)
+    const source = screen.getByRole('textbox', { name: 'Source Markdown' }) as HTMLTextAreaElement
+    source.focus()
+    source.setSelectionRange(4, 12)
+    fireEvent.select(source)
+    await user.click(screen.getByRole('button', { name: 'Mention' }))
+    await user.click(screen.getByRole('button', { name: 'Claire Mercer' }))
+    expect(source).toHaveValue('One @Claire Mercer  passage.')
+    await waitFor(() => expect(source).toHaveFocus())
+    expect(source.selectionStart).toBe(19)
+    expect(source.selectionEnd).toBe(19)
+    await user.click(screen.getByRole('button', { name: 'Annuler' }))
+    expect(source).toHaveValue('One selected passage.')
+  } finally {
+    animationFrame.mockRestore()
+  }
+})
+
+it('returns focus to the mention trigger when dismissed without inserting', async () => {
   const user = userEvent.setup()
   render(<ReviewEditor />)
-  const source = screen.getByRole('textbox', { name: 'Source Markdown' }) as HTMLTextAreaElement
-  source.focus()
-  source.setSelectionRange(4, 12)
-  fireEvent.select(source)
-  await user.click(screen.getByRole('button', { name: 'Mention' }))
-  await user.click(screen.getByRole('button', { name: 'Claire Mercer' }))
-  expect(source).toHaveValue('One @Claire Mercer  passage.')
-  await waitFor(() => expect(source).toHaveFocus())
-  await user.click(screen.getByRole('button', { name: 'Annuler' }))
-  expect(source).toHaveValue('One selected passage.')
+  const trigger = screen.getByRole('button', { name: 'Mention' })
+  await user.click(trigger)
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveValue(
+    'One selected passage.'
+  )
 })

@@ -79,6 +79,7 @@ export function MarkdownDraftEditor({
   const { i18n } = useTranslation()
   const copy = studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const editor = useRef<HTMLTextAreaElement>(null)
+  const mentionCursor = useRef<number | null>(null)
   const linkReturnFocus = useRef<HTMLElement | null>(null)
   const urlField = useRef<HTMLInputElement>(null)
   const commentsId = useId()
@@ -110,7 +111,7 @@ export function MarkdownDraftEditor({
   const commit = (next: TextSelection, focus = true) => {
     if (new TextEncoder().encode(next.text).length > 65_536) {
       setStatus(copy.limit)
-      return
+      return false
     }
     setHistory([...history.slice(-99), { text: content, ...selection }])
     setFuture([])
@@ -120,6 +121,7 @@ export function MarkdownDraftEditor({
       setSelection({ start: next.start, end: next.end })
     }
     setStatus(copy.edited)
+    return true
   }
   const command = (name: MarkdownCommand) => {
     const start = editor.current?.selectionStart ?? selection.start
@@ -226,6 +228,13 @@ export function MarkdownDraftEditor({
           label={copy.mention}
           open={mentionOpen}
           onOpenChange={setMentionOpen}
+          onCloseAutoFocus={(event) => {
+            if (mentionCursor.current === null) return
+            event.preventDefault()
+            editor.current?.focus()
+            editor.current?.setSelectionRange(mentionCursor.current, mentionCursor.current)
+            mentionCursor.current = null
+          }}
           trigger={
             <button
               type="button"
@@ -251,7 +260,9 @@ export function MarkdownDraftEditor({
                     content.slice(0, selection.start) + mention + content.slice(selection.end)
                   const cursor = selection.start + mention.length
                   setMentionOpen(false)
-                  commit({ text, start: cursor, end: cursor })
+                  if (commit({ text, start: cursor, end: cursor }, false)) {
+                    mentionCursor.current = cursor
+                  }
                 }}
               >
                 {member.name ?? member.userId}

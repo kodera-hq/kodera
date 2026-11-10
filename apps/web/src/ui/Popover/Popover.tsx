@@ -21,6 +21,8 @@ export interface PopoverProps {
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
+  /** Override the default trigger focus when an action continues in another control. */
+  onCloseAutoFocus?: (event: Event) => void
   side?: PopoverSide
   align?: PopoverAlign
   children: ReactNode
@@ -50,6 +52,7 @@ export const Popover = forwardRef<HTMLDivElement, PopoverProps>(function Popover
     open,
     defaultOpen,
     onOpenChange,
+    onCloseAutoFocus,
     side = 'bottom',
     align = 'start',
     children,
@@ -72,6 +75,7 @@ export const Popover = forwardRef<HTMLDivElement, PopoverProps>(function Popover
         <RadixPopover.Content
           ref={ref}
           aria-label={label}
+          onCloseAutoFocus={onCloseAutoFocus}
           // Ours to find a popover by (the live view's channel keys leave theirs alone), where
           // Radix's own wrapper attribute is its internal.
           data-popover=""
