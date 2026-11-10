@@ -1,4 +1,6 @@
+import '../../validation-policy'
 import { z } from 'zod'
+import { documentCommentSchema } from '../docs/documentComments'
 import { readDemoView } from '../../app/interactiveDemo'
 import { createChannelDocsWorkspace, type ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
 import type { WorkspaceChannel } from './workspace'
@@ -23,6 +25,7 @@ const savedView = z.object({
           channelId: z.string(),
           title: z.string().max(120),
           content: z.string().max(65536),
+          comments: z.array(documentCommentSchema).max(100).optional(),
         })
       )
       .max(64),
@@ -33,7 +36,10 @@ export interface LocalWorkspaceView {
   channels: Record<string, WorkspaceChannel[]>
   docs: ChannelDocsWorkspace
 }
-export function readLocalWorkspaceView(key: string): LocalWorkspaceView {
+export function readLocalWorkspaceView(
+  key: string,
+  initialDocs = createChannelDocsWorkspace()
+): LocalWorkspaceView {
   const result = savedView.safeParse(readDemoView(key))
-  return result.success ? result.data : { channels: {}, docs: createChannelDocsWorkspace() }
+  return result.success ? result.data : { channels: {}, docs: initialDocs }
 }

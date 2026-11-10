@@ -4,12 +4,14 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
 import { channelDocsMessages } from './channelDocsMessages'
+import type { DocumentComment, DocumentMember } from './documentComments'
 
 export interface ChannelDoc {
   readonly id: string
   readonly channelId: string
   readonly title: string
   readonly content: string
+  readonly comments?: readonly DocumentComment[] | undefined
 }
 export interface ChannelDocsWorkspace {
   readonly docs: readonly ChannelDoc[]
@@ -26,12 +28,16 @@ export function ChannelDocsEditor({
   workspace,
   onWorkspaceChange,
   onPublish,
+  members = [],
+  author,
 }: {
   readonly channelId: string
   readonly channelName: string
   readonly workspace: ChannelDocsWorkspace
   readonly onWorkspaceChange: Dispatch<SetStateAction<ChannelDocsWorkspace>>
-  readonly onPublish: (title: string, content: string) => Promise<void>
+  readonly onPublish: (title: string, content: string, documentId: string) => Promise<void>
+  readonly members?: readonly DocumentMember[]
+  readonly author?: DocumentMember | undefined
 }) {
   const { i18n } = useTranslation()
   const copy = channelDocsMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
@@ -78,7 +84,7 @@ export function ChannelDocsEditor({
     if (!current || publishing) return
     setPublishing(true)
     try {
-      await onPublish(current.title, current.content)
+      await onPublish(current.title, current.content, current.id)
       setStatus(copy.published)
     } catch {
       setStatus(copy.failed)
@@ -160,6 +166,15 @@ export function ChannelDocsEditor({
           channelName={channelName}
           content={current.content}
           onChange={(content) => update({ content })}
+          members={members}
+          author={author}
+          commentThreads={current.comments ?? []}
+          onCommentsChange={(comments) =>
+            onWorkspaceChange((prev) => ({
+              ...prev,
+              docs: prev.docs.map((doc) => (doc.id === current.id ? { ...doc, comments } : doc)),
+            }))
+          }
           shareAction={
             <Button
               disabled={publishing || !current.title.trim() || !current.content.trim()}

@@ -1,6 +1,9 @@
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
+import { Avatar } from '../../ui/Avatar/Avatar'
+import { Popover } from '../../ui/Popover/Popover'
+import type { DocumentComment, DocumentMember } from './documentComments'
 import { Dialog } from '../../ui/Dialog/Dialog'
 import { LINK_TEXT } from '../../ui/linkText'
 import { StudioGlyph } from '../../ui/icons/StudioGlyph'
@@ -56,6 +59,10 @@ export function MarkdownDraftEditor({
   shareAction,
   sourceLabel,
   sourceTestId,
+  commentThreads = [],
+  onCommentsChange,
+  members = [],
+  author,
 }: {
   title: string
   channelName: string
@@ -64,6 +71,10 @@ export function MarkdownDraftEditor({
   shareAction?: ReactNode
   sourceLabel?: string
   sourceTestId?: string
+  commentThreads?: readonly DocumentComment[]
+  onCommentsChange?: (comments: readonly DocumentComment[]) => void
+  members?: readonly DocumentMember[]
+  author?: DocumentMember | undefined
 }) {
   const { i18n } = useTranslation()
   const copy = studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
@@ -73,6 +84,8 @@ export function MarkdownDraftEditor({
   const commentsId = useId()
   const noticeId = useId()
   const [selection, setSelection] = useState({ start: 0, end: 0 })
+  const [commentBody, setCommentBody] = useState('')
+  const [mentionOpen, setMentionOpen] = useState(false)
   const [favorite, setFavorite] = useState(false)
   const [comments, setComments] = useState(true)
   const [status, setStatus] = useState('')
@@ -209,15 +222,43 @@ export function MarkdownDraftEditor({
         >
           <StudioGlyph name="link" />
         </button>
-        <button
-          type="button"
-          className={TOOL}
-          aria-label={copy.mention}
-          disabled
-          title={copy.mentionGap}
+        <Popover
+          label={copy.mention}
+          open={mentionOpen}
+          onOpenChange={setMentionOpen}
+          trigger={
+            <button
+              type="button"
+              className={TOOL}
+              aria-label={copy.mention}
+              disabled={!members.length}
+              title={!members.length ? copy.noMembers : copy.mention}
+              onClick={readSelection}
+            >
+              <StudioGlyph name="mention" />
+            </button>
+          }
         >
-          <StudioGlyph name="mention" />
-        </button>
+          <div className="flex max-h-shell-dock-width flex-col gap-2 overflow-y-auto">
+            {members.map((member) => (
+              <button
+                key={member.userId}
+                type="button"
+                className="min-h-12 rounded-md px-3 text-left text-sm text-c-ink hover:bg-c-muted focus-visible:ring"
+                onClick={() => {
+                  const mention = `@${member.name ?? member.userId} `
+                  const text =
+                    content.slice(0, selection.start) + mention + content.slice(selection.end)
+                  const cursor = selection.start + mention.length
+                  setMentionOpen(false)
+                  commit({ text, start: cursor, end: cursor })
+                }}
+              >
+                {member.name ?? member.userId}
+              </button>
+            ))}
+          </div>
+        </Popover>
         <button
           type="button"
           className={TOOL}
@@ -355,8 +396,101 @@ export function MarkdownDraftEditor({
           <h3 className="flex items-center gap-2 text-sm font-bold text-c-ink">
             <StudioGlyph name="message" />
             {copy.comments}
+            <span className="rounded-full bg-c-muted px-2 py-1 text-xs">
+              {commentThreads.filter((comment) => !comment.resolved).length}
+            </span>
           </h3>
-          <p className="mt-3 rounded-md bg-c-muted p-3 text-sm text-c-ink-2">{copy.commentGap}</p>
+          <ul className="mt-3 flex flex-col gap-4">
+            {commentThreads.map((comment) => (
+              <li key={comment.id} className="flex flex-col gap-2 text-sm text-c-ink">
+                <div className="flex items-center gap-2">
+                  <Avatar name={comment.authorName} identity={comment.authorId} size="md" />
+                  <div>
+                    <strong>{comment.authorName}</strong>
+                    <p className="text-xs text-c-ink-2">{comment.createdAtLabel}</p>
+                  </div>
+                </div>
+                {comment.quote ? (
+                  <blockquote className="border-l border-c-border-strong pl-3 text-xs break-words text-c-ink-2">
+                    {comment.quote}
+                  </blockquote>
+                ) : null}
+                <p className="rounded-md bg-c-muted p-3 break-words whitespace-pre-wrap">
+                  {comment.body}
+                </p>
+                {comment.resolved ? (
+                  <span className="text-xs text-c-ink-2">{copy.resolved}</span>
+                ) : null}
+                {onCommentsChange ? (
+                  <button
+                    type="button"
+                    aria-pressed={comment.resolved}
+                    className="min-h-10 self-start rounded-sm px-2 text-sm font-bold focus-visible:ring"
+                    onClick={() =>
+                      onCommentsChange(
+                        commentThreads.map((entry) =>
+                          entry.id === comment.id ? { ...entry, resolved: !entry.resolved } : entry
+                        )
+                      )
+                    }
+                  >
+                    {comment.resolved ? copy.reopen : copy.resolve}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          {!commentThreads.length ? (
+            <p className="mt-3 text-sm text-c-ink-2">{copy.noComments}</p>
+          ) : null}
+          {onCommentsChange && author ? (
+            <form
+              className="mt-4 flex flex-col gap-3"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (!commentBody.trim() || commentThreads.length >= 100) return
+                const quote = content.slice(selection.start, selection.end)
+                onCommentsChange([
+                  ...commentThreads,
+                  {
+                    id: crypto.randomUUID(),
+                    authorId: author.userId,
+                    authorName: author.name ?? author.userId,
+                    createdAtLabel: copy.justNow,
+                    body: commentBody.trim(),
+                    resolved: false,
+                    ...(quote ? { quote } : {}),
+                  },
+                ])
+                setCommentBody('')
+              }}
+            >
+              {selection.end > selection.start ? (
+                <blockquote className="border-l border-c-border-strong pl-3 text-xs break-words text-c-ink-2">
+                  {content.slice(selection.start, selection.end)}
+                </blockquote>
+              ) : null}
+              <label className="flex flex-col gap-2 text-sm text-c-ink">
+                {copy.commentBody}
+                <textarea
+                  value={commentBody}
+                  maxLength={4000}
+                  rows={3}
+                  required
+                  onChange={(event) => setCommentBody(event.target.value)}
+                  className="w-full rounded-md border border-c-border-input bg-c-surface p-3 text-c-ink focus-visible:ring"
+                />
+              </label>
+              <Button type="submit" disabled={!commentBody.trim() || commentThreads.length >= 100}>
+                {copy.addComment}
+              </Button>
+              {commentThreads.length >= 100 ? (
+                <p role="status" className="text-sm text-c-ink-2">
+                  {copy.commentLimit}
+                </p>
+              ) : null}
+            </form>
+          ) : null}
         </aside>
       </div>
       <Dialog

@@ -4,7 +4,21 @@ import { Dialog } from '../../ui/Dialog/Dialog'
 import { StudioGlyph, type StudioGlyphName } from '../../ui/icons/StudioGlyph'
 import { studioMessages } from './studioMessages'
 import { openWorkspaceCommand } from './WorkspaceMenu'
+import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { ChannelSearchEntry } from './ChannelSearch'
+
+export interface StudioActivity {
+  channel: ChannelSearchEntry
+  unread: number
+  mentions: number
+  body: string
+}
+export interface StudioFile {
+  id: string
+  title: string
+  channel: ChannelSearchEntry
+  document?: ChannelDoc
+}
 
 export function StudioNavigation({
   section,
@@ -13,7 +27,13 @@ export function StudioNavigation({
   onChange,
   rooms,
   onChoose,
+  activity = [],
+  files = [],
+  onOpenDocument,
 }: {
+  activity?: readonly StudioActivity[]
+  files?: readonly StudioFile[]
+  onOpenDocument?: ((doc: ChannelDoc) => HTMLElement | null) | undefined
   compact?: boolean
   section: 'primary' | 'tools' | 'call-entry'
   mode: 'chat' | 'docs'
@@ -50,7 +70,6 @@ export function StudioNavigation({
     icon: StudioGlyphName
     action: () => void
     selected?: boolean
-    unavailable?: boolean
   }[] =
     section === 'call-entry'
       ? [{ name: 'calls', icon: 'calls', action: () => setPanel('calls') }]
@@ -60,7 +79,6 @@ export function StudioNavigation({
               name: 'notifications',
               icon: 'bell',
               action: () => setPanel('notifications'),
-              unavailable: true,
             },
             {
               name: 'messages',
@@ -77,43 +95,92 @@ export function StudioNavigation({
               selected: mode === 'docs',
             },
             { name: 'calls', icon: 'calls', action: () => setPanel('calls') },
-            { name: 'files', icon: 'files', action: () => setPanel('files'), unavailable: true },
+            { name: 'files', icon: 'files', action: () => setPanel('files') },
             {
               name: 'integrations',
               icon: 'integrations',
               action: () => openWorkspaceCommand('extensions'),
             },
           ]
+  const choose = (entry: ChannelSearchEntry, doc?: ChannelDoc) => {
+    setPanel(null)
+    const target = doc && onOpenDocument ? onOpenDocument(doc) : onChoose(entry)
+    returnFocusTo.current = target ?? returnFocusTo.current
+    if (compact) target?.focus()
+  }
+  const itemClass =
+    'flex min-h-12 items-center gap-3 rounded-md border border-c-border px-3 py-2 text-left text-c-ink hover:bg-c-muted focus-visible:ring'
   const panelContent = (
-    <div className="flex flex-col gap-3 text-sm text-c-ink-2">
-      <p>
-        {panel === 'calls'
-          ? copy.callsHint
-          : panel === 'files'
-            ? copy.fileGap
-            : copy.notificationGap}
-      </p>
+    <div className="flex max-h-shell-dock-width flex-col gap-3 overflow-y-auto text-sm text-c-ink-2">
       {panel === 'calls' ? (
-        rooms.length ? (
-          rooms.map((room) => (
-            <button
-              key={room.id}
-              type="button"
-              className="flex min-h-12 items-center gap-2 rounded-md border border-c-border px-3 text-c-ink focus-visible:ring"
-              onClick={() => {
-                setPanel(null)
-                const target = onChoose(room)
-                returnFocusTo.current = target ?? returnFocusTo.current
-                if (compact) target?.focus()
-              }}
-            >
-              <StudioGlyph name="calls" />
-              {room.label}
-            </button>
-          ))
-        ) : (
-          <p>{copy.noCalls}</p>
-        )
+        <>
+          <p>{copy.callsHint}</p>
+          {rooms.length ? (
+            rooms.map((room) => (
+              <button
+                key={room.id}
+                type="button"
+                className={itemClass}
+                onClick={() => choose(room)}
+              >
+                <StudioGlyph name="calls" />
+                {room.label}
+              </button>
+            ))
+          ) : (
+            <p>{copy.noCalls}</p>
+          )}
+        </>
+      ) : panel === 'notifications' ? (
+        <>
+          <p>{copy.activityHint}</p>
+          {activity.length ? (
+            activity.map((item) => (
+              <button
+                key={item.channel.id}
+                type="button"
+                className={itemClass}
+                onClick={() => choose(item.channel)}
+              >
+                <StudioGlyph name="bell" />
+                <span className="flex min-w-0 flex-col gap-1">
+                  <strong>#{item.channel.label}</strong>
+                  <span>
+                    {item.unread ? `${copy.unread}: ${item.unread} · ` : ''}
+                    {item.mentions ? `${copy.mentions}: ${item.mentions}` : copy.recent}
+                  </span>
+                  <span className="line-clamp-2 text-xs break-words text-c-ink-2">{item.body}</span>
+                </span>
+              </button>
+            ))
+          ) : (
+            <p>{copy.noNotifications}</p>
+          )}
+        </>
+      ) : panel === 'files' ? (
+        <>
+          {files.length ? (
+            files.map((file) => (
+              <button
+                key={file.id}
+                type="button"
+                className={itemClass}
+                onClick={() => choose(file.channel, file.document)}
+              >
+                <StudioGlyph name={file.document ? 'docs' : 'files'} />
+                <span className="flex min-w-0 flex-col gap-1">
+                  <strong className="break-words">{file.title}</strong>
+                  <span className="text-xs text-c-ink-2">
+                    #{file.channel.label}
+                    {file.document ? ` · ${copy.openDocument}` : ''}
+                  </span>
+                </span>
+              </button>
+            ))
+          ) : (
+            <p>{copy.noFiles}</p>
+          )}
+        </>
       ) : null}
     </div>
   )
@@ -138,7 +205,6 @@ export function StudioNavigation({
               returnFocusTo.current = event.currentTarget
               entry.action()
             }}
-            title={entry.unavailable ? copy.unavailable : undefined}
             aria-pressed={entry.selected}
             disabled={!onChange && (entry.name === 'docs' || entry.name === 'messages')}
             data-testid={
@@ -152,11 +218,6 @@ export function StudioNavigation({
           >
             <StudioGlyph name={entry.icon} />
             <span>{section === 'call-entry' ? copy.audioOnly : copy[entry.name]}</span>
-            {entry.unavailable ? (
-              <span aria-hidden="true" className="ml-auto text-xs text-c-ink-3">
-                —
-              </span>
-            ) : null}
           </button>
         ))}
       </div>

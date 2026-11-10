@@ -127,3 +127,24 @@ it('adds a channel without losing conversations and immediately accepts messages
   expect(store.getTimeline(original.roomId).at(-1)?.body).toBe('Keep this conversation')
   expect(previous.rooms).toHaveLength(store.getSnapshot().rooms.length - 1)
 })
+
+it('seeds review threads and publishes stable document references across remounts', async () => {
+  sessionStorage.clear()
+  const workspace = readyWorkspace()
+  const store = createLocalWorkspaceStore(workspace, 'community', true)
+  const doc = store.getInitialDocuments!().docs[0]!
+  expect(doc.comments?.map((comment) => comment.authorName)).toEqual([
+    'Claire Mercer',
+    'Elena Vance',
+  ])
+  const room = store.getSnapshot().channels.get(doc.channelId)!
+  if (room.state !== 'resolved') throw new Error('Expected a ready room')
+  expect(store.getTimeline(room.roomId).at(-1)?.document?.id).toBe(doc.id)
+  await store.publishDocument!(room.roomId, { ...doc, title: 'Updated guide' })
+  const restored = createLocalWorkspaceStore(workspace, 'community', true)
+  expect(restored.getTimeline(room.roomId).at(-1)?.document).toEqual({
+    id: doc.id,
+    title: 'Updated guide',
+  })
+  sessionStorage.clear()
+})

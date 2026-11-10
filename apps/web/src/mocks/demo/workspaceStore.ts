@@ -1,4 +1,5 @@
 // In-memory conversations for the browser demo; never starts a client or contacts a homeserver.
+import type { ChannelDocsWorkspace } from '../../features/docs/ChannelDocsEditor'
 import i18n from '../../i18n'
 import { createLocalAudioCall } from './audioCall'
 import { isMatrixUserId } from '../../features/espace/roomInvitations'
@@ -65,6 +66,41 @@ export function createLocalWorkspaceStore(
       reactions: [],
     }
   }
+  const initialChannel = everyChannel(workspace).find(
+    (channel) => channel.kind === 'text' && channel.room_state === 'ready'
+  )
+  const initialDocs: ChannelDocsWorkspace = {
+    docs: initialChannel
+      ? [
+          {
+            id: `review-${initialChannel.id}`,
+            channelId: initialChannel.id,
+            title: copy.reviewTitle,
+            content: copy.reviewContent,
+            comments: [
+              {
+                id: 'review-claire',
+                authorId: members[2]!.userId,
+                authorName: 'Claire Mercer',
+                createdAtLabel: copy.claireTime,
+                body: copy.claireReview,
+                quote: copy.reviewQuote,
+                resolved: false,
+              },
+              {
+                id: 'review-elena',
+                authorId: members[0]!.userId,
+                authorName: 'Elena Vance',
+                createdAtLabel: copy.elenaTime,
+                body: copy.elenaReview,
+                resolved: false,
+              },
+            ],
+          },
+        ]
+      : [],
+    selectedByChannel: initialChannel ? { [initialChannel.id]: `review-${initialChannel.id}` } : {},
+  }
   const rooms: RoomSummary[] = everyChannel(workspace)
     .filter((channel) => channel.room_state === 'ready')
     .map((channel) => {
@@ -83,6 +119,15 @@ export function createLocalWorkspaceStore(
             )
           : EMPTY
       )
+      const doc = initialDocs.docs.find((entry) => entry.channelId === channel.id)
+      if (doc)
+        timelines.set(roomId, [
+          ...(timelines.get(roomId) ?? EMPTY),
+          {
+            ...message(doc.title, members[2]),
+            document: { id: doc.id, title: doc.title },
+          },
+        ])
       return {
         roomId,
         name: channel.name,
@@ -165,6 +210,21 @@ export function createLocalWorkspaceStore(
     emit()
   }
   return {
+    getInitialDocuments: () => initialDocs,
+    async publishDocument(roomId, doc) {
+      if (!timelines.has(roomId)) throw new Error('Unknown channel')
+      timelines.set(
+        roomId,
+        [
+          ...(timelines.get(roomId) ?? EMPTY),
+          {
+            ...message(`## ${doc.title}\n\n${doc.content}`),
+            document: { id: doc.id, title: doc.title },
+          },
+        ].slice(-MAX_MESSAGES)
+      )
+      emit()
+    },
     audioCall: createLocalAudioCall(
       viewer,
       members.slice(0, 3).map((member) => member.userId)
@@ -245,7 +305,16 @@ export function createLocalWorkspaceStore(
       const last = timelines.get(roomId)?.at(-1)?.eventId
       if (last) {
         markers.set(roomId, last)
-        save()
+        const room = snapshot.rooms.find((entry) => entry.roomId === roomId)
+        if (room && (room.unread || room.mentions)) {
+          snapshot = {
+            ...snapshot,
+            rooms: snapshot.rooms.map((entry) =>
+              entry.roomId === roomId ? { ...entry, unread: 0, mentions: 0 } : entry
+            ),
+          }
+          emit()
+        } else save()
       }
     },
     async send(roomId, body, options) {
@@ -316,7 +385,13 @@ function validStoredConversations(value: unknown): value is StoredConversations 
         typeof item.eventId === 'string' &&
         typeof item.sender === 'string' &&
         Number.isFinite(item.ts) &&
-        Array.isArray(item.reactions)
+        Array.isArray(item.reactions) &&
+        (item.document === undefined ||
+          (item.document &&
+            typeof item.document.id === 'string' &&
+            typeof item.document.title === 'string')) &&
+        (item.attachment === undefined ||
+          (item.attachment && typeof item.attachment.name === 'string'))
     )
   return (
     data.version === 1 &&

@@ -145,7 +145,9 @@ export function isDevelopmentAsset(
       url.pathname
     ) ||
     url.pathname.startsWith('/developer-docs/') ||
-    ['/src/', '/@fs/', '/node_modules/', '/@id/'].some((prefix) => url.pathname.startsWith(prefix))
+    ['/src/', '/assets/', '/@fs/', '/node_modules/', '/@id/'].some((prefix) =>
+      url.pathname.startsWith(prefix)
+    )
   )
 }
 
@@ -223,7 +225,7 @@ export async function startMockWorker(): Promise<void> {
     // network would either hang (no such host reachable) or, worse, reach a
     // real one (docs/dev/TESTING.md).
     onUnhandledRequest(request, print) {
-      if (isDevelopmentAsset(request, window.location.origin)) return
+      if (isDevelopmentAsset(request, window.location.origin, true)) return
       print.error()
     },
     quiet: true,

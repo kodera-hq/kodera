@@ -125,7 +125,8 @@ test('channels, messages, reactions, threads, invitations and notes work togethe
   await page.getByRole('button', { name: 'Publier dans le salon', exact: true }).click()
   await expect(page.getByText('Document publié dans le salon.', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Messages', exact: true }).click()
-  await expect(page.getByRole('log')).toContainText('Browser verified publication')
+  await expect(page.getByRole('log')).toContainText('QA decision')
+  await expect(page.getByRole('log')).toContainText('Ouvrir dans Docs')
   await page.screenshot({ path: info.outputPath('channel-published.png'), fullPage: true })
 })
 

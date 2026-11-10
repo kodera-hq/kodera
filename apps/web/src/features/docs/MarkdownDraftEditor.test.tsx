@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it } from 'vitest'
 import '../../i18n'
+import type { DocumentComment } from './documentComments'
 import { MarkdownDraftEditor } from './MarkdownDraftEditor'
 
 function Editor({ initial = 'One selected passage.' }: { initial?: string }) {
@@ -45,4 +46,59 @@ it('uses task inputs to change source and escapes HTML without inventing comment
   expect(screen.getByRole('button', { name: 'Partager' })).toBeDisabled()
   await user.click(screen.getByRole('button', { name: 'Commentaires' }))
   expect(screen.queryByRole('complementary', { name: 'Commentaires' })).toBeNull()
+})
+
+function ReviewEditor() {
+  const [content, onChange] = useState('One selected passage.')
+  const [comments, onCommentsChange] = useState<readonly DocumentComment[]>([])
+  return (
+    <MarkdownDraftEditor
+      title="Review"
+      channelName="design"
+      content={content}
+      onChange={onChange}
+      members={[{ userId: 'claire', name: 'Claire Mercer' }]}
+      author={{ userId: 'reviewer', name: 'Reviewer' }}
+      commentThreads={comments}
+      onCommentsChange={onCommentsChange}
+    />
+  )
+}
+
+it('anchors comments to the selected quote and can resolve and reopen them without changing source', async () => {
+  const user = userEvent.setup()
+  render(<ReviewEditor />)
+  const source = screen.getByRole('textbox', { name: 'Source Markdown' }) as HTMLTextAreaElement
+  source.focus()
+  source.setSelectionRange(4, 12)
+  fireEvent.select(source)
+  await user.type(
+    screen.getByRole('textbox', { name: 'Votre commentaire' }),
+    'Please clarify this.'
+  )
+  await user.click(screen.getByRole('button', { name: 'Ajouter un commentaire' }))
+  expect(screen.getByText('Please clarify this.')).toBeInTheDocument()
+  expect(screen.getByText('Reviewer')).toBeInTheDocument()
+  expect(screen.getAllByText('selected', { selector: 'blockquote' })).toHaveLength(2)
+  expect(source).toHaveValue('One selected passage.')
+  await user.click(screen.getByRole('button', { name: 'Résoudre' }))
+  expect(screen.getByRole('button', { name: 'Rouvrir' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: 'Rouvrir' }))
+  expect(screen.getByRole('button', { name: 'Résoudre' })).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByRole('button', { name: 'Ajouter un commentaire' })).toBeDisabled()
+})
+
+it('inserts a channel member at the selection, restores focus and supports undo', async () => {
+  const user = userEvent.setup()
+  render(<ReviewEditor />)
+  const source = screen.getByRole('textbox', { name: 'Source Markdown' }) as HTMLTextAreaElement
+  source.focus()
+  source.setSelectionRange(4, 12)
+  fireEvent.select(source)
+  await user.click(screen.getByRole('button', { name: 'Mention' }))
+  await user.click(screen.getByRole('button', { name: 'Claire Mercer' }))
+  expect(source).toHaveValue('One @Claire Mercer  passage.')
+  await waitFor(() => expect(source).toHaveFocus())
+  await user.click(screen.getByRole('button', { name: 'Annuler' }))
+  expect(source).toHaveValue('One selected passage.')
 })

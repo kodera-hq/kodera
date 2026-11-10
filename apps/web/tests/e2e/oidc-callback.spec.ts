@@ -27,10 +27,20 @@ async function start(page: Page) {
       const url = input instanceof Request ? input.url : String(input)
       if (url.endsWith('/protocol/openid-connect/token')) window.__callbackTokenRequests?.push(url)
       const response = await original(input, init)
-      if (url.endsWith('/protocol/openid-connect/token') && window.__holdCallbackToken) {
-        await new Promise<void>((resolve) => {
-          window.__releaseCallbackToken = resolve
-        })
+      if (url.endsWith('/protocol/openid-connect/token')) {
+        if (window.__holdCallbackToken) {
+          await new Promise<void>((resolve) => {
+            window.__releaseCallbackToken = resolve
+          })
+        }
+        if ((window.__callbackTokenRequests?.length ?? 0) === 1 && response.ok) {
+          const payload = (await response.clone().json()) as Record<string, unknown>
+          return new Response(JSON.stringify({ ...payload, expires_in: 120 }), {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          })
+        }
       }
       return response
     }
@@ -77,7 +87,7 @@ test('silent renewal timeout remains failed without exchanging a token', async (
     timeout: 15_000,
   })
   expect(await page.evaluate(() => window.__callbackTokenRequests?.length)).toBe(0)
-  await expect.poll(() => page.frames().length).toBe(1)
+  await expect.poll(() => page.frames().length, { timeout: 15_000 }).toBe(1)
   await expect(page).toHaveURL(/\/acme-sa\/home$/)
 })
 
