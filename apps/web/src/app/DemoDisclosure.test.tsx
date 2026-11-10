@@ -32,12 +32,14 @@ it.each(['fr', 'en'] as const)(
 )
 
 it.each(['mock', 'msw'] as const)(
-  'discloses %s mode even without a registered workspace',
+  'discloses %s workspace mode without polluting non-demo console fixtures',
   (mode) => {
     vi.stubEnv('VITE_ENABLE_MSW', mode === 'msw' ? '1' : '')
     vi.stubEnv('VITE_AUTH_MODE', mode === 'mock' ? 'mock' : 'oidc')
-    render(<DemoDisclosure org="other" />)
+    const { rerender } = render(<DemoDisclosure org="other" surface="workspace" />)
     expect(screen.getByRole('status')).toBeInTheDocument()
+    rerender(<DemoDisclosure org="other" surface="console" />)
+    expect(screen.queryByRole('status')).toBeNull()
   }
 )
 

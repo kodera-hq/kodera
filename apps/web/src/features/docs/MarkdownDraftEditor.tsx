@@ -172,7 +172,7 @@ export function MarkdownDraftEditor({
           <StudioGlyph name="star" />
         </button>
         <details>
-          <summary className="cursor-pointer rounded-sm p-2 focus-visible:ring">
+          <summary className="cursor-pointer rounded-sm p-2 text-c-ink focus-visible:ring">
             {copy.actions}
           </summary>
           <Button variant="secondary" size="sm" onClick={download}>
@@ -305,7 +305,7 @@ export function MarkdownDraftEditor({
                   <label key={index} className="flex min-h-8 items-center gap-2 narrow:min-h-12">
                     <input
                       type="checkbox"
-                      className="h-5 w-5 focus-visible:ring"
+                      className="h-6 w-6 shrink-0 focus-visible:ring"
                       checked={task[1] !== ' '}
                       onChange={() => {
                         const lines = content.split('\n')

@@ -2,8 +2,8 @@
 export const demoMessages = {
   en: {
     title: 'Interactive browser-local simulation',
-    body: 'Messages and changes stay only in this browser session. They are never sent to a server or seen by other participants.',
-    support: 'Real product or support questions:',
+    body: 'Local session only — nothing is sent to a server or seen by others.',
+    support: 'Real support:',
     composer:
       'Simulated message · saved only in this browser session (sessionStorage). No support ticket is created.',
     placeholder: 'Try a local simulated message…',
@@ -12,8 +12,8 @@ export const demoMessages = {
   },
   fr: {
     title: 'Simulation interactive locale au navigateur',
-    body: 'Les messages et modifications restent uniquement dans cette session du navigateur. Ils ne sont jamais envoyés à un serveur ni vus par les autres participants.',
-    support: 'Questions réelles sur le produit ou le support :',
+    body: 'Session locale uniquement — rien n’est envoyé au serveur ni vu par d’autres.',
+    support: 'Support réel :',
     composer:
       'Message simulé · conservé uniquement dans cette session du navigateur (sessionStorage). Aucun ticket de support n’est créé.',
     placeholder: 'Essayez un message simulé local…',
