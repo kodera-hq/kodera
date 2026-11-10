@@ -2,7 +2,7 @@ import { useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { Dialog } from '../../ui/Dialog/Dialog'
-import { LINK_TEXT } from '../../ui/LinkButton/LinkButton'
+import { LINK_TEXT } from '../../ui/linkText'
 import { StudioGlyph } from '../../ui/icons/StudioGlyph'
 import { studioMessages } from '../workspace/studioMessages'
 import {
