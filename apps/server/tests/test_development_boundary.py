@@ -112,6 +112,7 @@ def assert_image_boundary(ignore):
         "!core/api/problems.py",
         "!core/api/lanes.py",
         "!core/api/edge.py",
+        "!core/api/errors.py",
         "!core/db/__init__.py",
         "!core/db/ids.py",
         "!core/db/models.py",
@@ -218,6 +219,9 @@ def assert_image_boundary(ignore):
         "!apps/workspaces/setup.py",
         "!apps/workspaces/structure.py",
         "!apps/workspaces/initialise.py",
+        "!apps/workspaces/instant_claim.py",
+        "!apps/workspaces/warm_pool.py",
+        "!apps/workspaces/templates.py",
         "!apps/workspaces/administration.py",
         "!apps/workspaces/channel_access.py",
         "!apps/workspaces/channel_sets.py",
@@ -225,6 +229,7 @@ def assert_image_boundary(ignore):
         "!apps/workspaces/api/permissions.py",
         "!apps/workspaces/api/serializers.py",
         "!apps/workspaces/api/views.py",
+        "!apps/workspaces/api/instant_claim.py",
         "!apps/workspaces/api/administration.py",
         "!apps/workspaces/api/responses.py",
         "!tenant_agent/__init__.py",
@@ -449,6 +454,8 @@ try:
     from django.urls import get_resolver
 
     get_resolver().url_patterns
+    for status in (404, 500):
+        assert callable(get_resolver().resolve_error_handler(status))
     import config.wsgi
 except Exception as error:
     print(json.dumps({"started": False, "error": f"{type(error).__name__}: {error}"}))
@@ -620,6 +627,26 @@ def test_the_image_start_check_covers_every_profile_the_image_is_started_with():
     ],
 )
 def test_image_guard_refuses_missing_directory_source(path):
+    ignore = (ROOT / ".dockerignore").read_text().splitlines()
+    ignore.remove("!" + path)
+    with pytest.raises(
+        AssertionError, match="build inputs differ from the exact runtime allowlist"
+    ):
+        assert_image_boundary(ignore)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "core/api/errors.py",
+        "apps/workspaces/instant_claim.py",
+        "apps/workspaces/warm_pool.py",
+        "apps/workspaces/templates.py",
+        "apps/workspaces/api/instant_claim.py",
+    ],
+)
+def test_image_guard_refuses_missing_error_or_instant_claim_source(path):
+    assert path in image_files(ROOT), "the API image omits a served runtime module"
     ignore = (ROOT / ".dockerignore").read_text().splitlines()
     ignore.remove("!" + path)
     with pytest.raises(

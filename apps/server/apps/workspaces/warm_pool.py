@@ -6,8 +6,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
-from apps.orgs.models import RESERVED_ORGANISATION_SLUGS
-from apps.tenancy.models import RESERVED_TENANT_SLUGS
+from apps.orgs.intake_services import RESERVED_SLUGS as RESERVED_ORGANISATION_SLUGS
+from apps.tenancy.selectors import RESERVED_SLUGS as RESERVED_TENANT_SLUGS
 
 from .models import Channel
 from .templates import TEMPLATES, resolve_template

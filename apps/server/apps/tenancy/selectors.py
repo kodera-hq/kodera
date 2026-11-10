@@ -11,9 +11,10 @@ from uuid import UUID
 from django.conf import settings
 from django.db.models import QuerySet
 
-from .models import TENANT_STATUSES, Tenant, is_reserved_tenant_slug
+from .models import RESERVED_TENANT_SLUGS, TENANT_STATUSES, Tenant, is_reserved_tenant_slug
 
 STATUSES = frozenset(TENANT_STATUSES)
+RESERVED_SLUGS = frozenset(RESERVED_TENANT_SLUGS)
 
 
 def default_urls(row: Any) -> dict[str, str]:
