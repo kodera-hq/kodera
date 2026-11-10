@@ -39,7 +39,7 @@ it('keeps documents isolated by channel and publishes the edited Markdown', asyn
   await user.clear(body)
   await user.type(body, '## Ready')
   await user.click(screen.getByRole('button', { name: 'Publier dans le salon' }))
-  expect(publish).toHaveBeenCalledWith('Planning', '## Ready')
+  expect(publish).toHaveBeenCalledWith('Planning', '## Ready', expect.any(String))
   expect(await screen.findByText('Document publié dans le salon.')).toHaveAttribute(
     'role',
     'status'

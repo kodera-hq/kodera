@@ -1,3 +1,4 @@
+import type { ChannelDoc, ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
 import { StudioNavigation } from '../workspace/StudioNavigation'
 import { studioMessages } from '../workspace/studioMessages'
 import {
@@ -174,6 +175,8 @@ function AntennaIcon() {
 }
 
 export interface EspaceStoreLike {
+  getInitialDocuments?: () => ChannelDocsWorkspace
+  publishDocument?: (roomId: string, doc: ChannelDoc) => Promise<void>
   /** Optional call capability supplied by local preview adapters. */
   audioCall?: AudioCallLike
   /** Local demos can register a newly created channel without replacing conversation state. */
@@ -291,6 +294,8 @@ export interface EspaceLiveViewProps {
   readonly focusedDocs?: boolean | undefined
   readonly activeCanvasMode?: 'chat' | 'docs' | undefined
   readonly onChangeCanvasMode?: ((mode: 'chat' | 'docs') => void) | undefined
+  readonly documents?: readonly ChannelDoc[]
+  readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
   readonly docsCanvasSlot?: ReactNode | undefined
   /** Channels the server flags as the proximity room; see `isEmergencyChannel`. */
   readonly emergencyChannelIds?: ReadonlySet<string> | undefined
@@ -525,6 +530,8 @@ function uniqueThreadParticipants(replies: readonly MessageView[]): ThreadPartic
 }
 
 interface LiveMessageRowProps {
+  document?: ChannelDoc | undefined
+  onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
   profileRole: MemberProfileRole
   onMention: ((member: MemberProfile) => void) | undefined
   onlineLabel?: string | undefined
@@ -546,6 +553,8 @@ interface LiveMessageRowProps {
 
 /** One mounted message; only activation reports a timeline opener to the view. */
 function LiveMessageRow({
+  document,
+  onOpenDocument,
   message: msg,
   profileRole,
   onMention,
@@ -585,6 +594,16 @@ function LiveMessageRow({
   const isOwn = msg.sender === viewerId
   return (
     <TimelineMessage
+      document={
+        document && onOpenDocument
+          ? {
+              title: document.title,
+              subtitle: studioMessages[locale].documentStatus,
+              openLabel: studioMessages[locale].openDocument,
+              onOpen: () => onOpenDocument(document),
+            }
+          : undefined
+      }
       author={authorName}
       avatarIdentity={msg.sender}
       avatarOnlineLabel={presence === 'offline' ? undefined : copy[presence]}
@@ -813,6 +832,8 @@ function MountedEspaceLiveView({
   activeCanvasMode = 'chat',
   onChangeCanvasMode,
   docsCanvasSlot,
+  documents = [],
+  onOpenDocument,
   emergencyChannelIds,
   renderEmergencyPanel,
   onCreateInCategory,
@@ -1639,6 +1660,69 @@ function MountedEspaceLiveView({
     })),
   ]
 
+  const activity = searchEntries
+    .flatMap((channel) => {
+      const resolved = snapshot.channels.get(channel.id)
+      if (resolved?.state !== 'resolved') return []
+      const room = snapshot.rooms.find((entry) => entry.roomId === resolved.roomId)
+      if (!room) return []
+      const messages = activeStore.getTimeline(room.roomId).filter((message) => !message.redacted)
+      const latest = messages.at(-1)
+      const mention = messages.findLast((message) => message.mentionsMe)
+      return room.unread || room.mentions || latest
+        ? [
+            {
+              channel,
+              unread: room.unread,
+              mentions: room.mentions,
+              body: (room.mentions ? mention?.body : undefined) ?? latest?.body ?? '',
+              ts: latest?.ts ?? 0,
+            },
+          ]
+        : []
+    })
+    .sort(
+      (a, b) =>
+        Number(b.mentions > 0) - Number(a.mentions > 0) ||
+        Number(b.unread > 0) - Number(a.unread > 0) ||
+        b.ts - a.ts
+    )
+  const files = searchEntries.flatMap((channel) => {
+    const resolved = snapshot.channels.get(channel.id)
+    const attachments =
+      resolved?.state === 'resolved'
+        ? activeStore
+            .getTimeline(resolved.roomId)
+            .filter((message) => !message.redacted && message.attachment)
+            .map((message) => ({
+              id: `${channel.id}:${message.eventId}`,
+              title: message.attachment!.name,
+              channel,
+            }))
+        : []
+    return [
+      ...documents
+        .filter((doc) => doc.channelId === channel.id)
+        .map((doc) => ({ id: doc.id, title: doc.title, channel, document: doc })),
+      ...attachments,
+    ]
+  })
+  const openStudioDocument = onOpenDocument
+    ? (doc: ChannelDoc) => {
+        onOpenDocument(doc)
+        requestAnimationFrame(() => headingRef.current?.focus())
+        if (narrow) {
+          channelChooserReturnFocus.current = headingRef.current
+          setChannelsOpen(false)
+        }
+        return headingRef.current
+      }
+    : undefined
+  const openStudioChannel = (entry: ChannelSearchEntry) => {
+    if (entry.kind === 'text') onChangeCanvasMode?.('chat')
+    return openFromSearch(entry)
+  }
+
   // A text channel opens, and focus goes to its heading. An audio room is not joined: focus goes
   // to its row, whose own action joins it — unless its category is folded away or the room cannot
   // be joined yet, when the search keeps focus.
@@ -1908,7 +1992,10 @@ function MountedEspaceLiveView({
               : undefined
           }
           rooms={searchEntries.filter((entry) => entry.kind === 'audio')}
-          onChoose={openFromSearch}
+          onChoose={openStudioChannel}
+          activity={activity}
+          files={files}
+          onOpenDocument={openStudioDocument}
         />
         {sidebarActionSlot ?? null}
       </div>
@@ -1978,12 +2065,19 @@ function MountedEspaceLiveView({
             </p>
           ) : null}
           <AudioDock
+            key={callSnapshot.roomId}
             layout="studio"
+            localParticipantId={viewerId}
+            previewCamera={activeCall.mode === 'local-preview'}
             participants={callSnapshot.participants.map((id) => ({
               id,
               name:
                 snapshot.rooms.find((room) => room.roomId === callSnapshot.roomId)?.names?.[id] ??
                 displayNameOf(id),
+              roleLabel:
+                profileCopy[
+                  activeStore.getProfileRole?.(callSnapshot.roomId ?? '', id) ?? 'member'
+                ],
               speaking: dockStatus === 'connected' && callSnapshot.speakers.includes(id),
             }))}
             participantsLabel={
@@ -2054,7 +2148,10 @@ function MountedEspaceLiveView({
               : undefined
           }
           rooms={searchEntries.filter((entry) => entry.kind === 'audio')}
-          onChoose={openFromSearch}
+          onChoose={openStudioChannel}
+          activity={activity}
+          files={files}
+          onOpenDocument={openStudioDocument}
         />
       </div>
       {sidebarFooterSlot ?? null}
@@ -2336,6 +2433,12 @@ function MountedEspaceLiveView({
                               ? t('console.workspace.presence.online')
                               : undefined
                           }
+                          document={documents.find(
+                            (doc) =>
+                              doc.id === row.message.document?.id &&
+                              doc.channelId === activeChannel?.id
+                          )}
+                          onOpenDocument={openStudioDocument}
                           message={row.message}
                           placement="timeline"
                           viewerId={viewerId}

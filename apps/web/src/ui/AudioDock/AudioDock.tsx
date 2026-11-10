@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { studioMessages } from '../../features/workspace/studioMessages'
 import { Avatar } from '../Avatar/Avatar'
 import { StudioGlyph } from '../icons/StudioGlyph'
 import type { ReactNode, Ref } from 'react'
@@ -60,8 +63,10 @@ export type AudioDockStatus = 'connected' | 'connecting' | 'reconnecting'
 
 export interface AudioDockProps {
   /** The region's accessible name, e.g. « Appel en cours ». */
-  participants?: readonly { id: string; name: string; speaking: boolean }[]
+  participants?: readonly { id: string; name: string; speaking: boolean; roleLabel?: string }[]
   participantsLabel?: string
+  localParticipantId?: string
+  previewCamera?: boolean
   cameraUnavailable?: string
   label: string
   /** The room's name. */
@@ -190,7 +195,12 @@ export function AudioDock({
   participants,
   participantsLabel,
   cameraUnavailable,
+  localParticipantId,
+  previewCamera = false,
 }: AudioDockProps) {
+  const [cameraActive, setCameraActive] = useState(false)
+  const { i18n } = useTranslation()
+  const copy = studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   if (onOpenCall !== undefined && !hasLabel(labels.openCall)) {
     // An icon-only button with no name is a control nobody using a screen
     // reader can identify; refuse it rather than draw it.
@@ -261,32 +271,73 @@ export function AudioDock({
         )}
       </div>
       {layout === 'studio' && participants && participants.length > 0 ? (
-        <ul
-          aria-label={participantsLabel}
-          className="grid max-h-shell-dock-width min-w-0 flex-1 grid-cols-4 gap-2 overflow-y-auto narrow:grid-cols-2"
+        <div
+          role="region"
+          aria-label={participantsLabel ?? copy.participants}
+          tabIndex={0}
+          className="max-h-shell-dock-width min-w-0 flex-1 overflow-y-auto rounded-md focus-visible:ring focus-visible:outline-hidden"
         >
-          {participants.map((person) => (
-            <li
-              key={person.id}
-              className="flex min-w-0 flex-col items-center gap-3 rounded-md bg-c-inverse-2 p-3"
-            >
-              <Avatar name={person.name} identity={person.id} size="md" />
-              <span className="flex max-w-full items-center gap-2 text-xs font-bold">
-                <span
-                  aria-hidden="true"
-                  className={cx(
-                    'h-2 w-2 shrink-0 rounded-full',
-                    person.speaking ? 'bg-c-ok-on-dark' : 'border border-c-on-inverse-dim'
-                  )}
-                />
-                <span className="truncate">{person.name}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
+          <ul aria-label={participantsLabel} className="grid grid-cols-4 gap-2 narrow:grid-cols-2">
+            {participants.map((person) => (
+              <li
+                key={person.id}
+                data-speaking={person.speaking || undefined}
+                className={cx(
+                  'flex min-w-0 flex-col items-center gap-3 rounded-lg border bg-c-inverse-2 p-3',
+                  person.speaking
+                    ? 'border-c-ok-on-dark ring-1 ring-c-ok-on-dark'
+                    : 'border-c-on-inverse-dim'
+                )}
+              >
+                {previewCamera && cameraActive && person.id === localParticipantId ? (
+                  <div
+                    data-testid="local-camera-preview"
+                    className="flex w-full flex-col items-center gap-2 rounded-md bg-c-inverse p-3 text-c-on-inverse"
+                  >
+                    <StudioGlyph name="camera" />
+                    <span className="text-center text-xs">{copy.cameraPreview}</span>
+                  </div>
+                ) : (
+                  <Avatar name={person.name} identity={person.id} size="lg" />
+                )}
+                <span className="rounded-full bg-c-inverse px-2 py-1 text-xs text-c-on-inverse-dim">
+                  {person.id === localParticipantId
+                    ? copy.you
+                    : (person.roleLabel ?? copy.participant)}{' '}
+                  · {person.speaking ? copy.speaking : copy.listening}
+                </span>
+                <span className="flex max-w-full items-center gap-2 text-xs font-bold">
+                  <span
+                    aria-hidden="true"
+                    className={cx(
+                      'h-2 w-2 shrink-0 rounded-full',
+                      person.speaking ? 'bg-c-ok-on-dark' : 'border border-c-on-inverse-dim'
+                    )}
+                  />
+                  <span className="truncate">{person.name}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       <div className={CONTROLS[layout]}>
-        {cameraUnavailable ? (
+        {previewCamera && participants?.some((person) => person.id === localParticipantId) ? (
+          <Tooltip content={copy.cameraHint}>
+            <button
+              type="button"
+              aria-label={copy.camera}
+              aria-pressed={cameraActive}
+              onClick={() => setCameraActive(!cameraActive)}
+              className={cx(
+                'flex h-12 w-12 items-center justify-center rounded-md focus-visible:ring',
+                cameraActive ? TONE.pressed : TONE.idle
+              )}
+            >
+              <StudioGlyph name="camera" />
+            </button>
+          </Tooltip>
+        ) : cameraUnavailable ? (
           <Tooltip content={cameraUnavailable}>
             <button
               type="button"

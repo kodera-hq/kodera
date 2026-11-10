@@ -117,7 +117,7 @@ it('registers both local stores, preserving per-organisation isolation and norma
   const vercelli = createDemoWorkspaceStore('vercelli', readyWorkspace())!
   for (const room of community.getSnapshot().rooms.filter((room) => room.kind === 'text')) {
     expect(community.getTimeline(room.roomId)[0]?.body).toContain('Bienvenue')
-    expect(community.getTimeline(room.roomId)).toHaveLength(2)
+    expect(community.getTimeline(room.roomId)).toHaveLength(room.name === 'announcements' ? 3 : 2)
     if (room.name === 'partner-dinum' || room.name === 'partner-octo') {
       expect(community.getTimeline(room.roomId)[1]?.body).toMatch(/Element.*Matrix|Matrix.*Element/)
     }

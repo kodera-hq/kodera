@@ -64,3 +64,35 @@ it('restores every created channel beyond 256 without discarding unrelated notes
   registerInteractiveDemos([{ slug: 'community', createStore: vi.fn() }])
   expect(readLocalWorkspaceView('community:workspace-1')).toEqual(saved)
 })
+
+it('restores quoted review comments and rejects malformed comment state', () => {
+  const comment = {
+    id: 'review',
+    authorId: 'claire',
+    authorName: 'Claire Mercer',
+    createdAtLabel: '12 min ago',
+    body: 'Check access',
+    quote: 'Before sharing',
+    resolved: true,
+  }
+  const saved = {
+    channels: {},
+    docs: {
+      docs: [
+        {
+          id: 'doc',
+          channelId: 'design',
+          title: 'Guide',
+          content: 'Updated source',
+          comments: [comment],
+        },
+      ],
+      selectedByChannel: { design: 'doc' },
+    },
+  }
+  registerDemoViewStorage({ read: () => saved, write: vi.fn() })
+  registerInteractiveDemos([{ slug: 'community', createStore: vi.fn() }])
+  expect(readLocalWorkspaceView('community:workspace-1')).toEqual(saved)
+  saved.docs.docs[0]!.comments[0]!.body = 'x'.repeat(4001)
+  expect(readLocalWorkspaceView('community:workspace-1').docs.docs).toEqual([])
+})

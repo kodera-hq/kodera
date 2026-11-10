@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import '../../i18n'
 import { AudioDock } from './AudioDock'
 import type { AudioDockProps } from './AudioDock'
 
@@ -274,4 +275,54 @@ it('renders four named audio participants without fabricating video tracks', () 
     'true'
   )
   expect(document.querySelectorAll('video')).toHaveLength(0)
+})
+
+it('toggles only the local simulated camera tile without accessing devices', async () => {
+  const user = userEvent.setup()
+  const getUserMedia = vi.fn()
+  vi.stubGlobal(
+    'navigator',
+    Object.assign(Object.create(navigator), { mediaDevices: { getUserMedia } })
+  )
+  try {
+    setup({
+      layout: 'studio',
+      previewCamera: true,
+      localParticipantId: 'me',
+      participants: [
+        { id: 'me', name: 'Local member', speaking: true },
+        { id: 'other', name: 'Remote member', speaking: false },
+      ],
+    })
+    expect(screen.getByRole('region', { name: 'Participants à l’appel' })).toHaveAttribute(
+      'tabindex',
+      '0'
+    )
+    const camera = screen.getByRole('button', { name: 'Caméra' })
+    await user.click(camera)
+    expect(camera).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('local-camera-preview')).toHaveTextContent('aperçu local simulé')
+    expect(screen.getByTestId('local-camera-preview').closest('li')).toHaveTextContent(
+      'Local member'
+    )
+    await user.click(camera)
+    expect(screen.queryByTestId('local-camera-preview')).toBeNull()
+    expect(getUserMedia).not.toHaveBeenCalled()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('keeps real calls camera unavailable even when a local participant is present', () => {
+  setup({
+    layout: 'studio',
+    localParticipantId: 'me',
+    participants: [{ id: 'me', name: 'Local', speaking: false }],
+    cameraUnavailable: 'Video unavailable',
+  })
+  expect(screen.queryByRole('button', { name: 'Caméra' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Video unavailable' })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
 })

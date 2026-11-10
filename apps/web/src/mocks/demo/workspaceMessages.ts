@@ -1,6 +1,15 @@
 /** Copy for the local demonstration conversation. */
 export const workspaceDemoMessages = {
   fr: {
+    reviewTitle: 'Revue du guide communautaire',
+    reviewContent:
+      '## Avant de partager\n- [x] Relire le guide\n- [ ] Vérifier les accès\n\nUne version pour toute l’équipe.',
+    reviewQuote: 'Vérifier les accès',
+    claireReview:
+      'Ajoutons une vérification des accès avant de partager le guide avec les nouveaux membres.',
+    elenaReview: 'La structure est claire. Je peux relire la checklist après la mise à jour.',
+    claireTime: 'Il y a 12 min',
+    elenaTime: 'Il y a 5 min',
     welcome:
       'Bienvenue dans votre espace. Échangez avec votre équipe ici, ou ouvrez Docs pour préparer vos documents.',
     community: {
@@ -52,6 +61,14 @@ export const workspaceDemoMessages = {
     viewer: 'Inès Kaci',
   },
   en: {
+    reviewTitle: 'Community guide review',
+    reviewContent:
+      '## Before sharing\n- [x] Review the guide\n- [ ] Check access\n\nOne version for the whole team.',
+    reviewQuote: 'Check access',
+    claireReview: 'Let’s add an access check before sharing the guide with new members.',
+    elenaReview: 'The structure looks clear. I can review the checklist after the update.',
+    claireTime: '12 min ago',
+    elenaTime: '5 min ago',
     welcome:
       'Welcome to your workspace. Talk with your team here, or open Docs to prepare your documents.',
     community: {

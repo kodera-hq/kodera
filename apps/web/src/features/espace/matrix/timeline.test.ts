@@ -306,3 +306,15 @@ describe('a message that mentions the viewer (M8)', () => {
     expect(view.find((m) => m.eventId === '$text')).not.toHaveProperty('mentionsMe')
   })
 })
+
+it('exposes attachment names for file browsing without trusting download URLs', () => {
+  const file = event({
+    event_id: '$file',
+    content: { msgtype: 'm.file', body: 'review.pdf', url: 'javascript:alert(1)' },
+  })
+  expect(timelineView([file], ME)[0]?.attachment).toEqual({ name: 'review.pdf' })
+  expect(
+    timelineView([{ ...file, unsigned: { redacted_because: {} } }], ME)[0]?.attachment
+  ).toBeUndefined()
+  expect(timelineView([message('$text', 'review.pdf')], ME)[0]?.attachment).toBeUndefined()
+})
