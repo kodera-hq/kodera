@@ -26,6 +26,10 @@ class ClaimForbiddenError(Exception):
     """The current customer is not an active organisation owner."""
 
 
+class ClaimIdentityUnknownError(Exception):
+    """The verified token no longer resolves to an enabled customer identity."""
+
+
 class PoolUnavailableError(Exception):
     """No matching, ready, worker-prepared allocation exists. Never persisted for replay."""
 
@@ -33,11 +37,13 @@ class PoolUnavailableError(Exception):
 def _owner(verified: VerifiedAccessToken) -> TenantCaller:
     resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
     if resolved is None:
-        raise ClaimForbiddenError()
+        raise ClaimIdentityUnknownError()
     _, identity = resolved
     try:
         caller = read_tenant_caller(verified=verified, organisation_id=identity.organisation_id)
-    except (TenantCallerUnknownError, TenantCallerNotFoundError):
+    except TenantCallerUnknownError:
+        raise ClaimIdentityUnknownError() from None
+    except TenantCallerNotFoundError:
         raise ClaimForbiddenError() from None
     if caller.role != "org_owner" or caller.organisation_state != "active":
         raise ClaimForbiddenError()

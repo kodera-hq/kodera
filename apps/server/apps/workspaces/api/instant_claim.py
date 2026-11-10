@@ -10,13 +10,14 @@ from django.http import HttpRequest, HttpResponse
 from apps.workspaces.instant_claim import (
     ClaimConflictError,
     ClaimForbiddenError,
+    ClaimIdentityUnknownError,
     PoolUnavailableError,
     authorise_instant_claim,
     claim_allocation,
     reauthorise_instant_claim,
 )
 from apps.workspaces.warm_pool import InstantClaimInputError, parse_instant_claim_request
-from core.api import lanes
+from core.api import lanes, problems
 from core.api.idempotency import StoredResponse, respond_once
 from core.api.scopes import Operation, declares
 from services.identity.access_tokens import TokenVerificationError
@@ -70,6 +71,8 @@ def instant_claim(request: HttpRequest) -> HttpResponse:
         )
     except TokenVerificationError:
         response = responses.problem("unauthenticated", request_id)
+    except ClaimIdentityUnknownError:
+        response = problems.identity_unknown(request_id, OPERATION.operation_id)
     except ClaimForbiddenError:
         response = responses.problem("forbidden", request_id)
     except PoolUnavailableError:
