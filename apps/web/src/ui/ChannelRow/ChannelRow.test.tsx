@@ -43,7 +43,7 @@ describe('ChannelRow', () => {
     )
     const selected = screen.getByRole('link', { name: 'annonces' })
     expect(selected).toHaveAttribute('aria-current', 'page')
-    expect(selected).toHaveClass('bg-c-accent-soft', 'text-c-accent-ink', 'font-semibold')
+    expect(selected).toHaveClass('bg-c-ok-soft', 'text-c-ink', 'font-bold')
     expect(selected.querySelector('[data-selected-bar]')).toHaveClass(
       'bg-c-accent-ink',
       'w-[3px]',
@@ -52,7 +52,7 @@ describe('ChannelRow', () => {
       'bottom-1'
     )
     // The `#` glyph takes the row's accent ink while current (docs/specs/workspace-dark-roles.md).
-    expect(within(selected).getByText('#')).toHaveClass('text-c-accent-ink')
+    expect(within(selected).getByText('#')).toHaveClass('text-c-ink')
     const idle = screen.getByRole('link', { name: 'général' })
     expect(within(idle).getByText('#')).toHaveClass('text-c-ink-3')
     expect(idle).not.toHaveAttribute('aria-current')
@@ -200,7 +200,7 @@ describe('ChannelRow', () => {
     expect(link).toHaveAttribute('href', '/acme/espace/general')
     expect(link).toHaveAttribute('aria-current', 'page')
     expect(link).not.toHaveAttribute('title')
-    expect(link).toHaveClass('bg-c-accent-soft', 'min-h-8')
+    expect(link).toHaveClass('bg-c-ok-soft', 'min-h-8')
   })
 
   it('refuses an asChild child that is not exactly one element', () => {

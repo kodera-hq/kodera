@@ -4,6 +4,9 @@ async function openHub(page: Page) {
   await page.goto('/login?demo=1&org=community')
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await page.waitForURL(/\/community\/workspace$/)
+  if ((page.viewportSize()?.width ?? 1280) < 960) {
+    await page.getByRole('button', { name: 'Salons', exact: true }).click()
+  }
   await page.getByRole('button', { name: 'Docs', exact: true }).click()
   await page.getByRole('button', { name: 'Documentation développeur & API (Docs-as-Code)' }).click()
   await expect(page.getByTestId('developer-docs-hub')).toBeVisible()

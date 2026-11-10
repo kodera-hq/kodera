@@ -14,7 +14,7 @@ import { TOUCH_TARGET_HEIGHT } from '../touchTarget'
  *
  * States, each carried by more than colour, and each read in the accessible
  * name in the caller's words (« général, non lu, 3 mentions »):
- * - selected: `aria-current="page"`, the `c-accent-soft` fill and
+ * - selected: `aria-current="page"`, the `c-ok-soft` fill and
  *   `c-accent-ink` label, plus a bar at the leading edge and the semibold
  *   weight, so it does not rest on hue;
  * - unread: `c-ink` semibold against the idle `c-ink-2` regular weight;
@@ -55,7 +55,7 @@ const BASE =
 const TONE = {
   idle: 'font-regular text-c-ink-3 hover:bg-c-muted hover:text-c-ink',
   unread: 'font-semibold text-c-ink hover:bg-c-muted',
-  selected: 'bg-c-accent-soft font-semibold text-c-accent-ink',
+  selected: 'bg-c-ok-soft font-bold text-c-ink',
 } as const
 
 /** A text channel. Rendered inside an `<li>` it creates itself. */
@@ -124,7 +124,7 @@ export const ChannelRow = forwardRef<HTMLAnchorElement, ChannelRowProps>(functio
             aria-hidden="true"
             className={cx(
               'w-4 shrink-0 text-center font-medium',
-              selected ? 'text-c-accent-ink' : 'text-c-ink-3'
+              selected ? 'text-c-ink' : 'text-c-ink-3'
             )}
           >
             #

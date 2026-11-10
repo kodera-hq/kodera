@@ -3,6 +3,7 @@
 // and which `Idempotency-Key` the next creation attempt sends. No React, no client: each rule is
 // tested on its own (`workspace.test.ts`).
 
+import '../../validation-policy'
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 import { ApiProblem } from '../../api/client'

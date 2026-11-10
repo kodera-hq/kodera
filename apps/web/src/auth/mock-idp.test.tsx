@@ -32,8 +32,7 @@ describe('MockIdpAuthorizePage', () => {
   it.each(['demo', 'silent'])(
     'automatically completes %s authorization without a click',
     (mode) => {
-      if (mode === 'demo')
-        registerInteractiveDemo({ slug: 'community', createStore: createLocalWorkspaceStore })
+      registerInteractiveDemo({ slug: 'community', createStore: createLocalWorkspaceStore })
       const navigate = vi.fn()
       render(
         <MockIdpAuthorizePage

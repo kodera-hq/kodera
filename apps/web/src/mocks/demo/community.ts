@@ -146,10 +146,10 @@ export function isCommunityDemoRequest(request: Request): boolean {
 export function communityMemberships(now: Date): components['schemas']['Membership'][] {
   const names = [
     'Community Member',
-    'Kodera Maintainer',
-    'SDK Contributor',
-    'Sam Laurent',
-    'Camille Robert',
+    'Elena Vance',
+    'Marcus Sterling',
+    'Claire Mercer',
+    'Liam Thorne',
     'Morgan Petit',
   ]
   const base = seed.memberships(now)[0]!

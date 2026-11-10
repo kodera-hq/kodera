@@ -47,11 +47,11 @@ test('shell/rail: labels every module and marks the console as the current page'
 
   const rail = page.getByRole('navigation', { name: 'Modules' })
   const links = rail.getByRole('link')
-  // Visio, Docs, « Réglages » (the console) and the maker's mark — the
-  // fixture's two applications plus the rail's two constants for an owner. No
+  // Visio, Docs, and the maker's mark — the fixture's two applications plus the
+  // rail's home mark, alongside the « Réglages » action button at the foot. No
   // « Messages »: the fixture's tenant does not run `messaging`. Asserted so the
   // loop below cannot pass over an empty rail.
-  await expect(links).toHaveCount(4)
+  await expect(links).toHaveCount(3)
 
   // The brand mark is named. Icons only (docs/specs/icon-only-controls.md): a module draws no
   // text, and its name shows beside it as a tooltip while it has the focus.
@@ -59,8 +59,12 @@ test('shell/rail: labels every module and marks the console as the current page'
     const name = await link.evaluate((el) => el.getAttribute('aria-label'))
     expect(name?.trim()).toBeTruthy()
   }
-  for (const name of ['Visio', 'Docs', 'Réglages']) {
-    const item = rail.getByRole('link', { name: new RegExp(`^${name}`) })
+  for (const [role, name] of [
+    ['link', 'Visio'],
+    ['link', 'Docs'],
+    ['button', 'Réglages'],
+  ] as const) {
+    const item = rail.getByRole(role, { name: new RegExp(`^${name}`) })
     await expect(item).toHaveText('')
     await item.focus()
     await expect(page.locator('[data-side="right"]').filter({ hasText: name })).toBeVisible()

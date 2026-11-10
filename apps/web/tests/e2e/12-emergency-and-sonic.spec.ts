@@ -79,44 +79,49 @@ async function expectZeroRuntimeRegressions(
 }
 
 async function routeWorkspaceWithEmergencyChannel(page: Page): Promise<void> {
-  await page.route('**/api/v1/organisations/*/workspace', async (route) => {
-    if (route.request().method() !== 'GET') {
-      await route.fallback()
-      return
+  await page.addInitScript((urgenceId) => {
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = async (input, init) => {
+      const url = input instanceof Request ? input.url : String(input)
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+      const response = await originalFetch(input, init)
+      if (method === 'GET' && /\/api\/v1\/organisations\/[^/]+\/workspace$/.test(url)) {
+        const body = (await response.clone().json()) as {
+          categories?: Array<{
+            id: string
+            name: string
+            template_key: string | null
+            channels: Array<{
+              id: string
+              kind: string
+              name: string
+              template_key: string | null
+              topic: string
+              lifecycle: string
+              room_state: string
+            }>
+          }>
+        }
+        if (Array.isArray(body.categories) && body.categories[0] !== undefined) {
+          body.categories[0].channels.push({
+            id: urgenceId,
+            kind: 'text',
+            name: 'urgence',
+            template_key: null,
+            topic: 'Continuité bâtiment et pointage de sécurité hors-ligne',
+            lifecycle: 'active',
+            room_state: 'ready',
+          })
+        }
+        return new Response(JSON.stringify(body), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        })
+      }
+      return response
     }
-    const response = await route.fetch()
-    const body = (await response.json()) as {
-      categories?: Array<{
-        id: string
-        name: string
-        template_key: string | null
-        channels: Array<{
-          id: string
-          kind: string
-          name: string
-          template_key: string | null
-          topic: string
-          lifecycle: string
-          room_state: string
-        }>
-      }>
-    }
-    if (Array.isArray(body.categories) && body.categories[0] !== undefined) {
-      body.categories[0].channels.push({
-        id: URGENCE_CHANNEL_ID,
-        kind: 'text',
-        name: 'urgence',
-        template_key: null,
-        topic: 'Continuité bâtiment et pointage de sécurité hors-ligne',
-        lifecycle: 'active',
-        room_state: 'ready',
-      })
-    }
-    await route.fulfill({
-      response,
-      json: body,
-    })
-  })
+  }, URGENCE_CHANNEL_ID)
 }
 
 test('workspace/emergency: lists #urgence in the workspace sidebar, navigates to its channel view, and passes axe with zero CSP or console errors', async ({

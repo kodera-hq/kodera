@@ -1,3 +1,4 @@
+import { readLanguagePreference } from './languagePreference'
 // i18next runtime, wired to the generated catalogues. French is the product's
 // default language (docs/dev/I18N.md); English is the second one.
 //
@@ -47,7 +48,7 @@ function handleMissingKey(languages: readonly string[], _namespace: string, key:
 }
 
 void i18n.use(initReactI18next).init({
-  lng: 'fr',
+  lng: readLanguagePreference(),
   fallbackLng: 'fr',
   supportedLngs: ['fr', 'en'],
   resources: {

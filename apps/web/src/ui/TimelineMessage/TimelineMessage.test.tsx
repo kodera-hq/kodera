@@ -269,3 +269,23 @@ describe('TimelineMessage', () => {
     expect(first?.getAttribute('aria-labelledby')).not.toBe(second?.getAttribute('aria-labelledby'))
   })
 })
+
+it('opens a structured document card and hides it for deleted messages', async () => {
+  const user = userEvent.setup()
+  const onOpen = vi.fn()
+  const document = {
+    title: 'Guide review',
+    subtitle: 'Shared document',
+    openLabel: 'Open in Docs',
+    onOpen,
+  }
+  const { unmount } = setup({ document })
+  await user.click(
+    screen.getByRole('button', { name: 'Guide review Shared document Open in Docs' })
+  )
+  expect(onOpen).toHaveBeenCalledOnce()
+  expect(screen.queryByText('Mise en ligne jeudi à 7 h.')).toBeNull()
+  unmount()
+  setup({ document, deleted: 'Deleted' })
+  expect(screen.queryByRole('button', { name: /Open in Docs/ })).toBeNull()
+})

@@ -2,6 +2,27 @@
   "$comment": "The accessibility contract as data. The four load-bearing fields of a row — `fg`, `bg`, `label`, `min` — are the same four values kodera-visio/scripts/check-contrast.py carries in the `PAIRINGS` tuples it hardcodes; that script reads no JSON and this file is not an input to it. The shape is deliberate all the same, so a pairing can move from there to here without being reinterpreted. `fg` and `bg` are token paths from tokens.json, or a literal #hex. `min` is 4.5 for text (WCAG 2.1 SC 1.4.3) or 3.0 for a non-text boundary, control edge or focus indicator (SC 1.4.11); the large-text 3:1 exemption is not used anywhere in this system. A translucent foreground is composited over its background before it is measured, always: the alpha travels with the colour and no row can opt out, because a translucent colour measured as if it were opaque reports a ratio no user ever sees. `fg` may also be a `spec:` role rather than a token — `spec:focus-ring.<theme>.indicator` is the ring tone painted against the control and `spec:focus-ring.<theme>.outer` the tone painted onto the background, with `spec:focus-ring-on-inverse.<theme>.*` for the variant a control on an inverse panel is drawn with — which resolves to a colour scripts/lib/spec.mjs composes for the build, at its real alpha. The theme is part of the name because the ring follows `[data-theme]`: a role without one would let a row measure the light ring on a ground the dark ring is what actually paints. That is what keeps these rows measuring the focus ring that ships rather than a token named after it (ADR-0002). `exempt` records a row that is measured and reported but not gated. `expect: \"fail\"` inverts the row: it is a pair the design system forbids, and the gate fails if it ever starts passing, because that means the palette moved under the rule. Additional measurements classify decorative or unsupported capability combinations, and figures this package can compute about a value it ships but does not gate; they are explicitly outside normative contrast acceptance, carry a purpose, and are measured by the theme contract self-test. A measurement may name a `spec:` role in `fg` exactly as a pair can, so a colour the build composes is reported at the geometry that actually ships and moves when that geometry moves. No allowlist entries are created for them, and a measurement never becomes a requirement, a waiver or a threshold.",
   "pairs": [
     {
+      "id": "theme.light/studio-selection",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.theme.light.ok-soft",
+      "label": "light: selected workspace room and navigation text",
+      "min": 4.5
+    },
+    {
+      "id": "theme.dark/studio-selection",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.theme.dark.ok-soft",
+      "label": "dark: selected workspace room and navigation text",
+      "min": 4.5
+    },
+    {
+      "id": "theme.black/studio-selection",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.theme.black.ok-soft",
+      "label": "black: selected workspace room and navigation text",
+      "min": 4.5
+    },
+    {
       "id": "text.primary/surface.default",
       "fg": "semantic.text.primary",
       "bg": "semantic.surface.default",

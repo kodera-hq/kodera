@@ -17,12 +17,12 @@ function Identity({ name, slug }: OrganisationHeaderProps) {
       {/* The initials repeat the name beside them: hidden from the reading order. */}
       <span
         aria-hidden="true"
-        className="logo-tile-black flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sm font-bold"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-ok-soft text-sm font-bold text-c-ink"
       >
         {initialsOf(name)}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-md font-semibold text-c-ink">{name}</span>
+        <span className="truncate text-sm font-bold text-c-ink">{name}</span>
         {slug === 'community' ? (
           <span className="truncate text-xs text-c-ink-3">community.kodera.io</span>
         ) : null}

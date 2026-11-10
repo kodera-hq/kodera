@@ -72,8 +72,9 @@ export function authHandlers() {
       }
       return HttpResponse.json({
         access_token: fakeJwt(claims),
-        // Lets the installed SDK renew without opening an interactive iframe.
-        refresh_token: `mock-refresh-${String(realm)}`,
+        // Lets the installed SDK renew demo sessions without opening an interactive iframe,
+        // while keeping standard mock realms on explicit silent-SSO and expiry timers.
+        ...(isDemoActive(String(realm)) ? { refresh_token: `mock-refresh-${String(realm)}` } : {}),
         id_token: fakeJwt(claims),
         token_type: 'Bearer',
         expires_in: expiresIn,

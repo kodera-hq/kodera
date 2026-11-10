@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import type { MouseEvent, ReactNode, ReactElement } from 'react'
+import { StudioGlyph } from '../icons/StudioGlyph'
 import { Avatar } from '../Avatar/Avatar'
 import { cx } from '../cx'
 import { EspaceGlyph } from '../icons/EspaceGlyph'
@@ -77,6 +78,7 @@ export type TimelineDelivery =
   | { state: 'failed'; label: string; retryLabel: string; onRetry: () => void }
 
 export interface TimelineMessageProps {
+  document?: { title: string; subtitle: string; openLabel: string; onOpen: () => void } | undefined
   author: string
   /** Optional accessible profile disclosure around the avatar and author name. */
   profileTrigger?: ((trigger: ReactElement) => ReactNode) | undefined
@@ -117,6 +119,7 @@ const ROOT =
   'group relative flex gap-3 rounded-md px-2 text-md leading-body wrap-anywhere text-c-ink'
 
 export function TimelineMessage({
+  document,
   author,
   profileTrigger,
   avatarIdentity,
@@ -224,7 +227,7 @@ export function TimelineMessage({
           </span>
         ) : (
           <div className="flex flex-wrap items-baseline gap-2">
-            <span id={authorId} className="font-semibold">
+            <span id={authorId} className="text-sm font-bold">
               {profileTrigger
                 ? profileTrigger(
                     <button
@@ -255,7 +258,23 @@ export function TimelineMessage({
           </p>
         ) : (
           <div className="min-w-0">
-            {children}
+            {document ? (
+              <button
+                type="button"
+                onClick={document.onOpen}
+                aria-label={`${document.title} ${document.subtitle} ${document.openLabel}`}
+                className="my-2 flex w-full items-center gap-3 rounded-lg border border-c-border bg-c-surface p-4 text-left text-c-ink hover:bg-c-muted focus-visible:ring"
+              >
+                <StudioGlyph name="docs" />
+                <span className="flex min-w-0 flex-col gap-1">
+                  <strong>{document.title}</strong>
+                  <span className="text-xs text-c-ink-2">{document.subtitle}</span>
+                  <span className="text-sm font-bold">{document.openLabel}</span>
+                </span>
+              </button>
+            ) : (
+              children
+            )}
             {isEdited ? <span className="ml-1 text-xs text-c-ink-3">{edited}</span> : null}
           </div>
         )}

@@ -1,5 +1,6 @@
 import { spawn, execFile } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -8,6 +9,10 @@ import { expect, test } from '@playwright/test'
 import type { Browser, BrowserServer, BrowserContext, Page } from '@playwright/test'
 
 const run = promisify(execFile)
+const viteBin = [
+  resolve(import.meta.dirname, '../../node_modules/vite/bin/vite.js'),
+  resolve(import.meta.dirname, '../../../../node_modules/vite/bin/vite.js'),
+].find((candidate) => existsSync(candidate))!
 let root: string
 let server: ChildProcess | undefined
 let serverClosed: Promise<unknown> | undefined
@@ -24,7 +29,7 @@ test.beforeAll(async ({ playwright }, info) => {
   )
   await run(
     process.execPath,
-    ['node_modules/vite/bin/vite.js', 'build', '--outDir', join(root, 'dist')],
+    [viteBin, 'build', '--outDir', join(root, 'dist')],
     {
       env: {
         ...env,

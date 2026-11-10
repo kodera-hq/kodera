@@ -153,11 +153,11 @@ test('profile updates are visible in messages, profile cards and after reload', 
   await page.keyboard.press('Escape')
   await page
     .getByRole('log')
-    .getByRole('button', { name: 'Kodera Maintainer', exact: true })
+    .getByRole('button', { name: 'Elena Vance', exact: true })
     .last()
     .click()
   await page
-    .getByRole('dialog', { name: 'Kodera Maintainer', exact: true })
+    .getByRole('dialog', { name: 'Elena Vance', exact: true })
     .getByRole('button', { name: 'Mentionner', exact: true })
     .click()
   const composer = page.getByRole('combobox', { name: 'Message dans #announcements', exact: true })

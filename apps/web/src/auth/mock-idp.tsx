@@ -48,7 +48,7 @@ export function MockIdpAuthorizePage({
   const { t } = useTranslation()
   const params = new URLSearchParams(search)
   const realm = params.get('realm') ?? ''
-  const automatic = isDemoActive(realm) || params.get('prompt') === 'none'
+  const automatic = isDemoActive(realm)
   const redirected = useRef<string | undefined>(undefined)
   useEffect(() => {
     if (!automatic) return
