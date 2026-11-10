@@ -1,6 +1,11 @@
 import { ApiProblem, NetworkError, coreApi } from '../../api/client'
 export type TemplateId =
-  'audiovisual-production' | 'tech-studio' | 'b2b-advisory' | 'public-sector' | 'crisis-cell'
+  | 'audiovisual-production'
+  | 'tech-studio'
+  | 'b2b-advisory'
+  | 'public-sector'
+  | 'crisis-cell'
+  | 'open-source-community'
 export const TEMPLATE_CHANNELS: Record<TemplateId, readonly string[]> = {
   'audiovisual-production': [
     'production',
@@ -14,6 +19,13 @@ export const TEMPLATE_CHANNELS: Record<TemplateId, readonly string[]> = {
   'b2b-advisory': ['general', 'client-projects', 'deliverables'],
   'public-sector': ['general', 'compliance', 'on-call'],
   'crisis-cell': ['general', 'incident-log', 'field-bridge', 'urgence'],
+  'open-source-community': [
+    'general',
+    'announcements',
+    'contributing',
+    'support',
+    'community-lounge',
+  ],
 }
 
 export interface InstantClaimPayload {
@@ -146,6 +158,9 @@ export async function instantClaimWorkspace(
   payload: InstantClaimPayload,
   options: { post?: Post; idempotencyKey?: string; signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<ClaimedWorkspace> {
+  // Local templates must not be sent to a server contract that does not support them yet.
+  const cloudTemplate = payload.templateId
+  if (cloudTemplate === 'open-source-community') throw new InstantClaimError('refused')
   const templates = [
     'audiovisual-production',
     'tech-studio',
@@ -213,7 +228,11 @@ export async function instantClaimWorkspace(
         const result = await coreApi().POST('/workspaces/instant-claim', {
           ...init,
           params: { header: init.headers },
-          body: { ...init.body, enabledConnectors: [...init.body.enabledConnectors] },
+          body: {
+            ...init.body,
+            templateId: cloudTemplate,
+            enabledConnectors: [...init.body.enabledConnectors],
+          },
         })
         return { data: result.data, response: result.response }
       })

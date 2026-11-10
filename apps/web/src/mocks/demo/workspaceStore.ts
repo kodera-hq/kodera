@@ -1,4 +1,5 @@
 // In-memory conversations for the browser demo; never starts a client or contacts a homeserver.
+import type { ChannelDocsWorkspace } from '../../features/docs/ChannelDocsEditor'
 import i18n from '../../i18n'
 import { createLocalAudioCall } from './audioCall'
 import { isMatrixUserId } from '../../features/espace/roomInvitations'
@@ -14,9 +15,9 @@ import { workspaceDemoMessages } from './workspaceMessages'
 
 const VIEWER = '@ines:demo.invalid'
 const MEMBERS: readonly MemberView[] = [
-  { userId: '@product:demo.invalid', name: 'Product Team' },
-  { userId: '@engineering:demo.invalid', name: 'Engineering Team' },
-  { userId: '@design:demo.invalid', name: 'Design Team' },
+  { userId: '@elena:demo.invalid', name: 'Elena Vance' },
+  { userId: '@marcus:demo.invalid', name: 'Marcus Sterling' },
+  { userId: '@claire:demo.invalid', name: 'Claire Mercer' },
 ]
 const EMPTY: readonly MessageView[] = []
 const MAX_MESSAGES = 256
@@ -27,14 +28,21 @@ export function createLocalWorkspaceStore(
   persist = false
 ): EspaceStoreLike & { addChannel: (channel: WorkspaceChannel) => void } {
   const copy = workspaceDemoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
-  const viewer = profile === 'community' ? '@member:demo.invalid' : VIEWER
+  const viewer = profile === 'community' ? '@member:community.kodera.io' : VIEWER
+  const viewerName = profile === 'community' ? 'Liam Thorne' : copy.viewer
   const members =
     profile === 'community'
       ? [
-          { userId: '@maintainer:demo.invalid', name: 'Kodera Maintainer' },
-          { userId: '@contributor:demo.invalid', name: 'SDK Contributor' },
+          { userId: '@maintainer:community.kodera.io', name: 'Elena Vance' },
+          { userId: '@contributor:community.kodera.io', name: 'Marcus Sterling' },
+          { userId: '@core:community.kodera.io', name: 'Claire Mercer' },
+          { userId: '@design:community.kodera.io', name: 'Liam Thorne' },
         ]
       : MEMBERS
+  const roomNames: Readonly<Record<string, string>> = {
+    [viewer]: viewerName,
+    ...Object.fromEntries(members.map((member) => [member.userId, member.name ?? member.userId])),
+  }
   const listeners = new Set<() => void>()
   const timelines = new Map<string, readonly MessageView[]>()
   const threads = new Map<string, readonly MessageView[]>()
@@ -48,7 +56,7 @@ export function createLocalWorkspaceStore(
       key: eventId,
       eventId,
       sender: author?.userId ?? viewer,
-      senderName: author?.name ?? (profile === 'community' ? 'Community Member' : copy.viewer),
+      senderName: author?.name ?? viewerName,
       body,
       ts: Date.now(),
       edited: false,
@@ -57,6 +65,41 @@ export function createLocalWorkspaceStore(
       replyTo: null,
       reactions: [],
     }
+  }
+  const initialChannel = everyChannel(workspace).find(
+    (channel) => channel.kind === 'text' && channel.room_state === 'ready'
+  )
+  const initialDocs: ChannelDocsWorkspace = {
+    docs: initialChannel
+      ? [
+          {
+            id: `review-${initialChannel.id}`,
+            channelId: initialChannel.id,
+            title: copy.reviewTitle,
+            content: copy.reviewContent,
+            comments: [
+              {
+                id: 'review-claire',
+                authorId: members[2]!.userId,
+                authorName: 'Claire Mercer',
+                createdAtLabel: copy.claireTime,
+                body: copy.claireReview,
+                quote: copy.reviewQuote,
+                resolved: false,
+              },
+              {
+                id: 'review-elena',
+                authorId: members[0]!.userId,
+                authorName: 'Elena Vance',
+                createdAtLabel: copy.elenaTime,
+                body: copy.elenaReview,
+                resolved: false,
+              },
+            ],
+          },
+        ]
+      : [],
+    selectedByChannel: initialChannel ? { [initialChannel.id]: `review-${initialChannel.id}` } : {},
   }
   const rooms: RoomSummary[] = everyChannel(workspace)
     .filter((channel) => channel.room_state === 'ready')
@@ -76,6 +119,15 @@ export function createLocalWorkspaceStore(
             )
           : EMPTY
       )
+      const doc = initialDocs.docs.find((entry) => entry.channelId === channel.id)
+      if (doc)
+        timelines.set(roomId, [
+          ...(timelines.get(roomId) ?? EMPTY),
+          {
+            ...message(doc.title, members[2]),
+            document: { id: doc.id, title: doc.title },
+          },
+        ])
       return {
         roomId,
         name: channel.name,
@@ -84,6 +136,7 @@ export function createLocalWorkspaceStore(
         unread: 0,
         mentions: 0,
         occupancy: null,
+        names: roomNames,
         joined: members.length + 1,
         faces: members,
       }
@@ -157,7 +210,25 @@ export function createLocalWorkspaceStore(
     emit()
   }
   return {
-    audioCall: createLocalAudioCall(viewer),
+    getInitialDocuments: () => initialDocs,
+    async publishDocument(roomId, doc) {
+      if (!timelines.has(roomId)) throw new Error('Unknown channel')
+      timelines.set(
+        roomId,
+        [
+          ...(timelines.get(roomId) ?? EMPTY),
+          {
+            ...message(`## ${doc.title}\n\n${doc.content}`),
+            document: { id: doc.id, title: doc.title },
+          },
+        ].slice(-MAX_MESSAGES)
+      )
+      emit()
+    },
+    audioCall: createLocalAudioCall(
+      viewer,
+      members.slice(0, 3).map((member) => member.userId)
+    ),
     addChannel(channel) {
       if (channels.has(channel.id)) return
       if (channel.room_state !== 'ready')
@@ -179,6 +250,7 @@ export function createLocalWorkspaceStore(
             unread: 0,
             mentions: 0,
             occupancy: null,
+            names: roomNames,
             joined: members.length + 1,
             faces: members,
           },
@@ -215,14 +287,34 @@ export function createLocalWorkspaceStore(
       )
       emit()
     },
-    getMemberRole: () => 'member',
+    getMemberRole: (_roomId, userId) =>
+      profile === 'community' && userId === '@maintainer:community.kodera.io' ? 'admin' : 'member',
+    getProfileRole: (_roomId, userId) =>
+      profile === 'community'
+        ? userId === '@maintainer:community.kodera.io'
+          ? 'maintainer'
+          : userId === '@core:community.kodera.io'
+            ? 'core'
+            : userId === '@design:community.kodera.io'
+              ? 'partner'
+              : 'member'
+        : 'member',
     isOnline: () => true,
     getReadMarker: (roomId) => markers.get(roomId) ?? null,
     async markRead(roomId) {
       const last = timelines.get(roomId)?.at(-1)?.eventId
       if (last) {
         markers.set(roomId, last)
-        save()
+        const room = snapshot.rooms.find((entry) => entry.roomId === roomId)
+        if (room && (room.unread || room.mentions)) {
+          snapshot = {
+            ...snapshot,
+            rooms: snapshot.rooms.map((entry) =>
+              entry.roomId === roomId ? { ...entry, unread: 0, mentions: 0 } : entry
+            ),
+          }
+          emit()
+        } else save()
       }
     },
     async send(roomId, body, options) {
@@ -293,7 +385,13 @@ function validStoredConversations(value: unknown): value is StoredConversations 
         typeof item.eventId === 'string' &&
         typeof item.sender === 'string' &&
         Number.isFinite(item.ts) &&
-        Array.isArray(item.reactions)
+        Array.isArray(item.reactions) &&
+        (item.document === undefined ||
+          (item.document &&
+            typeof item.document.id === 'string' &&
+            typeof item.document.title === 'string')) &&
+        (item.attachment === undefined ||
+          (item.attachment && typeof item.attachment.name === 'string'))
     )
   return (
     data.version === 1 &&

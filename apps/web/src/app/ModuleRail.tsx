@@ -6,7 +6,7 @@ import type { RailSurface, RailSurfaceItem } from './railModules'
 import type { OrganisationRole } from './Sidebar'
 import type { UserBlockUser } from './UserBlock'
 import { otherApplications, useTenantApplications } from './tenantApplications'
-import { WorkspaceMenu } from '../features/workspace/WorkspaceMenu'
+import { openWorkspaceCommand, WorkspaceMenu } from '../features/workspace/WorkspaceMenu'
 import { ModuleGlyph } from '../ui/icons/ModuleGlyph'
 import { RAIL_TIP_OFFSET } from '../ui/Rail/Rail'
 import { Tooltip } from '../ui/Tooltip/Tooltip'
@@ -39,52 +39,12 @@ export interface ModuleRailProps {
   user: UserBlockUser
   /** The surface on screen (`railModules.ts`, `surfaceOf`): its item is the current one. */
   surface?: RailSurface
-  /** The person's role in the organisation: a member is offered « Messages » before a tenant
-   * exists, and is not offered « Réglages ». Unknown, « Réglages » is not drawn either: the rail
-   * shows settings only to a role known to have them. */
+  /** The role determines workspace availability; personal settings are available to everyone. */
   role?: OrganisationRole
 }
 
-/**
- * The module rail: the strip of application icons left of the sidebar, on the
- * dark ground the delivered design gives it while the rest of the shell stays
- * light. `--shell-rail-width` wide, read from `@kodera/design-tokens`
- * rather than written here, with 48 px icon items; the ground and the
- * ink are the themed `c-*` roles, so the rail follows the light/dark/black
- * boundary the tokens package draws instead of pinning a colour of its own.
- *
- * Top to bottom: the maker's mark, linking to the organisation home; the
- * tenant's own applications, each opening its application URL in a new tab;
- * « Messages », the workspace, for an organisation that has it. At the foot:
- * « Réglages », the administration console, for every role but `org_member`,
- * with the account menu kept in the sidebar. The surface on screen says so with
- * `aria-current="page"` rather than with colour alone. A member reaches the
- * console's home, Applications and Aide through the mark, as before; the rail
- * no longer offers them settings they cannot change.
- *
- * A second `nav` landmark beside the sidebar's, so it carries its own
- * accessible name (§10) — as does the sidebar's, from this change on. The
- * rail is rendered AFTER the skip link in `Shell`, so the documented focus
- * order still opens with "Aller au contenu".
- *
- * An item is named for its application — "Visio", not "Ouvrir Visio". The
- * Applications screen and the Home card already carry an "Ouvrir Visio" action
- * each; a third control with that name for the same address would be three
- * links a person has to tell apart by where they sit. The rail is a dock: the
- * name is the destination, and the new-tab hint says what the click does.
- *
- * The maker's mark links to the organisation home, so on that route the router
- * marks it `aria-current="page"` — the same annotation the sidebar's "Accueil"
- * already carries, applied by `Link` itself to any link pointing at the
- * current route. That is why the "exactly one current item" rule is about the
- * MODULE LIST below and not about the whole landmark: the mark is a brand
- * affordance, not a module.
- *
- * It grants nothing. Every item is an application the tenant already has or
- * the console the person is already in; there is no People, Domain,
- * Federation or Billing entry here, so no role can reach through the rail
- * what `Sidebar`'s own matrix denies it (`src/app/role-navigation.test.tsx`).
- */
+/** Application navigation and a persistent entry point to personal and workspace settings.
+ * Settings grants no administrative authority: each section retains its own role checks. */
 export function ModuleRail({
   org,
   organisationId,
@@ -106,10 +66,9 @@ export function ModuleRail({
   const surfaces = railSurfaces().filter((item) =>
     item.surface === 'workspace'
       ? hasMessaging || memberBeforeTenant || surface === 'workspace'
-      : role !== undefined && role !== 'org_member'
+      : true
   )
   const modules = surfaces.filter((item) => item.surface !== 'console')
-  const foot = surfaces.filter((item) => item.surface === 'console')
   const openInNewTab = t('console.common.a11y-opens-new-tab')
 
   // Each stays a link to its surface's entry rather than becoming inert text, so it keeps its place
@@ -201,9 +160,33 @@ export function ModuleRail({
       </ul>
 
       <div className="flex w-full shrink-0 flex-col items-center gap-3 border-t border-c-rail-line pt-3">
-        {foot.length > 0 ? (
-          <ul className="flex flex-col items-center">{foot.map(surfaceItem)}</ul>
-        ) : null}
+        <ul className="flex flex-col items-center">
+          <li>
+            <Tooltip
+              content={t('console.shell.rail.title-settings')}
+              side="right"
+              sideOffset={RAIL_TIP_OFFSET}
+              names
+            >
+              <button
+                type="button"
+                aria-current={surface === 'console' ? 'page' : undefined}
+                aria-label={t('console.shell.rail.title-settings')}
+                data-workspace-settings-trigger
+                onClick={() => openWorkspaceCommand('settings')}
+                className={surface === 'console' ? ITEM_CURRENT : ITEM_IDLE}
+              >
+                {surface === 'console' ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-4 left-1 h-4 w-1 rounded-sm bg-c-on-inverse"
+                  />
+                ) : null}
+                <ModuleGlyph name="console" />
+              </button>
+            </Tooltip>
+          </li>
+        </ul>
       </div>
     </nav>
   )

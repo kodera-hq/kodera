@@ -87,9 +87,9 @@ describe('Matrix channel invitation dialog', () => {
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
     const dialog = screen.getByRole('dialog')
     const expected = [
-      'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=demo.invalid',
+      'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=community.kodera.io',
       '#partner-dinum:demo.invalid',
-      'matrix:r/partner-dinum:demo.invalid?action=join&via=demo.invalid',
+      'matrix:r/partner-dinum:demo.invalid?action=join&via=community.kodera.io',
       `${window.location.origin}/community/workspace/${setup().channel.id}`,
     ]
     const buttons = within(dialog).getAllByRole('button', { name: /^Copier :/ })

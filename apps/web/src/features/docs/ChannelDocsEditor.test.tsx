@@ -30,6 +30,7 @@ it('keeps documents isolated by channel and publishes the edited Markdown', asyn
   render(<Editor />)
   await user.selectOptions(screen.getByRole('combobox', { name: 'Modèle' }), 'meeting')
   await user.click(screen.getByRole('button', { name: 'Nouveau document' }))
+  await user.click(screen.getByText('Documents du salon', { selector: 'summary' }))
   const title = screen.getByRole('textbox', { name: 'Titre du document' })
   await user.clear(title)
   await user.type(title, 'Planning')
@@ -38,8 +39,11 @@ it('keeps documents isolated by channel and publishes the edited Markdown', asyn
   await user.clear(body)
   await user.type(body, '## Ready')
   await user.click(screen.getByRole('button', { name: 'Publier dans le salon' }))
-  expect(publish).toHaveBeenCalledWith('Planning', '## Ready')
-  expect(await screen.findByRole('status')).toHaveTextContent('Document publié')
+  expect(publish).toHaveBeenCalledWith('Planning', '## Ready', expect.any(String))
+  expect(await screen.findByText('Document publié dans le salon.')).toHaveAttribute(
+    'role',
+    'status'
+  )
   await user.click(screen.getByRole('button', { name: 'Switch channel' }))
   expect(screen.queryByRole('textbox', { name: 'Titre du document' })).toBeNull()
   await user.click(screen.getByRole('button', { name: 'Switch channel' }))
@@ -65,6 +69,8 @@ it('keeps a draft and reports publication failure truthfully', async () => {
   render(<Editor />)
   await user.click(screen.getByRole('button', { name: 'Nouveau document' }))
   await user.click(screen.getByRole('button', { name: 'Publier dans le salon' }))
-  expect(await screen.findByRole('status')).toHaveTextContent('La publication a échoué')
+  expect(
+    await screen.findByText('La publication a échoué. Votre brouillon est conservé.')
+  ).toHaveAttribute('role', 'status')
   expect(screen.getByRole('textbox', { name: 'Source Markdown' })).toHaveValue('## Notes\n')
 })

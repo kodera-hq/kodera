@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from 'react'
+import { useId, useMemo, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MessageKey } from '../../i18n'
 import { Button } from '../../ui/Button/Button'
@@ -120,6 +120,7 @@ export interface ThemeStudioModalProps {
   readonly currentThemeMode: CoreThemeMode
   readonly onSelectCoreTheme: (mode: CoreThemeMode) => void
   readonly onShareToChannel?: ((themeName: string, shareCode: string) => Promise<void>) | undefined
+  readonly returnFocusTo?: RefObject<HTMLElement | null> | undefined
   readonly onClose: () => void
 }
 
@@ -128,6 +129,7 @@ export function ThemeStudioModal({
   currentThemeMode,
   onSelectCoreTheme,
   onShareToChannel,
+  returnFocusTo,
   onClose,
 }: ThemeStudioModalProps) {
   const { t, i18n } = useTranslation()
@@ -261,6 +263,7 @@ export function ThemeStudioModal({
     <WorkspaceDialog
       open={open}
       onClose={onClose}
+      returnFocusTo={returnFocusTo}
       data-testid="kodera-theme-studio-modal"
       className="flex h-[90%] w-full max-w-[960px] flex-col gap-4 overflow-y-auto rounded-lg border border-c-border bg-c-surface p-6 shadow-pop shadow-c-shadow-2"
     >

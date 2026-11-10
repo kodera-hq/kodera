@@ -41,7 +41,7 @@ it('keeps the selected template in both terminal commands and refuses shell inje
 async function finish() {
   const user = userEvent.setup()
   const modal = screen.getByRole('dialog')
-  await user.type(within(modal).getByRole('textbox'), 'Cinema')
+  await user.type(within(modal).getByRole('textbox', { name: 'Nom de l’espace' }), 'Cinema')
   await user.click(within(modal).getByRole('button', { name: 'Continuer' }))
   await user.click(within(modal).getByRole('button', { name: 'Continuer' }))
   await user.click(within(modal).getByRole('button', { name: 'Ouvrir l’espace' }))
@@ -160,15 +160,48 @@ it.each(['A', '🌲🌲'])(
     )
     const user = userEvent.setup()
     const modal = screen.getByRole('dialog')
-    await user.type(within(modal).getByRole('textbox'), name)
+    await user.type(within(modal).getByRole('textbox', { name: 'Nom de l’espace' }), name)
     await user.click(within(modal).getByRole('button', { name: 'Continuer' }))
-    await user.click(within(modal).getByRole('button', { name: 'Continuer' }))
-    await user.click(within(modal).getByRole('button', { name: 'Ouvrir l’espace' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Choisissez un nom unique')
     expect(claimed).not.toHaveBeenCalled()
     expect(complete).not.toHaveBeenCalled()
   }
 )
+it('claims a community template with an edited slug and a voice lounge', async () => {
+  const claimed = vi.fn()
+  render(
+    <FirstRunOnboardingModal
+      open
+      claimMode="preview"
+      isDarkTheme={false}
+      onSelectTheme={() => {}}
+      onClaimed={claimed}
+      onDismiss={() => {}}
+      onComplete={() => {}}
+    />
+  )
+  const user = userEvent.setup()
+  await user.type(screen.getByRole('textbox', { name: 'Nom de l’espace' }), 'Open Source')
+  const address = screen.getByRole('textbox', { name: 'Adresse de l’espace' })
+  expect(address).toHaveValue('open-source')
+  await user.clear(address)
+  await user.type(address, 'community-team')
+  await user.click(screen.getByRole('button', { name: 'Continuer' }))
+  await user.selectOptions(screen.getByRole('combobox'), 'open-source')
+  await user.click(screen.getByRole('button', { name: 'Continuer' }))
+  await user.click(screen.getByRole('button', { name: 'Ouvrir l’espace' }))
+  expect(claimed).toHaveBeenCalledWith(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        slug: 'community-team',
+        templateId: 'open-source-community',
+      }),
+      channels: expect.arrayContaining([
+        expect.objectContaining({ name: 'community-lounge', kind: 'audio' }),
+      ]),
+    })
+  )
+})
 it('keeps local creation open when the registry refuses a reserved or duplicate name', async () => {
   const complete = vi.fn()
   render(
@@ -189,3 +222,61 @@ it('keeps local creation open when the registry refuses a reserved or duplicate 
   expect(complete).not.toHaveBeenCalled()
   expect(screen.getByRole('dialog')).toBeInTheDocument()
 })
+
+it('keeps the community template inside preview mode, including after a mode change', async () => {
+  const props = {
+    open: true,
+    isDarkTheme: false,
+    onSelectTheme: () => {},
+    onDismiss: () => {},
+    onComplete: () => {},
+  }
+  const { rerender } = render(<FirstRunOnboardingModal {...props} claimMode="preview" />)
+  const user = userEvent.setup()
+  await user.type(screen.getByRole('textbox', { name: 'Nom de l’espace' }), 'Studio')
+  await user.click(screen.getByRole('button', { name: 'Continuer' }))
+  await user.selectOptions(screen.getByRole('combobox'), 'open-source')
+  rerender(<FirstRunOnboardingModal {...props} claimMode="cloud" />)
+  expect(screen.queryByRole('option', { name: 'Communauté Open-Source' })).toBeNull()
+  expect(screen.getByRole('combobox')).toHaveValue('audiovisual')
+  await user.click(screen.getByRole('button', { name: 'Retour' }))
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Hébergement' }), 'selfhost')
+  await user.click(screen.getByRole('button', { name: 'Continuer' }))
+  expect(screen.queryByRole('option', { name: 'Communauté Open-Source' })).toBeNull()
+  expect(screen.getByRole('combobox')).toHaveValue('audiovisual')
+})
+
+it.each(['ABC', 'abcdefghijklmnopqrstuvwxyzabcdef'])(
+  'preserves the cloud slug contract for %s',
+  async (name) => {
+    post.mockResolvedValue({ response: { status: 403 }, data: {} })
+    render(
+      <FirstRunOnboardingModal
+        open
+        claimMode="cloud"
+        isDarkTheme={false}
+        onSelectTheme={() => {}}
+        onDismiss={() => {}}
+        onComplete={() => {}}
+      />
+    )
+    const user = userEvent.setup()
+    await user.type(screen.getByRole('textbox', { name: 'Nom de l’espace' }), name)
+    expect(screen.getByRole('textbox', { name: 'Adresse de l’espace' })).toHaveValue(
+      name.toLowerCase()
+    )
+    await user.click(screen.getByRole('button', { name: 'Continuer' }))
+    await user.click(screen.getByRole('button', { name: 'Continuer' }))
+    await user.click(screen.getByRole('button', { name: 'Ouvrir l’espace' }))
+    await screen.findByRole('alert')
+    expect(post).toHaveBeenCalledWith(
+      '/workspaces/instant-claim',
+      expect.objectContaining({
+        body: expect.objectContaining({
+          slug: name.toLowerCase(),
+          templateId: 'audiovisual-production',
+        }),
+      })
+    )
+  }
+)

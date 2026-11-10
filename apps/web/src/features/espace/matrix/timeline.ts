@@ -39,6 +39,9 @@ export interface MessageView {
   /** The sender's display name in the room; absent when it has none, and the id is all there is. */
   senderName?: string
   body: string
+  /** Structured references supplied by workspace adapters. */
+  document?: { id: string; title: string }
+  attachment?: { name: string }
   ts: number
   /** Replaced by a later edit from its own sender. */
   edited: boolean
@@ -128,6 +131,10 @@ function toMessageView(
     sender: event.sender,
     ...(event.sender_name === undefined ? {} : { senderName: event.sender_name }),
     body: redacted ? '' : (edit?.body ?? text(event.content) ?? ''),
+    ...(!redacted &&
+    ['m.file', 'm.image', 'm.audio', 'm.video'].includes(String(event.content.msgtype))
+      ? { attachment: { name: text(event.content) ?? '' } }
+      : {}),
     ts: event.origin_server_ts,
     edited: !redacted && edit !== undefined,
     redacted,

@@ -8,13 +8,13 @@
 // of this, the worker script and `./auth`'s handlers included, ships in a
 // build that never boots MSW (`scripts/check-production-bundle.sh`).
 
-import type { HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw'
 import { setupWorker } from 'msw/browser'
 import { authMode } from '../config'
 import { authHandlers } from './auth'
 import { DEMO_SCENARIO, DEMO_SLUG } from './demo/seed'
 import { registerInteractiveDemos } from '../app/interactiveDemo'
-import { communityDemo } from './demo/community'
+import { communityDemo, communityDiscovery } from './demo/community'
 import { registerDemoWorkspaceCreator, registerDemoViewStorage } from '../app/interactiveDemo'
 import { restoreLocalWorkspaces, registerLocalWorkspace } from './demo/localWorkspaces'
 import { createLocalWorkspaceStore } from './demo/workspaceStore'
@@ -28,6 +28,33 @@ const SCENARIO_KEY = 'msw:scenarios'
  * it (docs/dev/DEMO.md). */
 const DEMO_PARAM = 'demo'
 const DEMO_OFF_VALUES: readonly string[] = ['0', 'false', 'off']
+const DEMO_DISABLED_KEY = 'msw:demo-disabled'
+
+/** Fresh community visits work without a URL flag; explicit opt-out survives redirects. */
+export function prepareDemoScenarios(
+  url: string,
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
+  mode = authMode()
+): void {
+  const target = new URL(url)
+  const value = target.searchParams.get(DEMO_PARAM)
+  if (value !== null) {
+    if (DEMO_OFF_VALUES.includes(value.trim().toLowerCase()))
+      storage.setItem(DEMO_DISABLED_KEY, '1')
+    else storage.removeItem(DEMO_DISABLED_KEY)
+    applyDemoParam(url, storage)
+    return
+  }
+  if (mode !== 'mock' || storage.getItem(DEMO_DISABLED_KEY) === '1') return
+  const community =
+    target.pathname === '/' ||
+    /^\/community(?:\/|$)/u.test(target.pathname) ||
+    target.searchParams.get('realm') === 'community'
+  if (!community) return
+  // Keep explicit test scenarios: their failure cases must not become demo successes.
+  if (storage.getItem(SCENARIO_KEY) !== null) return
+  storage.setItem(SCENARIO_KEY, JSON.stringify([DEMO_SCENARIO]))
+}
 
 /**
  * Turns `?demo=1` into the scenario selection the worker is about to read.
@@ -118,12 +145,13 @@ export function isDevelopmentAsset(
       url.pathname
     ) ||
     url.pathname.startsWith('/developer-docs/') ||
-    ['/src/', '/@fs/', '/node_modules/', '/@id/'].some((prefix) => url.pathname.startsWith(prefix))
+    ['/src/', '/assets/', '/@fs/', '/node_modules/', '/@id/'].some((prefix) =>
+      url.pathname.startsWith(prefix)
+    )
   )
 }
 
-export async function startMockWorker(): Promise<void> {
-  applyDemoParam(window.location.href, window.sessionStorage)
+function registerDemoRuntime(): void {
   // The demo organisation's own mark, registered from inside the mock tree so
   // it can only ever exist where this module does (`src/app/demoBranding.ts`
   // holds the registry and the reason there is one). Before the worker starts,
@@ -155,14 +183,49 @@ export async function startMockWorker(): Promise<void> {
     })
   }
   installDemoBranding()
+}
+
+/** Activate only a community discovery request, leaving unknown slugs to base handlers. */
+export function communityDiscoveryHandler(activate: () => void): HttpHandler {
+  return http.post('*/api/v1/auth/discover', async ({ request }) => {
+    const body = (await request
+      .clone()
+      .json()
+      .catch(() => null)) as { slug?: unknown; email?: unknown } | null
+    if (
+      body?.slug !== 'community' &&
+      !(typeof body?.email === 'string' && body.email.endsWith('@community.kodera.io'))
+    )
+      return
+    activate()
+    return HttpResponse.json(communityDiscovery())
+  })
+}
+
+export async function startMockWorker(): Promise<void> {
+  prepareDemoScenarios(window.location.href, window.sessionStorage)
+  registerDemoRuntime()
   const worker = setupWorker(...buildHandlers(activeScenarios()))
+  if (
+    authMode() === 'mock' &&
+    activeScenarios().length === 0 &&
+    sessionStorage.getItem(DEMO_DISABLED_KEY) !== '1'
+  ) {
+    worker.use(
+      communityDiscoveryHandler(() => {
+        sessionStorage.setItem(SCENARIO_KEY, JSON.stringify([DEMO_SCENARIO]))
+        registerDemoRuntime()
+        worker.use(...buildHandlers(activeScenarios()))
+      })
+    )
+  }
   await worker.start({
     // A request MSW does not have a handler for is a mock that has drifted
     // from what the console actually calls — silently falling through to the
     // network would either hang (no such host reachable) or, worse, reach a
     // real one (docs/dev/TESTING.md).
     onUnhandledRequest(request, print) {
-      if (isDevelopmentAsset(request, window.location.origin)) return
+      if (isDevelopmentAsset(request, window.location.origin, true)) return
       print.error()
     },
     quiet: true,

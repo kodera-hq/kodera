@@ -3,7 +3,8 @@
 // the first message someone else wrote since the member last read the room. The marker is
 // taken when the room is opened, so it stays while the read marker moves under it.
 
-import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { act, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '../../i18n'
 import type { Workspace } from '../workspace/workspace'
@@ -278,4 +279,42 @@ describe('« Nouveaux messages »', () => {
       marker.compareDocumentPosition(screen.getByText('body $b')) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
   })
+})
+
+it('routes document cards and workspace files by ID, excluding unrelated and deleted files', async () => {
+  const user = userEvent.setup()
+  const doc = { id: 'guide', channelId: GENERAL, title: 'Guide review', content: 'Review' }
+  const onOpenDocument = vi.fn()
+  const { store } = makeStore(
+    [
+      message('published', '2026-11-10T10:00:00Z', { document: { id: doc.id, title: doc.title } }),
+      message('file', '2026-11-10T10:01:00Z', { attachment: { name: 'diagram.svg' } }),
+      message('deleted', '2026-11-10T10:02:00Z', {
+        redacted: true,
+        attachment: { name: 'removed.pdf' },
+      }),
+    ],
+    null
+  )
+  render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={store}
+      onOpenDocument={onOpenDocument}
+      documents={[doc, { ...doc, id: 'other', channelId: 'outside', title: 'Outside workspace' }]}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: /Guide review.*Ouvrir dans Docs/ }))
+  expect(onOpenDocument).toHaveBeenCalledWith(doc)
+  await user.click(screen.getByRole('button', { name: 'Fichiers' }))
+  const files = screen.getByRole('dialog', { name: 'Fichiers' })
+  expect(within(files).getByRole('button', { name: /diagram.svg/ })).toBeInTheDocument()
+  expect(within(files).queryByText('removed.pdf')).toBeNull()
+  expect(within(files).queryByText('Outside workspace')).toBeNull()
+  await user.click(within(files).getByRole('button', { name: /Guide review/ }))
+  expect(onOpenDocument).toHaveBeenCalledTimes(2)
+  expect(screen.queryByRole('dialog', { name: 'Fichiers' })).toBeNull()
 })

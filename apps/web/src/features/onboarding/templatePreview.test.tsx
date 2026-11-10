@@ -23,7 +23,7 @@ it.each([
     />
   )
   const modal = screen.getByRole('dialog')
-  await user.type(within(modal).getByRole('textbox'), 'Studio')
+  await user.type(within(modal).getByRole('textbox', { name: 'Nom de l’espace' }), 'Studio')
   await user.click(within(modal).getByRole('button', { name: 'Continuer' }))
   await user.selectOptions(within(modal).getByRole('combobox'), selection)
   const rows = within(modal)

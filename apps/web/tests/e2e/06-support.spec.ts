@@ -204,7 +204,7 @@ async function expectHelpPage(page: Page, topic?: string): Promise<void> {
   await settleOnHelp(page)
   await expect(page).toHaveURL(new RegExp(`/${ORG}/help(\\?|$)`))
   await expect(page.getByRole('heading', { level: 1, name: 'Aide' })).toBeVisible()
-  await expect(page.getByText(/Écrivez-nous à hello@kodera\.io\./)).toBeVisible()
+  await expect(page.getByText(/Écrivez-nous à support@kodera\.io\./)).toBeVisible()
   await expect(page.getByText("Cette page n'est pas encore disponible.")).toHaveCount(0)
   await expect(page.getByRole('main').getByRole('list')).toContainText(
     topic === undefined ? 'La page sur laquelle vous étiez' : `Le sujet : ${topic}`

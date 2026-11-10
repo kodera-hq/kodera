@@ -1,7 +1,52 @@
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { activeScenarios, applyDemoParam, buildHandlers } from '@/mocks/browser'
+import {
+  activeScenarios,
+  applyDemoParam,
+  buildHandlers,
+  prepareDemoScenarios,
+  communityDiscoveryHandler,
+} from '@/mocks/browser'
 import { DEMO_SCENARIO, ORGANISATION_NAME } from '@/mocks/demo/seed'
+
+describe('community bootstrap', () => {
+  afterEach(() => sessionStorage.clear())
+
+  it.each([
+    '/',
+    '/community',
+    '/community/workspace',
+    '/community/settings',
+    '/__mock-idp/authorize?realm=community',
+  ])('automatically selects community handlers for %s in mock mode', (path) => {
+    sessionStorage.clear()
+    prepareDemoScenarios(`https://console.test${path}`, sessionStorage, 'mock')
+    expect(activeScenarios()).toEqual([DEMO_SCENARIO])
+  })
+
+  it('keeps unknown organisations and real authentication outside the demo', () => {
+    sessionStorage.clear()
+    prepareDemoScenarios('https://console.test/unknown-org/home', sessionStorage, 'mock')
+    expect(activeScenarios()).toEqual([])
+    prepareDemoScenarios('https://console.test/community/workspace', sessionStorage, 'oidc')
+    expect(activeScenarios()).toEqual([])
+  })
+
+  it('preserves explicit scenarios and a demo opt-out across redirects', () => {
+    sessionStorage.setItem('msw:scenarios', JSON.stringify(['shell.single-organisation']))
+    prepareDemoScenarios('https://console.test/community/workspace', sessionStorage, 'mock')
+    expect(activeScenarios()).toEqual(['shell.single-organisation'])
+    prepareDemoScenarios('https://console.test/community/workspace?demo=0', sessionStorage, 'mock')
+    prepareDemoScenarios(
+      'https://console.test/__mock-idp/authorize?realm=community',
+      sessionStorage,
+      'mock'
+    )
+    expect(activeScenarios()).toEqual([])
+    prepareDemoScenarios('https://console.test/community/workspace?demo=1', sessionStorage, 'mock')
+    expect(activeScenarios()).toEqual([DEMO_SCENARIO])
+  })
+})
 
 describe('activeScenarios', () => {
   it('is empty when sessionStorage carries nothing', () => {
@@ -42,16 +87,19 @@ describe('buildHandlers', () => {
   // red.
   const server = setupServer()
   const previousAuthMode = (import.meta.env as Record<string, unknown>)['VITE_AUTH_MODE']
+  const previousKeycloak = (import.meta.env as Record<string, unknown>)['VITE_KEYCLOAK_URL']
   beforeAll(() => {
     // `oidc`, not `mock`: this suite is about overlay-versus-base-handler
     // resolution order, not the mock identity provider, and `oidc` skips
     // `authHandlers()`'s own required Keycloak env reads.
     ;(import.meta.env as Record<string, unknown>)['VITE_AUTH_MODE'] = 'oidc'
+    ;(import.meta.env as Record<string, unknown>)['VITE_KEYCLOAK_URL'] = 'https://id.example.test'
     server.listen({ onUnhandledRequest: 'error' })
   })
   afterEach(() => server.resetHandlers())
   afterAll(() => {
     ;(import.meta.env as Record<string, unknown>)['VITE_AUTH_MODE'] = previousAuthMode
+    ;(import.meta.env as Record<string, unknown>)['VITE_KEYCLOAK_URL'] = previousKeycloak
     server.close()
   })
 
@@ -73,6 +121,28 @@ describe('buildHandlers', () => {
       body: JSON.stringify({ slug: 'acme-sa' }),
     })
     await expect(response.json()).resolves.toMatchObject({ realm: null, candidates: [] })
+  })
+
+  it('activates community on discovery while leaving unknown slugs unresolved', async () => {
+    let activated = false
+    server.use(
+      communityDiscoveryHandler(() => {
+        activated = true
+      }),
+      ...buildHandlers([])
+    )
+    const discover = (slug: string) =>
+      fetch('https://example.test/api/v1/auth/discover', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ slug }),
+      })
+    await expect((await discover('unknown-org')).json()).resolves.toMatchObject({ realm: null })
+    expect(activated).toBe(false)
+    await expect((await discover('community')).json()).resolves.toMatchObject({
+      realm: 'community',
+    })
+    expect(activated).toBe(true)
   })
 })
 

@@ -176,7 +176,12 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       expect(screen.getAllByText(scope).length).toBeGreaterThanOrEqual(1)
     }
 
+    await user.type(
+      screen.getByLabelText('Secret de signature de test'),
+      'whsec_temporary_test_value'
+    )
     await user.click(screen.getByRole('button', { name: /Pont d'incidents & supervision/i }))
+    expect(screen.getByLabelText('Secret de signature de test')).toHaveValue('')
     expect(screen.getByText(/\/incident \[open\|ack\|resolve\] <titre>/i)).toBeInTheDocument()
 
     const urlInput = screen.getByLabelText(/URL de destination du webhook/i)
@@ -207,5 +212,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       'io.kodera.ext.uptime-incident-bridge',
       'https://hooks.exemple-organisation.fr/kodera/incidents'
     )
+    await user.type(urlInput, '/changed')
+    expect(screen.queryByTestId('extension-webhook-valid')).toBeNull()
   })
 })

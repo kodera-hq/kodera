@@ -95,7 +95,7 @@ function ChannelLink({ org, channel, current, onNavigate }: ChannelLinkProps) {
           // keeps every label where it was.
           'border border-transparent',
           current
-            ? `bg-c-accent-soft font-semibold text-c-accent-ink ${CURRENT_BAR_ACCENT}`
+            ? `bg-c-ok-soft font-bold text-c-ink ${CURRENT_BAR_ACCENT}`
             : 'font-medium text-c-ink-2 hover:bg-c-muted'
         )}
       >

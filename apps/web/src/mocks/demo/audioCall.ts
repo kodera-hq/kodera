@@ -2,7 +2,7 @@ import type { AudioCallLike } from '../../features/espace/EspaceLiveView'
 import type { CallSnapshot } from '../../features/espace/audio/call'
 
 /** Exercises call controls locally; never captures media or contacts a voice service. */
-export function createLocalAudioCall(viewer: string): AudioCallLike {
+export function createLocalAudioCall(viewer: string, peers: readonly string[] = []): AudioCallLike {
   const listeners = new Set<() => void>()
   const idle = (): CallSnapshot => ({
     status: 'idle',
@@ -31,7 +31,14 @@ export function createLocalAudioCall(viewer: string): AudioCallLike {
     getSnapshot: () => snapshot,
     async join(roomId) {
       mutedBeforeDeafen = false
-      update({ ...idle(), status: 'connected', roomId, self: viewer, participants: [viewer] })
+      update({
+        ...idle(),
+        status: 'connected',
+        roomId,
+        self: viewer,
+        participants: [viewer, ...peers],
+        speakers: peers[0] !== undefined ? [peers[0]] : [],
+      })
     },
     async leave() {
       update(idle())

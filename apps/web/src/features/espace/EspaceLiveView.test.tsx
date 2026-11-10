@@ -4004,11 +4004,13 @@ describe('Matrix channel invitations', () => {
     expect(within(dialog).getByText('#partner-dinum:demo.invalid')).toBeInTheDocument()
     expect(
       within(dialog).getByText(
-        'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=demo.invalid'
+        'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=community.kodera.io'
       )
     ).toBeInTheDocument()
     expect(
-      within(dialog).getByText('matrix:r/partner-dinum:demo.invalid?action=join&via=demo.invalid')
+      within(dialog).getByText(
+        'matrix:r/partner-dinum:demo.invalid?action=join&via=community.kodera.io'
+      )
     ).toBeInTheDocument()
     expect(
       within(dialog).getByText(`${window.location.origin}/community/workspace/${channel.id}`)
@@ -4137,4 +4139,36 @@ describe('mobile channel chooser', () => {
     expect(call.leave).toHaveBeenCalled()
     expect(screen.queryByRole('region', { name: 'Appel en cours' })).not.toBeInTheDocument()
   })
+})
+
+it('keeps the same call and document subtree across canvas navigation', async () => {
+  const user = userEvent.setup()
+  const store = makeFakeStore()
+  const call = makeFakeCall()
+  const props = {
+    org: 'acme',
+    organisationName: 'Acme SA',
+    workspace: WORKSPACE,
+    channelId: GENERAL,
+    store,
+    call,
+    docsCanvasSlot: <input aria-label="Draft" defaultValue="Review" />,
+  }
+  const view = render(<EspaceLiveView {...props} activeCanvasMode="chat" />)
+  await user.click(screen.getByRole('button', { name: 'Rejoindre Point quotidien, 2 personnes' }))
+  call.set({ status: 'connected' })
+  const dock = screen.getByRole('region', { name: 'Appel en cours' })
+  expect(dock.closest('nav')).toBeNull()
+  view.rerender(<EspaceLiveView {...props} activeCanvasMode="docs" />)
+  const draft = screen.getByRole('textbox', { name: 'Draft' })
+  await user.type(draft, ' retained')
+  view.rerender(<EspaceLiveView {...props} activeCanvasMode="chat" />)
+  view.rerender(<EspaceLiveView {...props} activeCanvasMode="docs" />)
+  expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(draft)
+  expect(draft).toHaveValue('Review retained')
+  expect(screen.getByRole('region', { name: 'Appel en cours' })).toBe(dock)
+  expect(call.join).toHaveBeenCalledTimes(1)
+  expect(call.leave).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Couper le micro' }))
+  expect(call.setMuted).toHaveBeenCalledWith(true)
 })

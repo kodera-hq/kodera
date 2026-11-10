@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { AuthProvider } from '../auth/AuthProvider'
 import { SessionExpiryProvider } from '../auth/sessionExpiry'
 import { ToastProvider } from '../ui/Toast/Toast'
+import { clearWorkspaceSettingsRuntime } from '../features/workspace/settingsRuntime'
 
 /**
  * The query cache owns every server read (ADR-0005). `refetchOnWindowFocus`
@@ -59,7 +60,10 @@ export function AppProviders({ children, queryClient }: AppProvidersProps) {
   return (
     <QueryClientProvider client={client}>
       <AuthProvider
-        onSessionEnded={() => client.clear()}
+        onSessionEnded={() => {
+          clearWorkspaceSettingsRuntime()
+          client.clear()
+        }}
         onCredentialChanged={() => {
           void client.cancelQueries({ queryKey: ['me'] })
           client.removeQueries({ queryKey: ['me'] })

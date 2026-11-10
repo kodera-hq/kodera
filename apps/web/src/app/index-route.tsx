@@ -20,6 +20,8 @@ export const indexRoute = createRoute({
   pendingMinMs: 0,
   beforeLoad: async () => {
     if (!(await authAdapter.restoreSession())) {
+      if (isDemoActive('community'))
+        throw redirect({ to: '/$org/workspace', params: { org: 'community' } })
       throw redirect({ to: '/login' })
     }
     const { me, generation, credentialGeneration } = await loadCurrentUser()

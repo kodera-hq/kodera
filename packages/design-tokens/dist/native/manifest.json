@@ -2,7 +2,7 @@
   "format": "kodera-native-tokens/1",
   "source": {
     "path": "tokens.json",
-    "sha256": "6006e5efe557bc754e6d04ce4601e84cce104dfd1685dd76d43b8867701e8be8"
+    "sha256": "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a"
   },
   "mapping": {
     "colors": "sRGB normalized channels; alpha preserved without compositing",
@@ -4224,6 +4224,15 @@
       "api": "KoderaTokens.FontWeight.bold",
       "type": "fontWeight",
       "value": 700
+    },
+    {
+      "path": "font.weight.extrabold",
+      "aliases": [
+        "font.weight.extrabold"
+      ],
+      "api": "KoderaTokens.FontWeight.extrabold",
+      "type": "fontWeight",
+      "value": 800
     },
     {
       "path": "font.family.sans",

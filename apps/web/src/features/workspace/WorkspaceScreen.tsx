@@ -11,6 +11,7 @@ import {
   ChannelDocsEditor,
   createChannelDocsWorkspace,
   type ChannelDocsWorkspace,
+  type ChannelDoc,
 } from '../docs/ChannelDocsEditor'
 import type { WorkspaceCategory, WorkspaceChannel } from './workspace'
 import { useThemePreference } from '../../theme/useThemePreference'
@@ -324,7 +325,7 @@ function LiveWorkspace({
   const [docsWorkspace, setDocsWorkspace] = useState(() =>
     store
       ? (demoWorkspaceViews.get(store)?.docs ??
-        readLocalWorkspaceView(`${org}:${workspace.id}`).docs)
+        readLocalWorkspaceView(`${org}:${workspace.id}`, store.getInitialDocuments?.()).docs)
       : createChannelDocsWorkspace()
   )
   useEffect(() => {
@@ -397,6 +398,16 @@ function LiveWorkspace({
         {...(session ? { session } : {})}
         {...(store ? { store } : {})}
         focusedDocs={canvas === 'docs' && docsView === 'developer'}
+        documents={docsWorkspace.docs}
+        onOpenDocument={(doc: ChannelDoc) => {
+          setDocsWorkspace((prev) => ({
+            ...prev,
+            selectedByChannel: { ...prev.selectedByChannel, [doc.channelId]: doc.id },
+          }))
+          setDocsView('team')
+          setCanvas('docs')
+          if (doc.channelId !== channel?.id) void navigation.onNavigateChannel(doc.channelId)
+        }}
         activeCanvasMode={canvas}
         onChangeCanvasMode={setCanvas}
         organisationActionSlot={actions}
@@ -412,11 +423,31 @@ function LiveWorkspace({
                     channelName={channel.name}
                     workspace={docsWorkspace}
                     onWorkspaceChange={setDocsWorkspace}
-                    onPublish={async (title, content) => {
+                    author={{
+                      userId,
+                      name:
+                        store
+                          .getSnapshot()
+                          .rooms.flatMap((room) => room.names?.[userId] ?? [])[0] ?? userId,
+                    }}
+                    members={(() => {
+                      const room = store.getSnapshot().channels.get(channel.id)
+                      return room?.state === 'resolved'
+                        ? (store.getMembers?.(room.roomId) ?? [])
+                        : []
+                    })()}
+                    onPublish={async (title, content, documentId) => {
                       const room = store.getSnapshot().channels.get(channel.id)
                       if (room?.state !== 'resolved')
                         throw new Error('The channel is not available')
-                      await store.send(room.roomId, `## ${title}\n\n${content}`)
+                      if (store.publishDocument)
+                        await store.publishDocument(room.roomId, {
+                          id: documentId,
+                          channelId: channel.id,
+                          title,
+                          content,
+                        })
+                      else await store.send(room.roomId, `## ${title}\n\n${content}`)
                     }}
                   />
                 ) : undefined
@@ -467,12 +498,13 @@ function LiveWorkspace({
             category.channels.map((item) => item.name)
           )}
           onClose={() => setCreateCategory(null)}
-          onCreate={(name, kind) => {
-            const created: WorkspaceChannel = {
+          onCreate={(name, kind, options) => {
+            const created: WorkspaceChannel & { access: 'members' | 'invite' } = {
               id: `local-${crypto.randomUUID()}`,
               name,
               kind,
-              topic: '',
+              topic: options.topic,
+              access: options.access,
               template_key: null,
               lifecycle: 'active',
               room_state: 'ready',
@@ -750,7 +782,13 @@ export function WorkspaceScreen() {
           onClaimed={(workspace) => {
             if (addCreatedDemoWorkspace(workspace)) {
               void queryClient.invalidateQueries()
-              void router.invalidate()
+              void router.invalidate().then(() =>
+                router.navigate({
+                  to: '/$org/workspace',
+                  params: { org: workspace.payload.slug },
+                })
+              )
+              setOnboardingOpen(false)
             }
             choose(
               workspace.payload.themeId === 'real-black'

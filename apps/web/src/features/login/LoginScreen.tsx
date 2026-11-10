@@ -1,3 +1,4 @@
+import { keepLanguagePreference } from '../../i18n/languagePreference'
 // `login` — realm discovery (docs/specs/00-shell-and-login.md §4.1) and
 // `login-organisation` (§4.2): the first question is always the email
 // address (§2's "alone test"), the organisation identifier is the fallback
@@ -371,7 +372,10 @@ export function LoginScreen({
               type="button"
               variant={i18n.language === 'fr' ? 'primary' : 'secondary'}
               size="sm"
-              onClick={() => void i18n.changeLanguage('fr')}
+              onClick={() => {
+                keepLanguagePreference('fr')
+                void i18n.changeLanguage('fr')
+              }}
             >
               FR
             </Button>
@@ -379,7 +383,10 @@ export function LoginScreen({
               type="button"
               variant={i18n.language === 'en' ? 'primary' : 'secondary'}
               size="sm"
-              onClick={() => void i18n.changeLanguage('en')}
+              onClick={() => {
+                keepLanguagePreference('en')
+                void i18n.changeLanguage('en')
+              }}
             >
               EN
             </Button>

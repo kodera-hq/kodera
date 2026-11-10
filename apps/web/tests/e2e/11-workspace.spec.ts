@@ -37,7 +37,10 @@ test('workspace/channels: shows the starter categories and channels in the order
 
   const nav = channels(page)
   await expect(nav.getByText('ACME', { exact: false }).first()).toBeVisible()
-  await expect(nav.locator('button[aria-expanded]')).toHaveText(['Général', 'Équipe'])
+  await expect(nav.locator('button[aria-expanded][aria-controls]')).toHaveText([
+    'Général',
+    'Équipe',
+  ])
   await expect(nav.getByRole('link')).toHaveText(['#bienvenue', '#général'])
   // The starter audio channel is named, not a link; the contract's example has its room pending.
   // `.last()`: the « Équipe » category's own row contains this one too.
@@ -367,7 +370,7 @@ test('workspace/navigation: switches organisation from the head of the channel c
     name: 'ACME Construction, changer d’organisation',
   })
   await header.click()
-  await page.getByRole('menuitem', { name: /ACME Holding/ }).click()
+  await page.getByRole('menuitemradio', { name: /ACME Holding/ }).click()
   await expect(page).toHaveURL(/__mock-idp\/authorize/)
   await page.getByRole('button', { name: 'Continuer' }).click()
 

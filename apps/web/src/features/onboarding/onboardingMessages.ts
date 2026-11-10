@@ -1,6 +1,13 @@
 export const onboardingMessages = {
   en: {
     configure: 'Configure a workspace',
+    slug: 'Workspace address',
+    slugHint: '5–20 lowercase letters or digits, with optional internal hyphens.',
+    cloudSlugHint: 'Use 3–32 lowercase letters or digits, with optional internal hyphens.',
+    communityTemplate: 'Open-source community',
+    productTemplate: 'Product & engineering team',
+    publicTemplate: 'Public or sovereign organisation',
+    studioTemplate: 'Audiovisual & post-production studio',
     architecture: 'Architecture comparison',
     communityArchitecture: 'Your infrastructure, operation and external OIDC issuer.',
     sharedArchitecture: 'Managed European infrastructure under the confirmed shared offer.',
@@ -47,6 +54,14 @@ export const onboardingMessages = {
   },
   fr: {
     configure: 'Configurer un espace',
+    slug: 'Adresse de l’espace',
+    slugHint: '5 à 20 lettres minuscules ou chiffres, avec des tirets à l’intérieur si nécessaire.',
+    cloudSlugHint:
+      'Utilisez 3 à 32 lettres minuscules ou chiffres, avec des tirets à l’intérieur si nécessaire.',
+    communityTemplate: 'Communauté Open-Source',
+    productTemplate: 'Équipe Produit & Ingénierie',
+    publicTemplate: 'Organisation Publique / Souveraine',
+    studioTemplate: 'Studio Audiovisuel & Post-Prod',
     architecture: 'Comparateur d’architecture',
     communityArchitecture: 'Votre infrastructure, son exploitation et votre émetteur OIDC externe.',
     sharedArchitecture: 'Infrastructure européenne opérée selon l’offre mutualisée confirmée.',

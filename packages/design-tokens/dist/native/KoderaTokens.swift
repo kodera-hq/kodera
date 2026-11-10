@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT. kodera-native-tokens/1
 // Public source checksum (SHA-256)
-// 6006e5efe557bc754e6d04ce4601e84cce104dfd1685dd76d43b8867701e8be8
+// f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a
 // Source file: tokens.json
 
 import SwiftUI
@@ -372,6 +372,7 @@ public enum KoderaTokens {
         public static let medium: Font.Weight = .medium
         public static let semibold: Font.Weight = .semibold
         public static let bold: Font.Weight = .bold
+        public static let extrabold: Font.Weight = .heavy
     }
     public enum FontFamily {
         public static let sans = Family(primary: "Plus Jakarta Sans", fallbacks: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"])

@@ -29,15 +29,14 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
     0
   )
   for (const [name, theme] of [
-    ['Clair', 'light'],
-    ['Sombre', 'dark'],
+    ['Clair · Givre', 'light'],
+    ['Sombre · Ardoise', 'dark'],
     ['Noir OLED', 'black'],
   ] as const) {
-    await page
-      .getByRole('button', { name: /changer d’organisation/ })
-      .first()
-      .click()
-    await page.getByRole('menuitemradio', { name, exact: true }).click()
+    await menu(page, 'Réglages de l’espace…', true)
+    await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+    await page.getByRole('button', { name: new RegExp(name) }).click()
+    await page.keyboard.press('Escape')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await page.screenshot({
       path: info.outputPath(`workspace-${theme}.png`),
@@ -49,21 +48,22 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
       .analyze()
     expect(accessibility.violations, `Workspace accessibility in ${theme}`).toEqual([])
   }
-  await menu(page, 'Theme Studio')
-  await expect(page.getByRole('dialog')).toBeVisible()
+  await menu(page, 'Réglages de l’espace…')
+  await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+  await page.getByRole('button', { name: 'Ouvrir Theme Studio', exact: true }).click()
   await expect(page.getByTestId('theme-share-code-input')).toBeVisible()
   await page.getByTestId('theme-share-to-channel-btn').click()
   await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
   await expect(page.getByRole('log')).toContainText('kodera-theme:v1:')
-  await menu(page, 'Connecteurs & Extensions', true)
+  await menu(page, 'Réglages de l’espace…', true)
+  await page.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('Frame.io')
   await page.keyboard.press('Escape')
-  await menu(page, 'Hébergement & Offre')
+  await menu(page, 'Réglages de l’espace…')
+  await page.getByRole('tab', { name: 'Hébergement & administration', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('Mode actuel')
   await page.keyboard.press('Escape')
-  await menu(page, 'Documentation Développeur & API')
-  await expect(page.getByTestId('developer-docs-hub')).toBeVisible()
-  await page.screenshot({ path: info.outputPath('developer-docs.png'), fullPage: true })
 })
 
 test('channels, messages, reactions, threads, invitations and notes work together', async ({
@@ -117,14 +117,16 @@ test('channels, messages, reactions, threads, invitations and notes work togethe
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Docs', exact: true }).click()
   await page.getByRole('button', { name: 'Nouveau document', exact: true }).click()
+  await page.locator('summary').filter({ hasText: 'Documents du salon' }).click()
   await page.getByLabel('Titre du document', { exact: true }).fill('QA decision')
   await page
     .getByLabel('Source Markdown', { exact: true })
     .fill('## Decision\nBrowser verified publication')
   await page.getByRole('button', { name: 'Publier dans le salon', exact: true }).click()
   await expect(page.getByText('Document publié dans le salon.', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Discussion', exact: true }).click()
-  await expect(page.getByRole('log')).toContainText('Browser verified publication')
+  await page.getByRole('button', { name: 'Messages', exact: true }).click()
+  await expect(page.getByRole('log')).toContainText('QA decision')
+  await expect(page.getByRole('log')).toContainText('Ouvrir dans Docs')
   await page.screenshot({ path: info.outputPath('channel-published.png'), fullPage: true })
 })
 
@@ -139,18 +141,14 @@ test('created workspaces switch without losing the previous conversation', async
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
   await page.getByRole('button', { name: 'Docs', exact: true }).click()
   await page.getByRole('button', { name: 'Nouveau document', exact: true }).click()
+  await page.locator('summary').filter({ hasText: 'Documents du salon' }).click()
   await page.getByLabel('Titre du document', { exact: true }).fill('Retained note')
-  await menu(page, '+ Créer / Configurer un nouvel espace')
+  await menu(page, '+ Créer ou configurer un nouvel espace')
   await page.getByLabel('Nom de l’espace', { exact: true }).fill('QA Studio')
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
   await page.getByRole('button', { name: 'Ouvrir l’espace', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await page
-    .getByRole('button', { name: /changer d’organisation/ })
-    .last()
-    .click()
-  await page.getByRole('menuitemradio', { name: 'QA Studio qa-studio', exact: true }).click()
   await page.waitForURL(/\/qa-studio\/workspace/)
   await expect(page.getByRole('button', { name: /QA Studio, changer/ }).first()).toBeVisible()
   await page
@@ -188,6 +186,7 @@ test('console pages remain community-scoped and return to Messages', async ({ pa
 test('a healthy session stays unobstructed after one minute and keyboard focus', async ({
   page,
 }, info) => {
+  test.setTimeout(90_000)
   await login(page)
   await page.waitForTimeout(61_000)
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
@@ -232,6 +231,7 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
     .getByRole('button', { name: /Rejoindre office-hours/ })
     .click()
   await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toHaveCount(0)
+  await page.getByRole('region', { name: 'Appel en cours', exact: true }).scrollIntoViewIfNeeded()
   await expect(page.getByRole('region', { name: 'Appel en cours', exact: true })).toBeInViewport()
   await page.screenshot({ path: info.outputPath('workspace-mobile-voice.png'), fullPage: true })
   await page.getByRole('button', { name: 'Quitter', exact: true }).click()

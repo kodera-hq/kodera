@@ -8,6 +8,7 @@ import { Button } from '../ui/Button/Button'
 import { Drawer } from '../ui/Drawer/Drawer'
 import { KoderaMark } from '../ui/icons/KoderaMark'
 import { ModuleGlyph } from '../ui/icons/ModuleGlyph'
+import { openWorkspaceCommand } from '../features/workspace/WorkspaceMenu'
 import { TabGlyph } from '../ui/icons/TabGlyph'
 import type { TabGlyphName } from '../ui/icons/TabGlyph'
 import { ACCOUNT_ITEMS, accountRoleLabelKey } from './accountItems'
@@ -57,7 +58,7 @@ const NAV_PLACEMENT: Record<NavArea, { in: 'tab'; glyph: TabGlyphName } | { in: 
 }
 
 // Four columns for a role without « Facturation », five otherwise; the module
-// bar has two to six. Written out so Tailwind sees every class name in the
+// bar has three to seven. Written out so Tailwind sees every class name in the
 // source.
 const GRID_COLUMNS: Record<number, string> = {
   2: 'grid-cols-2',
@@ -65,6 +66,7 @@ const GRID_COLUMNS: Record<number, string> = {
   4: 'grid-cols-4',
   5: 'grid-cols-5',
   6: 'grid-cols-6',
+  7: 'grid-cols-7',
 }
 
 // A tab: 52 px tall (touch targets are 44 px at least, README §3), glyph over
@@ -288,7 +290,7 @@ export function NarrowModuleBar({ org, organisationId }: NarrowModuleBarProps) {
       aria-label={t('console.shell.rail.a11y-label')}
       className="safe-area-bottom sticky bottom-0 z-10 order-last border-t border-c-border-soft bg-c-surface"
     >
-      <ul className={`grid ${GRID_COLUMNS[1 + surfaces.length + apps.length] ?? 'grid-cols-6'}`}>
+      <ul className={`grid ${GRID_COLUMNS[2 + surfaces.length + apps.length] ?? 'grid-cols-6'}`}>
         <li className="flex">
           <Link to={home.to} params={{ org }} className={`${TAB} ${TAB_IDLE}`}>
             <TabGlyph name="home" />
@@ -323,6 +325,17 @@ export function NarrowModuleBar({ org, organisationId }: NarrowModuleBarProps) {
             </a>
           </li>
         ))}
+        <li className="flex">
+          <button
+            type="button"
+            className={`${TAB} ${TAB_IDLE}`}
+            data-workspace-settings-trigger
+            onClick={() => openWorkspaceCommand('settings')}
+          >
+            <ModuleGlyph name="console" size="tab" />
+            <span className="max-w-full truncate">{t('console.shell.rail.title-settings')}</span>
+          </button>
+        </li>
       </ul>
     </nav>
   )
