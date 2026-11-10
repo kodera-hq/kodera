@@ -1,3 +1,4 @@
+import '../../validation-policy'
 import { z } from 'zod'
 import { documentCommentSchema } from '../docs/documentComments'
 import { readDemoView } from '../../app/interactiveDemo'

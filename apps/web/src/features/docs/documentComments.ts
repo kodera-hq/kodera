@@ -1,3 +1,4 @@
+import '../../validation-policy'
 import { z } from 'zod'
 
 export const documentCommentSchema = z.object({

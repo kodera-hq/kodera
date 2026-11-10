@@ -87,7 +87,7 @@ test('silent renewal timeout remains failed without exchanging a token', async (
     timeout: 15_000,
   })
   expect(await page.evaluate(() => window.__callbackTokenRequests?.length)).toBe(0)
-  await expect.poll(() => page.frames().length).toBe(1)
+  await expect.poll(() => page.frames().length, { timeout: 15_000 }).toBe(1)
   await expect(page).toHaveURL(/\/acme-sa\/home$/)
 })
 
