@@ -170,11 +170,18 @@ export function ModuleRail({
             >
               <button
                 type="button"
+                aria-current={surface === 'console' ? 'page' : undefined}
                 aria-label={t('console.shell.rail.title-settings')}
                 data-workspace-settings-trigger
                 onClick={() => openWorkspaceCommand('settings')}
-                className={ITEM_IDLE}
+                className={surface === 'console' ? ITEM_CURRENT : ITEM_IDLE}
               >
+                {surface === 'console' ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-4 left-1 h-4 w-1 rounded-sm bg-c-on-inverse"
+                  />
+                ) : null}
                 <ModuleGlyph name="console" />
               </button>
             </Tooltip>

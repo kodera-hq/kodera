@@ -19,7 +19,7 @@ test('desktop shell uses the token width and preserves the page when toggled', a
   // beside it as a tooltip once it has the focus, drawn for the eye and kept out of the tree.
   const settings = page
     .getByRole('navigation', { name: 'Modules' })
-    .getByRole('link', { name: 'Réglages', exact: true })
+    .getByRole('button', { name: 'Réglages', exact: true })
   await expect(settings).toHaveText('')
   await settings.focus()
   await expect(page.locator('[data-side="right"]').filter({ hasText: 'Réglages' })).toBeVisible()

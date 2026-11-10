@@ -27,10 +27,20 @@ async function start(page: Page) {
       const url = input instanceof Request ? input.url : String(input)
       if (url.endsWith('/protocol/openid-connect/token')) window.__callbackTokenRequests?.push(url)
       const response = await original(input, init)
-      if (url.endsWith('/protocol/openid-connect/token') && window.__holdCallbackToken) {
-        await new Promise<void>((resolve) => {
-          window.__releaseCallbackToken = resolve
-        })
+      if (url.endsWith('/protocol/openid-connect/token')) {
+        if (window.__holdCallbackToken) {
+          await new Promise<void>((resolve) => {
+            window.__releaseCallbackToken = resolve
+          })
+        }
+        if ((window.__callbackTokenRequests?.length ?? 0) === 1 && response.ok) {
+          const payload = (await response.clone().json()) as Record<string, unknown>
+          return new Response(JSON.stringify({ ...payload, expires_in: 120 }), {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          })
+        }
       }
       return response
     }
