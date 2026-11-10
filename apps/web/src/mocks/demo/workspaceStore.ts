@@ -14,9 +14,9 @@ import { workspaceDemoMessages } from './workspaceMessages'
 
 const VIEWER = '@ines:demo.invalid'
 const MEMBERS: readonly MemberView[] = [
-  { userId: '@product:demo.invalid', name: 'Product Team' },
-  { userId: '@engineering:demo.invalid', name: 'Engineering Team' },
-  { userId: '@design:demo.invalid', name: 'Design Team' },
+  { userId: '@elena:demo.invalid', name: 'Elena Vance' },
+  { userId: '@marcus:demo.invalid', name: 'Marcus Sterling' },
+  { userId: '@claire:demo.invalid', name: 'Claire Mercer' },
 ]
 const EMPTY: readonly MessageView[] = []
 const MAX_MESSAGES = 256
@@ -28,15 +28,20 @@ export function createLocalWorkspaceStore(
 ): EspaceStoreLike & { addChannel: (channel: WorkspaceChannel) => void } {
   const copy = workspaceDemoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const viewer = profile === 'community' ? '@member:community.kodera.io' : VIEWER
+  const viewerName = profile === 'community' ? 'Liam Thorne' : copy.viewer
   const members =
     profile === 'community'
       ? [
-          { userId: '@maintainer:community.kodera.io', name: 'Kodera Maintainer' },
-          { userId: '@contributor:community.kodera.io', name: 'SDK Contributor' },
-          { userId: '@core:community.kodera.io', name: 'Core Team' },
-          { userId: '@design:community.kodera.io', name: 'Design Partner' },
+          { userId: '@maintainer:community.kodera.io', name: 'Elena Vance' },
+          { userId: '@contributor:community.kodera.io', name: 'Marcus Sterling' },
+          { userId: '@core:community.kodera.io', name: 'Claire Mercer' },
+          { userId: '@design:community.kodera.io', name: 'Liam Thorne' },
         ]
       : MEMBERS
+  const roomNames: Readonly<Record<string, string>> = {
+    [viewer]: viewerName,
+    ...Object.fromEntries(members.map((member) => [member.userId, member.name ?? member.userId])),
+  }
   const listeners = new Set<() => void>()
   const timelines = new Map<string, readonly MessageView[]>()
   const threads = new Map<string, readonly MessageView[]>()
@@ -50,7 +55,7 @@ export function createLocalWorkspaceStore(
       key: eventId,
       eventId,
       sender: author?.userId ?? viewer,
-      senderName: author?.name ?? (profile === 'community' ? 'Community Member' : copy.viewer),
+      senderName: author?.name ?? viewerName,
       body,
       ts: Date.now(),
       edited: false,
@@ -86,6 +91,7 @@ export function createLocalWorkspaceStore(
         unread: 0,
         mentions: 0,
         occupancy: null,
+        names: roomNames,
         joined: members.length + 1,
         faces: members,
       }
@@ -159,7 +165,10 @@ export function createLocalWorkspaceStore(
     emit()
   }
   return {
-    audioCall: createLocalAudioCall(viewer),
+    audioCall: createLocalAudioCall(
+      viewer,
+      members.slice(0, 3).map((member) => member.userId)
+    ),
     addChannel(channel) {
       if (channels.has(channel.id)) return
       if (channel.room_state !== 'ready')
@@ -181,6 +190,7 @@ export function createLocalWorkspaceStore(
             unread: 0,
             mentions: 0,
             occupancy: null,
+            names: roomNames,
             joined: members.length + 1,
             faces: members,
           },

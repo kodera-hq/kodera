@@ -73,6 +73,7 @@ export function MarkdownDraftEditor({
   const commentsId = useId()
   const noticeId = useId()
   const [selection, setSelection] = useState({ start: 0, end: 0 })
+  const [favorite, setFavorite] = useState(false)
   const [comments, setComments] = useState(true)
   const [status, setStatus] = useState('')
   const [linkOpen, setLinkOpen] = useState(false)
@@ -147,10 +148,11 @@ export function MarkdownDraftEditor({
         <strong className="min-w-0 flex-1 break-words">{title}</strong>
         <button
           type="button"
-          className={TOOL}
-          disabled
+          className={`${TOOL} ${favorite ? 'bg-c-muted text-c-ink' : ''}`}
           aria-label={copy.favorite}
-          title={copy.favoriteGap}
+          aria-pressed={favorite}
+          title={copy.favorite}
+          onClick={() => setFavorite(!favorite)}
         >
           <StudioGlyph name="star" />
         </button>
