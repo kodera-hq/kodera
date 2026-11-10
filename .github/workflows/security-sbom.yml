@@ -82,3 +82,12 @@ jobs:
           name: kodera-cra-dependency-inventory
           path: sbom-out/
           retention-days: 14
+
+  sbom-and-provenance:
+    if: always()
+    needs: [hygiene-and-sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Enforce security, hygiene, and SBOM gate
+        run: test "${{ needs.hygiene-and-sbom.result }}" = "success"
