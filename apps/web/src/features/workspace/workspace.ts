@@ -5,7 +5,7 @@
 
 import '../../validation-policy'
 import type { TFunction } from 'i18next'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { ApiProblem } from '../../api/client'
 import type { components } from '../../api/schema'
 import type { MessageKey } from '../../i18n'

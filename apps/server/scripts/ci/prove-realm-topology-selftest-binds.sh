@@ -36,8 +36,8 @@ trap 'rm -rf "$work"' EXIT
 caught=0
 
 echo "realm-topology mutation probe"
-mkdir -p "$work/baseline/.github/scripts"
-cp "$check" "$selftest" "$work/baseline/.github/scripts/"
+mkdir -p "$work/baseline/scripts/ci"
+cp "$check" "$selftest" "$work/baseline/scripts/ci/"
 if ! bash "$work/baseline/scripts/ci/check-realm-topology.selftest.sh" > "$work/baseline.out" 2>&1; then
   echo "mutation probe FAILED: the unmutated suite does not pass" >&2
   cat "$work/baseline.out" >&2
@@ -52,8 +52,8 @@ printf '  ok  %-34s the unmutated suite passes\n' "baseline"
 # red" are distinguishable, and only the second is evidence about this clause.
 mutate() {
   local label="$1" case="$2" old="$3" new="$4" dir="$work/$1" out got=0
-  mkdir -p "$dir/.github/scripts"
-  cp "$check" "$selftest" "$dir/.github/scripts/"
+  mkdir -p "$dir/scripts/ci"
+  cp "$check" "$selftest" "$dir/scripts/ci/"
 
   python3 - "$dir/scripts/ci/check-realm-topology.py" "$old" "$new" <<'PY'
 import sys
@@ -190,14 +190,14 @@ mutate register-is-not-scanned 'a tracked register is not scanned' \
   'pass'
 
 mutate own-files-are-skipped "the check's own files are skipped by name" \
-  '        ".github/scripts/prove-realm-topology-selftest-binds.sh",' \
-  '        ".github/scripts/prove-realm-topology-selftest-binds.sh.not",'
+  '        "scripts/ci/prove-realm-topology-selftest-binds.sh",' \
+  '        "scripts/ci/prove-realm-topology-selftest-binds.sh.not",'
 
 # The skip list is names, not a directory. Turn it into a prefix test and the
 # next file dropped beside this one could hide a real statement.
 mutate skip-list-is-not-a-glob 'a neighbour in the same directory is still read' \
   'return [name for name in out.split("\0") if name and name not in skip]' \
-  'return [name for name in out.split("\0") if name and not name.startswith(".github/scripts/")]'
+  'return [name for name in out.split("\0") if name and not name.startswith("scripts/ci/")]'
 
 # ------------------------------------------------------- the allowlist bindings
 #

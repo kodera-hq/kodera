@@ -43,7 +43,8 @@ from pathlib import Path
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
 TOKEN_FORMAT = "kodera-native-tokens/1"
-TOKEN_PRODUCER_COMMIT = "4518d6414283b38b5d98728c102e0aff126201e9"
+TOKEN_PRODUCER_COMMIT = "32270125fc9aeb5b37be4475700ddd3f64db34f9"
+TOKEN_SOURCE_SHA256 = "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a"
 
 LANGUAGES = ("fr", "en")
 SOURCE_LANGUAGE = "fr"
@@ -204,7 +205,7 @@ def findings(root):
     if pin.get("producerCommit") != TOKEN_PRODUCER_COMMIT:
         errors.append("TokenProvenance.json producerCommit is not the qualified token producer")
     source_sha = pin.get("sourceSha256")
-    if not source_sha or source_sha not in read_bytes(tokens).decode("utf-8", "replace"):
+    if source_sha != TOKEN_SOURCE_SHA256 or source_sha not in read_bytes(tokens).decode("utf-8", "replace"):
         errors.append("KoderaTokens.swift does not carry the sourceSha256 recorded in TokenProvenance.json")
 
     catalogue = read_json(app / "Resources/Localizable.xcstrings")

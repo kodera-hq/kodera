@@ -34,11 +34,11 @@ import yaml
 HERE = Path(__file__).resolve().parent
 LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 DUMPER = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
-CORE = "contracts/core-api.openapi.yaml"
-AGENT = "contracts/agent-api.openapi.yaml"
-ADDED = "contracts/selftest-api.openapi.yaml"
-PROBE = "contracts/probe-api.openapi.yaml"
-SEVERITY = "contracts/oasdiff-severity-levels.txt"
+CORE = "apps/server/contracts/core-api.openapi.yaml"
+AGENT = "apps/server/contracts/agent-api.openapi.yaml"
+ADDED = "apps/server/contracts/selftest-api.openapi.yaml"
+PROBE = "apps/server/contracts/probe-api.openapi.yaml"
+SEVERITY = "apps/server/contracts/oasdiff-severity-levels.txt"
 LABEL = "contract:breaking"
 LABEL_REFUSAL = "POLICY: breaking classification requires the contract:breaking label"
 NO_BUMP_REFUSAL = "POLICY: changed classification requires a strictly greater version"
@@ -92,7 +92,7 @@ class Fixture:
         root.mkdir()
         self.git("init", "--quiet")
         self.git("checkout", "--quiet", "-b", "trunk")
-        (root / "contracts").mkdir()
+        (root / "apps/server/contracts").mkdir(parents=True)
         self.texts: dict[str, str] = {}
         for path in (CORE, AGENT):
             source = contracts / Path(path).name
@@ -521,7 +521,6 @@ OVERRIDE_PAIRS: dict[str, tuple[Edit | None, Edit]] = {
         lambda d: _parameter(d).update(deprecated=True),
         lambda d: _get(d).update(parameters=[]),
     ),
-    "api-security-added": (None, lambda d: _get(d).update(security=[{"bearer": []}])),
     "response-optional-property-became-write-only": (
         None,
         lambda d: _response(d)["schema"]["properties"]["note"].update(writeOnly=True),
@@ -551,7 +550,7 @@ PR = ("--target", "trunk")
 
 def untouched_contracts(f: Fixture, branch: str) -> str:
     f.start(branch)
-    f.write("notes.txt", f"{branch}: a change outside contracts/\n")
+    f.write("notes.txt", f"{branch}: a change outside apps/server/contracts/\n")
     return f.commit(branch)
 
 
@@ -955,7 +954,7 @@ def _parameter_rename_widens_authz(f: Fixture) -> Run:
 @case("security-added")
 def _security_added(f: Fixture) -> Run:
     head = f.change("security", CORE, require_security, bump("minor"))
-    return Run(head, PR, 1, ("ERR  api-security-added", LABEL_REFUSAL))
+    return Run(head, PR, 1, ("ERR  api-security-anonymous-access-removed", LABEL_REFUSAL))
 
 
 @case("became-write-only")
@@ -1001,7 +1000,7 @@ def _head_weakens_severity(f: Fixture) -> Run:
         PR,
         1,
         (
-            "severity levels: contracts/oasdiff-severity-levels.txt as it is at the base",
+            "severity levels: apps/server/contracts/oasdiff-severity-levels.txt as it is at the base",
             "ERR  response-property-enum-value-removed",
             LABEL_REFUSAL,
         ),
@@ -1255,7 +1254,7 @@ def verify(
 
 
 def pinned_version(contracts: Path) -> str | None:
-    workflow = contracts.parent / ".github" / "workflows" / "ci.yml"
+    workflow = contracts.parents[2] / ".github" / "workflows" / "ci-server.yml"
     try:
         document = yaml.load(workflow.read_text(encoding="utf-8"), Loader=LOADER)  # noqa: S506 - safe loader
         pinned = document["env"]["OASDIFF_VERSION"]

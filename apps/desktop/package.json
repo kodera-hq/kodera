@@ -5,8 +5,8 @@
   "type": "module",
   "license": "Apache-2.0",
   "scripts": {
-    "dev": "npx tauri dev",
-    "build": "npx tauri build",
+    "dev": "cargo run --locked --manifest-path src-tauri/Cargo.toml --features desktop-app --bin kodera-desktop",
+    "build": "cargo build --locked --manifest-path src-tauri/Cargo.toml --features desktop-app --bin kodera-desktop",
     "typecheck": "node scripts/verify-config.mjs --selftest"
   }
 }

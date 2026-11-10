@@ -439,3 +439,17 @@ def test_loopback_startup_policy_mutations_are_observed_in_real_startup(tmp_path
     assert_loopback_startup_deployed_refusal(
         loopback_startup("config.settings.customer_http", root=root)
     )
+
+
+@pytest.mark.parametrize("mode", ["test", "live"])
+def test_deploy_refuses_stripe_without_a_reconciliation_route(mode):
+    result = start("config.settings.deploy", {
+        "KODERA_STRIPE_SECRET_KEY": "rk_" + mode + "_" + "synthetic0123456789",
+        "KODERA_STRIPE_WEBHOOK_SECRET": "whsec_" + "synthetic",
+    })
+    assert "ImproperlyConfigured: Stripe payments require a routed reconciliation webhook" in refusal(result)
+
+
+def test_deploy_without_payments_still_starts():
+    result = start("config.settings.deploy", {})
+    assert result.returncode == 0, result.stderr

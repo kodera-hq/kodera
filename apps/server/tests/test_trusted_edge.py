@@ -135,7 +135,8 @@ def case_view_reads_the_namespaced_id(m) -> bool:
 
 def case_view_never_reads_an_unsafe_id(m) -> bool:
     # 63 characters pass a view's own check, so only the middleware's removal keeps it out.
-    return _through(m, "x" * 63) is None
+    value = _through(m, "x" * 63)
+    return value is not None and len(value) == 36 and value != "x" * 63
 
 
 def case_a_cached_header_read_is_refreshed(m) -> bool:
@@ -193,8 +194,8 @@ MUTATIONS = [
     ),
     (
         "case_view_never_reads_an_unsafe_id",
-        'request.META.pop("HTTP_X_REQUEST_ID", None)',
-        'request.META.get("HTTP_X_REQUEST_ID", None)',
+        'namespaced or str(new_uuid7())',
+        'namespaced or "x" * 63',
     ),
     (
         "case_a_cached_header_read_is_refreshed",

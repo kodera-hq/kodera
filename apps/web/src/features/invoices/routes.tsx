@@ -13,7 +13,7 @@
 // `location.hash` directly (ADR-0005's own note on why).
 
 import { createRoute } from '@tanstack/react-router'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { orgRoute } from '../../app/org-route'
 import { InvoiceDetailScreen } from './InvoiceDetailScreen'
 import { InvoiceListScreen } from './InvoiceListScreen'

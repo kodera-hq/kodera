@@ -10,7 +10,61 @@ on:
 permissions:
   contents: read
 
+env:
+  OASDIFF_VERSION: "1.37.0"
+  OASDIFF_SHA256: eac87307d31d08c36800c58a409c247f1c5db37fbb72e2544402f22a87cbca3c
+
 jobs:
+  contract-change:
+    name: OpenAPI lint, compatibility and version policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+      - name: Install locked contract tools
+        working-directory: apps/server
+        run: |
+          uv sync --locked
+          (cd contracts/lint && npm ci --ignore-scripts --engine-strict)
+          curl -fsSL -o "$RUNNER_TEMP/oasdiff.tar.gz" "https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
+          echo "${OASDIFF_SHA256}  $RUNNER_TEMP/oasdiff.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/oasdiff-bin"
+          tar -xzf "$RUNNER_TEMP/oasdiff.tar.gz" -C "$RUNNER_TEMP/oasdiff-bin" oasdiff
+          echo "$RUNNER_TEMP/oasdiff-bin" >> "$GITHUB_PATH"
+      - name: Prove OpenAPI lint and version-policy refusals
+        working-directory: apps/server
+        run: |
+          bash scripts/ci/prove-contract-lint-fails.selftest.sh
+          bash scripts/ci/prove-contract-lint-fails.sh
+          contracts/lint/node_modules/.bin/redocly lint --config contracts/lint/redocly.yaml contracts/*.openapi.yaml
+          uv run bash contracts/check-version-policy.selftest.sh
+          uv run bash contracts/check-version-policy.mutations.sh
+          bash contracts/check-contract-change.selftest.sh
+          bash contracts/check-contract-change-ci.selftest.sh
+          bash contracts/check-contract-change.mutations.sh
+      - name: Compare contracts and enforce classified version policy
+        working-directory: apps/server
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: bash contracts/check-contract-change-ci.sh --repo ../..
+
   server-static-and-unit:
     name: Server Lint, Types, Contracts & Unit Suite
     runs-on: ubuntu-latest
@@ -59,15 +113,21 @@ jobs:
         run: |
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run ruff check .
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run mypy .
+          uv run bash scripts/ci/check-authz-matrix.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-authz-matrix.py
+          uv run bash scripts/ci/check-migrations-complete.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-migrations-complete.py --settings config.settings.job_queue
+          uv run bash scripts/ci/check-realm-topology.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-realm-topology.py --root .
+          uv run bash scripts/ci/check-docs-index.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-docs-index.py
+          uv run bash scripts/ci/check-alert-parity.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-alert-parity.py .
           bash scripts/ci/check-adr-status.selftest.sh
           env -i PATH="$PATH" HOME="$HOME" GITHUB_REF_NAME="main" DATABASE_URL="$DATABASE_URL" DJANGO_SECRET_KEY="$DJANGO_SECRET_KEY" uv run python scripts/ci/check-adr-status.py .
           bash scripts/ci/check-uv-lock.selftest.sh
           bash scripts/ci/check-uv-lock.sh .
+          uv run bash scripts/ci/check-image-dependencies.selftest.sh
           bash scripts/ci/check-image-dependencies.sh .
       - name: Configure ephemeral PostgreSQL (fsync = off) and wait for reload
         env:

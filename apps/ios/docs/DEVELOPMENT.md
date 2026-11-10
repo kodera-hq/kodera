@@ -48,7 +48,7 @@ Until Core discovery (I-1) runs locally, organisation search shows "unavailable"
 
 ## Checks
 
-CI proves Xcode 26.6 on the hosted `macos-26` image; Xcode 27.1 is also used locally. [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.44.1 or later generates the project.
+The monorepo mobile workflow selects Xcode 26.3 on `macos-15`, builds the simulator app and runs `KoderaAppTests` on an available iPhone simulator. [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.44.1 or later generates the project.
 
 ```sh
 # Swift packages (host tests; Domain and Client also run on Linux in CI)
@@ -56,11 +56,11 @@ CI proves Xcode 26.6 on the hosted `macos-26` image; Xcode 27.1 is also used loc
 (cd packages/KoderaClient && swift test --force-resolved-versions)
 (cd packages/KoderaAuth && swift test --force-resolved-versions)   # macOS only
 
-# App: generate the project, then build unsigned for devices, as CI does
+# App: generate the project, then build unsigned for the simulator, as CI does
 # (use 'generic/platform=iOS Simulator' for a simulator build)
 xcodegen generate
 xcodebuild -project Kodera.xcodeproj -scheme Kodera \
-  -destination 'generic/platform=iOS' build CODE_SIGNING_ALLOWED=NO
+  -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
 
 # App resources and repository policy
 python3 scripts/ci/check-app-resources.py .
@@ -68,7 +68,7 @@ python3 ../../.github/scripts/check-vendor-attribution.py ../..
 python3 ../../.github/scripts/check-required-clauses.py ../..
 ```
 
-CI (`.github/workflows/ci.yml`) runs three jobs. `Security Scan` (gitleaks and `check-app-resources.py` with its self-test) and `Swift packages (Linux)` (KoderaDomain and KoderaClient) run on every pull request and every push to `main`. `iOS app (macOS)` (unsigned Debug and Release builds for the device SDK, the tests of all three packages, and the hosted Debug App-model simulator checks below) runs only on pull requests that are not drafts. `Native CI` aggregates all three and accepts only the macOS job as skipped.
+The monorepo `../../../.github/workflows/ci-mobile.yml` runs all three Swift package suites, resource self-tests and checks, an unsigned simulator build, and the hosted `KoderaAppTests`. The root workflow selects mobile changes and aggregates this reusable workflow into `ci-ok`.
 
 ## Actual App model harness
 
@@ -76,7 +76,7 @@ CI (`.github/workflows/ci.yml`) runs three jobs. `Security Scan` (gitleaks and `
 
 Use a fresh isolated checkout without ignored deployment configuration, existing resolved dependencies and an installed simulator runtime. Never read or copy `Config/Local.xcconfig`; its presence or symlink is a stop. Every harness test command must build the independently launched host with ALL deployment values empty/off, as below. Smoke asserts its actual bundled configuration is unconfigured, so the normal host startup exits before FirstLaunch/storage work. Injected test models have separate synthetic configuration and defaults.
 
-Local qualification may explicitly use installed Xcode 27.1; CI remains pinned to 26.6 and qualifies its own compiler, hosted imports and result schema separately. No tool/runtime/dependency installation, graph re-resolution or automatic retry is part of this harness. Use an owned result/DerivedData directory, register the heavy job, retain the disk floor plus all projected growth, and select ONE existing available Shutdown iPhone. The workflow's selector orders installed iOS runtimes by numeric version descending, then iPhones by UDID ascending; no device creation, erase or alternate destination after failure.
+Local qualification may explicitly use installed Xcode 27.1; CI remains pinned to 26.3 and qualifies its own compiler, hosted imports and result schema separately. No tool/runtime/dependency installation, graph re-resolution or automatic retry is part of this harness. Use an owned result/DerivedData directory, register the heavy job, retain the disk floor plus all projected growth, and select ONE existing available Shutdown iPhone. The workflow selects the first available iPhone returned by `simctl list devices available --json`; it does not create or erase a device. For local qualification, select one existing Shutdown iPhone explicitly.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer

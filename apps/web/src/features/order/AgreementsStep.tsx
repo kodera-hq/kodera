@@ -14,7 +14,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { OrderSummary } from './OrderSummary'
 import { formatDate } from '../../i18n/format'
 import { Banner } from '../../ui/Banner/Banner'

@@ -30,6 +30,8 @@ jobs:
           cmp -s packages/api-contract/agent-api.openapi.yaml apps/server/contracts/agent-api.openapi.yaml
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
+      - name: Verify scaffolder and refusal self-tests
+        run: npm --workspace create-kodera test && npm --workspace create-kodera run selftest
       - name: Verify @kodera/design-tokens grammar, contrast, drift & tests
         working-directory: packages/design-tokens
         run: node test/run.mjs
@@ -52,6 +54,11 @@ jobs:
           node-version-file: .nvmrc
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
+      - name: Dependency advisory gate and failure proofs
+        working-directory: apps/web
+        run: |
+          bash scripts/check-audit.selftest.sh
+          node scripts/check-audit.mjs
       - name: Typecheck, Lint, Copy Parity, Unit Tests & Production Bundle
         run: |
           python3 apps/web/scripts/check-copy-keys.py

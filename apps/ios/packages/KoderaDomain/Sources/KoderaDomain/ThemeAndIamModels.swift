@@ -275,7 +275,7 @@ public struct DocsPadDraft: Equatable, Sendable {
     public let padId: String, channelId: String, title: String, markdownBody: String, updatedBy: String
     public let revision: Int
     public init(padId: String, channelId: String, title: String, markdownBody: String, revision: Int = 1, updatedBy: String) throws {
-        guard admittedText(padId, bytes: 255), admittedText(channelId, bytes: 255), admittedText(title, bytes: 120),
+        guard admittedText(padId, bytes: DocsPadSummary.maximumIDBytes), admittedText(channelId, bytes: 255), admittedText(title, bytes: 120),
               markdownBody.utf8.count <= Self.maximumBodyBytes, revision >= 1, admittedUUID(updatedBy),
               !markdownBody.unicodeScalars.contains(where: { (CharacterSet.controlCharacters.contains($0) && $0 != "\n" && $0 != "\t" && $0 != "\r") || $0.properties.generalCategory == .format }) else { throw WorkspacePreferencesError.invalidDocument }
         self.padId = padId; self.channelId = channelId; self.title = title; self.markdownBody = markdownBody; self.revision = revision; self.updatedBy = updatedBy

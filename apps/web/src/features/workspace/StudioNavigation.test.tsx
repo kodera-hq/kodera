@@ -21,7 +21,11 @@ for (const compact of [false, true]) {
         activity={[{ channel, unread: 3, mentions: 1, body: '@Reviewer please check the guide' }]}
       />
     )
-    await user.click(screen.getByRole('button', { name: 'Notifications' }))
+    const trigger = screen.getByRole('button', { name: 'Notifications' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await user.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(document.getElementById(trigger.getAttribute('aria-controls')!)).toBeVisible()
     const panel = screen.getByRole(compact ? 'region' : 'dialog', { name: 'Notifications' })
     expect(panel).toHaveTextContent('Non lus: 3')
     expect(panel).toHaveTextContent('Mentions: 1')
@@ -72,4 +76,17 @@ it('shows truthful empty states and returns keyboard focus on Escape', async () 
   render(<StudioNavigation section="tools" mode="chat" rooms={[]} onChoose={() => null} />)
   await user.click(screen.getByRole('button', { name: 'Fichiers' }))
   expect(screen.getByText('Aucun document ni pièce jointe dans cet espace.')).toBeInTheDocument()
+})
+
+it('identifies the active destination as the current page', () => {
+  render(
+    <StudioNavigation
+      section="tools"
+      mode="docs"
+      rooms={[]}
+      onChoose={() => null}
+      onChange={() => {}}
+    />
+  )
+  expect(screen.getByRole('button', { name: 'Docs' })).toHaveAttribute('aria-current', 'page')
 })

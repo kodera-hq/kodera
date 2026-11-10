@@ -18,7 +18,6 @@ response-property-default-value-removed err
 api-path-removed-with-deprecation err
 api-removed-with-deprecation err
 request-parameter-removed-with-deprecation err
-api-security-added err
 response-optional-property-became-write-only err
 response-optional-write-only-property-removed err
 response-required-property-became-write-only err

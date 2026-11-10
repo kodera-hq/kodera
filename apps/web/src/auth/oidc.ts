@@ -490,8 +490,14 @@ export class OidcAuthAdapter implements AuthAdapter {
         throw new Error('The sign-in was cancelled before its callback completed.')
       }
       if (user === undefined) return 'silent'
+      const identity = this.#processedIdentity(user)
+      if (identity === undefined) {
+        // signOut clears storage and publishes the closed boundary even if SDK cleanup fails.
+        await this.signOut()
+        throw new Error('Invalid sign-in identity.')
+      }
       this.#user = user
-      this.#identity = this.#processedIdentity(user)
+      this.#identity = identity
       this.#publish('ready')
       return 'interactive'
     })()

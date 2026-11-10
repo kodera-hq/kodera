@@ -97,7 +97,7 @@ test('community entry opens Docs and the appropriate help discussion without all
   await expect(page.getByRole('heading', { name: 'extensions', exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(page.getByTestId('espace-canvas-mode-chat')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('espace-canvas-mode-chat')).toHaveAttribute('aria-current', 'page')
 })
 test('mobile reference remains readable and scrollable with reduced motion', async ({
   page,

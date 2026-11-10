@@ -45,10 +45,15 @@
 
 import { spawnSync } from 'node:child_process'
 
-const run = spawnSync('npx', ['playwright', 'test', '--list', '--reporter=json'], {
-  encoding: 'utf8',
-  maxBuffer: 64 * 1024 * 1024,
-})
+// npm may relocate execution to the workspace root; retain the caller's suite.
+const run = spawnSync(
+  'npx',
+  ['playwright', 'test', '--config', process.cwd(), '--list', '--reporter=json'],
+  {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  }
+)
 
 const rawOutput = [run.stdout, run.stderr].filter(Boolean).join('\n')
 

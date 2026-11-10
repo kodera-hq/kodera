@@ -117,4 +117,30 @@ final class DocsWorkspaceStateTests: XCTestCase {
         XCTAssertEqual(composed, try DocsWorkspaceScope(organisationId: org, channelId: "é"))
     }
 
+    func testSharedPadBounds() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("packages/kodera-rs/tests/vectors/docs-pad/bounds.tsv")
+        for line in try String(contentsOf: file, encoding: .utf8).split(separator: "\n") {
+            let fields = line.split(separator: " ")
+            let size = try XCTUnwrap(Int(fields[1]))
+            let expected = fields[2] == "true"
+            if fields[0] == "id" {
+                let id = String(repeating: "a", count: size)
+                let summary = try? DocsPadSummary(id: id, title: "Title", padURL: URL(string: "https://docs.example.org/pad")!, updatedAtEpochSeconds: 0)
+                let draft = try? DocsPadDraft(padId: id, channelId: "channel", title: "Title", markdownBody: "", updatedBy: org)
+                XCTAssertEqual(summary != nil, expected, String(line))
+                XCTAssertEqual(draft != nil, expected, String(line))
+            } else {
+                XCTAssertEqual(fields[0], "count")
+                var state = DocsWorkspaceState()
+                var admitted = true
+                do { try state.beginLocalPreview(scope: scope(), pads: (0..<size).map { try pad("pad-\($0)") }) }
+                catch { admitted = false }
+                XCTAssertEqual(admitted, expected, String(line))
+            }
+        }
+    }
+
 }

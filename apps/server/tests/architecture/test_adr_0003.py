@@ -44,9 +44,8 @@ DEPLOY_INPUTS = {
     "DJANGO_SECRET_KEY": "synthetic-deployment-only-" + "abc0123456789" * 5,
     "DJANGO_ALLOWED_HOSTS": "api.synthetic.test",
     "DATABASE_URL": "postgresql://synthetic:synthetic-pass@private-db.test/core",
-    # Both Stripe keys, so the walk sees the settings they fill: a restricted key and a secret.
-    "KODERA_STRIPE_SECRET_KEY": "rk_test_" + "SyntheticNotAKey0",
-    "KODERA_STRIPE_WEBHOOK_SECRET": "whsec_" + "synthetic-not-a-secret",
+    # Stripe is refused at deployment startup until reconciliation is routed.
+    # The settings names still exist and are included in the walk below.
 }
 REFUSED = "django.core.exceptions.ImproperlyConfigured: Deployment configuration refused"
 

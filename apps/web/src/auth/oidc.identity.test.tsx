@@ -65,8 +65,16 @@ describe('active processed SDK identity', () => {
     { iss: issuer, sub: 42 },
     { iss: ['other', issuer], sub: 'subject' },
   ])('does not infer capability from incomplete or mismatched profile %j', async (profile) => {
-    const adapter = await ready(profile)
-    expect(adapter.getUser()).not.toHaveProperty('identity')
+    vi.spyOn(UserManager.prototype, 'signinRedirect').mockResolvedValue()
+    vi.spyOn(UserManager.prototype, 'signinCallback').mockResolvedValueOnce(live(profile))
+    const remove = vi.spyOn(UserManager.prototype, 'removeUser').mockResolvedValue()
+    const adapter = new OidcAuthAdapter()
+    await adapter.signIn('acme-sa')
+    await expect(adapter.handleCallback()).rejects.toThrow('Invalid sign-in identity')
+    expect(adapter.getSnapshot().status).toBe('unauthenticated')
+    expect(adapter.getAccessToken()).toBeUndefined()
+    expect(adapter.getUser()).toBeUndefined()
+    expect(remove).toHaveBeenCalled()
     await adapter.signOut()
   })
   it.each(['same', 'subject', 'issuer', 'missing'] as const)(

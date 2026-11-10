@@ -10,7 +10,7 @@
 
 import { createRoute } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { orgRoute } from '../../app/org-route'
 import { RequireRole } from '../../app/RequireRole'
 import {

@@ -272,11 +272,7 @@ export function MarkdownDraftEditor({
         </button>
         <span aria-hidden="true" className="mx-1 h-4 border-l border-c-border-soft" />
         <div className="ml-auto">
-          {shareAction ?? (
-            <Button disabled title={copy.shareGap} icon={<StudioGlyph name="share" />}>
-              {copy.share}
-            </Button>
-          )}
+          {shareAction ?? <p className="text-sm text-c-ink-2">{copy.shareGap}</p>}
         </div>
       </div>
       <div className="flex min-w-0 gap-6 p-5 narrow:flex-col narrow:p-3">
@@ -441,7 +437,9 @@ export function MarkdownDraftEditor({
             ))}
           </ul>
           {!commentThreads.length ? (
-            <p className="mt-3 text-sm text-c-ink-2">{copy.noComments}</p>
+            <p className="mt-3 text-sm text-c-ink-2">
+              {onCommentsChange && author ? copy.noComments : copy.commentGap}
+            </p>
           ) : null}
           {onCommentsChange && author ? (
             <form

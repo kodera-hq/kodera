@@ -9,7 +9,7 @@
 // reference) must look like one.
 
 import type { TFunction } from 'i18next'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 
 export const LIFECYCLE_STATES = [
   'ready',

@@ -79,7 +79,7 @@ def _public_https(value: str) -> bool:
 
 def _claim(request: HttpRequest, organisation_id: UUID, request_id: str) -> StoredResponse:
     try:
-        payload = parse_instant_claim_request(request.body, request.content_type)
+        payload = parse_instant_claim_request(request.body, request.content_type or "")
     except InstantClaimInputError:
         status, body = responses.document("malformed-request", request_id, {})
         return StoredResponse(status=status, body=body, content_type=responses.PROBLEM_TYPE)

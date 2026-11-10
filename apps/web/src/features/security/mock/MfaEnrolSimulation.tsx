@@ -1,7 +1,7 @@
 // Demonstration only: imported exclusively by the explicit mock/MSW build.
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import {
   trackEnrolmentAbandoned,
   trackEnrolmentCompleted,

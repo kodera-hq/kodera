@@ -19,7 +19,7 @@
 # first time someone deletes a case, and it goes stale silently.
 set -uo pipefail
 
-here="$(git rev-parse --show-toplevel)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 check="$here/scripts/check-e2e-specs.mjs"
 work="$(mktemp -d "$here/.e2e-selftest-XXXXXX")"
 fails=0

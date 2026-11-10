@@ -8,6 +8,7 @@ import type * as OidcClientTs from 'oidc-client-ts'
 import.meta.env['VITE_KEYCLOAK_URL'] = 'https://id.example.test'
 import.meta.env['VITE_OIDC_CLIENT_ID'] = 'console'
 
+const issuer = 'https://id.example.test/realms/acme-sa'
 const signinSilent = vi.fn()
 const signinRedirect = vi.fn().mockResolvedValue(undefined)
 const signinRedirectCallback = vi.fn()
@@ -100,7 +101,7 @@ describe('OidcAuthAdapter', () => {
     signinRedirectCallback.mockResolvedValue({
       access_token: 'token-123',
       expired: false,
-      profile: { sub: 'user-1' },
+      profile: { iss: issuer, sub: 'user-1' },
     })
 
     const onCallback = new OidcAuthAdapter()
@@ -122,7 +123,7 @@ describe('OidcAuthAdapter', () => {
     signinRedirectCallback.mockResolvedValue({
       access_token: 'token-123',
       expired: false,
-      profile: { sub: 'user-1' },
+      profile: { iss: issuer, sub: 'user-1' },
     })
     await adapter.handleCallback()
     expect(adapter.getAccessToken()).toBe('token-123')
@@ -175,7 +176,11 @@ describe('OidcAuthAdapter', () => {
   it('forgets the token even if stopping SDK renewal fails', async () => {
     const adapter = new OidcAuthAdapter()
     await adapter.signIn('acme-sa')
-    signinRedirectCallback.mockResolvedValueOnce({ access_token: 'old-token', expired: false })
+    signinRedirectCallback.mockResolvedValueOnce({
+      access_token: 'old-token',
+      expired: false,
+      profile: { iss: issuer, sub: 'user-1' },
+    })
     await adapter.handleCallback()
     stopSilentRenew.mockImplementationOnce(() => {
       throw new Error('SDK cleanup failed')
@@ -576,7 +581,11 @@ describe('renewal belongs to the current adapter session', () => {
     )
     const old = adapter.renew()
     await adapter.signIn('other-realm')
-    signinRedirectCallback.mockResolvedValueOnce({ ...renewedUser(), access_token: 'new-token' })
+    signinRedirectCallback.mockResolvedValueOnce({
+      ...renewedUser(),
+      access_token: 'new-token',
+      profile: { iss: 'https://id.example.test/realms/other-realm', sub: 'user-1' },
+    })
     await adapter.handleCallback()
     let resolveNew!: (user: unknown) => void
     signinSilent.mockReturnValueOnce(
@@ -590,7 +599,11 @@ describe('renewal belongs to the current adapter session', () => {
     expect(removeUser.mock.contexts).toEqual([managers[0]])
     expect(adapter.getAccessToken()).toBe('new-token')
     expect(adapter.renew()).toBe(current)
-    resolveNew({ ...renewedUser(), access_token: 'new-renewed-token' })
+    resolveNew({
+      ...renewedUser(),
+      access_token: 'new-renewed-token',
+      profile: { iss: 'https://id.example.test/realms/other-realm', sub: 'user-1' },
+    })
     await expect(current).resolves.toBe(true)
     expect(adapter.getAccessToken()).toBe('new-renewed-token')
   })
@@ -605,12 +618,19 @@ describe('renewal belongs to the current adapter session', () => {
     )
     const old = adapter.renew()
     await adapter.signIn('other-realm')
-    signinRedirectCallback.mockResolvedValueOnce({ ...renewedUser(), access_token: 'new-token' })
+    signinRedirectCallback.mockResolvedValueOnce({
+      ...renewedUser(),
+      access_token: 'new-token',
+      profile: { iss: 'https://id.example.test/realms/other-realm', sub: 'user-1' },
+    })
     await adapter.handleCallback()
     rejectOld(new ErrorResponse({ error: 'invalid_grant' }))
     await expect(old).resolves.toBe(false)
     expect(adapter.getAccessToken()).toBe('new-token')
-    signinSilent.mockResolvedValueOnce(renewedUser())
+    signinSilent.mockResolvedValueOnce({
+      ...renewedUser(),
+      profile: { iss: 'https://id.example.test/realms/other-realm', sub: 'user-1' },
+    })
     await expect(adapter.renew()).resolves.toBe(true)
   })
 })
@@ -620,7 +640,7 @@ describe('one-shot reload restoration', () => {
     access_token: 'restored',
     expired: false,
     expires_at: Math.floor(Date.now() / 1000) + 300,
-    profile: { sub: 'synthetic' },
+    profile: { iss: issuer, sub: 'synthetic' },
   })
 
   it('shares one restoration and publishes stable snapshots without changing generation on renewal', async () => {
@@ -747,7 +767,7 @@ describe('replacement setup failures', () => {
     signinRedirectCallback.mockResolvedValueOnce({
       access_token: 'new-token',
       expired: false,
-      profile: { sub: 'new-user' },
+      profile: { iss: 'https://id.example.test/realms/bravo', sub: 'new-user' },
     })
     await adapter.handleCallback()
     const current = adapter.getSnapshot()
@@ -777,7 +797,7 @@ describe('replacement setup failures', () => {
         access_token: 'old-token',
         expired: false,
         expires_at: Math.floor(Date.now() / 1000) + 300,
-        profile: { sub: 'old-user' },
+        profile: { iss: issuer, sub: 'old-user' },
       })
       await adapter.handleCallback()
       const previous = adapter.getSnapshot()

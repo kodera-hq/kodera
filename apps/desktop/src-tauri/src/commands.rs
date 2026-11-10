@@ -1906,7 +1906,7 @@ mod tests {
     #[test]
     fn docs_registry_capacity_replacements_and_failed_identity_do_not_leak() {
         let mut state = session();
-        for i in 0..64 {
+        for i in 0..kodera_rs::MAX_DOCS_PADS {
             state
                 .save_docs_pad(ORG, &format!("pad-{i}"), "text", "Title", "body", "author")
                 .unwrap();
@@ -1915,7 +1915,7 @@ mod tests {
             state.save_docs_pad(ORG, "overflow", "text", "Title", "body", "author"),
             Err(CoreError::CapacityExceeded)
         );
-        assert_eq!(state.docs_pads.len(), 64);
+        assert_eq!(state.docs_pads.len(), kodera_rs::MAX_DOCS_PADS);
         assert_eq!(
             state
                 .save_docs_pad(ORG, "pad-0", "text", "Next", "body", "author")
@@ -1926,7 +1926,7 @@ mod tests {
         assert!(state
             .save_docs_pad(ORG, " bad", "text", "Title", "body", "author")
             .is_err());
-        assert_eq!(state.docs_pads.len(), 64);
+        assert_eq!(state.docs_pads.len(), kodera_rs::MAX_DOCS_PADS);
     }
     #[test]
     fn preference_teardown_and_failed_switch_erase_profile_theme_and_docs() {

@@ -28,8 +28,8 @@ pub use workspace_prefs::{
     evaluate_channel_access, validate_user_profile, ChannelAccessDecision, ChannelPermissionPolicy,
     CoreThemeMode, CustomThemePalette, DocsPadDocument, DocsPadError, OrgRoleRank, PresenceStatus,
     ProfileIamError, ShareableThemePayload, ThemeCodecError, UserProfile, KODERA_MONOGRAM_BG_HEX,
-    KODERA_MONOGRAM_BG_RGB, MAX_DOCS_PAD_MARKDOWN_BYTES, MAX_THEME_SHARE_CODE_BYTES,
-    THEME_SHARE_PREFIX,
+    KODERA_MONOGRAM_BG_RGB, MAX_DOCS_PADS, MAX_DOCS_PAD_ID_BYTES, MAX_DOCS_PAD_MARKDOWN_BYTES,
+    MAX_THEME_SHARE_CODE_BYTES, THEME_SHARE_PREFIX,
 };
 
 /// Maximum wire size in bytes for a single `#urgence` BLE GATT frame.

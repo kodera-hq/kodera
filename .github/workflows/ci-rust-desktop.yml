@@ -29,9 +29,10 @@ jobs:
       - name: Check formatting, locked clippy & unit/mutation tests
         run: |
           cargo fmt --all -- --check
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-          cargo test --locked --workspace
-      - name: Verify Tauri v2 security configuration
+          cargo check --locked --workspace --all-targets --all-features
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo test --locked --workspace --all-targets --all-features
+      - name: Verify desktop WebView security configuration contract
         run: |
           node apps/desktop/scripts/verify-config.mjs --selftest
           node apps/desktop/scripts/verify-config.mjs

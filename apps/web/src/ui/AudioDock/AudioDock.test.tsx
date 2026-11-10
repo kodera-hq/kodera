@@ -270,10 +270,7 @@ it('renders four named audio participants without fabricating video tracks', () 
   expect(
     within(screen.getByRole('list', { name: 'Participants' })).getAllByRole('listitem')
   ).toHaveLength(4)
-  expect(screen.getByRole('button', { name: 'Video unavailable' })).toHaveAttribute(
-    'aria-disabled',
-    'true'
-  )
+  expect(screen.getByRole('button', { name: 'Video unavailable' })).toBeDisabled()
   expect(document.querySelectorAll('video')).toHaveLength(0)
 })
 
@@ -321,8 +318,11 @@ it('keeps real calls camera unavailable even when a local participant is present
     cameraUnavailable: 'Video unavailable',
   })
   expect(screen.queryByRole('button', { name: 'Caméra' })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Video unavailable' })).toHaveAttribute(
-    'aria-disabled',
-    'true'
-  )
+  expect(screen.getByRole('button', { name: 'Video unavailable' })).toBeDisabled()
+})
+
+it('announces call state changes politely', () => {
+  setup({ status: 'reconnecting', statusLabel: 'Reconnecting' })
+  expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite')
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting')
 })

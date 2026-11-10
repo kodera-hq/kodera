@@ -2,6 +2,8 @@
 
 import os
 
+from django.core.exceptions import ImproperlyConfigured
+
 from apps.billing.configuration import (
     PAYMENT_TERMS_DAYS,
     issuer_from_environment as billing_issuer,
@@ -86,3 +88,8 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
     KODERA_STRIPE_SECRET_KEY,
     KODERA_STRIPE_WEBHOOK_SECRET,
 ) = stripe_from_environment(os.environ)
+
+# No routed signed webhook exists in customer_urls yet. Do not accept money that
+# this deployment cannot reconcile; enabling it requires a route and replay tests.
+if KODERA_PAYMENT_PROVIDER == "stripe":
+    raise ImproperlyConfigured("Stripe payments require a routed reconciliation webhook")

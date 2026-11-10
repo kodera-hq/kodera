@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it } from 'vitest'
 import '../../i18n'
+import { studioMessages } from '../workspace/studioMessages'
 import type { DocumentComment } from './documentComments'
 import { MarkdownDraftEditor } from './MarkdownDraftEditor'
 
@@ -43,7 +44,10 @@ it('uses task inputs to change source and escapes HTML without inventing comment
   expect(container.querySelector('img')).toBeNull()
   expect(container.querySelector('mark')).toHaveTextContent('Shared')
   expect(screen.getByRole('button', { name: 'Mention' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Partager' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Partager' })).toBeNull()
+  expect(screen.getByText(studioMessages.fr.shareGap)).toBeVisible()
+  expect(screen.getByText(studioMessages.fr.commentGap)).toBeVisible()
+  expect(screen.queryByText(studioMessages.fr.noComments)).toBeNull()
   await user.click(screen.getByRole('button', { name: 'Commentaires' }))
   expect(screen.queryByRole('complementary', { name: 'Commentaires' })).toBeNull()
 })

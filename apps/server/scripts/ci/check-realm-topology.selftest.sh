@@ -243,23 +243,23 @@ expect 0 "an untracked file is not read" untracked - \
 # This check, its self-test and its mutation probe all have to spell the
 # forbidden phrases out in order to look for them, so they are skipped by name.
 repo own-files
-mkdir -p "$work/own-files/.github/scripts"
+mkdir -p "$work/own-files/scripts/ci"
 printf 'one realm per tenant\n' \
-  > "$work/own-files/.github/scripts/prove-realm-topology-selftest-binds.sh"
+  > "$work/own-files/scripts/ci/prove-realm-topology-selftest-binds.sh"
 track own-files
 expect 0 "the check's own files are skipped by name" own-files - \
   "no realm-per-tenant statement in 0 tracked files"
 
-# ...by NAME, and not by directory. A glob over `.github/scripts/` would let the
+# ...by NAME, and not by directory. A glob over `scripts/ci/` would let the
 # next file dropped in there hide a real statement, and that claim is only worth
 # the line it is written on if something fails when it stops being true.
 repo neighbour-file
-mkdir -p "$work/neighbour-file/.github/scripts"
+mkdir -p "$work/neighbour-file/scripts/ci"
 printf 'one realm per tenant\n' \
-  > "$work/neighbour-file/.github/scripts/check-something-else.py"
+  > "$work/neighbour-file/scripts/ci/check-something-else.py"
 track neighbour-file
 expect 1 "a neighbour in the same directory is still read" neighbour-file - \
-  ".github/scripts/check-something-else.py,line=1" \
+  "scripts/ci/check-something-else.py,line=1" \
   "(realm-per-tenant)"
 
 # --- the allowlist -----------------------------------------------------------

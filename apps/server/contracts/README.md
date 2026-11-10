@@ -67,31 +67,29 @@ never going to hold is a row that can only ever be red.
 
 ## Target contract pipeline
 
-**What runs today.** Of the five gates below, two run, in two jobs of `.github/workflows/ci.yml`
-that are both in `ci-ok`'s `needs:`. The `contracts` job runs the `redocly lint` half of gate 1
-and shellcheck over `contracts/*.sh`. The linter installs from `contracts/lint/package-lock.json` with `npm ci --ignore-scripts`, so the version that runs is
-the one the lockfile pins, and it lints with the repository ruleset `contracts/lint/redocly.yaml`:
-`recommended`, with a missing 4xx raised from a warning to an error, plus a rule that every
-operation declaring operation-level `parameters` or a `requestBody` declares a `'400'`. The rule
-keys on the operation object: the 27 operations whose only parameters are path-item-level path
-parameters (`getOrganisation`, `getTenant`, `deleteDomain`, and so on) sit outside it, on purpose,
-because a malformed path parameter is `404 not-found` in `docs/api/CONVENTIONS.md` §6 and
-`400 malformed-request` covers the body, the media type and the query. Before the real lint,
-`.github/scripts/prove-contract-lint-fails.sh` lints four mutated copies of the contract — a
-dangling `$ref`, a `'400'` stripped from a list operation, a `'400'` stripped from an operation
-with a request body, every 4xx stripped from an operation — and expects each to fail by the rule
-that names it.
+**What runs today.** The `contract-change` job in
+`../../../.github/workflows/ci-server.yml` runs Redocly lint and the compatibility/version
+policy gate. The reusable server workflow feeds the required `ci-ok` aggregate through
+`../../../.github/workflows/ci.yml`. The linter installs from
+`contracts/lint/package-lock.json` with `npm ci --ignore-scripts --engine-strict` and uses
+`contracts/lint/redocly.yaml`: `recommended`, missing 4xx responses raised to errors, and
+an operation-level rule requiring `'400'` when `parameters` or `requestBody` is declared.
+Path-item-only parameters remain outside that rule because malformed path parameters
+use `404 not-found` under `docs/api/CONVENTIONS.md` §6.
 
-The `contract-change` job runs gate 3 on every pull request that is ready for review and every
-push to `main` whose change can reach it (the paths in `.github/scripts/ci-plan.py`
-`PATH_GATED`: `contracts/`, the job catalogue, the workflows, the Python lock and the scripts
-the gate's proofs run), and on every tag and every manual run, for every
-`contracts/*.openapi.yaml`, as specified in
-[`CONTRACT_VERSION_POLICY.md`](../docs/specs/CONTRACT_VERSION_POLICY.md). It runs the version
-policy's self-test and mutations first, then the gate's own self-test and mutations, then the gate.
-A manual run on `main`'s tip has nothing to compare: the gate says `no contract comparison
-performed: base equals head` and exits 0. That is deliberate, and safe, because no change reaches
-`main` that way; every merge is a pull request and a push, and both are compared.
+Before linting the real documents, `scripts/ci/prove-contract-lint-fails.selftest.sh`
+checks the refusal harness and `scripts/ci/prove-contract-lint-fails.sh` proves rejection
+of dangling references, missing query/body `'400'` responses, and missing all 4xx responses.
+Version-policy self-tests and mutations, compatibility-gate self-tests and mutations,
+and event-planning self-tests run before the actual comparison.
+
+The root `scripts/ci/ci-plan.py` selects this workflow for changes under
+`apps/server/` or `packages/api-contract/`, and for relevant workflow/tooling changes.
+The orchestrator runs for pull-request updates (including label additions/removals)
+and pushes to `main`. Pull requests compare against the target merge-base; pushes
+compare against the previous commit. Every `apps/server/contracts/*.openapi.yaml`
+is covered under [`CONTRACT_VERSION_POLICY.md`](../docs/specs/CONTRACT_VERSION_POLICY.md).
+The workflow does not provide tag or manual-run triggers.
 
 Spectral, the generated-versus-committed diff, Schemathesis and client generation are not wired; a
 pull request that wires one moves it into this section. Gates 2, 4 and 5 below, and the Spectral
@@ -246,7 +244,7 @@ secrets and CA key, and green CI in its own repository (ADR-0001).
 - The version policy and the breaking-change gate are specified in
   [`CONTRACT_VERSION_POLICY.md`](../docs/specs/CONTRACT_VERSION_POLICY.md), and CI runs both in
   the `contract-change` job. To run them locally, put the oasdiff release binary for the version
-  `.github/workflows/ci.yml` pins (`OASDIFF_VERSION`) on `PATH`; the gate refuses any other
+  `../../../.github/workflows/ci-server.yml` pins (`OASDIFF_VERSION`) on `PATH`; the gate refuses any other
   version, a build from source included:
 
   ```sh
@@ -515,3 +513,21 @@ secrets and CA key, and green CI in its own repository (ADR-0001).
   (migrations `orgs.0018` and `orgs.0019`). A request that names one of them was accepted and is
   now refused. Both lists are now pinned to one list of the labels of `kodera.io` in Core's tests,
   so they cannot drift apart again.
+
+
+## Monorepo execution
+
+Status: Active
+
+The reusable `ci-server.yml` workflow runs OpenAPI lint and its failure proofs, version-policy
+self-tests and mutations, contract-change and event-selection self-tests, and their mutation
+suite. The `contract-change` job compares `apps/server/contracts/*.openapi.yaml` at the PR
+merge-base and head (or before/after a main push), then invokes `check-version-policy.sh` with
+the computed classification. The locked Redocly CLI and SHA256-verified oasdiff release are
+installed before these checks. Canonical `packages/api-contract/` changes trigger both server
+and web areas; byte parity checks bind the server and web copies to that canonical source.
+The reusable server workflow is required by the root `ci-ok` aggregate.
+
+With oasdiff 1.37.0, requiring authentication on an anonymous operation is the built-in ERR
+`api-security-anonymous-access-removed`. The obsolete `api-security-added` override is removed;
+the `security-added` failure proof still requires the breaking-change label refusal.

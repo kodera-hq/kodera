@@ -16,6 +16,7 @@ from apps.workspaces.warm_pool import (
     OFFICIAL_CONNECTOR_IDS,
     RESERVED_SLUGS,
     InstantClaimInputError,
+    InstantClaimRequest,
     build_instant_claim_plan,
     build_instant_claim_response,
     parse_instant_claim_request,
@@ -32,7 +33,7 @@ VALID_CLAIM_PAYLOAD = {
 }
 
 
-def _parse(payload: dict) -> object:
+def _parse(payload: dict) -> InstantClaimRequest:
     return parse_instant_claim_request(json.dumps(payload).encode("utf-8"), "application/json")
 
 

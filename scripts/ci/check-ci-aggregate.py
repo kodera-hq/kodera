@@ -61,6 +61,10 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
     if "synchronize" not in (pull_request.get("types") or []):
         problems.append(f"{ORCHESTRATOR} must run on every push to a pull request")
 
+    for event in ("labeled", "unlabeled"):
+        if event not in (pull_request.get("types") or []):
+            problems.append(f"{ORCHESTRATOR} must rerun label-sensitive gates on {event}")
+
     plan = jobs.get("plan") or {}
     outputs = set((plan.get("outputs") or {}).keys())
     if outputs != AREAS:
@@ -136,6 +140,12 @@ def selftest(root: Path) -> None:
     def no_sync(o, a):
         triggers(o)["pull_request"]["types"] = ["opened"]
 
+    def no_label(o, a):
+        triggers(o)["pull_request"]["types"].remove("labeled")
+
+    def no_unlabel(o, a):
+        triggers(o)["pull_request"]["types"].remove("unlabeled")
+
     cases = [
         (drop_need, "job `web` is not in `ci-ok` needs"),
         (drop_always, "must run `if: always()`"),
@@ -147,6 +157,8 @@ def selftest(root: Path) -> None:
         (lax_judge, "no longer judges every result"),
         (plan_output, "plan outputs"),
         (no_sync, "must run on every push to a pull request"),
+        (no_label, "must rerun label-sensitive gates on labeled"),
+        (no_unlabel, "must rerun label-sensitive gates on unlabeled"),
     ]
     failed = []
     for mutate, expected in cases:
