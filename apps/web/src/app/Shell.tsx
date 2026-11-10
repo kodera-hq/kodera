@@ -1,3 +1,4 @@
+import { DemoDisclosure } from './DemoDisclosure'
 import { useState, type ReactNode } from 'react'
 import { WorkspaceSettingsHost } from '../features/workspace/WorkspaceSettingsHost'
 import type { MessageKey } from '../i18n'
@@ -129,6 +130,7 @@ export function Shell({
           <div className="clear-of-bars flex min-w-0 flex-1 flex-col">
             <IncidentBannerClaimProvider>
               {sessionExpiry}
+              <DemoDisclosure org={org} />
               <StatusBanner
                 organisationId={organisationId}
                 org={org}
@@ -177,6 +179,7 @@ export function Shell({
           <div className="flex h-screen min-w-0 flex-1 flex-col">
             <IncidentBannerClaimProvider>
               {sessionExpiry}
+              <DemoDisclosure org={org} />
               <StatusBanner organisationId={organisationId} org={org} role={role} />
               <main id="main-content" className="flex min-h-0 w-full flex-1 flex-col">
                 {children}
@@ -247,6 +250,7 @@ export function Shell({
               offline → session-expiring → incident → dunning → capacity →
               maintenance precedence (`src/app/bannerPrecedence.ts`). */}
           {sessionExpiry}
+          <DemoDisclosure org={org} />
           <StatusBanner organisationId={organisationId} org={org} role={role} />
           <main id="main-content" className="flex w-full flex-1 flex-col gap-6 px-6 py-5">
             {children}

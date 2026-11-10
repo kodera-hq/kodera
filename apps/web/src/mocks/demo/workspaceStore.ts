@@ -210,6 +210,7 @@ export function createLocalWorkspaceStore(
     emit()
   }
   return {
+    simulation: true,
     getInitialDocuments: () => initialDocs,
     async publishDocument(roomId, doc) {
       if (!timelines.has(roomId)) throw new Error('Unknown channel')
