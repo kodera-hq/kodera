@@ -176,11 +176,7 @@ impl ChannelPoll {
                     id,
                     label: label.clone(),
                     vote_count: count,
-                    percentage: if total == 0 {
-                        0
-                    } else {
-                        (count * 100 + total / 2) / total
-                    },
+                    percentage: (count * 100 + total / 2).checked_div(total).unwrap_or(0),
                 }
             })
             .collect();
