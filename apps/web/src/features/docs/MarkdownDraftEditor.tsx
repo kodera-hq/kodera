@@ -2,6 +2,7 @@ import { useId, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { Dialog } from '../../ui/Dialog/Dialog'
+import { LINK_TEXT } from '../../ui/LinkButton/LinkButton'
 import { StudioGlyph } from '../../ui/icons/StudioGlyph'
 import { studioMessages } from '../workspace/studioMessages'
 import {
@@ -35,7 +36,7 @@ function inline(text: string): ReactNode[] {
         return (
           <a
             key={index}
-            className="text-c-action underline focus-visible:ring"
+            className={`${LINK_TEXT.inline} focus-visible:ring`}
             href={link[2]}
             target="_blank"
             rel="noopener noreferrer"
@@ -254,7 +255,7 @@ export function MarkdownDraftEditor({
                   <label key={index} className="flex min-h-8 items-center gap-2 narrow:min-h-12">
                     <input
                       type="checkbox"
-                      className="h-5 w-5 accent-c-action focus-visible:ring"
+                      className="h-5 w-5 focus-visible:ring"
                       checked={task[1] !== ' '}
                       onChange={() => {
                         const lines = content.split('\n')

@@ -171,7 +171,7 @@ export function StudioNavigation({
               <strong className="text-sm text-c-ink">{copy[panel]}</strong>
               <button
                 type="button"
-                className="min-h-12 rounded-sm px-2 text-sm text-c-action focus-visible:ring"
+                className="text-c-link min-h-12 rounded-sm px-2 text-sm focus-visible:ring"
                 onClick={closePanel}
               >
                 {copy.close}
