@@ -12,7 +12,7 @@ name: CI
 # base), it runs everything.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches: [main]
 
@@ -62,6 +62,9 @@ jobs:
   server:
     needs: plan
     if: needs.plan.outputs.server == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci-server.yml
 
   web:

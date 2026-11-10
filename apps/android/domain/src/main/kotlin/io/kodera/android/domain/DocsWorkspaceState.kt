@@ -20,7 +20,7 @@ data class DocsWorkspaceScope(val organisationId: String, val channelId: String)
 data class DocsPadSummary(val scope: DocsWorkspaceScope, val id: String, val title: String,
     val httpsUrl: String, val updatedAtEpochSeconds: Long) {
     init {
-        if (id.length !in 1..128 || !TrustPolicy.isVisibleASCII(id) || !TrustPolicy.boundedScalarText(title, requireTrimmed = true) ||
+        if (id.toByteArray(Charsets.UTF_8).size !in 1..MAX_ID_BYTES || !TrustPolicy.isVisibleASCII(id) || !TrustPolicy.boundedScalarText(title, requireTrimmed = true) ||
             updatedAtEpochSeconds < 0) {
             throw DocsWorkspaceFailure(DocsWorkspaceError.INVALID_PAD)
         }
@@ -31,6 +31,7 @@ data class DocsPadSummary(val scope: DocsWorkspaceScope, val id: String, val tit
     val path: String get() = URI(httpsUrl).rawPath
 
     companion object {
+        const val MAX_ID_BYTES = 128
         /** Check raw input before URI parsing can conceal separators or normalize a path. */
         private fun validateDocsUrl(value: String) {
             fun refuse(): Nothing = throw DocsWorkspaceFailure(DocsWorkspaceError.INVALID_URL)

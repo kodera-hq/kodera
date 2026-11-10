@@ -210,7 +210,7 @@ data class ChannelIamPolicy(val channelId: String, val categoryId: String, val i
 data class DocsPadDraft(val padId: String, val channelId: String, val title: String, val markdownBody: String,
     val revision: Int, val updatedBy: String) {
     init {
-        if (!preferenceText(padId, 128, 128) || !preferenceText(channelId, 255, 255) || !preferenceText(title, 120, 120) || revision < 1 ||
+        if (!preferenceText(padId, DocsPadSummary.MAX_ID_BYTES, DocsPadSummary.MAX_ID_BYTES) || !preferenceText(channelId, 255, 255) || !preferenceText(title, 120, 120) || revision < 1 ||
             !canonicalPreferenceUuid(updatedBy) || !validBody(markdownBody)) preferenceRefusal(WorkspacePreferencesError.INVALID_DOCUMENT)
     }
     fun updateContent(newTitle: String, newBody: String, actor: String): DocsPadDraft {

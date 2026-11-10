@@ -63,7 +63,8 @@ from pathlib import Path
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
 TOKEN_FORMAT = "kodera-native-tokens/1"
-TOKEN_PRODUCER_COMMIT = "4518d6414283b38b5d98728c102e0aff126201e9"
+TOKEN_PRODUCER_COMMIT = "32270125fc9aeb5b37be4475700ddd3f64db34f9"
+TOKEN_SOURCE_SHA256 = "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a"
 
 # values/ is French, the default; values-en/ is English.
 CATALOGUES = ("values", "values-en")
@@ -205,7 +206,7 @@ def findings(root):
         errors.append("tokens.json producerCommit is not the qualified token producer")
     source_sha = pin.get("sourceSha256")
     manifest_source = read_json(token_manifest).get("source", {}).get("sha256")
-    if not source_sha or source_sha != manifest_source or source_sha not in read_text(tokens):
+    if source_sha != TOKEN_SOURCE_SHA256 or source_sha != manifest_source or source_sha not in read_text(tokens):
         errors.append("the token source checksum differs between tokens.json, its manifest and KoderaTokens.kt")
 
     catalogues = []

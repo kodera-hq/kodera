@@ -98,4 +98,22 @@ class DocsWorkspaceStateTests {
         assertTrue(stopped.pads.isEmpty())
         refuses(DocsWorkspaceError.STOPPED) { stopped.localPreview(listOf(pad())) }
     }
+    @Test fun sharedPadBounds() {
+        val suffix = "packages/kodera-rs/tests/vectors/docs-pad/bounds.tsv"
+        val file = listOf(java.io.File("../../$suffix"), java.io.File("../../../$suffix"), java.io.File(suffix)).first { it.isFile }
+        for (line in file.readLines()) {
+            val fields = line.split(" ")
+            val size = fields[1].toInt()
+            val expected = fields[2].toBooleanStrict()
+            if (fields[0] == "id") {
+                val id = "a".repeat(size)
+                assertEquals(line, expected, runCatching { pad(id) }.isSuccess)
+                assertEquals(line, expected, runCatching { DocsPadDraft(id, "channel", "Title", "", 1, scope.organisationId) }.isSuccess)
+            } else {
+                assertEquals("count", fields[0])
+                assertEquals(line, expected, runCatching { DocsWorkspaceState.unprovisioned(scope).localPreview((0 until size).map { pad("pad-$it") }) }.isSuccess)
+            }
+        }
+    }
+
 }

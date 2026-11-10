@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, userEvent, within } from 'storybook/test'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { Button } from '../Button/Button'
 import { Form } from './Form'
 import { FormField } from './FormField'

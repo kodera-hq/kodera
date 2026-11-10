@@ -23,23 +23,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
-GATE = "contracts/check_contract_change.py"
-GATE_SELFTEST = "contracts/check_contract_change_selftest.py"
-EVENTS = "contracts/check_contract_change_ci.py"
-EVENTS_SELFTEST = "contracts/check_contract_change_ci_selftest.py"
-SEVERITY = "contracts/oasdiff-severity-levels.txt"
+ROOT = HERE.parents[2]
+GATE = "apps/server/contracts/check_contract_change.py"
+GATE_SELFTEST = "apps/server/contracts/check_contract_change_selftest.py"
+EVENTS = "apps/server/contracts/check_contract_change_ci.py"
+EVENTS_SELFTEST = "apps/server/contracts/check_contract_change_ci_selftest.py"
+SEVERITY = "apps/server/contracts/oasdiff-severity-levels.txt"
 WORKFLOW = ".github/workflows/ci.yml"
-COVERAGE = ".github/scripts/check-aggregate-covers-jobs.py"
+COVERAGE = "scripts/ci/check-ci-aggregate.py"
 COPIED = (
+    ".github/workflows/ci-server.yml",
     GATE,
     GATE_SELFTEST,
     EVENTS,
     EVENTS_SELFTEST,
     SEVERITY,
-    "contracts/check-version-policy.sh",
+    "apps/server/contracts/check-version-policy.sh",
 )
-JOB = "contract-change"
+JOB = "server"
 # Which self-test proves a mutation of each file; the workflow is proven by the coverage check.
 RUNNERS = {GATE: GATE_SELFTEST, SEVERITY: GATE_SELFTEST, EVENTS: EVENTS_SELFTEST}
 SUMMARIES = {
@@ -181,7 +182,7 @@ MUTATIONS = (
         '"security-scheme-changed", ERR',
         '"security-scheme-changed", INFO',
         "security-scheme-url-changed",
-        REFUSED,
+        "missing 'ERR  security-scheme-changed  components/securitySchemes/keycloakStaff'",
     ),
     gate(
         "an added security scheme is additive, not breaking",
@@ -251,7 +252,7 @@ MUTATIONS = (
         "paths = sorted(set(at_base) | set(at_head))",
         "paths = sorted(set(at_base))",
         "contract-added",
-        "missing 'contracts/selftest-api.openapi.yaml: added'",
+        "missing 'apps/server/contracts/selftest-api.openapi.yaml: added'",
     ),
     gate(
         "an added contract is held to the policy",
@@ -424,10 +425,10 @@ MUTATIONS = (
     Mutation(
         "the aggregate depends on the gate's job",
         WORKFLOW,
-        f"      - {JOB}\n",
-        "",
+        "needs: [plan, server, web, rust-desktop, mobile]",
+        "needs: [plan, web, rust-desktop, mobile]",
         "the coverage check",
-        f"job '{JOB}' is not in `ci-ok` needs:",
+        f"job `{JOB}` is not in `ci-ok` needs",
     ),
 )
 
@@ -509,7 +510,7 @@ def main() -> int:
                 )
                 return 1
             print(f"PASS control: the unmutated {selftest} passes all {len(cases[selftest])} cases")
-        status, output = run([python, str(ROOT / COVERAGE), str(ROOT / WORKFLOW)])
+        status, output = run([python, str(ROOT / COVERAGE), "--root", str(ROOT)])
         if status != 0:
             print(output)
             print(
@@ -529,10 +530,10 @@ def main() -> int:
                 )
                 continue
             if mutation.file == WORKFLOW:
-                target = workspace / str(index) / "ci.yml"
-                target.parent.mkdir(parents=True)
-                target.write_text(mutated, encoding="utf-8")
-                status, output = run([python, str(ROOT / COVERAGE), str(target)])
+                copy = workspace / str(index)
+                shutil.copytree(ROOT / ".github/workflows", copy / ".github/workflows")
+                (copy / WORKFLOW).write_text(mutated, encoding="utf-8")
+                status, output = run([python, str(ROOT / COVERAGE), "--root", str(copy)])
                 caught = status == 1 and mutation.diagnostic in output
             else:
                 copy = private_copy(workspace / str(index))

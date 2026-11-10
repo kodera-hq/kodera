@@ -6,7 +6,7 @@
 // the pure functions over it; `useOrderDraft.ts` is the thin `localStorage`
 // binding around them.
 
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 
 export const ORDER_STEPS = ['plan', 'contacts', 'agreements', 'confirmation'] as const
 export type OrderStep = (typeof ORDER_STEPS)[number]

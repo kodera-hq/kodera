@@ -24,11 +24,11 @@ AREAS: dict[str, str] = {
     r"|scripts/ci/check-community-deploy\.py$|scripts/ci/check-publish-images-workflow\.py$"
     r"|\.github/workflows/(ci-server|publish-images)\.yml$|\.nvmrc$",
     "web": r"\.nvmrc$|package\.json$|package-lock\.json$|apps/web/|apps/server/|packages/design-tokens/"
-    r"|packages/api-contract/|packages/extension-sdk/|extensions/|\.github/workflows/ci-web\.yml$",
+    r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
     r"|\.nvmrc$|\.github/workflows/ci-rust-desktop\.yml$",
     "mobile": r"apps/ios/|apps/android/|packages/kodera-rs/|packages/design-tokens/"
-    r"|\.github/workflows/ci-mobile\.yml$",
+    r"|scripts/ci/check-native-tokens\.py$|\.github/workflows/ci-mobile\.yml$",
 }
 
 
@@ -62,6 +62,12 @@ def changed_paths(base: str, head: str) -> list[str] | None:
 
 def selftest() -> None:
     cases: list[tuple[str, list[str] | None, dict[str, bool]]] = [
+        ("scaffolder reaches web", ["packages/create-kodera/index.mjs"],
+         {"server": False, "web": True, "rust": False, "mobile": False}),
+        ("canonical contract reaches server and web", ["packages/api-contract/core-api.openapi.yaml"],
+         {"server": True, "web": True, "rust": False, "mobile": False}),
+        ("contract checker reaches server and consumer", ["apps/server/contracts/check-contract-change.sh"],
+         {"server": True, "web": True, "rust": False, "mobile": False}),
         ("unknown base runs all", None, dict.fromkeys(AREAS, True)),
         ("orchestrator runs all", [".github/workflows/ci.yml"], dict.fromkeys(AREAS, True)),
         ("plan runs all", ["scripts/ci/ci-plan.py"], dict.fromkeys(AREAS, True)),

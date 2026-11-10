@@ -98,6 +98,7 @@ def test_workspace_registration_is_explicit_per_profile(profile, has_workspace):
             "ChannelNotice",
             "ResourcePolicy",
             "ResourcePolicyRule",
+            "WarmPoolAllocation",
             "Workspace",
         ]
         if has_workspace

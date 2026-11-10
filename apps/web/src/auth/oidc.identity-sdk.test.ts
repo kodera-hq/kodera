@@ -72,13 +72,17 @@ describe('real installed SDK profile path', () => {
       if (mode === 'missing issuer') delete claims['iss']
       const adapter = await callback()
       try {
-        // This explicitly demonstrates the SDK accepts these token responses;
-        // the bridge must not assume it compared the issuer on our behalf.
-        await expect(adapter.handleCallback()).resolves.toBe('interactive')
-        expect(adapter.getAccessToken()).toBe('synthetic-access')
-        if (mode === 'valid')
+        // The SDK accepts these responses, so the adapter must enforce issuer identity.
+        if (mode === 'valid') {
+          await expect(adapter.handleCallback()).resolves.toBe('interactive')
+          expect(adapter.getAccessToken()).toBe('synthetic-access')
           expect(adapter.getUser()?.identity).toEqual({ issuer, subject: 'sdk-processed-subject' })
-        else expect(adapter.getUser()?.identity).toBeUndefined()
+        } else {
+          await expect(adapter.handleCallback()).rejects.toThrow('Invalid sign-in identity')
+          expect(adapter.getAccessToken()).toBeUndefined()
+          expect(adapter.getUser()).toBeUndefined()
+          expect(adapter.getSnapshot().status).toBe('unauthenticated')
+        }
       } finally {
         await adapter.signOut()
       }

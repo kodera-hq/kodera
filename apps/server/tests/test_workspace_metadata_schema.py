@@ -193,6 +193,7 @@ def test_registered_schema_matches_migrations(schema):
             "0005_template_key",
             "0006_espace_structure",
             "0007_room_state_revision",
+            "0008_warmpoolallocation",
         }
 
 

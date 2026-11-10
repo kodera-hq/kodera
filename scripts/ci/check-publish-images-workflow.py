@@ -73,6 +73,8 @@ def check_build_steps(text: str, root: Path) -> list[str]:
 def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     errors: list[str] = []
     lines = text.splitlines()
+    if "    if: github.ref == 'refs/heads/main'" not in text:
+        errors.append("image publication must be gated to refs/heads/main")
 
     if not lines or lines[0] != "name: Publish images":
         errors.append("workflow must start with exact line 'name: Publish images'")
@@ -182,6 +184,11 @@ def run_selftest(baseline: str) -> int:
                 1,
             ),
             "unpinned or non-40-hex action reference",
+        ),
+        (
+            "manual publication from an untrusted branch",
+            lambda s: s.replace("    if: github.ref == 'refs/heads/main'\n", ""),
+            "image publication must be gated to refs/heads/main",
         ),
         (
             "missing persist-credentials: false on checkout",

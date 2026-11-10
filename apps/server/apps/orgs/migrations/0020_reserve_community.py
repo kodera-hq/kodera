@@ -2,6 +2,8 @@
 
 from django.db import migrations, models
 
+TIMEOUTS = "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';"
+
 RESERVED = (
     "community",
     "master",
@@ -28,7 +30,6 @@ RESERVED = (
 
 def refuse_held_community(apps, schema_editor):
     with schema_editor.connection.cursor() as cursor:
-        cursor.execute("SET LOCAL lock_timeout = '5s'")
         cursor.execute("SELECT 1 FROM orgs_organisation WHERE slug = %s LIMIT 1", ["community"])
         if cursor.fetchone():
             raise RuntimeError(
@@ -39,6 +40,7 @@ def refuse_held_community(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0019_validate_reserved_platform_hosts")]
     operations = [
+        migrations.RunSQL(sql=TIMEOUTS, reverse_sql=migrations.RunSQL.noop),
         migrations.RunPython(refuse_held_community, migrations.RunPython.noop),
         migrations.RemoveConstraint(
             model_name="organisation", name="organisation_slug_not_reserved"
@@ -49,4 +51,5 @@ class Migration(migrations.Migration):
                 name="organisation_slug_not_reserved", condition=~models.Q(slug__in=RESERVED)
             ),
         ),
+        migrations.RunSQL(sql=migrations.RunSQL.noop, reverse_sql=TIMEOUTS),
     ]

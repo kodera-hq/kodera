@@ -43,9 +43,9 @@ caught=0
 # The baseline. Without it, every refusal below could be the tree rather than
 # the mutation, and the whole file would prove nothing.
 echo "alert-parity mutation probe"
-mkdir -p "$work/baseline/.github/scripts"
+mkdir -p "$work/baseline/scripts/ci"
 cp -R "$root/docs" "$work/baseline/docs"
-cp "$check" "$selftest" "$work/baseline/.github/scripts/"
+cp "$check" "$selftest" "$work/baseline/scripts/ci/"
 if ! bash "$work/baseline/scripts/ci/check-alert-parity.selftest.sh" > "$work/baseline.out" 2>&1; then
   echo "mutation probe FAILED: the unmutated suite does not pass" >&2
   cat "$work/baseline.out" >&2
@@ -60,9 +60,9 @@ printf '  ok  %-28s the unmutated suite passes\n' "baseline"
 # red" are distinguishable — and only the second is evidence about this clause.
 mutate() {
   local label="$1" case="$2" old="$3" new="$4" dir="$work/$1" out got=0
-  mkdir -p "$dir/.github/scripts"
+  mkdir -p "$dir/scripts/ci"
   cp -R "$root/docs" "$dir/docs"
-  cp "$check" "$selftest" "$dir/.github/scripts/"
+  cp "$check" "$selftest" "$dir/scripts/ci/"
 
   python3 - "$dir/scripts/ci/check-alert-parity.py" "$old" "$new" <<'PY'
 import sys

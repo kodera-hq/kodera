@@ -1073,7 +1073,7 @@ impl DesktopWorkspaceSession {
             existing.validate_and_advance(title, markdown_body, editor_handle)?;
             return Ok(existing.clone());
         }
-        if self.docs_pads.len() >= 64 {
+        if self.docs_pads.len() >= kodera_rs::MAX_DOCS_PADS {
             return Err(CoreError::CapacityExceeded);
         }
         let created = candidate;
@@ -1212,6 +1212,52 @@ mod tests {
                 return Err(CoreError::InvalidSignature);
             }
             Ok(())
+        }
+    }
+
+    #[test]
+    fn docs_pad_bounds_match_shared_native_cases() {
+        for line in
+            include_str!("../../../../packages/kodera-rs/tests/vectors/docs-pad/bounds.tsv").lines()
+        {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            let size: usize = fields[1].parse().unwrap();
+            let expected = fields[2] == "true";
+            let signer = TestSigner {
+                key: [9; 32],
+                pk: [9; 32],
+            };
+            let org = "11111111-1111-4111-8111-111111111111";
+            let mut session =
+                DesktopWorkspaceSession::new(org, [0x42; 32], HashSet::from([signer.pk]), 4)
+                    .unwrap();
+            let admitted = match fields[0] {
+                "id" => session
+                    .save_docs_pad(org, &"a".repeat(size), "channel", "Title", "", "actor")
+                    .is_ok(),
+                "count" => {
+                    size > 0
+                        && (0..size).all(|i| {
+                            session
+                                .save_docs_pad(
+                                    org,
+                                    &format!("pad-{i}"),
+                                    "channel",
+                                    "Title",
+                                    "",
+                                    "actor",
+                                )
+                                .is_ok()
+                        })
+                }
+                _ => panic!("unknown bounds case"),
+            };
+            assert_eq!(admitted, expected, "{line}");
+            if fields[0] == "count" && size >= kodera_rs::MAX_DOCS_PADS {
+                assert!(session
+                    .save_docs_pad(org, "pad-0", "channel", "Updated", "", "actor")
+                    .is_ok());
+            }
         }
     }
 

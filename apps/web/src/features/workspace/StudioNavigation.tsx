@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Dialog } from '../../ui/Dialog/Dialog'
 import { StudioGlyph, type StudioGlyphName } from '../../ui/icons/StudioGlyph'
@@ -43,6 +43,7 @@ export function StudioNavigation({
 }) {
   const { i18n } = useTranslation()
   const copy = studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const panelId = useId()
   const returnFocusTo = useRef<HTMLElement | null>(null)
   const inlinePanel = useRef<HTMLElement | null>(null)
   const [panel, setPanel] = useState<'notifications' | 'files' | 'calls' | null>(null)
@@ -111,7 +112,10 @@ export function StudioNavigation({
   const itemClass =
     'flex min-h-12 items-center gap-3 rounded-md border border-c-border px-3 py-2 text-left text-c-ink hover:bg-c-muted focus-visible:ring'
   const panelContent = (
-    <div className="flex max-h-shell-dock-width flex-col gap-3 overflow-y-auto text-sm text-c-ink-2">
+    <div
+      id={panelId}
+      className="flex max-h-shell-dock-width flex-col gap-3 overflow-y-auto text-sm text-c-ink-2"
+    >
       {panel === 'calls' ? (
         <>
           <p>{copy.callsHint}</p>
@@ -205,7 +209,18 @@ export function StudioNavigation({
               returnFocusTo.current = event.currentTarget
               entry.action()
             }}
-            aria-pressed={entry.selected}
+            aria-current={entry.selected ? 'page' : undefined}
+            aria-expanded={
+              ['notifications', 'files', 'calls'].includes(entry.name)
+                ? panel === entry.name
+                : undefined
+            }
+            aria-controls={panel === entry.name ? panelId : undefined}
+            aria-haspopup={
+              !compact && ['notifications', 'files', 'calls'].includes(entry.name)
+                ? 'dialog'
+                : undefined
+            }
             disabled={!onChange && (entry.name === 'docs' || entry.name === 'messages')}
             data-testid={
               entry.name === 'docs'

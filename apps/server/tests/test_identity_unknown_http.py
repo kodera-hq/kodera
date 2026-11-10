@@ -209,6 +209,14 @@ CASES = (
         "apps.workspaces.structure.WorkspaceCallerUnknownError",
         ("apps.billing.api.create_tenant.authorise",),
     ),
+    Case(
+        "instantClaimWorkspace",
+        "apps.workspaces.api.instant_claim.instant_claim",
+        "post",
+        {},
+        "apps.workspaces.instant_claim.ClaimIdentityUnknownError",
+        ("apps.workspaces.api.instant_claim.authorise_instant_claim",),
+    ),
     *(
         Case(
             operation,

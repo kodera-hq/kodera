@@ -108,8 +108,8 @@ def build_history(root: Path) -> History:
 
     root.mkdir()
     run("init", "--quiet")
-    first = commit("first", {"contracts/probe.openapi.yaml": "v: 1\n", "notes.txt": "one\n"})
-    changed = commit("contract changed", {"contracts/probe.openapi.yaml": "v: 2\n"})
+    first = commit("first", {"apps/server/contracts/probe.openapi.yaml": "v: 1\n", "notes.txt": "one\n"})
+    changed = commit("contract changed", {"apps/server/contracts/probe.openapi.yaml": "v: 2\n"})
     unchanged = commit("note changed", {"notes.txt": "two\n"})
     return History(first, changed, unchanged)
 

@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   publish-images:
+    if: github.ref == 'refs/heads/main'
     name: Build and publish Core, operator-deps and worker images
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -4,7 +4,7 @@
 // (docs/dev/I18N.md rule 1). Validation timing (on blur vs on submit) is the
 // form's `mode`, not this schema's concern.
 
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { TENANT_SLUG_PATTERN } from '../../api/tenantSlug'
 import type { MessageKey } from '../../i18n'
 

@@ -13,19 +13,24 @@ permissions:
 jobs:
   ios-checks:
     name: iOS Resources, Swift Packages & Simulator Build
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 40
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
       XCODEGEN_VERSION: "2.44.1"
       XCODEGEN_SHA256: a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Verify native token source and producer provenance
+        run: python3 scripts/ci/check-native-tokens.py --selftest && python3 scripts/ci/check-native-tokens.py
       - name: Verify iOS app resources
         working-directory: apps/ios
-        run: python3 scripts/ci/check-app-resources.py
+        run: |
+          bash scripts/ci/check-app-resources.selftest.sh
+          python3 scripts/ci/check-app-resources.py
       - name: Swift package tests (Domain, Client, Auth)
         working-directory: apps/ios/packages
         run: |
@@ -46,6 +51,13 @@ jobs:
           xcodebuild -project Kodera.xcodeproj -scheme Kodera \
             -destination 'generic/platform=iOS Simulator' \
             build CODE_SIGNING_ALLOWED=NO
+      - name: Run hosted app tests on an available iOS simulator
+        working-directory: apps/ios
+        run: |
+          destination=$(xcrun simctl list devices available --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(device["udid"] for runtime, devices in d["devices"].items() if ".iOS-" in runtime for device in devices if device["isAvailable"] and device["name"].startswith("iPhone")))')
+          xcodebuild -project Kodera.xcodeproj -scheme KoderaAppTests \
+            -destination "platform=iOS Simulator,id=$destination" \
+            test CODE_SIGNING_ALLOWED=NO KODERA_OFFLINE_ACCESS=NO
 
   android-checks:
     name: Android Resource & Unit Checks
@@ -55,6 +67,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
@@ -63,5 +76,8 @@ jobs:
       - name: Verify Android app resources & unit tests
         working-directory: apps/android
         run: |
+          bash scripts/ci/check-app-resources.selftest.sh
           python3 scripts/ci/check-app-resources.py
-          ./gradlew :domain:test :client:test testDebugUnitTest --no-daemon
+          ./gradlew test :app:processDebugMainManifest :app:processReleaseMainManifest --no-daemon
+          python3 scripts/ci/check-app-resources.py --merged app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml
+          python3 scripts/ci/check-app-resources.py --merged-release app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml

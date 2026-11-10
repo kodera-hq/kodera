@@ -9,6 +9,8 @@ pub const KODERA_MONOGRAM_BG_RGB: [u8; 3] = [0, 0, 0];
 pub const KODERA_MONOGRAM_BG_HEX: &str = "#000000";
 pub const THEME_SHARE_PREFIX: &str = "kodera-theme:v1:";
 pub const MAX_THEME_SHARE_CODE_BYTES: usize = 2048;
+pub const MAX_DOCS_PAD_ID_BYTES: usize = 128;
+pub const MAX_DOCS_PADS: usize = 32;
 pub const MAX_DOCS_PAD_MARKDOWN_BYTES: usize = 65_536;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -392,6 +394,7 @@ impl DocsPadDocument {
         actor: &str,
     ) -> Result<Self, DocsPadError> {
         if !identifier(pad_id)
+            || pad_id.len() > MAX_DOCS_PAD_ID_BYTES
             || !identifier(channel_id)
             || !text(title, 120)
             || body.len() > MAX_DOCS_PAD_MARKDOWN_BYTES
@@ -988,6 +991,23 @@ mod tests {
             include_str!("../tests/vectors/docs-pad/empty-body.export.txt"),
         ),
     ];
+    #[test]
+    fn docs_pad_bounds_match_shared_native_cases() {
+        for line in include_str!("../tests/vectors/docs-pad/bounds.tsv").lines() {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            let size: usize = fields[1].parse().unwrap();
+            let expected = fields[2] == "true";
+            let admitted = match fields[0] {
+                "id" => {
+                    DocsPadDocument::new(&"a".repeat(size), "channel", "Title", "", "actor").is_ok()
+                }
+                "count" => (1..=MAX_DOCS_PADS).contains(&size),
+                _ => panic!("unknown bounds case"),
+            };
+            assert_eq!(admitted, expected, "{line}");
+        }
+    }
+
     #[test]
     fn docs_export_matches_the_shared_vectors() {
         for (name, meta, body, export) in DOCS_PAD_VECTORS {

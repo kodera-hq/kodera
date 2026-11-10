@@ -5,3 +5,6 @@ from django.urls import path
 from core.health import live, ready
 
 urlpatterns = [path("health/live", live), path("health/ready", ready)]
+
+handler404 = "core.api.errors.not_found"
+handler500 = "core.api.errors.server_error"

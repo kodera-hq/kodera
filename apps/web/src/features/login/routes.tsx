@@ -1,5 +1,5 @@
 import { createRoute } from '@tanstack/react-router'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { rootRoute } from '../../app/root-route'
 import { LoginScreen } from './LoginScreen'
 

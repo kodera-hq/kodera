@@ -25,7 +25,20 @@ export function buildCallbackUrl(search: string): string | undefined {
   const params = new URLSearchParams(search)
   const redirectUri = params.get('redirect_uri')
   if (redirectUri === null) return undefined
-  const target = new URL(redirectUri)
+  let target: URL
+  try {
+    target = new URL(redirectUri)
+  } catch {
+    return undefined
+  }
+  if (
+    target.origin !== window.location.origin ||
+    target.username ||
+    target.password ||
+    target.hash ||
+    !['/auth/callback', '/auth/claim-callback'].includes(target.pathname)
+  )
+    return undefined
   target.searchParams.set('code', 'mock-authorization-code')
   const state = params.get('state')
   if (state !== null) target.searchParams.set('state', state)

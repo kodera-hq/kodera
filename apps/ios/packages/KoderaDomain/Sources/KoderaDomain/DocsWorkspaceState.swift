@@ -68,9 +68,10 @@ public struct DocsPadSummary: Equatable, Sendable {
     public let id: String
     public let title: String
     public let padURL: URL
+    public static let maximumIDBytes = 128
     public let updatedAtEpochSeconds: UInt64
     public init(id: String, title: String, padURL: URL, updatedAtEpochSeconds: UInt64) throws {
-        guard (1...128).contains(id.utf8.count), TrustPolicy.isVisibleASCII(id),
+        guard (1...Self.maximumIDBytes).contains(id.utf8.count), TrustPolicy.isVisibleASCII(id),
               DocsWorkspaceScope.boundedText(title) else { throw DocsWorkspaceError.invalidPad }
         try DocsPadURLPolicy.validate(padURL)
         self.id = id

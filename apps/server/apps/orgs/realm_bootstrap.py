@@ -423,9 +423,12 @@ def fetch_document(url: str, request_id: str) -> dict[str, Any]:
     """GET one public JSON document, with no credential, no redirect and no cache: `https` only,
     or `http` on a loopback issuer of a profile that admits one (config.environment). Anything
     that is not a complete JSON object raises RealmUnreachable."""
-    scheme = urlsplit(url).scheme
+    parsed = urlsplit(url)
+    scheme = parsed.scheme
     loopback = getattr(settings, "KODERA_LOOPBACK_ISSUERS", False) is True
-    if scheme != "https" and not (loopback and scheme == "http"):
+    if scheme != "https" and not (
+        loopback and scheme == "http" and parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    ):
         raise RealmUnreachable(f"{scheme} is not fetched")
     request = urllib.request.Request(  # noqa: S310 - the scheme is checked above
         url,

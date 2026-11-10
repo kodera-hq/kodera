@@ -1,0 +1,75 @@
+# Reviewed historical non-secrets. Each exemption binds one commit, path, rule and line.
+# New occurrences are scanned; no path or rule is globally exempted.
+# Published RFC 8032 public key used by the conformance vector.
+1a9f1717f123b2d7fefcabf433904c3351738d77:packages/kodera-rs/docs/emergency-v1-vectors.md:generic-api-key:21
+# Synthetic SDK signing and request-token fixtures.
+2f9e8486afa96b080dc9323d1e8ecb68203d18eb:packages/extension-sdk/test/sdk.test.mjs:generic-api-key:223
+# Public token-generator commit identifier, not a credential.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/android/scripts/ci/check-app-resources.py:generic-api-key:66
+# Swift private property type declaration; contains no key bytes.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/ios/packages/KoderaDomain/Sources/KoderaDomain/EmergencyFrame.swift:generic-api-key:110
+# Public token-generator commit identifier, not a credential.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:46
+# Development JDBC service address without credentials.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/server/compose.yaml:generic-api-key:108
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:119
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:12
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:133
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:152
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:86
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:95
+# Synthetic webhook signing fixture for the example extension.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:extensions/frameio-review-bridge/test/index.test.ts:generic-api-key:5
+# Synthetic SDK signing and request-token fixtures.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:packages/extension-sdk/test/sdk.test.mjs:generic-api-key:248
+# Synthetic SDK signing and request-token fixtures.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:packages/extension-sdk/test/sdk.test.mjs:generic-api-key:27
+# Published RFC 8032 public key used by the conformance vector.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:packages/kodera-rs/docs/emergency-v1-vectors.md:generic-api-key:23
+# Synthetic encrypted Matrix event sender public key; no private key.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:packages/synapse-policy/tests/integration/scenario.py:generic-api-key:20
+# Synthetic encrypted Matrix event sender public key; no private key.
+3cf5b15ac64be192bd1b1c97e4ce53ec3b85d7c7:packages/synapse-policy/tests/test_policy.py:generic-api-key:413
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+45c4659845971f80120d8a62bf6cc30bd7741366:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:119
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+45c4659845971f80120d8a62bf6cc30bd7741366:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:12
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+45c4659845971f80120d8a62bf6cc30bd7741366:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:133
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+45c4659845971f80120d8a62bf6cc30bd7741366:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:152
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+45c4659845971f80120d8a62bf6cc30bd7741366:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:86
+# Synthetic sequential provider-token fixture for validation and redaction tests.
+45c4659845971f80120d8a62bf6cc30bd7741366:apps/web/tests/unit/selfhost/plan.test.ts:generic-api-key:95
+# Synthetic webhook signing fixture for the example extension.
+a26eb31890d4c6bd668f5633655d5b3f3cc9878c:extensions/frameio-review-bridge/test/index.test.ts:generic-api-key:5
+# Swift private property type declaration; contains no key bytes.
+e18d3af87edfc577092368b5d4d54236c835c353:apps/ios/packages/KoderaDomain/Sources/KoderaDomain/EmergencyFrame.swift:generic-api-key:79
+# Public token-generator commit identifier, not a credential.
+fbe7ebe0224f8b921d5a17a39fe4a716467031eb:apps/android/scripts/ci/check-app-resources.py:generic-api-key:66
+# Public token-generator commit identifier, not a credential.
+fbe7ebe0224f8b921d5a17a39fe4a716467031eb:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:46
+# Development JDBC service address without credentials.
+fbe7ebe0224f8b921d5a17a39fe4a716467031eb:apps/server/compose.yaml:generic-api-key:108
+# Synthetic SDK signing and request-token fixtures.
+fbe7ebe0224f8b921d5a17a39fe4a716467031eb:packages/extension-sdk/test/sdk.test.mjs:generic-api-key:10
+# Synthetic encrypted Matrix event sender public key; no private key.
+fbe7ebe0224f8b921d5a17a39fe4a716467031eb:packages/synapse-policy/tests/integration/scenario.py:generic-api-key:20
+# Synthetic encrypted Matrix event sender public key; no private key.
+fbe7ebe0224f8b921d5a17a39fe4a716467031eb:packages/synapse-policy/tests/test_policy.py:generic-api-key:189
+
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/android/scripts/ci/check-app-resources.py:generic-api-key:66
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/android/scripts/ci/check-app-resources.py:generic-api-key:67
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:46
+# Public native-token producer commit or source checksum, not a credential.
+d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:47

@@ -24,6 +24,7 @@ config/settings/deploy_worker.py
 # The trusted edge's client address and the caller's request-id namespace (TRUSTED_EDGE.md);
 # config/settings/base.py's first middleware: without it the image does not start.
 !core/api/edge.py
+!core/api/errors.py
 !core/db/__init__.py
 !core/db/ids.py
 !core/db/models.py
@@ -136,6 +137,9 @@ config/settings/deploy_worker.py
 !apps/workspaces/setup.py
 !apps/workspaces/structure.py
 !apps/workspaces/initialise.py
+!apps/workspaces/instant_claim.py
+!apps/workspaces/warm_pool.py
+!apps/workspaces/templates.py
 !apps/workspaces/administration.py
 !apps/workspaces/channel_access.py
 !apps/workspaces/channel_sets.py
@@ -143,6 +147,7 @@ config/settings/deploy_worker.py
 !apps/workspaces/api/permissions.py
 !apps/workspaces/api/serializers.py
 !apps/workspaces/api/views.py
+!apps/workspaces/api/instant_claim.py
 !apps/workspaces/api/administration.py
 !apps/workspaces/api/responses.py
 !apps/billing/__init__.py

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import type { DraftContacts } from './draft'
 import { editableContactsSchema, EDITABLE_RETENTION_MS, ownerTuple } from './editableStorage'
 import type { OrderOwner } from './owner'

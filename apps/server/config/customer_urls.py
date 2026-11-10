@@ -132,3 +132,6 @@ urlpatterns = [
     path("agent/v1/commands/<uuid:command_id>/ack", ack),
     path("agent/v1/commands/<uuid:command_id>/result", result),
 ]
+
+handler404 = "core.api.errors.not_found"
+handler500 = "core.api.errors.server_error"

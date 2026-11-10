@@ -41,8 +41,8 @@ import yaml
 
 DESCRIPTION = "Classify every contract change between two commits and hold it to the policy."
 HERE = Path(__file__).resolve().parent
-WORKFLOW = HERE.parent / ".github" / "workflows" / "ci.yml"
-CONTRACT_DIR = "contracts"
+WORKFLOW = HERE.parents[2] / ".github" / "workflows" / "ci-server.yml"
+CONTRACT_DIR = "apps/server/contracts"
 CONTRACT_SUFFIX = ".openapi.yaml"
 SEVERITY_PATH = f"{CONTRACT_DIR}/oasdiff-severity-levels.txt"
 BREAKING_LABEL = "contract:breaking"
@@ -111,7 +111,7 @@ class Git:
         )
 
     def blob(self, commit: str, path: str) -> str | None:
-        listing = self("ls-tree", "-z", "--full-tree", commit, "--", path).rstrip(b"\0")
+        listing = self("ls-tree", "-r", "-z", "--full-tree", commit, "--", path).rstrip(b"\0")
         if not listing:
             return None
         meta, _, _ = listing.partition(b"\t")
@@ -141,7 +141,7 @@ def revisions(
 def contracts_at(git: Git, commit: str) -> dict[str, str]:
     """Map every contracts/*.openapi.yaml at a commit to its blob id."""
     found: dict[str, str] = {}
-    listing = git("ls-tree", "-z", "--full-tree", commit, "--", f"{CONTRACT_DIR}/")
+    listing = git("ls-tree", "-r", "-z", "--full-tree", commit, "--", f"{CONTRACT_DIR}/")
     for entry in listing.split(b"\0"):
         if not entry:
             continue

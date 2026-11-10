@@ -1,5 +1,5 @@
 import '../../validation-policy'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { documentCommentSchema } from '../docs/documentComments'
 import { readDemoView } from '../../app/interactiveDemo'
 import { createChannelDocsWorkspace, type ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'

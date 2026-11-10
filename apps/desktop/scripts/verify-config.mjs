@@ -27,12 +27,16 @@ function verifyConfiguration(config, availableFiles, defaultCapability) {
   // rather than proving two blob directives while overlooking an expanded script policy.
   const expectedSources = new Map([
     ['default-src', ["'self'"]],
-    ['connect-src', ["'self'", 'https:', 'wss:']],
-    ['img-src', ["'self'", 'data:', 'blob:', 'https:']],
+    ['connect-src', ["'self'"]],
+    ['img-src', ["'self'", 'data:', 'blob:']],
     ['media-src', ["'self'", 'blob:']],
     ['worker-src', ["'self'", 'blob:']],
     ['style-src', ["'self'", "'unsafe-inline'"]],
     ['font-src', ["'self'", 'data:']],
+    ['object-src', ["'none'"]],
+    ['base-uri', ["'none'"]],
+    ['form-action', ["'self'"]],
+    ['frame-ancestors', ["'none'"]],
   ]);
   for (const [name, sources] of expectedSources) {
     const matches = directives.filter(([directive]) => directive === name);
@@ -97,10 +101,10 @@ function selftest() {
       config.app.security.csp += '; script-src https://scripts.example.org';
     }],
     ['wildcard connections', /connect-src must use only approved sources/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("connect-src 'self' https: wss:", 'connect-src *');
+      config.app.security.csp = config.app.security.csp.replace("connect-src 'self'", 'connect-src *');
     }],
     ['insecure connections', /connect-src must use only approved sources/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("connect-src 'self' https: wss:", "connect-src 'self' http: ws:");
+      config.app.security.csp = config.app.security.csp.replace("connect-src 'self'", "connect-src 'self' http: ws:");
     }],
     ['external workers', /worker-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("worker-src 'self' blob:", "worker-src 'self' blob: https:");
@@ -109,7 +113,7 @@ function selftest() {
       config.app.security.csp = config.app.security.csp.replace("media-src 'self' blob:", "media-src 'self' blob: https:");
     }],
     ['insecure images', /img-src must use only approved sources/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("img-src 'self' data: blob: https:", "img-src 'self' data: blob: http:");
+      config.app.security.csp = config.app.security.csp.replace("img-src 'self' data: blob:", "img-src 'self' data: blob: http:");
     }],
     ['external fonts', /font-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("font-src 'self' data:", "font-src 'self' data: https:");
@@ -134,6 +138,11 @@ function selftest() {
       defaultCapability.platforms = ['windows'];
     }],
   ];
+  for (const directive of ['connect-src', 'img-src', 'object-src', 'base-uri', 'form-action', 'frame-ancestors']) {
+    mutations.push([`expanded ${directive}`, new RegExp(`${directive} must use only approved sources`, 'u'), (config) => {
+      config.app.security.csp = config.app.security.csp.replace(`${directive} `, `${directive} https: wss: `);
+    }]);
+  }
   for (const [name, diagnostic, mutate] of mutations) {
     const mutated = structuredClone(conf);
     const availableFiles = new Set(files);

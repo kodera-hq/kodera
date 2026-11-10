@@ -94,7 +94,12 @@ def test_the_deployable_api_profile_refuses_to_start_with_a_full_secret_key(secr
     assert secret not in refused.stderr + refused.stdout
 
 
-def test_the_deployable_api_profile_starts_with_a_restricted_key():
-    started = start_api(RESTRICTED)
-    assert started.returncode == 0, started.stderr[-2000:]
-    assert started.stdout.split() == ["started", "stripe"]
+@pytest.mark.parametrize("secret", [RESTRICTED, RESTRICTED_LIVE])
+def test_the_deployable_api_refuses_restricted_keys_until_webhook_reconciliation_exists(secret):
+    refused = start_api(secret)
+    assert refused.returncode != 0 and "started" not in refused.stdout
+    assert refused.stderr.strip().splitlines()[-1] == (
+        "django.core.exceptions.ImproperlyConfigured: "
+        "Stripe payments require a routed reconciliation webhook"
+    )
+    assert secret not in refused.stderr + refused.stdout

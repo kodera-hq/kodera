@@ -1,3 +1,4 @@
+import { studioMessages } from '../workspace/studioMessages'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -175,7 +176,8 @@ describe('DocsWorkspacePanel', () => {
     expect(screen.getByTestId('docs-inline-save-badge')).toHaveTextContent(
       'Brouillon modifié, non partagé'
     )
-    expect(screen.getByRole('button', { name: 'Partager' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Partager' })).toBeNull()
+    expect(screen.getByText(studioMessages.fr.shareGap)).toBeVisible()
     expect(container.textContent).not.toMatch(/Yjs|CRDT/i)
   })
 })

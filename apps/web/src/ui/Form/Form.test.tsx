@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { Button } from '../Button/Button'
 import { Form } from './Form'
 import { FormField } from './FormField'

@@ -33,6 +33,21 @@ copy() {
   fi
 }
 
+# Keep mutation edits portable across Linux and macOS.
+mutate() {
+  python3 - "$@" <<'PYTHON'
+import re
+import sys
+from pathlib import Path
+path, pattern, replacement = sys.argv[1:]
+file = Path(path)
+changed, count = re.subn(pattern, replacement, file.read_text(), count=1, flags=re.MULTILINE)
+if count != 1:
+    sys.exit(f"mutation matched {count} sites: {pattern}")
+file.write_text(changed)
+PYTHON
+}
+
 # judge <substring> <exit status> <output> — a refusal, for the stated reason
 judge() {
   local want="$1" rc="$2" out="$3"
@@ -79,7 +94,7 @@ fi
 # the mutation to hold. The assertion is uv's own sentence, which only the
 # `RUN uv sync` step inside the build can print.
 copy stale-lock
-sed -i '/^dependencies = \[/,/^\]/{0,/^  "\([^"=]*\)==/s//  "\1>=/}' "$d/pyproject.toml"
+mutate "$d/pyproject.toml" '(?s)(^dependencies = \[.*?^  "[^"=]*?)==' '\g<1>>='
 if cmp -s "$here/pyproject.toml" "$d/pyproject.toml"; then
   echo "FAIL: case 2 found no exact runtime pin to loosen; the mutation did nothing"
   fails=$((fails+1))
@@ -96,7 +111,7 @@ fi
 # Docker ignores the tag when a digest is present, so this context still
 # builds with the uv the digest selects. Only the version check refuses it.
 copy tag-mismatch
-sed -i -E "s|^(FROM ghcr\.io/astral-sh/uv:)$pin@|\10.0.1@|" "$d/Dockerfile"
+mutate "$d/Dockerfile" '^(FROM ghcr\.io/astral-sh/uv:)[0-9.]+@' '\g<1>0.0.1@'
 if cmp -s "$here/Dockerfile" "$d/Dockerfile"; then
   echo "FAIL: case 3 found no uv tag to change; the mutation did nothing"
   fails=$((fails+1))
@@ -108,7 +123,7 @@ fi
 # A tag alone has nothing to compare with, and Docker would follow it wherever
 # it moves. The version check would agree with itself and pass.
 copy no-digest
-sed -i -E 's|^(FROM ghcr\.io/astral-sh/uv:[0-9.]+)@sha256:[0-9a-f]{64}|\1|' "$d/Dockerfile"
+mutate "$d/Dockerfile" '^(FROM ghcr\.io/astral-sh/uv:[0-9.]+)@sha256:[0-9a-f]{64}' '\1'
 if cmp -s "$here/Dockerfile" "$d/Dockerfile"; then
   echo "FAIL: case 4 found no uv digest to drop; the mutation did nothing"
   fails=$((fails+1))
@@ -121,7 +136,7 @@ fi
 # another image. Reading the first line would compare its tag with the other
 # stage's binary.
 copy other-stage
-sed -i -E 's|^(FROM ghcr\.io/astral-sh/uv:.*) AS uv$|\1 AS uv-source\nFROM python:3.12-slim-bookworm AS uv|' "$d/Dockerfile"
+mutate "$d/Dockerfile" '^(FROM ghcr\.io/astral-sh/uv:.*) AS uv$' '\1 AS uv-source\nFROM python:3.12-slim-bookworm AS uv'
 if cmp -s "$here/Dockerfile" "$d/Dockerfile"; then
   echo "FAIL: case 5 found no uv stage to rename; the mutation did nothing"
   fails=$((fails+1))
@@ -135,7 +150,7 @@ fi
 # so the build itself succeeds. Only reading the version from the BUILT stage,
 # not from the `uv` stage, refuses it. No other image is pulled.
 copy uv-from-elsewhere
-sed -i -E 's|^COPY --from=uv /uv (/usr/local/bin/uv)$|RUN printf '"'"'#!/bin/sh\\necho "uv 0.0.1 (stand-in)"\\n'"'"' > \1 \&\& chmod +x \1|' "$d/Dockerfile"
+mutate "$d/Dockerfile" '^COPY --from=uv /uv (/usr/local/bin/uv)$' 'RUN printf "#!/bin/sh\\necho \"uv 0.0.1 (stand-in)\"\\n" > \1 && chmod +x \1'
 if cmp -s "$here/Dockerfile" "$d/Dockerfile"; then
   echo "FAIL: case 6 found no \`COPY --from=uv\` to replace; the mutation did nothing"
   fails=$((fails+1))
@@ -145,7 +160,7 @@ fi
 
 # --- case 7: the Dockerfile no longer pins uv --------------------------------
 copy no-pin
-sed -i '/^FROM ghcr\.io\/astral-sh\/uv:/d' "$d/Dockerfile"
+mutate "$d/Dockerfile" '^FROM ghcr\.io/astral-sh/uv:.*\n' ''
 expect_fail_saying "cannot find exactly one digest-pinned uv stage in" "$d"
 
 # --- case 8: an option is not a build context --------------------------------

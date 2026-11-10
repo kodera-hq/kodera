@@ -17,6 +17,8 @@ from collections.abc import Callable, Mapping, Sequence
 
 from django.http import HttpRequest, HttpResponse
 
+from core.db.ids import new_uuid7
+
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -87,9 +89,10 @@ class CallerRequestIdMiddleware:
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
         namespaced = caller_request_id(request.META.pop("HTTP_X_REQUEST_ID", None))
-        if namespaced is not None:
-            request.META["HTTP_X_REQUEST_ID"] = namespaced
+        request.META["HTTP_X_REQUEST_ID"] = namespaced or str(new_uuid7())
         # `request.headers` is cached from META on first read: drop a copy something ahead of
         # this may already have cached.
         request.__dict__.pop("headers", None)
-        return self.get_response(request)
+        response = self.get_response(request)
+        response["X-Request-Id"] = request.META["HTTP_X_REQUEST_ID"]
+        return response

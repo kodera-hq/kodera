@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Refresh native design tokens from the monorepo source and align local document bounds across clients.
+
 Status: Kodera for iOS is in development; no store release is recorded here.
 
 ## Unreleased

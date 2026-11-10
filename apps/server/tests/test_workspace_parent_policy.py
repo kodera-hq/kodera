@@ -965,10 +965,11 @@ def without_template_key(objects):
 
 
 # 0006_espace_structure, the structure administration (ESPACE_STRUCTURE.md §§4, 5, 9), and
-# 0007_room_state_revision, the channel set's result order (§13.3). 0007 is the leaf: every
-# reversal below it removes these objects and restores the two position constraints to immediate
-# first, and every test restores it.
-LEAF = "0007_room_state_revision"
+# 0007_room_state_revision, the channel set's result order (§13.3). Reversals below them
+# remove these objects and restore the two position constraints to immediate first.
+# Every test restores the current leaf, including the later warm-pool allocation table.
+LEAF = "0008_warmpoolallocation"
+WARM_POOL_TABLE = "workspaces_warmpoolallocation"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
     ("column", "workspaces_channel", "room_state"),
@@ -986,6 +987,13 @@ DEFERRED_POSITIONS = {
     ("constraint", "workspaces_channel", "channel_position_unique"),
 }
 DEFERRED = " DEFERRABLE INITIALLY DEFERRED"
+
+
+def without_warm_pool(objects):
+    """0008 owns only the warm-pool table; retain every unrelated schema object."""
+    assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
+    assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
+    return {key: value for key, value in objects.items() if key[1] != WARM_POOL_TABLE}
 
 
 def without_espace_structure(objects):
@@ -1022,7 +1030,9 @@ def without_policy_integrity(objects):
 
 def metadata_baseline_objects(objects):
     """Remove only the declared new objects; unknown shared changes remain visible."""
-    result = without_policy_integrity(without_template_key(without_espace_structure(objects)))
+    result = without_policy_integrity(
+        without_template_key(without_espace_structure(without_warm_pool(objects)))
+    )
     expected_indexes = {
         "workspaces_workspace": "default_policy_id",
         "workspaces_category": "default_policy_id",
@@ -1059,7 +1069,7 @@ def test_policy_migrations_reverse_reapply_exact_definitions_and_preserve_metada
     try:
         MigrationExecutor(connection).migrate([("workspaces", "0003_policy_state")])
         assert schema_objects() == without_policy_integrity(
-            without_template_key(without_espace_structure(complete))
+            without_template_key(without_espace_structure(without_warm_pool(complete)))
         )
         MigrationExecutor(connection).migrate([("workspaces", "0002_integrity")])
         assert schema_objects() == baseline

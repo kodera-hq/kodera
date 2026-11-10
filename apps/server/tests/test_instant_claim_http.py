@@ -130,4 +130,6 @@ def test_replay_rechecks_current_identity(w, frozen_clock):
     prepare(w)
     assert call(w).status_code == 201
     w.models.Identity.objects.filter(pk=w.owner.identity.pk).update(enabled=False)
-    assert call(w).status_code == 403
+    response = call(w)
+    assert response.status_code == 403
+    assert response.json()["type"] == "https://kodera.io/problems/identity-unknown"

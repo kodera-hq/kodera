@@ -264,3 +264,17 @@ describe('the canonical instant-claim registration', () => {
       ).toThrow('not a contract operation')
   })
 })
+
+it('matches every capability served flag to the server route manifest', () => {
+  const manifest = JSON.parse(
+    readFileSync(join(root, '../server/contracts/served-operations.json'), 'utf8')
+  ) as {
+    operations: { operation_id: string }[]
+  }
+  const served = new Set(manifest.operations.map((operation) => operation.operation_id))
+  expect(served.size).toBeGreaterThan(0)
+  for (const [name, row] of Object.entries(CAPABILITIES)) {
+    expect(row.operations.length, name).toBeGreaterThan(0)
+    expect(row.served, name).toBe(row.operations.every((operation) => served.has(operation)))
+  }
+})

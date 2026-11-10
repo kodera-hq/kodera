@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from '@/validation-policy'
 import { emptyDraft } from './draft'
 import type { OrderDraft } from './draft'
 import type { OrderOwner } from './owner'

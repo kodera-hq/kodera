@@ -232,7 +232,12 @@ export function AudioDock({
           )}
           {/* Wraps rather than truncates, as the reference's state does: at 14 px bold
               « Connecté · écoute seule » is wider than the sidebar dock's text column. */}
-          <p className={cx('text-sm font-bold break-words tabular-nums', STATUS_INK[status])}>
+          <p
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className={cx('text-sm font-bold break-words tabular-nums', STATUS_INK[status])}
+          >
             {statusLabel}
           </p>
           {meterRef === undefined ? null : (
@@ -341,7 +346,7 @@ export function AudioDock({
           <Tooltip content={cameraUnavailable}>
             <button
               type="button"
-              aria-disabled="true"
+              disabled
               aria-label={cameraUnavailable}
               className="flex h-12 w-12 items-center justify-center rounded-md bg-c-inverse-2 text-c-on-inverse-dim focus-visible:ring"
             >
