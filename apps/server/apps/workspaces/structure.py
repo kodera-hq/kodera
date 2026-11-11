@@ -98,7 +98,9 @@ def read_workspace(*, verified: VerifiedAccessToken, organisation_id: UUID) -> W
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         try:
-            caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)
+            caller = read_tenant_caller(
+                verified=verified, organisation_id=organisation_id, allow_community=True
+            )
         except TenantCallerUnknownError:
             raise WorkspaceCallerUnknownError() from None
         except TenantCallerNotFoundError:

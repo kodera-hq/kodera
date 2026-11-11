@@ -69,7 +69,11 @@ def workspace(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
             responses.bearer(request), trusted=settings.KODERA_AUTH_TRUST
         )
         verified, lane = lanes.admit(verified, lane)
-        if lane == "staff":
+        from apps.orgs.community import ensure_community_membership, is_community
+
+        if is_community(organisation_id):
+            ensure_community_membership(verified=verified)
+        if lane == "staff" and not is_community(organisation_id):
             record_staff_denial(
                 verified=verified,
                 organisation_id=organisation_id,

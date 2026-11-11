@@ -624,3 +624,23 @@ def test_the_webhook_refuses_unbounded_unsigned_or_malformed_deliveries(tmp_path
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_matrix_only_agent_needs_no_docker_access(tmp_path, monkeypatch):
+    from tenant_agent import __main__ as main
+
+    # An object with no Docker methods proves that startup never inspects a socket.
+    monkeypatch.setattr(main, "DockerExec", lambda *args: object())
+    env = {
+        **AGENT_ENV,
+        "KODERA_APPS": "matrix",
+        "KODERA_AGENT_STATE_DIR": str(tmp_path),
+        "KODERA_SYNAPSE_URL": "http://synapse:8008",
+        "KODERA_SYNAPSE_TOKEN": "synthetic-matrix-token",
+        "KODERA_MATRIX_SERVER_NAME": "community.example.test",
+    }
+    agent, _, _ = main.build(Config.from_env(env))
+    assert "engine_set_channel_members" in agent._handlers.kinds
+    for field in ("KODERA_SYNAPSE_URL", "KODERA_SYNAPSE_TOKEN", "KODERA_MATRIX_SERVER_NAME"):
+        with pytest.raises(ConfigError, match=field):
+            Config.from_env({**env, field: ""})

@@ -48,6 +48,9 @@ def read_customer(
     if connection.in_atomic_block:
         # Do not inherit an earlier request snapshot or silently downgrade isolation.
         raise RuntimeError("customer read requires its own transaction")
+    from apps.orgs.community import ensure_community_membership
+
+    ensure_community_membership(verified=verified)
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")

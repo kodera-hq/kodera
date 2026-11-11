@@ -227,6 +227,10 @@ def test_a_channel_s_room_is_made_under_its_alias_with_its_policy_and_members(tm
     assert room["state"][(POLICY, "")] == {
         "version": 1,
         "kind": "text",
+        "read_only": False,
+        "audience": "listed",
+        "members": [mx(ALICE), mx(BOB)],
+        "exempt": [],
         "listen_only": False,
         "may_publish": [],
         "archived": False,
@@ -1168,9 +1172,8 @@ def test_an_unchanged_channel_reads_and_writes_no_state_on_the_next_application(
     )
 
 
-def test_a_removal_alone_reads_no_state_and_kicks(tmp_path):
-    # Who the room holds is not part of its state: removing a member leaves the fingerprint as it
-    # was, so the removal costs the membership read and the kick, and nothing else.
+def test_a_removal_updates_private_policy_and_kicks(tmp_path):
+    # The policy carries the restricted audience, so revocation must update it as well as kick.
     handlers, homeserver, _, _ = build(tmp_path)
     handlers.handle(CHANNEL_KIND, channel_set(1, channel(FIRST), channel(SECOND)))
     homeserver.reads.clear()
@@ -1178,10 +1181,11 @@ def test_a_removal_alone_reads_no_state_and_kicks(tmp_path):
 
     handlers.handle(CHANNEL_KIND, channel_set(2, channel(FIRST), channel(SECOND, members=[ALICE])))
 
-    assert not [r for r in homeserver.reads if "/state/" in r or "/directory/" in r]
-    assert homeserver.writes == [
-        f"POST /_matrix/client/v3/rooms/{room_id_of(homeserver, SECOND)}/kick"
-    ]
+    assert (
+        f"POST /_matrix/client/v3/rooms/{room_id_of(homeserver, SECOND)}/kick" in homeserver.writes
+    )
+    assert homeserver.room_of(SECOND)["state"][(POLICY, "")]["members"] == [mx(ALICE)]
+    assert not any(room_id_of(homeserver, FIRST) in path for path in homeserver.writes)
     assert homeserver.joined(SECOND) == {AGENT, mx(ALICE)}
 
 
@@ -1464,7 +1468,7 @@ def test_an_application_that_changes_no_fingerprint_does_not_rewrite_them(tmp_pa
     old = path.stat().st_mtime_ns - 10**9
     os.utime(path, ns=(old, old))
 
-    handlers.handle(CHANNEL_KIND, channel_set(2, channel(FIRST), channel(SECOND, members=[ALICE])))
+    handlers.handle(CHANNEL_KIND, channel_set(2, channel(FIRST), channel(SECOND)))
 
     assert path.stat().st_mtime_ns == old
 
