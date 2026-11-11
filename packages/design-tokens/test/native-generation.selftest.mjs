@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdtempSync, cpSync, rmSync } from 'node:f
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, indexTokens, resolve, parseColor } from '../scripts/lib/tokens.mjs';
+import { THEMES } from '../scripts/lib/themes.mjs';
 
 const bytes = readFileSync(join(ROOT, 'tokens.json'));
 const tree = JSON.parse(bytes);
@@ -53,8 +54,9 @@ test('all themes have the same native roles and exact sRGB/alpha provenance', as
   const manifest = JSON.parse(outputs[names[2]]);
   const index = indexTokens(tree);
   const roles = Object.keys(tree.semantic.theme.light).filter(k => !k.startsWith('$') && k !== 'page-grad');
-  for (const theme of ['light', 'dark', 'black']) {
-    const entries = manifest.entries.filter(e => e.api.startsWith(`KoderaTokens.${theme}.`));
+  for (const theme of THEMES) {
+    const native = theme.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
+    const entries = manifest.entries.filter(e => e.api.startsWith(`KoderaTokens.${native}.`));
     assert.equal(entries.length, roles.length);
     for (const role of roles) {
       const path = `semantic.theme.${theme}.${role}`;
@@ -64,8 +66,8 @@ test('all themes have the same native roles and exact sRGB/alpha provenance', as
       assert.deepEqual(entry.value, parseColor(resolve(path, index)));
       const c = parseColor(resolve(path, index));
       const numeric = n => Number.isInteger(n) ? `${n}.0` : String(n);
-      const swift = outputs[names[0]].split(`public static let ${theme} = Palette(`)[1].split('\n    )')[0];
-      const compose = outputs[names[1]].split(`public val ${theme} = Palette(`)[1].split('\n    )')[0];
+      const swift = outputs[names[0]].split(`public static let ${native} = Palette(`)[1].split('\n    )')[0];
+      const compose = outputs[names[1]].split(`public val ${native} = Palette(`)[1].split('\n    )')[0];
       const member = entry.api.split('.').at(-1);
       assert.ok(swift.includes(`${member}: Color(.sRGB, red: ${numeric(c.r / 255)}, green: ${numeric(c.g / 255)}, blue: ${numeric(c.b / 255)}, opacity: ${numeric(c.a)})`), `${path}: Swift equality`);
       assert.ok(compose.includes(`${member} = Color(red = ${numeric(c.r / 255)}f, green = ${numeric(c.g / 255)}f, blue = ${numeric(c.b / 255)}f, alpha = ${numeric(c.a)}f)`), `${path}: Compose equality`);
@@ -124,7 +126,7 @@ test('native refuses wrong types, non-px dimensions and invalid colors', async (
   await mutation(t => { t.font.weight.semibold.$value = 650; }, /native: font weight/);
   await mutation(t => { t.color['theme-light'].scrim.$value = 'rgba(0,0,0)'; }, /native: color syntax/);
   await mutation(t => { t.font.family.sans.$value = ['']; }, /native: font family/);
-  await mutation(t => { for (const theme of ['light', 'dark', 'black']) t.semantic.theme[theme].ink.$type = 'gradient'; }, /native: type semantic.theme.light.ink/);
+  await mutation(t => { for (const theme of THEMES) t.semantic.theme[theme].ink.$type = 'gradient'; }, /native: type semantic.theme.light.ink/);
 });
 
 test('native refuses identifier collisions and alias type laundering', async () => {

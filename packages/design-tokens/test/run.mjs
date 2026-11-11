@@ -7,6 +7,7 @@
 //   units     the token-resolution guard, CSS parity with the design drop, the
 //             colour maths the contrast gate rests on, the control rings, the
 //             contrast gate's own self-test (each way it must fail, fails),
+//             the theme registry every generator reads,
 //             the shell themes' own contract, elevation and breakpoints, and
 //             the Givre & Nuit properties (no gradient, dark steps, rail, radii)
 //
@@ -33,6 +34,7 @@ const gates = [
       'test/color-math.selftest.mjs',
       'test/control-selection-ring.selftest.mjs',
       'test/check-contrast.selftest.mjs',
+      'test/theme-registry.selftest.mjs',
       'test/theme-contract.selftest.mjs',
       'test/elevation-breakpoints.selftest.mjs',
       'test/cursor-and-tag-palettes.selftest.mjs',

@@ -18,9 +18,9 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { buildNative } from './lib/native.mjs';
 import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, aliasTarget } from './lib/tokens.mjs';
+import { THEMES, THEME_REGISTRY, THEME_FAMILIES, DEFAULT_THEME, themeSelector, assertThemeGroups } from './lib/themes.mjs';
 import {
   SPEC,
-  THEMES,
   focusRingLayers,
   focusRingIndicatorWidth,
   focusRingProperty,
@@ -35,27 +35,29 @@ const tokens = walkTokens(tree);
 const index = indexTokens(tree);
 const byPath = new Map(tokens.map((t) => [t.path, t]));
 
+// The themes come from the registry (scripts/lib/themes.mjs) and from nowhere
+// else. Every per-theme group below is held to it: the same ids, in the same
+// order, so a theme cannot be declared in tokens.json and missing from the
+// registry, or the other way round.
+const own = (node) => Object.keys(node ?? {}).filter((k) => !k.startsWith('$'));
+
 const themeGroups = tree.semantic?.theme;
-if (!themeGroups || Object.keys(themeGroups).join(',') !== THEMES.join(',')) {
-  throw new Error('expected complete theme set: light, dark, black');
-}
-const themeRoles = Object.keys(themeGroups.light);
+assertThemeGroups('expected complete theme set', own(themeGroups));
+const themeRoles = Object.keys(themeGroups[DEFAULT_THEME]);
 
 // Elevation is themed like the roles above, in a group of its own: a shadow is
 // not a colour, and the `--c-*` roles are the colour contract
-// (docs/specs/shell-themes.md). Same three themes, same levels in each.
+// (docs/specs/shell-themes.md). Same themes, same levels in each.
 const elevationGroups = tree.semantic?.elevation;
-if (!elevationGroups || Object.keys(elevationGroups).filter((k) => !k.startsWith('$')).join(',') !== THEMES.join(',')) {
-  throw new Error('expected elevation for the complete theme set: light, dark, black');
-}
-const elevationLevels = Object.keys(elevationGroups.light).filter((k) => !k.startsWith('$'));
-if (!elevationLevels.length) throw new Error('light: no elevation level');
+assertThemeGroups('expected elevation for the complete theme set', own(elevationGroups));
+const elevationLevels = own(elevationGroups[DEFAULT_THEME]);
+if (!elevationLevels.length) throw new Error(`${DEFAULT_THEME}: no elevation level`);
 for (const name of THEMES) {
-  if (Object.keys(elevationGroups[name]).filter((k) => !k.startsWith('$')).join(',') !== elevationLevels.join(',')) {
+  if (own(elevationGroups[name]).join(',') !== elevationLevels.join(',')) {
     throw new Error(`${name}: incomplete elevation level set`);
   }
 }
-if (!themeRoles.length) throw new Error('light: incomplete theme role set');
+if (!themeRoles.length) throw new Error(`${DEFAULT_THEME}: incomplete theme role set`);
 for (const name of THEMES) {
   if (Object.keys(themeGroups[name]).join(',') !== themeRoles.join(',')) {
     throw new Error(`${name}: incomplete theme role set`);
@@ -79,8 +81,8 @@ const flat = (path) => {
 // a token rename fails the build rather than the browser. ADR-0002.
 //
 // The ring's core is a theme role, so it is emitted inside each theme block
-// below rather than once on `:root`. The light block's selector carries `:root`
-// with it, which is how the unthemed default keeps working.
+// below rather than once on `:root`. The default theme's selector carries
+// `:root` with it, which is how the unthemed default keeps working.
 
 // --- Path → CSS custom property --------------------------------------------
 const kebab = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
@@ -279,7 +281,7 @@ function buildCss() {
     .join('\n\n');
 
   const themes = THEMES.map((name) => {
-    const selector = name === 'light' ? ':root, [data-theme="light"]' : `[data-theme="${name}"]`;
+    const selector = themeSelector(name);
     const values = themeRoles.map((role) => `  --c-${role}: ${cssValue(byPath.get(`semantic.theme.${name}.${role}`))};`);
     const elevation = elevationLevels.map(
       (level) => `  --elevation-${level}: ${cssValue(byPath.get(`semantic.elevation.${name}.${level}`))};`,
@@ -366,7 +368,7 @@ function buildPreset() {
   for (const t of flatSemantic) colors[mechanicalName(t.path)] = flat(t.path);
   for (const [nick, path] of Object.entries(PRESET_NICKNAMES)) colors[nick] = flat(path);
   for (const role of themeRoles) {
-    if (byPath.get(`semantic.theme.light.${role}`).type === 'color') colors[`c-${role}`] = `var(--c-${role})`;
+    if (byPath.get(`semantic.theme.${DEFAULT_THEME}.${role}`).type === 'color') colors[`c-${role}`] = `var(--c-${role})`;
   }
 
   // The themed shadow primitives are implementation values, like the theme
@@ -449,7 +451,7 @@ function buildPreset() {
 // not exist emits NO CSS and NO error — for \`border-*\` the element falls back
 // to preflight's \`border: 0 solid #e5e7eb\`, a light grey line on our page.
 //
-// The c-* colors follow the complete light/dark/black CSS theme boundary.
+// The c-* colors follow the complete ${THEMES.join('/')} CSS theme boundary.
 // Legacy colors remain static. The elevation shadows (raised, overlay, drawer,
 // dialog) follow the theme too. Breakpoints are supplied; z-index is not.
 
@@ -509,11 +511,91 @@ export default preset;
 `;
 }
 
+// --- dist/themes.js and dist/themes.d.ts ------------------------------------
+// The registry as a consumer reads it: a theme switcher, a `color-scheme`
+// rule, a "follow the device" setting inside one family. Emitted from the same
+// module every generator above reads, so a consumer's list cannot disagree with
+// the blocks tokens.css declares.
+const GENERATED_FROM_REGISTRY = `// GENERATED FILE — DO NOT EDIT.
+// Written by scripts/build.mjs from the theme registry (scripts/lib/themes.mjs),
+// the one list every generator reads. Editing this file by hand is undone by
+// the next build and caught by \`npm run check:drift\`.`;
+
+function buildThemes() {
+  const entry = (theme) =>
+    `  Object.freeze({ id: ${js(theme.id)}, family: ${js(theme.family)}, mode: ${js(theme.mode)}, scheme: ${js(theme.scheme)}, default: ${theme.default} }),`;
+  const family = ([name, rules]) =>
+    `  ${js(name)}: Object.freeze({ material: ${js(rules.material)}, gradient: ${js(rules.gradient)}, themes: Object.freeze(${js(
+      THEME_REGISTRY.filter((theme) => theme.family === name).map((theme) => theme.id),
+    )}) }),`;
+  return `${GENERATED_FROM_REGISTRY}
+
+/** Every theme, in the order tokens.css declares its \`[data-theme]\` block. */
+export const themes = Object.freeze([
+${THEME_REGISTRY.map(entry).join('\n')}
+]);
+
+/** The \`[data-theme]\` attribute values, in the same order. */
+export const themeIds = Object.freeze(themes.map((theme) => theme.id));
+
+/** The theme an unthemed document renders in: its block also carries \`:root\`. */
+export const defaultTheme = ${js(DEFAULT_THEME)};
+
+/** What each family allows, and the themes it holds. */
+export const themeFamilies = Object.freeze({
+${Object.entries(THEME_FAMILIES).map(family).join('\n')}
+});
+
+/** The theme of \`family\` in \`mode\`, or undefined when that family has none. */
+export function themeFor(family, mode) {
+  return themes.find((theme) => theme.family === family && theme.mode === mode);
+}
+`;
+}
+
+function buildThemeTypes() {
+  const union = (values) => [...new Set(values)].map((v) => `'${v}'`).join(' | ');
+  return `${GENERATED_FROM_REGISTRY}
+
+/** A \`[data-theme]\` attribute value. */
+export type ThemeId = ${union(THEMES)};
+export type ThemeFamily = ${union(Object.keys(THEME_FAMILIES))};
+export type ThemeMode = ${union(THEME_REGISTRY.map((theme) => theme.mode))};
+export type ThemeScheme = ${union(THEME_REGISTRY.map((theme) => theme.scheme))};
+
+export interface ThemeInfo {
+  readonly id: ThemeId;
+  readonly family: ThemeFamily;
+  readonly mode: ThemeMode;
+  /** The \`color-scheme\` native controls render in under this theme. */
+  readonly scheme: ThemeScheme;
+  /** True for the one theme an unthemed document renders in. */
+  readonly default: boolean;
+}
+
+export interface ThemeFamilyInfo {
+  /** \`flat\`: opaque surfaces only. \`glass\`: translucent materials are allowed. */
+  readonly material: ${union(Object.values(THEME_FAMILIES).map((rules) => rules.material))};
+  /** \`none\`: every gradient is one colour. \`controlled\`: the bounded gradient grammar applies. */
+  readonly gradient: ${union(Object.values(THEME_FAMILIES).map((rules) => rules.gradient))};
+  readonly themes: readonly ThemeId[];
+}
+
+export declare const themes: readonly ThemeInfo[];
+export declare const themeIds: readonly ThemeId[];
+export declare const defaultTheme: ThemeId;
+export declare const themeFamilies: Readonly<Record<ThemeFamily, ThemeFamilyInfo>>;
+export declare function themeFor(family: ThemeFamily, mode: ThemeMode): ThemeInfo | undefined;
+`;
+}
+
 // --- Emit or diff -----------------------------------------------------------
 const artefacts = {
   'tokens.css': buildCss(),
   'tailwind.preset.js': buildPreset(),
   'tokens.d.ts': buildTypes(),
+  'themes.js': buildThemes(),
+  'themes.d.ts': buildThemeTypes(),
   ...buildNative(readFileSync(join(ROOT, 'tokens.json'))),
 };
 

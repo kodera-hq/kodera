@@ -1,8 +1,10 @@
-// Native bindings deliberately depend on the source bytes alone.
+// Native bindings deliberately depend on the source bytes alone, plus the theme
+// registry every generator shares (./themes.mjs): this module keeps no theme
+// list of its own.
 import { createHash } from 'node:crypto';
 import { indexTokens, resolve, aliasTarget, parseColor } from './tokens.mjs';
+import { THEMES, DEFAULT_THEME } from './themes.mjs';
 
-const THEMES = ['light', 'dark', 'black'];
 const FORMAT = 'kodera-native-tokens/1';
 const GROUPS = [
   ['space', 'Space', 'dimension', 'dp'],
@@ -75,17 +77,17 @@ export function buildNative(sourceBytes) {
   };
   const themes = group('semantic.theme');
   if (keys(themes).join(',') !== THEMES.join(',')) fail(`themes must be ${THEMES.join(', ')}`);
-  const roles = keys(group('semantic.theme.light'));
+  const roles = keys(group(`semantic.theme.${DEFAULT_THEME}`));
   for (const required of ['page', 'surface', 'ink', 'action']) if (!roles.includes(required)) fail(`theme roles: missing ${required}`);
   for (const theme of THEMES) {
     if (keys(group(`semantic.theme.${theme}`)).join(',') !== roles.join(',')) fail(`theme roles differ in ${theme}`);
     for (const role of roles) {
       const path = `semantic.theme.${theme}.${role}`;
       const type = index.get(path)?.type;
-      if (type !== index.get(`semantic.theme.light.${role}`)?.type) fail(`theme roles: inconsistent type ${path}`);
+      if (type !== index.get(`semantic.theme.${DEFAULT_THEME}.${role}`)?.type) fail(`theme roles: inconsistent type ${path}`);
       if (['page', 'surface', 'ink', 'action'].includes(role) && type !== 'color') fail(`type ${path}: expected color, got ${type}`);
       if (type === 'gradient') continue;
-      const entry = take(path, `KoderaTokens.${theme}.${identifier(role)}`, 'color');
+      const entry = take(path, `KoderaTokens.${identifier(theme)}.${identifier(role)}`, 'color');
       entry.value = color(entry.value, path);
       entry.colorSpace = 'sRGB';
     }
@@ -122,15 +124,15 @@ export function buildNative(sourceBytes) {
     entries, excluded,
   };
   const header = `// GENERATED FILE — DO NOT EDIT. ${FORMAT}\n// Public source checksum (SHA-256)\n// ${manifest.source.sha256}\n// Source file: tokens.json\n`;
-  const themed = theme => entries.filter(e => e.api.startsWith(`KoderaTokens.${theme}.`));
+  const themed = theme => entries.filter(e => e.api.startsWith(`KoderaTokens.${identifier(theme)}.`));
   const member = e => e.api.split('.').at(-1);
   const swColor = c => `Color(.sRGB, red: ${number(c.r / 255)}, green: ${number(c.g / 255)}, blue: ${number(c.b / 255)}, opacity: ${number(c.a)})`;
   const ktColor = c => `Color(red = ${number(c.r / 255)}f, green = ${number(c.g / 255)}f, blue = ${number(c.b / 255)}f, alpha = ${number(c.a)}f)`;
-  const sw = [header, 'import SwiftUI\n', 'public enum KoderaTokens {', '    public struct Palette: Sendable {', ...themed('light').map(e => `        public let ${member(e)}: Color`), '    }'];
-  const kt = [header, 'package io.kodera.tokens\n', 'import androidx.compose.ui.graphics.Color', 'import androidx.compose.ui.unit.dp', 'import androidx.compose.ui.unit.sp', 'import androidx.compose.ui.text.font.FontWeight as ComposeFontWeight\n', 'public object KoderaTokens {', '    public data class Palette(', ...themed('light').map(e => `        public val ${member(e)}: Color,`), '    )'];
+  const sw = [header, 'import SwiftUI\n', 'public enum KoderaTokens {', '    public struct Palette: Sendable {', ...themed(DEFAULT_THEME).map(e => `        public let ${member(e)}: Color`), '    }'];
+  const kt = [header, 'package io.kodera.tokens\n', 'import androidx.compose.ui.graphics.Color', 'import androidx.compose.ui.unit.dp', 'import androidx.compose.ui.unit.sp', 'import androidx.compose.ui.text.font.FontWeight as ComposeFontWeight\n', 'public object KoderaTokens {', '    public data class Palette(', ...themed(DEFAULT_THEME).map(e => `        public val ${member(e)}: Color,`), '    )'];
   for (const theme of THEMES) {
-    sw.push(`    public static let ${theme} = Palette(`, ...themed(theme).map((e, i, all) => `        ${member(e)}: ${swColor(e.value)}${i < all.length - 1 ? ',' : ''}`), '    )');
-    kt.push(`    public val ${theme} = Palette(`, ...themed(theme).map(e => `        ${member(e)} = ${ktColor(e.value)},`), '    )');
+    sw.push(`    public static let ${identifier(theme)} = Palette(`, ...themed(theme).map((e, i, all) => `        ${member(e)}: ${swColor(e.value)}${i < all.length - 1 ? ',' : ''}`), '    )');
+    kt.push(`    public val ${identifier(theme)} = Palette(`, ...themed(theme).map(e => `        ${member(e)} = ${ktColor(e.value)},`), '    )');
   }
   sw.push('    public struct Family: Sendable {', '        public let primary: String', '        public let fallbacks: [String]', '    }');
   kt.push('    public data class Family(public val primary: String, public val fallbacks: List<String>)');
