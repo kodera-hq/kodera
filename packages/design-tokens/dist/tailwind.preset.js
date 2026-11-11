@@ -255,12 +255,18 @@ export default {
       },
       transitionTimingFunction: {
         out: "cubic-bezier(0.2, 0.7, 0.3, 1)",
+        "spring-snappy": "var(--spring-snappy)",
+        "spring-gentle": "var(--spring-gentle)",
+        "spring-bouncy": "var(--spring-bouncy)",
       },
       transitionDuration: {
         fast: "120ms",
         base: "200ms",
         slow: "320ms",
         DEFAULT: "200ms",
+        "spring-snappy": "var(--spring-snappy-duration)",
+        "spring-gentle": "var(--spring-gentle-duration)",
+        "spring-bouncy": "var(--spring-bouncy-duration)",
       },
       screens: {
         sm: "40rem",

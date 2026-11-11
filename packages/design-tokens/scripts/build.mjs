@@ -20,6 +20,7 @@ import { buildNative } from './lib/native.mjs';
 import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, toHex } from './lib/tokens.mjs';
 import { MATERIAL_LEVELS, resolveMaterial } from './lib/material.mjs';
 import { resolveGradient } from './lib/gradient.mjs';
+import { springProfile } from './lib/spring.mjs';
 import { THEMES, THEME_REGISTRY, THEME_FAMILIES, DEFAULT_THEME, themeSelector, assertThemeGroups } from './lib/themes.mjs';
 import {
   SPEC,
@@ -132,6 +133,7 @@ const CSS_PREFIX = {
   shadow: 'shadow',
   'motion.duration': 'dur',
   'motion.easing': 'ease',
+  'motion.spring': 'spring',
   breakpoint: 'breakpoint',
 };
 
@@ -244,6 +246,50 @@ function focusRingDeclarations(theme) {
       `  ${focusRingColorProperty(variant)}: ${tone(layers[0])};`,
     ];
   });
+}
+
+// --- Springs ----------------------------------------------------------------
+// A spring is emitted as the pair CSS can animate with: `--spring-<name>`, an
+// easing, and `--spring-<name>-duration`. Like a material, it STARTS as the
+// value every client can draw — the plain ease-out, which never overshoots —
+// and the spring itself is switched on afterwards, where `linear()` exists,
+// and switched back off for a reader who asked for reduced motion.
+const springs = pick('motion.spring').map((token) => ({
+  name: token.path.slice('motion.spring.'.length),
+  easingProperty: `--${cssName(token.path)}`,
+  durationProperty: `--${cssName(token.path)}-duration`,
+  ...springProfile(resolveValue(token.value, index)),
+}));
+/** The easing a spring falls back to. A token, so a rename fails here rather than in the browser. */
+const SPRING_FALLBACK = 'motion.easing.out';
+const springFallback = () => {
+  flat(SPRING_FALLBACK);
+  return `var(--${cssName(SPRING_FALLBACK)})`;
+};
+/** Every custom property the springs declare beyond the token's own name. */
+const SPRING_VARIABLES = springs.map((spring) => spring.durationProperty);
+/** A client that can draw a sampled easing at all. */
+const SPRING_SUPPORT = '(transition-timing-function: linear(0, 1))';
+
+function springDeclarations() {
+  return springs.flatMap((spring) => [
+    `  ${spring.easingProperty}: ${springFallback()};`,
+    `  ${spring.durationProperty}: ${spring.durationMs}ms;`,
+  ]);
+}
+
+function buildSpringCss() {
+  if (!springs.length) return '';
+  const on = springs.map((spring) => `    ${spring.easingProperty}: ${spring.easing};`).join('\n');
+  const off = springs.map((spring) => `    ${spring.easingProperty}: ${springFallback()};`).join('\n');
+  return [
+    `/* Springs. \`--spring-<name>\` is declared above as the plain ease-out, which
+   every client can draw and which never overshoots. The sampled spring is
+   enabled here, only where \`linear()\` exists, and disabled again for a reader
+   who asked for reduced motion. Animate \`transform\` and \`opacity\` with it. */`,
+    `@supports ${SPRING_SUPPORT} {\n  :root {\n${on}\n  }\n}`,
+    `@media (prefers-reduced-motion: reduce) {\n  :root {\n${off}\n  }\n}`,
+  ].join('\n\n');
 }
 
 // --- Materials --------------------------------------------------------------
@@ -361,7 +407,7 @@ function buildCss() {
     ['space (4px base)', pick('space').map(declare)],
     ['radius', pick('radius').map(declare)],
     ['elevation', pick('shadow').map(declare)],
-    ['motion', pick('motion').map(declare)],
+    ['motion', [...pick('motion').filter((t) => t.type !== 'spring').map(declare), ...springDeclarations()]],
     ['breakpoints (min-width, mobile-first; not usable inside a media query)', pick('breakpoint').map(declare)],
     ['shell geometry', [...pick('semantic.layout'), ...pick('component.shell')].map(declare)],
   ];
@@ -379,7 +425,7 @@ function buildCss() {
     return `${selector} {\n${[...values, ...focusRingDeclarations(name), ...elevation, ...materialDeclarations(name)].join('\n')}\n}`;
   }).join('\n\n');
 
-  return `${HEADER}\n:root {\n${body}\n}\n\n/* Complete shell themes, and the focus ring, which follows them; the legacy\n   variables above retain their values. */\n${themes}\n\n${buildMaterialCss()}\n`;
+  return `${HEADER}\n:root {\n${body}\n}\n\n/* Complete shell themes, and the focus ring, which follows them; the legacy\n   variables above retain their values. */\n${themes}\n\n${buildMaterialCss()}\n\n${buildSpringCss()}\n`;
 }
 
 // --- dist/tailwind.preset.js ------------------------------------------------
@@ -529,10 +575,18 @@ function buildPreset() {
       DEFAULT: focusRingIndicatorWidth(),
       'control-selection': flat('semantic.control.selection-ring-width'),
     },
-    transitionTimingFunction: Object.fromEntries(
-      pick('motion.easing').map((t) => [t.path.slice('motion.easing.'.length), cssValue(t)]),
-    ),
-    transitionDuration: withDefaults('transitionDuration', scaleObject('motion.duration')),
+    // A spring is a pair: `ease-spring-<name>` with `duration-spring-<name>`.
+    // Both are `var()`, so they follow the stylesheet's switch — the sampled
+    // spring where it can be drawn, the plain ease-out where it cannot or where
+    // the reader asked for reduced motion.
+    transitionTimingFunction: {
+      ...Object.fromEntries(pick('motion.easing').map((t) => [t.path.slice('motion.easing.'.length), cssValue(t)])),
+      ...Object.fromEntries(springs.map((spring) => [`spring-${spring.name}`, `var(${spring.easingProperty})`])),
+    },
+    transitionDuration: {
+      ...withDefaults('transitionDuration', scaleObject('motion.duration')),
+      ...Object.fromEntries(springs.map((spring) => [`spring-${spring.name}`, `var(${spring.durationProperty})`])),
+    },
     // Mobile-first min-widths, Tailwind 4's own five steps, all named here so
     // the package rather than Tailwind's defaults is the source.
     screens: scaleObject('breakpoint'),
@@ -568,6 +622,7 @@ function buildTypes() {
     '--bg-page',
     ...RING_VARIABLES,
     ...MATERIAL_VARIABLES,
+    ...SPRING_VARIABLES,
     // A material is emitted as its parts above, never as one property.
     ...tokens.filter((t) => t.type !== 'material').map((t) => `--${cssName(t.path)}`),
   ])].sort();

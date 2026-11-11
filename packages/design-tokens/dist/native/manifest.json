@@ -2,7 +2,7 @@
   "format": "kodera-native-tokens/1",
   "source": {
     "path": "tokens.json",
-    "sha256": "1aacc7815a6ce19b9465c1e2d14b2410e858c52efd25a5de5f8a49d31674258a"
+    "sha256": "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51"
   },
   "mapping": {
     "colors": "sRGB normalized channels; alpha preserved without compositing",
@@ -8912,6 +8912,18 @@
     },
     {
       "path": "motion.easing.out",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.spring.snappy",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.spring.gentle",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "motion.spring.bouncy",
       "reason": "outside the native format 1 surface"
     },
     {

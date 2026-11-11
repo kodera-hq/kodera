@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT. kodera-native-tokens/1
 // Public source checksum (SHA-256)
-// 1aacc7815a6ce19b9465c1e2d14b2410e858c52efd25a5de5f8a49d31674258a
+// b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51
 // Source file: tokens.json
 
 package io.kodera.tokens
