@@ -391,6 +391,18 @@ def test_real_tenant_listing_is_canonical_and_membership_scoped(
     )
     headers = {"HTTP_AUTHORIZATION": "Bearer " + signed_token(http_signer, issuer, subject)}
     client = Client()
+    if lane == "customer":
+        from apps.orgs.community import bind_community_identity
+
+        bind_community_identity(user_id=principal.user_id, subject="proven-canonical-account")
+        profile = client.get("/api/v1/me", **headers)
+        assert profile.status_code == 200, profile.content
+        relationship = next(
+            row
+            for row in profile.json()["organisations"]
+            if row["organisation"]["slug"] == "community"
+        )
+        assert relationship["identity_id"] == str(principal.id)
     path = f"/api/v1/organisations/{community.organisation.id}/tenants"
     response = client.get(path, **headers)
     assert response.status_code == 200, response.content

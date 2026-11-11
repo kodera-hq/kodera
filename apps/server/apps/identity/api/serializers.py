@@ -26,10 +26,10 @@ def serialize_customer(value: CustomerRead) -> bytes:
             if member.accepted_at is not None
             else None,
         }
-        if organisation.id in identity_ids:
-            entry["identity_id"] = identity_ids[organisation.id]
-        elif organisation.slug == "community":
+        if organisation.slug == "community":
             entry["identity_id"] = str(value.current_identity_id)
+        elif organisation.id in identity_ids:
+            entry["identity_id"] = identity_ids[organisation.id]
         memberships.append(entry)
     projection = {
         "id": str(value.person.id),

@@ -55,9 +55,9 @@ def organisation(slug="acme-sa"):
     return owner
 
 
-def tenant(owner, slug):
-    return Tenant.objects.create(
-        organisation=owner,
+def tenant(owner, slug, model=Tenant):
+    return model.objects.create(
+        organisation_id=owner.id,
         slug=slug,
         name="X",
         status_changed_at=timezone.now(),
@@ -92,11 +92,13 @@ def test_the_migration_stops_naming_the_held_labels():
     database could hold before this migration, and the refused forward run."""
     try:
         with transaction.atomic():
-            MigrationExecutor(connection).migrate([BEFORE])
+            executor = MigrationExecutor(connection)
+            executor.migrate([BEFORE])
+            historical = executor.loader.project_state([BEFORE]).apps.get_model("tenancy", "Tenant")
             owner = organisation()
-            tenant(owner, "staging")
-            tenant(owner, "matrix")
-            tenant(owner, "acme")
+            tenant(owner, "staging", historical)
+            tenant(owner, "matrix", historical)
+            tenant(owner, "acme", historical)
             with pytest.raises(RuntimeError) as stopped:
                 MigrationExecutor(connection).migrate([RESERVING])
             message = str(stopped.value)
