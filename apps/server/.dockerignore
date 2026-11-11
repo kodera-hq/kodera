@@ -256,3 +256,6 @@ config/settings/deploy_worker.py
 !apps/support/community.py
 !apps/support/api/community.py
 !apps/support/triage.py
+!apps/identity/community.py
+!apps/tenancy/community.py
+!apps/workspaces/community.py

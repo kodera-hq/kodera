@@ -3,39 +3,27 @@
 from uuid import UUID
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
 from django.db import transaction
 from django.utils import timezone
 
-from apps.identity.models import Identity, User
+from apps.identity.community import (
+    CommunityPrincipal,
+    bind_proven_community_identity,
+    community_identity,
+    materialize_community_identity,
+    require_enabled_person,
+)
 from apps.identity.selectors import is_storable_subject
-from apps.tenancy.models import Tenant
-from apps.workspaces.channel_access import READ_ONLY
-from apps.workspaces.models import Category, Channel, ResourcePolicy, ResourcePolicyRule, Workspace
+from apps.tenancy.community import provision_community_tenant
+from apps.workspaces.community import (
+    CommunityWorkspace,
+    provision_community_workspace,
+    refresh_staff_grants,
+)
 from services.identity.access_tokens import VerifiedAccessToken
 from services.identity.trusted_issuers import is_trusted_issuer
 
 from .models import Membership, Organisation, SlugReservation
-
-CATEGORIES = (
-    (
-        "community",
-        "Community",
-        (
-            "announcements",
-            "general",
-            "developers-community",
-            "support",
-            "extensions",
-            "self-hosting",
-            "show-and-tell",
-            "office-hours",
-        ),
-    ),
-    ("core_kodera", "Core Kodera", ("dev", "strategy", "ops-oncall", "kodera-git-tracker")),
-    ("design_partners", "Design Partners", ("partner-dinum", "partner-octo")),
-)
 
 
 def configured_slug() -> str:
@@ -64,7 +52,7 @@ def is_community(organisation_id: UUID) -> bool:
 
 
 @transaction.atomic
-def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Workspace:
+def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> CommunityWorkspace:
     """Repeatable operator step; never creates an owner account or a remote room."""
     if not configured_slug():
         raise ValueError("KODERA_DEFAULT_COMMUNITY_ORG_SLUG must be configured")
@@ -82,7 +70,7 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
     if organisation is None:
         if owner_user_id is None:
             raise ValueError("First bootstrap requires an existing enabled owner user")
-        owner = User.objects.get(id=owner_user_id, enabled=True, deleted_at__isnull=True)
+        require_enabled_person(owner_user_id)
         organisation = Organisation.objects.create(
             slug="community",
             realm="community",
@@ -98,7 +86,7 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
             protected_at=timezone.now(),
         )
         Membership.objects.create(
-            user=owner,
+            user_id=owner_user_id,
             organisation=organisation,
             role="org_owner",
             state="active",
@@ -111,122 +99,14 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
         or organisation.deleted_at is not None
     ):
         raise ValueError("Existing community binding must be reconciled by an operator")
-    tenant, _ = Tenant.objects.get_or_create(
-        slug="community",
-        defaults={
-            "organisation": organisation,
-            "is_default_community": True,
-            "name": "Kodera Community",
-            "status": "provisioning",
-            "status_changed_at": timezone.now(),
-            "pack_code": "workspace",
-            "capacity_tier_code": "S",
-            "apps": ["messaging"],
-            "realm": "community",
-            "locale": "en",
-        },
+    provision_community_tenant(organisation_id=organisation.id)
+    workspace = provision_community_workspace(
+        organisation_id=organisation.id, administrator_ids=_administrator_ids(organisation.id)
     )
-    if (
-        not tenant.is_default_community
-        or tenant.organisation_id != organisation.id
-        or tenant.realm != "community"
-        or tenant.apps != ["messaging"]
-        or tenant.status in {"deleted", "decommissioning"}
-    ):
-        raise ValueError("Existing community tenant binding requires operator reconciliation")
-    workspace, _ = Workspace.objects.get_or_create(organisation=organisation)
-    if workspace.default_policy_id is None:
-        workspace.default_policy = ResourcePolicy.objects.create(
-            workspace=workspace, visibility="organisation"
-        )
-        workspace.save(update_fields=["default_policy"])
-    for position, (key, name, channels) in enumerate(CATEGORIES):
-        category, _ = Category.objects.get_or_create(
-            workspace=workspace, template_key=key, defaults={"name": name, "position": position}
-        )
-        if category.default_policy_id is None:
-            category.default_policy = ResourcePolicy.objects.create(
-                workspace=workspace,
-                visibility="organisation" if key == "community" else "restricted",
-            )
-            category.save(update_fields=["default_policy"])
-        expected_visibility = "organisation" if key == "community" else "restricted"
-        if (
-            category.default_policy is None
-            or category.default_policy.visibility != expected_visibility
-        ):
-            raise ValueError("Canonical category policy drift requires operator reconciliation")
-        if key == "core_kodera":
-            # Explicit administrator membership grants; ordinary signup never promotes staff roles.
-            for member in Membership.objects.filter(
-                organisation=organisation,
-                role__in=("org_owner", "org_admin"),
-                state="active",
-                deleted_at__isnull=True,
-            ):
-                ResourcePolicyRule.objects.get_or_create(
-                    policy=category.default_policy, kind="allow_member", membership=member
-                )
-        for index, channel_name in enumerate(channels):
-            channel, created = Channel.objects.get_or_create(
-                workspace=workspace,
-                template_key=channel_name.replace("-", "_"),
-                defaults={
-                    "category": category,
-                    "position": index,
-                    "name": channel_name,
-                    "kind": "audio" if channel_name == "office-hours" else "text",
-                    "lifecycle": "active",
-                },
-            )
-            expected_kind = "audio" if channel_name == "office-hours" else "text"
-            expected_mode = "explicit" if channel_name == "announcements" else "inherit"
-            if (
-                channel.category_id != category.id
-                or channel.kind != expected_kind
-                or channel.lifecycle != "active"
-                or (not created and channel.policy_mode != expected_mode)
-            ):
-                raise ValueError("Canonical channel drift requires operator reconciliation")
-            if channel_name == "announcements":
-                if channel.explicit_policy_id is None:
-                    channel.explicit_policy = ResourcePolicy.objects.create(
-                        workspace=workspace, visibility="organisation"
-                    )
-                    channel.policy_mode = "explicit"
-                    channel.save(update_fields=["explicit_policy", "policy_mode"])
-                if (
-                    channel.explicit_policy is None
-                    or channel.explicit_policy.visibility != "organisation"
-                ):
-                    raise ValueError("Canonical announcement policy drift requires reconciliation")
-                for capability in READ_ONLY:
-                    ResourcePolicyRule.objects.get_or_create(
-                        policy=channel.explicit_policy,
-                        kind="deny_capability",
-                        capability=capability,
-                    )
     from .member_set_hooks import member_set_changed
 
     member_set_changed(organisation_id=organisation.id, reason="community_bootstrap")
     return workspace
-
-
-def _identity(verified: VerifiedAccessToken) -> Identity | None:
-    if not is_storable_subject(verified.subject):
-        return None
-    return (
-        Identity.objects.select_related("user")
-        .filter(
-            issuer=verified.issuer,
-            subject=verified.subject,
-            enabled=True,
-            deleted_at__isnull=True,
-            user__enabled=True,
-            user__deleted_at__isnull=True,
-        )
-        .first()
-    )
 
 
 @transaction.atomic
@@ -241,36 +121,25 @@ def ensure_community_membership(*, verified: VerifiedAccessToken) -> Membership 
         return None
     # Serialize membership bootstrap and signup identity creation across process races.
     community = Organisation.objects.select_for_update().get(id=community.id)
-    principal = _identity(verified)
+    principal = community_identity(verified)
     if principal is None:
-        if Identity.objects.filter(issuer=verified.issuer, subject=verified.subject).exists():
-            return None
-        if verified.issuer != community.issuer or not verified.email_verified or not verified.email:
-            return None
-        try:
-            validate_email(verified.email)
-        except ValidationError:
-            return None
-        if len(verified.email) > 254:
-            return None
-        user = User.objects.create(email=verified.email)
-        principal = Identity.objects.create(
-            user=user,
-            organisation=community,
+        principal = materialize_community_identity(
+            verified=verified,
+            organisation_id=community.id,
             issuer=community.issuer,
             realm=community.realm,
-            subject=verified.subject,
-            email=verified.email,
         )
+    if principal is None:
+        return None
     membership = (
-        Membership.objects.filter(user=principal.user, organisation=community)
+        Membership.objects.filter(user_id=principal.user_id, organisation=community)
         .order_by("-created_at")
         .first()
     )
     if membership is not None:
         return membership
     membership = Membership.objects.create(
-        user=principal.user,
+        user_id=principal.user_id,
         organisation=community,
         role="org_member",
         state="active",
@@ -282,14 +151,18 @@ def ensure_community_membership(*, verified: VerifiedAccessToken) -> Membership 
     return membership
 
 
-def community_member(*, verified: VerifiedAccessToken) -> tuple[Identity, Membership] | None:
+def community_member(
+    *, verified: VerifiedAccessToken
+) -> tuple[CommunityPrincipal, Membership] | None:
     """Current persisted authority only; safe within a caller's read-only snapshot."""
     community = canonical_community()
-    principal = _identity(verified)
+    if community is None:
+        return None
+    principal = community_identity(verified)
     if community is None or principal is None:
         return None
     member = Membership.objects.filter(
-        user=principal.user,
+        user_id=principal.user_id,
         organisation=community,
         state="active",
         accepted_at__isnull=False,
@@ -299,30 +172,25 @@ def community_member(*, verified: VerifiedAccessToken) -> tuple[Identity, Member
 
 
 @transaction.atomic
-def bind_community_identity(*, user_id: UUID, subject: str) -> Identity:
+def bind_community_identity(*, user_id: UUID, subject: str) -> CommunityPrincipal:
     """Operator-only binding after proof of control of both accounts; never email matching."""
     community = canonical_community()
     if community is None or not is_storable_subject(subject):
         raise ValueError("An active community and a valid realm subject are required")
     Organisation.objects.select_for_update().get(id=community.id)
-    user = User.objects.get(id=user_id, enabled=True, deleted_at__isnull=True)
+    require_enabled_person(user_id)
     member = Membership.objects.filter(
-        user=user, organisation=community, state="active", deleted_at__isnull=True
+        user_id=user_id, organisation=community, state="active", deleted_at__isnull=True
     ).first()
     if member is None:
         raise ValueError("The person requires an active community membership")
-    principal, _ = Identity.objects.get_or_create(
-        issuer=community.issuer,
+    principal = bind_proven_community_identity(
+        user_id=user_id,
         subject=subject,
-        defaults={
-            "user": user,
-            "organisation": community,
-            "realm": community.realm,
-            "email": user.email,
-        },
+        organisation_id=community.id,
+        issuer=community.issuer,
+        realm=community.realm,
     )
-    if principal.user_id != user.id or not principal.enabled or principal.deleted_at is not None:
-        raise ValueError("The realm subject already has a different or disabled binding")
     from .member_set_hooks import member_set_changed
 
     member_set_changed(organisation_id=community.id, reason="community_identity_bound")
@@ -333,23 +201,17 @@ def refresh_community_staff_grants(organisation_id: UUID) -> None:
     """Keep managed staff-category grants aligned with current administrator roles."""
     if not is_community(organisation_id):
         return
-    category = Category.objects.filter(
-        workspace__organisation_id=organisation_id, template_key="core_kodera"
-    ).first()
-    if category is None or category.default_policy_id is None:
-        return
-    administrators = Membership.objects.filter(
-        organisation_id=organisation_id,
-        role__in=("org_owner", "org_admin"),
-        state="active",
-        deleted_at__isnull=True,
-    ).values_list("id", flat=True)
-    wanted = set(administrators)
-    rules = ResourcePolicyRule.objects.filter(
-        policy_id=category.default_policy_id, kind="allow_member"
+    refresh_staff_grants(
+        organisation_id=organisation_id, administrator_ids=_administrator_ids(organisation_id)
     )
-    rules.exclude(membership_id__in=wanted).delete()
-    for membership_id in wanted:
-        ResourcePolicyRule.objects.get_or_create(
-            policy_id=category.default_policy_id, kind="allow_member", membership_id=membership_id
-        )
+
+
+def _administrator_ids(organisation_id: UUID) -> tuple[UUID, ...]:
+    return tuple(
+        Membership.objects.filter(
+            organisation_id=organisation_id,
+            role__in=("org_owner", "org_admin"),
+            state="active",
+            deleted_at__isnull=True,
+        ).values_list("id", flat=True)
+    )

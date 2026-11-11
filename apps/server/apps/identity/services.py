@@ -1,4 +1,4 @@
-"""One coherent, materialized customer read; no write, bootstrap or authority cache."""
+"""Materialized identity reads after explicit opt-in canonical membership preparation."""
 
 from dataclasses import dataclass
 from uuid import UUID
@@ -85,3 +85,36 @@ def read_customer(
             identity.id,
             factor.value,
         )
+
+
+def read_staff_community(*, verified: VerifiedAccessToken) -> CustomerRead:
+    """Staff may see only their canonical membership; disabled deployments do no database work."""
+    from apps.orgs.community import community_member, configured_slug, ensure_community_membership
+
+    if not configured_slug():
+        raise CustomerReadForbiddenError()
+    ensure_community_membership(verified=verified)
+    shared = community_member(verified=verified)
+    if shared is None:
+        raise CustomerReadForbiddenError()
+    principal, member = shared
+    return CustomerRead(
+        principal.user,
+        (
+            IdentitySnapshot(
+                principal.id,
+                member.organisation_id,
+                principal.issuer,
+                principal.realm,
+                principal.subject,
+                principal.email,
+            ),
+        ),
+        tuple(
+            m
+            for m in person_memberships(user_id=principal.user_id)
+            if m.organisation.id == member.organisation_id
+        ),
+        principal.id,
+        None,
+    )

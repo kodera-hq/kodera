@@ -8,7 +8,12 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.http import parse_etags
 
-from apps.identity.services import CustomerReadForbiddenError, UnknownCustomerError, read_customer
+from apps.identity.services import (
+    CustomerReadForbiddenError,
+    UnknownCustomerError,
+    read_customer,
+    read_staff_community,
+)
 from core.api import lanes, problems
 from core.api.scopes import declares
 from core.db.ids import new_uuid7
@@ -70,44 +75,10 @@ def me(request: HttpRequest) -> HttpResponse:
             )
             verified, lane = lanes.admit(verified, lane)
             if lane == "staff":
-                from apps.identity.selectors import IdentitySnapshot, PersonSnapshot
-                from apps.identity.services import CustomerRead
-                from apps.orgs.community import community_member, ensure_community_membership
-                from apps.orgs.selectors import person_memberships
-
-                ensure_community_membership(verified=verified)
-                shared = community_member(verified=verified)
-                if shared is None:
-                    response = _problem(403, request_id)
-                else:
-                    principal, member = shared
-                    content = serialize_customer(
-                        CustomerRead(
-                            PersonSnapshot(
-                                principal.user_id, principal.user.email, principal.user.display_name
-                            ),
-                            (
-                                IdentitySnapshot(
-                                    principal.id,
-                                    member.organisation_id,
-                                    principal.issuer,
-                                    principal.realm,
-                                    principal.subject,
-                                    principal.email,
-                                ),
-                            ),
-                            tuple(
-                                m
-                                for m in person_memberships(user_id=principal.user_id)
-                                if m.organisation.id == member.organisation_id
-                            ),
-                            principal.id,
-                            None,
-                        )
-                    )
-                    projection = json.loads(content)
-                    projection["staff"] = True
-                    response = HttpResponse(json.dumps(projection), content_type="application/json")
+                content = serialize_customer(read_staff_community(verified=verified))
+                projection = json.loads(content)
+                projection["staff"] = True
+                response = HttpResponse(json.dumps(projection), content_type="application/json")
             else:
                 content = serialize_customer(
                     read_customer(

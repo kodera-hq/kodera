@@ -324,6 +324,15 @@ CASES = (
         ("apps.legal.services.read_dpa",),
     ),
     Case(
+        "createCommunitySupportTicket",
+        "apps.support.api.community.community_support_tickets",
+        "post",
+        {},
+        "apps.support.tickets.TicketCallerUnknownError",
+        ("apps.support.api.community.authorise_community_support",),
+        verifier="apps.support.api.views",
+    ),
+    Case(
         "createSupportTicket",
         "apps.support.api.views.support_tickets",
         "post",

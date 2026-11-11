@@ -4,9 +4,13 @@ import json
 
 from django.http import HttpRequest, HttpResponse
 
-from apps.orgs.community import community_member, ensure_community_membership
 from apps.support import tickets as service
-from apps.support.community import CommunitySupportForbiddenError, open_community_ticket
+from apps.support.community import (
+    CommunitySupportForbiddenError,
+    authorise_community_support,
+    open_community_ticket,
+)
+from core.api import problems
 from core.api.idempotency import StoredResponse, respond_once
 from core.api.scopes import Operation, declares
 from services.identity.access_tokens import TokenVerificationError
@@ -23,9 +27,7 @@ def community_support_tickets(request: HttpRequest) -> HttpResponse:
             response["Allow"] = "POST"
             return views._finish(response, request_id)
         verified, _lane = views._verified(request)
-        ensure_community_membership(verified=verified)
-        if community_member(verified=verified) is None:
-            raise CommunitySupportForbiddenError()
+        authorise_community_support(verified=verified)
         ticket_request = service.parse_request(views._body(request), request.content_type or "")
 
         def handler() -> StoredResponse:
@@ -45,6 +47,8 @@ def community_support_tickets(request: HttpRequest) -> HttpResponse:
         )
     except TokenVerificationError:
         response = views._problem("unauthenticated", request_id)
+    except service.TicketCallerUnknownError:
+        response = problems.identity_unknown(request_id, "createCommunitySupportTicket")
     except CommunitySupportForbiddenError:
         response = views._problem("forbidden", request_id)
     except service.TicketInputError as error:

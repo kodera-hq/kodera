@@ -4,12 +4,19 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import record_support_ticket_opened
-from apps.identity.models import User
-from apps.orgs.community import community_member
+from apps.identity.community import community_identity, lock_person
+from apps.orgs.community import community_member, ensure_community_membership
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import SupportTicket
-from .tickets import PER_IDENTITY, WINDOW, TicketInputError, TicketRateLimitedError, TicketRequest
+from .tickets import (
+    PER_IDENTITY,
+    WINDOW,
+    TicketCallerUnknownError,
+    TicketInputError,
+    TicketRateLimitedError,
+    TicketRequest,
+)
 from .triage import classify_support_ticket
 
 
@@ -26,7 +33,7 @@ def open_community_ticket(
         raise CommunitySupportForbiddenError()
     principal, member = caller
     # One lock covers every issuer identity of the same persisted person.
-    User.objects.select_for_update().get(id=principal.user_id)
+    lock_person(principal.user_id)
     if community_member(verified=verified) is None:
         raise CommunitySupportForbiddenError()
     if (
@@ -43,7 +50,7 @@ def open_community_ticket(
         raise TicketRateLimitedError(int(WINDOW.total_seconds()))
     ticket = SupportTicket.objects.create(
         organisation_id=member.organisation_id,
-        created_by=principal,
+        created_by_id=principal.id,
         subject=request.subject,
         body=request.body,
         category=request.category,
@@ -68,3 +75,12 @@ def open_community_ticket(
         "queue": verdict.queue,
         "confirmation": "ticket-created",
     }
+
+
+def authorise_community_support(*, verified: VerifiedAccessToken) -> None:
+    ensure_community_membership(verified=verified)
+    if community_member(verified=verified) is not None:
+        return
+    if community_identity(verified) is None:
+        raise TicketCallerUnknownError()
+    raise CommunitySupportForbiddenError()

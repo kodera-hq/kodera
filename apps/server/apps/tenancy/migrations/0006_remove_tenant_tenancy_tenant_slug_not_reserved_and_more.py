@@ -8,6 +8,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.RemoveConstraint(
             model_name="tenant",
             name="tenancy_tenant_slug_not_reserved",
@@ -69,5 +73,9 @@ class Migration(migrations.Migration):
                 ),
                 name="tenancy_tenant_community_binding",
             ),
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]

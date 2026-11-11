@@ -158,3 +158,10 @@ def record_no_membership_denial(
             required_scope=scope,
             reason="role_missing",
         )
+
+
+def is_shared_community(organisation_id: UUID) -> bool:
+    """The sole cross-issuer billing read exception is the canonical tenant list."""
+    from apps.orgs.community import is_community
+
+    return is_community(organisation_id)

@@ -171,9 +171,11 @@ def _member_read(
     unknown caller nor a staff token can tell an existing identifier from an absent one."""
     verified, lane = verify_configured_token(_bearer(request), trusted=settings.KODERA_AUTH_TRUST)
     verified, lane = lanes.admit(verified, lane)
-    from apps.orgs.community import is_community
+    from apps.billing.access import is_shared_community
 
-    shared = allow_community and (owner := organisation()) is not None and is_community(owner)
+    shared = (
+        allow_community and (owner := organisation()) is not None and is_shared_community(owner)
+    )
     if lane == "staff" and not shared:
         record_staff_denial(
             verified=verified, target_urn=target_urn, request_id=request_id, scope=scope

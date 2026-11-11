@@ -14,7 +14,7 @@ from apps.support.models import SupportTicket
 from apps.support.tickets import TicketRateLimitedError, TicketRequest
 from apps.workspaces.channel_access import resolve
 from apps.workspaces.channel_sets import channel_set_input
-from apps.workspaces.models import Category, Channel
+from apps.workspaces.models import Category, Channel, Workspace
 from apps.workspaces.structure import WorkspaceNotFoundError, read_workspace
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -43,7 +43,8 @@ def community(settings, monkeypatch):
     settings.KODERA_DEFAULT_COMMUNITY_ISSUER = ISSUER
     monkeypatch.setattr("apps.orgs.community.is_trusted_issuer", lambda *args, **kwargs: True)
     owner = User.objects.create(email="owner@example.test")
-    workspace = bootstrap_community_workspace(owner_user_id=owner.id)
+    result = bootstrap_community_workspace(owner_user_id=owner.id)
+    workspace = Workspace.objects.get(id=result.id)
     return SimpleNamespace(owner=owner, workspace=workspace, organisation=workspace.organisation)
 
 
@@ -178,6 +179,8 @@ def test_explicit_identity_binding_is_unique_and_emits_subject(community):
     from apps.orgs.community import bind_community_identity
 
     bound = bind_community_identity(user_id=community.owner.id, subject="owner-community")
+    assert "owner-community" not in repr(bound)
+    assert community.owner.email not in repr(bound)
     assert (
         bind_community_identity(user_id=community.owner.id, subject="owner-community").id
         == bound.id
@@ -431,3 +434,81 @@ def test_real_tenant_listing_is_canonical_and_membership_scoped(
         user_id=Identity.objects.get(issuer=issuer, subject=subject).user_id,
     ).update(state="suspended")
     assert client.get(path, **headers).status_code == 404
+
+
+def test_deployed_operator_executes_bootstrap_and_explicit_binding(http_signer):
+    """The deployed command graph must execute on the migrated database, without HTTP setup."""
+    import json
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+    from urllib.parse import quote
+
+    from customer_http_fixtures import trust_entry
+    from django.db import connection
+
+    owner = User.objects.create(email="operator-owner@example.test")
+    db = connection.settings_dict
+    authority = f"{quote(str(db['USER']), safe='')}:{quote(str(db['PASSWORD']), safe='')}"
+    database_url = f"postgresql://{authority}@{db['HOST']}:{db['PORT']}/{db['NAME']}"
+    environment = {
+        "DJANGO_SETTINGS_MODULE": "config.settings.deploy_operator",
+        "DJANGO_SECRET_KEY": "synthetic-command-profile-" + "abc0123456789" * 5,
+        "DJANGO_ALLOWED_HOSTS": "operator.synthetic.test",
+        "DATABASE_URL": database_url,
+        "KODERA_DEFAULT_COMMUNITY_ORG_SLUG": "community",
+        "KODERA_DEFAULT_COMMUNITY_ISSUER": ISSUER,
+        "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID": str(owner.id),
+        "KODERA_AUTH_TRUST": json.dumps(
+            [trust_entry(http_signer, ISSUER, expires_at=int(time.time()) + 600)]
+        ),
+    }
+    root = Path(__file__).resolve().parents[1]
+    for arguments in (
+        ["bootstrap_community_workspace"],
+        ["bootstrap_community_workspace"],
+        ["bind_community_identity", "--user-id", str(owner.id), "--subject", "proven-owner"],
+    ):
+        result = subprocess.run(  # noqa: S603 - fixed local interpreter and owned commands
+            [sys.executable, "manage.py", *arguments],
+            cwd=root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+    assert Workspace.objects.count() == 1
+    assert Channel.objects.count() == 14
+    assert Identity.objects.get(issuer=ISSUER, subject="proven-owner").user_id == owner.id
+
+
+@pytest.mark.parametrize("state", ["unknown", "disabled", "removed"])
+def test_support_reports_unknown_identity_and_denies_revoked_membership(
+    community, settings, http_signer, frozen_clock, state
+):
+    import json
+
+    from customer_http_fixtures import configure, token as signed_token, trust_entry
+    from django.test import Client
+
+    configure(settings, [trust_entry(http_signer, ISSUER)])
+    if state != "unknown":
+        _, member = signup("refused-support")
+        if state == "disabled":
+            Identity.objects.filter(user_id=member.user_id).update(enabled=False)
+        else:
+            Membership.objects.filter(id=member.id).update(state="removed")
+    credential = signed_token(http_signer, ISSUER, "refused-support")
+    response = Client().post(
+        "/api/v1/community/support/tickets",
+        json.dumps({"subject": "Help", "body": "Login help"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credential,
+        HTTP_IDEMPOTENCY_KEY="refused-support-ticket-001",
+    )
+    assert response.status_code == 403
+    expected = "forbidden" if state == "removed" else "identity-unknown"
+    assert response.json()["type"] == "https://kodera.io/problems/" + expected
+    assert SupportTicket.objects.count() == 0
