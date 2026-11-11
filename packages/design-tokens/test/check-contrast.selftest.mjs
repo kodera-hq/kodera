@@ -546,7 +546,9 @@ test('a translucent background is measured over its backdrop set, and held to th
   assert.equal(status, 0, output);
   assert.match(output, glassVerdict(13.86, 'PASS'));
   assert.match(output, /↳ minimum of 4 backgrounds over its own set; worst: the darkest any blend of the backdrops can be/);
-  assert.match(output, /487 pairs — 477 pass/);
+  // One row more than the register holds, and it is counted as a pass.
+  const shipped = readJson(ROOT, 'contrast-pairs.json').pairs.length;
+  assert.match(output, new RegExp(`^${shipped + 1} pairs — \\d+ pass, 0 allowed, \\d+ exempt, \\d+ forbidden, 0 fail$`, 'm'));
 });
 
 // The extreme is the only thing that changes between these two runs. Tertiary

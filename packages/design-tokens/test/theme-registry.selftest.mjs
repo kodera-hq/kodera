@@ -39,10 +39,14 @@ const EXPECTED = [
   { id: 'light', family: 'givre', mode: 'light', scheme: 'light', default: true },
   { id: 'dark', family: 'givre', mode: 'dark', scheme: 'dark', default: false },
   { id: 'black', family: 'givre', mode: 'black', scheme: 'dark', default: false },
+  { id: 'ciel', family: 'ciel', mode: 'light', scheme: 'light', default: false },
+  { id: 'ciel-nuit', family: 'ciel', mode: 'dark', scheme: 'dark', default: false },
 ];
 const EXPECTED_FAMILIES = {
   givre: { material: 'flat', gradient: 'none' },
+  ciel: { material: 'glass', gradient: 'controlled' },
 };
+const LIST = EXPECTED.map((theme) => theme.id).join(', ');
 
 /** `ciel-nuit` → `cielNuit`: the member name a native binding gives a theme. */
 const nativeName = (id) => id.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
@@ -53,6 +57,11 @@ test('the registry lists every theme once, as a family in a mode', () => {
   assert.deepEqual([...THEMES], EXPECTED.map((theme) => theme.id));
   assert.equal(DEFAULT_THEME, 'light');
   assert.deepEqual(themesOfFamily('givre'), ['light', 'dark', 'black']);
+  assert.deepEqual(themesOfFamily('ciel'), ['ciel', 'ciel-nuit']);
+  assert.equal(themeSelector('ciel-nuit'), '[data-theme="ciel-nuit"]');
+  assert.deepEqual(familyRules('ciel-nuit'), EXPECTED_FAMILIES.ciel);
+  assert.equal(published.themeFor('ciel', 'dark').id, 'ciel-nuit');
+  assert.equal(published.themeFor('ciel', 'black'), undefined, 'a family has no theme in a mode it does not declare');
   assert.equal(themeSelector('light'), ':root, [data-theme="light"]');
   assert.equal(themeSelector('dark'), '[data-theme="dark"]');
   assert.deepEqual(familyRules('black'), EXPECTED_FAMILIES.givre);
@@ -60,12 +69,12 @@ test('the registry lists every theme once, as a family in a mode', () => {
 });
 
 test('an unknown theme or family is an error, never a silent default', () => {
-  assert.throws(() => themeInfo('sepia'), /"sepia" is not a theme; the themes are light, dark, black/);
+  assert.throws(() => themeInfo('sepia'), new RegExp(`"sepia" is not a theme; the themes are ${LIST}$`));
   assert.throws(() => themeSelector('sepia'), /"sepia" is not a theme/);
   assert.throws(() => themesOfFamily('aurora'), /"aurora" is not a theme family/);
   assert.throws(
     () => assertThemeGroups('expected complete theme set', ['light', 'dark']),
-    /expected complete theme set: light, dark, black \(the registry, scripts\/lib\/themes\.mjs\); tokens\.json declares light, dark$/,
+    new RegExp(`expected complete theme set: ${LIST} \\(the registry, scripts/lib/themes\\.mjs\\); tokens\\.json declares light, dark$`),
   );
   assert.throws(() => assertThemeGroups('expected complete theme set', [...THEMES].reverse()), /expected complete theme set: /);
   assert.throws(() => assertThemeGroups('expected complete theme set', []), /tokens\.json declares none/);
@@ -200,18 +209,18 @@ test('the build holds tokens.json to the registry in both directions', () => {
 
   const unregistered = sandbox((dir) => writeFileSync(join(dir, 'tokens.json'), JSON.stringify(withUnregisteredTheme(tree))));
   assert.notEqual(unregistered.status, 0, 'a theme in tokens.json that the registry does not hold must fail the build');
-  assert.match(unregistered.stderr, /expected complete theme set: light, dark, black \(the registry, [^)]+\); tokens\.json declares light, dark, black, sepia/);
+  assert.match(unregistered.stderr, new RegExp(`expected complete theme set: ${LIST} \\(the registry, [^)]+\\); tokens\\.json declares ${LIST}, sepia`));
 
   // The reverse: the registry holds a theme tokens.json does not declare.
   const tokenless = sandbox((dir) => {
     const file = join(dir, 'scripts/lib/themes.mjs');
     const source = readFileSync(file, 'utf8');
-    const patched = source.replace("{ id: 'black', family: 'givre', mode: 'black' },", "{ id: 'noir', family: 'givre', mode: 'black' },");
+    const patched = source.replace("{ id: 'ciel-nuit', family: 'ciel', mode: 'dark' },", "{ id: 'ciel-nuit', family: 'ciel', mode: 'dark' },\n    { id: 'sepia', family: 'ciel', mode: 'black' },");
     assert.notEqual(patched, source, 'the sandbox registry was not patched, so this case would pass vacuously');
     writeFileSync(file, patched);
   });
   assert.notEqual(tokenless.status, 0, 'a registered theme with no tokens must fail the build');
-  assert.match(tokenless.stderr, /expected complete theme set: light, dark, noir \(the registry, [^)]+\); tokens\.json declares light, dark, black/);
+  assert.match(tokenless.stderr, new RegExp(`expected complete theme set: ${LIST}, sepia \\(the registry, [^)]+\\); tokens\\.json declares ${LIST}$`, 'm'));
 
   const elevationOnly = sandbox((dir) => {
     const copy = structuredClone(tree);
@@ -219,14 +228,14 @@ test('the build holds tokens.json to the registry in both directions', () => {
     writeFileSync(join(dir, 'tokens.json'), JSON.stringify(copy));
   });
   assert.notEqual(elevationOnly.status, 0);
-  assert.match(elevationOnly.stderr, /expected elevation for the complete theme set: light, dark, black .*tokens\.json declares light, dark, black, sepia/);
+  assert.match(elevationOnly.stderr, new RegExp(`expected elevation for the complete theme set: ${LIST} .*tokens\\.json declares ${LIST}, sepia`));
 });
 
 test('the native generator is held to the same registry', async () => {
   const { buildNative } = await import('../scripts/lib/native.mjs');
   assert.throws(
     () => buildNative(Buffer.from(JSON.stringify(withUnregisteredTheme(tree)))),
-    /native: themes must be light, dark, black/,
+    new RegExp(`native: themes must be ${LIST}$`),
   );
 });
 

@@ -2,7 +2,7 @@
   "format": "kodera-native-tokens/1",
   "source": {
     "path": "tokens.json",
-    "sha256": "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a"
+    "sha256": "6408ebda321561d36cdb09a0db27e6d6ee573f6fefd494b5927171ce22b62dba"
   },
   "mapping": {
     "colors": "sRGB normalized channels; alpha preserved without compositing",
@@ -3756,6 +3756,2502 @@
       "colorSpace": "sRGB"
     },
     {
+      "path": "semantic.theme.ciel.page",
+      "aliases": [
+        "semantic.theme.ciel.page",
+        "color.theme-ciel.page"
+      ],
+      "api": "KoderaTokens.ciel.page",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 245,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.surface",
+      "aliases": [
+        "semantic.theme.ciel.surface",
+        "color.theme-ciel.surface"
+      ],
+      "api": "KoderaTokens.ciel.surface",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.sunken",
+      "aliases": [
+        "semantic.theme.ciel.sunken",
+        "color.theme-ciel.sunken"
+      ],
+      "api": "KoderaTokens.ciel.sunken",
+      "type": "color",
+      "value": {
+        "r": 245,
+        "g": 249,
+        "b": 253,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.muted",
+      "aliases": [
+        "semantic.theme.ciel.muted",
+        "color.theme-ciel.muted"
+      ],
+      "api": "KoderaTokens.ciel.muted",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 242,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.muted-2",
+      "aliases": [
+        "semantic.theme.ciel.muted-2",
+        "color.theme-ciel.muted-2"
+      ],
+      "api": "KoderaTokens.ciel.muted2",
+      "type": "color",
+      "value": {
+        "r": 220,
+        "g": 230,
+        "b": 240,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.hairline",
+      "aliases": [
+        "semantic.theme.ciel.hairline",
+        "color.theme-ciel.hairline"
+      ],
+      "api": "KoderaTokens.ciel.hairline",
+      "type": "color",
+      "value": {
+        "r": 242,
+        "g": 246,
+        "b": 250,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.border",
+      "aliases": [
+        "semantic.theme.ciel.border",
+        "color.theme-ciel.border"
+      ],
+      "api": "KoderaTokens.ciel.border",
+      "type": "color",
+      "value": {
+        "r": 217,
+        "g": 225,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.border-soft",
+      "aliases": [
+        "semantic.theme.ciel.border-soft",
+        "color.theme-ciel.border-soft"
+      ],
+      "api": "KoderaTokens.ciel.borderSoft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 234,
+        "b": 241,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.border-strong",
+      "aliases": [
+        "semantic.theme.ciel.border-strong",
+        "color.theme-ciel.border-strong"
+      ],
+      "api": "KoderaTokens.ciel.borderStrong",
+      "type": "color",
+      "value": {
+        "r": 201,
+        "g": 211,
+        "b": 222,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.inverse",
+      "aliases": [
+        "semantic.theme.ciel.inverse",
+        "color.theme-ciel.inverse"
+      ],
+      "api": "KoderaTokens.ciel.inverse",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 24,
+        "b": 39,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.inverse-2",
+      "aliases": [
+        "semantic.theme.ciel.inverse-2",
+        "color.theme-ciel.inverse-2"
+      ],
+      "api": "KoderaTokens.ciel.inverse2",
+      "type": "color",
+      "value": {
+        "r": 29,
+        "g": 37,
+        "b": 53,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.rail-line",
+      "aliases": [
+        "semantic.theme.ciel.rail-line",
+        "color.theme-ciel.rail-line"
+      ],
+      "api": "KoderaTokens.ciel.railLine",
+      "type": "color",
+      "value": {
+        "r": 58,
+        "g": 69,
+        "b": 89,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ink",
+      "aliases": [
+        "semantic.theme.ciel.ink",
+        "color.theme-ciel.ink"
+      ],
+      "api": "KoderaTokens.ciel.ink",
+      "type": "color",
+      "value": {
+        "r": 30,
+        "g": 41,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ink-2",
+      "aliases": [
+        "semantic.theme.ciel.ink-2",
+        "color.theme-ciel.ink-2"
+      ],
+      "api": "KoderaTokens.ciel.ink2",
+      "type": "color",
+      "value": {
+        "r": 86,
+        "g": 98,
+        "b": 110,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ink-3",
+      "aliases": [
+        "semantic.theme.ciel.ink-3",
+        "color.theme-ciel.ink-3"
+      ],
+      "api": "KoderaTokens.ciel.ink3",
+      "type": "color",
+      "value": {
+        "r": 92,
+        "g": 104,
+        "b": 116,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ink-4",
+      "aliases": [
+        "semantic.theme.ciel.ink-4",
+        "color.theme-ciel.ink-4"
+      ],
+      "api": "KoderaTokens.ciel.ink4",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 136,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.on-inverse",
+      "aliases": [
+        "semantic.theme.ciel.on-inverse",
+        "color.theme-ciel.on-inverse"
+      ],
+      "api": "KoderaTokens.ciel.onInverse",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.on-inverse-dim",
+      "aliases": [
+        "semantic.theme.ciel.on-inverse-dim",
+        "color.theme-ciel.on-inverse-dim"
+      ],
+      "api": "KoderaTokens.ciel.onInverseDim",
+      "type": "color",
+      "value": {
+        "r": 180,
+        "g": 191,
+        "b": 204,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.action",
+      "aliases": [
+        "semantic.theme.ciel.action",
+        "color.theme-ciel.action"
+      ],
+      "api": "KoderaTokens.ciel.action",
+      "type": "color",
+      "value": {
+        "r": 43,
+        "g": 75,
+        "b": 219,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.action-hover",
+      "aliases": [
+        "semantic.theme.ciel.action-hover",
+        "color.theme-ciel.action-hover"
+      ],
+      "api": "KoderaTokens.ciel.actionHover",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 64,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.accent-soft",
+      "aliases": [
+        "semantic.theme.ciel.accent-soft",
+        "color.theme-ciel.accent-soft"
+      ],
+      "api": "KoderaTokens.ciel.accentSoft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 233,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.accent-ink",
+      "aliases": [
+        "semantic.theme.ciel.accent-ink",
+        "color.theme-ciel.accent-ink"
+      ],
+      "api": "KoderaTokens.ciel.accentInk",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 64,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ok-on-dark",
+      "aliases": [
+        "semantic.theme.ciel.ok-on-dark",
+        "color.theme-ciel.ok-on-dark"
+      ],
+      "api": "KoderaTokens.ciel.okOnDark",
+      "type": "color",
+      "value": {
+        "r": 168,
+        "g": 229,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.bad-on-dark",
+      "aliases": [
+        "semantic.theme.ciel.bad-on-dark",
+        "color.theme-ciel.bad-on-dark"
+      ],
+      "api": "KoderaTokens.ciel.badOnDark",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 196,
+        "b": 186,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ok",
+      "aliases": [
+        "semantic.theme.ciel.ok",
+        "color.theme-ciel.ok"
+      ],
+      "api": "KoderaTokens.ciel.ok",
+      "type": "color",
+      "value": {
+        "r": 46,
+        "g": 139,
+        "b": 87,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ok-soft",
+      "aliases": [
+        "semantic.theme.ciel.ok-soft",
+        "color.theme-ciel.ok-soft"
+      ],
+      "api": "KoderaTokens.ciel.okSoft",
+      "type": "color",
+      "value": {
+        "r": 227,
+        "g": 243,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ok-ink",
+      "aliases": [
+        "semantic.theme.ciel.ok-ink",
+        "color.theme-ciel.ok-ink"
+      ],
+      "api": "KoderaTokens.ciel.okInk",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 107,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.ok-border",
+      "aliases": [
+        "semantic.theme.ciel.ok-border",
+        "color.theme-ciel.ok-border"
+      ],
+      "api": "KoderaTokens.ciel.okBorder",
+      "type": "color",
+      "value": {
+        "r": 199,
+        "g": 228,
+        "b": 211,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.warn",
+      "aliases": [
+        "semantic.theme.ciel.warn",
+        "color.theme-ciel.warn"
+      ],
+      "api": "KoderaTokens.ciel.warn",
+      "type": "color",
+      "value": {
+        "r": 183,
+        "g": 121,
+        "b": 31,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.warn-soft",
+      "aliases": [
+        "semantic.theme.ciel.warn-soft",
+        "color.theme-ciel.warn-soft"
+      ],
+      "api": "KoderaTokens.ciel.warnSoft",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 241,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.warn-ink",
+      "aliases": [
+        "semantic.theme.ciel.warn-ink",
+        "color.theme-ciel.warn-ink"
+      ],
+      "api": "KoderaTokens.ciel.warnInk",
+      "type": "color",
+      "value": {
+        "r": 138,
+        "g": 90,
+        "b": 16,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.bad",
+      "aliases": [
+        "semantic.theme.ciel.bad",
+        "color.theme-ciel.bad"
+      ],
+      "api": "KoderaTokens.ciel.bad",
+      "type": "color",
+      "value": {
+        "r": 194,
+        "g": 55,
+        "b": 43,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.bad-soft",
+      "aliases": [
+        "semantic.theme.ciel.bad-soft",
+        "color.theme-ciel.bad-soft"
+      ],
+      "api": "KoderaTokens.ciel.badSoft",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 229,
+        "b": 226,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.bad-ink",
+      "aliases": [
+        "semantic.theme.ciel.bad-ink",
+        "color.theme-ciel.bad-ink"
+      ],
+      "api": "KoderaTokens.ciel.badInk",
+      "type": "color",
+      "value": {
+        "r": 181,
+        "g": 50,
+        "b": 31,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.shadow-1",
+      "aliases": [
+        "semantic.theme.ciel.shadow-1",
+        "color.theme-ciel.shadow-1"
+      ],
+      "api": "KoderaTokens.ciel.shadow1",
+      "type": "color",
+      "value": {
+        "r": 30,
+        "g": 64,
+        "b": 104,
+        "a": 0.22
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.shadow-2",
+      "aliases": [
+        "semantic.theme.ciel.shadow-2",
+        "color.theme-ciel.shadow-2"
+      ],
+      "api": "KoderaTokens.ciel.shadow2",
+      "type": "color",
+      "value": {
+        "r": 30,
+        "g": 64,
+        "b": 104,
+        "a": 0.32
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t1-bg",
+      "aliases": [
+        "semantic.theme.ciel.t1-bg",
+        "color.theme-ciel.t1-bg"
+      ],
+      "api": "KoderaTokens.ciel.t1Bg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 233,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t1-fg",
+      "aliases": [
+        "semantic.theme.ciel.t1-fg",
+        "color.theme-ciel.t1-fg"
+      ],
+      "api": "KoderaTokens.ciel.t1Fg",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 64,
+        "b": 196,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t2-bg",
+      "aliases": [
+        "semantic.theme.ciel.t2-bg",
+        "color.theme-ciel.t2-bg"
+      ],
+      "api": "KoderaTokens.ciel.t2Bg",
+      "type": "color",
+      "value": {
+        "r": 227,
+        "g": 243,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t2-fg",
+      "aliases": [
+        "semantic.theme.ciel.t2-fg",
+        "color.theme-ciel.t2-fg"
+      ],
+      "api": "KoderaTokens.ciel.t2Fg",
+      "type": "color",
+      "value": {
+        "r": 31,
+        "g": 122,
+        "b": 69,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t3-bg",
+      "aliases": [
+        "semantic.theme.ciel.t3-bg",
+        "color.theme-ciel.t3-bg"
+      ],
+      "api": "KoderaTokens.ciel.t3Bg",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 241,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t3-fg",
+      "aliases": [
+        "semantic.theme.ciel.t3-fg",
+        "color.theme-ciel.t3-fg"
+      ],
+      "api": "KoderaTokens.ciel.t3Fg",
+      "type": "color",
+      "value": {
+        "r": 138,
+        "g": 90,
+        "b": 16,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t4-bg",
+      "aliases": [
+        "semantic.theme.ciel.t4-bg",
+        "color.theme-ciel.t4-bg"
+      ],
+      "api": "KoderaTokens.ciel.t4Bg",
+      "type": "color",
+      "value": {
+        "r": 251,
+        "g": 229,
+        "b": 226,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t4-fg",
+      "aliases": [
+        "semantic.theme.ciel.t4-fg",
+        "color.theme-ciel.t4-fg"
+      ],
+      "api": "KoderaTokens.ciel.t4Fg",
+      "type": "color",
+      "value": {
+        "r": 181,
+        "g": 50,
+        "b": 31,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t5-bg",
+      "aliases": [
+        "semantic.theme.ciel.t5-bg",
+        "color.theme-ciel.t5-bg"
+      ],
+      "api": "KoderaTokens.ciel.t5Bg",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 242,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t5-fg",
+      "aliases": [
+        "semantic.theme.ciel.t5-fg",
+        "color.theme-ciel.t5-fg"
+      ],
+      "api": "KoderaTokens.ciel.t5Fg",
+      "type": "color",
+      "value": {
+        "r": 86,
+        "g": 98,
+        "b": 110,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t6-bg",
+      "aliases": [
+        "semantic.theme.ciel.t6-bg",
+        "color.theme-ciel.t6-bg"
+      ],
+      "api": "KoderaTokens.ciel.t6Bg",
+      "type": "color",
+      "value": {
+        "r": 220,
+        "g": 230,
+        "b": 240,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.t6-fg",
+      "aliases": [
+        "semantic.theme.ciel.t6-fg",
+        "color.theme-ciel.t6-fg"
+      ],
+      "api": "KoderaTokens.ciel.t6Fg",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 58,
+        "b": 69,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.elevated",
+      "aliases": [
+        "semantic.theme.ciel.elevated",
+        "color.theme-ciel.surface"
+      ],
+      "api": "KoderaTokens.ciel.elevated",
+      "type": "color",
+      "value": {
+        "r": 255,
+        "g": 255,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.scrim",
+      "aliases": [
+        "semantic.theme.ciel.scrim",
+        "color.theme-ciel.scrim"
+      ],
+      "api": "KoderaTokens.ciel.scrim",
+      "type": "color",
+      "value": {
+        "r": 47,
+        "g": 58,
+        "b": 69,
+        "a": 0.55
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.border-input",
+      "aliases": [
+        "semantic.theme.ciel.border-input",
+        "color.slate.500"
+      ],
+      "api": "KoderaTokens.ciel.borderInput",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 136,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.placeholder",
+      "aliases": [
+        "semantic.theme.ciel.placeholder",
+        "color.theme-ciel.ink-3"
+      ],
+      "api": "KoderaTokens.ciel.placeholder",
+      "type": "color",
+      "value": {
+        "r": 92,
+        "g": 104,
+        "b": 116,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.disabled",
+      "aliases": [
+        "semantic.theme.ciel.disabled",
+        "color.theme-ciel.muted"
+      ],
+      "api": "KoderaTokens.ciel.disabled",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 242,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.on-disabled",
+      "aliases": [
+        "semantic.theme.ciel.on-disabled",
+        "color.theme-ciel.ink-3"
+      ],
+      "api": "KoderaTokens.ciel.onDisabled",
+      "type": "color",
+      "value": {
+        "r": 92,
+        "g": 104,
+        "b": 116,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-1",
+      "aliases": [
+        "semantic.theme.ciel.cursor-1",
+        "color.theme-ciel.cursor-1"
+      ],
+      "api": "KoderaTokens.ciel.cursor1",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 96,
+        "b": 163,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-1-soft",
+      "aliases": [
+        "semantic.theme.ciel.cursor-1-soft",
+        "color.theme-ciel.cursor-1-soft"
+      ],
+      "api": "KoderaTokens.ciel.cursor1Soft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 240,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-2",
+      "aliases": [
+        "semantic.theme.ciel.cursor-2",
+        "color.theme-ciel.cursor-2"
+      ],
+      "api": "KoderaTokens.ciel.cursor2",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 54,
+        "b": 194,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-2-soft",
+      "aliases": [
+        "semantic.theme.ciel.cursor-2-soft",
+        "color.theme-ciel.cursor-2-soft"
+      ],
+      "api": "KoderaTokens.ciel.cursor2Soft",
+      "type": "color",
+      "value": {
+        "r": 239,
+        "g": 233,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-3",
+      "aliases": [
+        "semantic.theme.ciel.cursor-3",
+        "color.theme-ciel.cursor-3"
+      ],
+      "api": "KoderaTokens.ciel.cursor3",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 110,
+        "b": 120,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-3-soft",
+      "aliases": [
+        "semantic.theme.ciel.cursor-3-soft",
+        "color.theme-ciel.cursor-3-soft"
+      ],
+      "api": "KoderaTokens.ciel.cursor3Soft",
+      "type": "color",
+      "value": {
+        "r": 227,
+        "g": 244,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-4",
+      "aliases": [
+        "semantic.theme.ciel.cursor-4",
+        "color.theme-ciel.cursor-4"
+      ],
+      "api": "KoderaTokens.ciel.cursor4",
+      "type": "color",
+      "value": {
+        "r": 168,
+        "g": 36,
+        "b": 104,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-4-soft",
+      "aliases": [
+        "semantic.theme.ciel.cursor-4-soft",
+        "color.theme-ciel.cursor-4-soft"
+      ],
+      "api": "KoderaTokens.ciel.cursor4Soft",
+      "type": "color",
+      "value": {
+        "r": 250,
+        "g": 234,
+        "b": 242,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-5",
+      "aliases": [
+        "semantic.theme.ciel.cursor-5",
+        "color.theme-ciel.cursor-5"
+      ],
+      "api": "KoderaTokens.ciel.cursor5",
+      "type": "color",
+      "value": {
+        "r": 172,
+        "g": 77,
+        "b": 12,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-5-soft",
+      "aliases": [
+        "semantic.theme.ciel.cursor-5-soft",
+        "color.theme-ciel.cursor-5-soft"
+      ],
+      "api": "KoderaTokens.ciel.cursor5Soft",
+      "type": "color",
+      "value": {
+        "r": 253,
+        "g": 240,
+        "b": 228,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-6",
+      "aliases": [
+        "semantic.theme.ciel.cursor-6",
+        "color.theme-ciel.cursor-6"
+      ],
+      "api": "KoderaTokens.ciel.cursor6",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 117,
+        "b": 86,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.cursor-6-soft",
+      "aliases": [
+        "semantic.theme.ciel.cursor-6-soft",
+        "color.theme-ciel.cursor-6-soft"
+      ],
+      "api": "KoderaTokens.ciel.cursor6Soft",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 245,
+        "b": 238,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-1-bg",
+      "aliases": [
+        "semantic.theme.ciel.tag-1-bg",
+        "color.theme-ciel.tag-1-bg"
+      ],
+      "api": "KoderaTokens.ciel.tag1Bg",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 238,
+        "b": 252,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-1-fg",
+      "aliases": [
+        "semantic.theme.ciel.tag-1-fg",
+        "color.theme-ciel.tag-1-fg"
+      ],
+      "api": "KoderaTokens.ciel.tag1Fg",
+      "type": "color",
+      "value": {
+        "r": 77,
+        "g": 44,
+        "b": 166,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-2-bg",
+      "aliases": [
+        "semantic.theme.ciel.tag-2-bg",
+        "color.theme-ciel.tag-2-bg"
+      ],
+      "api": "KoderaTokens.ciel.tag2Bg",
+      "type": "color",
+      "value": {
+        "r": 229,
+        "g": 244,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-2-fg",
+      "aliases": [
+        "semantic.theme.ciel.tag-2-fg",
+        "color.theme-ciel.tag-2-fg"
+      ],
+      "api": "KoderaTokens.ciel.tag2Fg",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 94,
+        "b": 106,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-3-bg",
+      "aliases": [
+        "semantic.theme.ciel.tag-3-bg",
+        "color.theme-ciel.tag-3-bg"
+      ],
+      "api": "KoderaTokens.ciel.tag3Bg",
+      "type": "color",
+      "value": {
+        "r": 249,
+        "g": 235,
+        "b": 244,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-3-fg",
+      "aliases": [
+        "semantic.theme.ciel.tag-3-fg",
+        "color.theme-ciel.tag-3-fg"
+      ],
+      "api": "KoderaTokens.ciel.tag3Fg",
+      "type": "color",
+      "value": {
+        "r": 138,
+        "g": 36,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-4-bg",
+      "aliases": [
+        "semantic.theme.ciel.tag-4-bg",
+        "color.theme-ciel.tag-4-bg"
+      ],
+      "api": "KoderaTokens.ciel.tag4Bg",
+      "type": "color",
+      "value": {
+        "r": 230,
+        "g": 241,
+        "b": 250,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-4-fg",
+      "aliases": [
+        "semantic.theme.ciel.tag-4-fg",
+        "color.theme-ciel.tag-4-fg"
+      ],
+      "api": "KoderaTokens.ciel.tag4Fg",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 81,
+        "b": 122,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-5-bg",
+      "aliases": [
+        "semantic.theme.ciel.tag-5-bg",
+        "color.theme-ciel.tag-5-bg"
+      ],
+      "api": "KoderaTokens.ciel.tag5Bg",
+      "type": "color",
+      "value": {
+        "r": 245,
+        "g": 236,
+        "b": 249,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-5-fg",
+      "aliases": [
+        "semantic.theme.ciel.tag-5-fg",
+        "color.theme-ciel.tag-5-fg"
+      ],
+      "api": "KoderaTokens.ciel.tag5Fg",
+      "type": "color",
+      "value": {
+        "r": 110,
+        "g": 40,
+        "b": 137,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-6-bg",
+      "aliases": [
+        "semantic.theme.ciel.tag-6-bg",
+        "color.theme-ciel.tag-6-bg"
+      ],
+      "api": "KoderaTokens.ciel.tag6Bg",
+      "type": "color",
+      "value": {
+        "r": 238,
+        "g": 243,
+        "b": 230,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel.tag-6-fg",
+      "aliases": [
+        "semantic.theme.ciel.tag-6-fg",
+        "color.theme-ciel.tag-6-fg"
+      ],
+      "api": "KoderaTokens.ciel.tag6Fg",
+      "type": "color",
+      "value": {
+        "r": 63,
+        "g": 87,
+        "b": 27,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.page",
+      "aliases": [
+        "semantic.theme.ciel-nuit.page",
+        "color.theme-ciel-nuit.page"
+      ],
+      "api": "KoderaTokens.cielNuit.page",
+      "type": "color",
+      "value": {
+        "r": 14,
+        "g": 17,
+        "b": 32,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.surface",
+      "aliases": [
+        "semantic.theme.ciel-nuit.surface",
+        "color.theme-ciel-nuit.surface"
+      ],
+      "api": "KoderaTokens.cielNuit.surface",
+      "type": "color",
+      "value": {
+        "r": 20,
+        "g": 26,
+        "b": 45,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.sunken",
+      "aliases": [
+        "semantic.theme.ciel-nuit.sunken",
+        "color.theme-ciel-nuit.sunken"
+      ],
+      "api": "KoderaTokens.cielNuit.sunken",
+      "type": "color",
+      "value": {
+        "r": 16,
+        "g": 21,
+        "b": 36,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.muted",
+      "aliases": [
+        "semantic.theme.ciel-nuit.muted",
+        "color.theme-ciel-nuit.muted"
+      ],
+      "api": "KoderaTokens.cielNuit.muted",
+      "type": "color",
+      "value": {
+        "r": 29,
+        "g": 36,
+        "b": 58,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.muted-2",
+      "aliases": [
+        "semantic.theme.ciel-nuit.muted-2",
+        "color.theme-ciel-nuit.muted-2"
+      ],
+      "api": "KoderaTokens.cielNuit.muted2",
+      "type": "color",
+      "value": {
+        "r": 36,
+        "g": 44,
+        "b": 67,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.hairline",
+      "aliases": [
+        "semantic.theme.ciel-nuit.hairline",
+        "color.theme-ciel-nuit.hairline"
+      ],
+      "api": "KoderaTokens.cielNuit.hairline",
+      "type": "color",
+      "value": {
+        "r": 23,
+        "g": 28,
+        "b": 46,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.border",
+      "aliases": [
+        "semantic.theme.ciel-nuit.border",
+        "color.theme-ciel-nuit.border"
+      ],
+      "api": "KoderaTokens.cielNuit.border",
+      "type": "color",
+      "value": {
+        "r": 36,
+        "g": 44,
+        "b": 66,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.border-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.border-soft",
+        "color.theme-ciel-nuit.border-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.borderSoft",
+      "type": "color",
+      "value": {
+        "r": 29,
+        "g": 36,
+        "b": 56,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.border-strong",
+      "aliases": [
+        "semantic.theme.ciel-nuit.border-strong",
+        "color.theme-ciel-nuit.border-strong"
+      ],
+      "api": "KoderaTokens.cielNuit.borderStrong",
+      "type": "color",
+      "value": {
+        "r": 48,
+        "g": 59,
+        "b": 88,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.inverse",
+      "aliases": [
+        "semantic.theme.ciel-nuit.inverse",
+        "color.theme-ciel-nuit.inverse"
+      ],
+      "api": "KoderaTokens.cielNuit.inverse",
+      "type": "color",
+      "value": {
+        "r": 7,
+        "g": 9,
+        "b": 13,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.inverse-2",
+      "aliases": [
+        "semantic.theme.ciel-nuit.inverse-2",
+        "color.theme-ciel-nuit.inverse-2"
+      ],
+      "api": "KoderaTokens.cielNuit.inverse2",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 27,
+        "b": 38,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.rail-line",
+      "aliases": [
+        "semantic.theme.ciel-nuit.rail-line",
+        "color.theme-ciel-nuit.rail-line"
+      ],
+      "api": "KoderaTokens.cielNuit.railLine",
+      "type": "color",
+      "value": {
+        "r": 42,
+        "g": 50,
+        "b": 66,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ink",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ink",
+        "color.theme-ciel-nuit.ink"
+      ],
+      "api": "KoderaTokens.cielNuit.ink",
+      "type": "color",
+      "value": {
+        "r": 237,
+        "g": 241,
+        "b": 247,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ink-2",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ink-2",
+        "color.theme-ciel-nuit.ink-2"
+      ],
+      "api": "KoderaTokens.cielNuit.ink2",
+      "type": "color",
+      "value": {
+        "r": 184,
+        "g": 194,
+        "b": 209,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ink-3",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ink-3",
+        "color.theme-ciel-nuit.ink-3"
+      ],
+      "api": "KoderaTokens.cielNuit.ink3",
+      "type": "color",
+      "value": {
+        "r": 151,
+        "g": 163,
+        "b": 181,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ink-4",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ink-4",
+        "color.theme-ciel-nuit.ink-4"
+      ],
+      "api": "KoderaTokens.cielNuit.ink4",
+      "type": "color",
+      "value": {
+        "r": 125,
+        "g": 138,
+        "b": 157,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.on-inverse",
+      "aliases": [
+        "semantic.theme.ciel-nuit.on-inverse",
+        "color.theme-ciel-nuit.on-inverse"
+      ],
+      "api": "KoderaTokens.cielNuit.onInverse",
+      "type": "color",
+      "value": {
+        "r": 243,
+        "g": 247,
+        "b": 251,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.on-inverse-dim",
+      "aliases": [
+        "semantic.theme.ciel-nuit.on-inverse-dim",
+        "color.theme-ciel-nuit.on-inverse-dim"
+      ],
+      "api": "KoderaTokens.cielNuit.onInverseDim",
+      "type": "color",
+      "value": {
+        "r": 161,
+        "g": 173,
+        "b": 190,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.action",
+      "aliases": [
+        "semantic.theme.ciel-nuit.action",
+        "color.theme-ciel-nuit.action"
+      ],
+      "api": "KoderaTokens.cielNuit.action",
+      "type": "color",
+      "value": {
+        "r": 67,
+        "g": 97,
+        "b": 238,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.action-hover",
+      "aliases": [
+        "semantic.theme.ciel-nuit.action-hover",
+        "color.theme-ciel-nuit.action-hover"
+      ],
+      "api": "KoderaTokens.cielNuit.actionHover",
+      "type": "color",
+      "value": {
+        "r": 58,
+        "g": 89,
+        "b": 232,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.accent-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.accent-soft",
+        "color.theme-ciel-nuit.accent-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.accentSoft",
+      "type": "color",
+      "value": {
+        "r": 26,
+        "g": 35,
+        "b": 80,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.accent-ink",
+      "aliases": [
+        "semantic.theme.ciel-nuit.accent-ink",
+        "color.theme-ciel-nuit.accent-ink"
+      ],
+      "api": "KoderaTokens.cielNuit.accentInk",
+      "type": "color",
+      "value": {
+        "r": 174,
+        "g": 190,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ok-on-dark",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ok-on-dark",
+        "color.theme-ciel-nuit.ok-on-dark"
+      ],
+      "api": "KoderaTokens.cielNuit.okOnDark",
+      "type": "color",
+      "value": {
+        "r": 127,
+        "g": 209,
+        "b": 163,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.bad-on-dark",
+      "aliases": [
+        "semantic.theme.ciel-nuit.bad-on-dark",
+        "color.theme-ciel-nuit.bad-on-dark"
+      ],
+      "api": "KoderaTokens.cielNuit.badOnDark",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ok",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ok",
+        "color.theme-ciel-nuit.ok"
+      ],
+      "api": "KoderaTokens.cielNuit.ok",
+      "type": "color",
+      "value": {
+        "r": 53,
+        "g": 169,
+        "b": 106,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ok-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ok-soft",
+        "color.theme-ciel-nuit.ok-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.okSoft",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 42,
+        "b": 29,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ok-ink",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ok-ink",
+        "color.theme-ciel-nuit.ok-ink"
+      ],
+      "api": "KoderaTokens.cielNuit.okInk",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 206,
+        "b": 147,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.ok-border",
+      "aliases": [
+        "semantic.theme.ciel-nuit.ok-border",
+        "color.theme-ciel-nuit.ok-border"
+      ],
+      "api": "KoderaTokens.cielNuit.okBorder",
+      "type": "color",
+      "value": {
+        "r": 31,
+        "g": 75,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.warn",
+      "aliases": [
+        "semantic.theme.ciel-nuit.warn",
+        "color.theme-ciel-nuit.warn"
+      ],
+      "api": "KoderaTokens.cielNuit.warn",
+      "type": "color",
+      "value": {
+        "r": 216,
+        "g": 155,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.warn-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.warn-soft",
+        "color.theme-ciel-nuit.warn-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.warnSoft",
+      "type": "color",
+      "value": {
+        "r": 44,
+        "g": 36,
+        "b": 19,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.warn-ink",
+      "aliases": [
+        "semantic.theme.ciel-nuit.warn-ink",
+        "color.theme-ciel-nuit.warn-ink"
+      ],
+      "api": "KoderaTokens.cielNuit.warnInk",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 178,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.bad",
+      "aliases": [
+        "semantic.theme.ciel-nuit.bad",
+        "color.theme-ciel-nuit.bad"
+      ],
+      "api": "KoderaTokens.cielNuit.bad",
+      "type": "color",
+      "value": {
+        "r": 194,
+        "g": 55,
+        "b": 43,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.bad-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.bad-soft",
+        "color.theme-ciel-nuit.bad-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.badSoft",
+      "type": "color",
+      "value": {
+        "r": 51,
+        "g": 26,
+        "b": 26,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.bad-ink",
+      "aliases": [
+        "semantic.theme.ciel-nuit.bad-ink",
+        "color.theme-ciel-nuit.bad-ink"
+      ],
+      "api": "KoderaTokens.cielNuit.badInk",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.shadow-1",
+      "aliases": [
+        "semantic.theme.ciel-nuit.shadow-1",
+        "color.theme-ciel-nuit.shadow-1"
+      ],
+      "api": "KoderaTokens.cielNuit.shadow1",
+      "type": "color",
+      "value": {
+        "r": 2,
+        "g": 4,
+        "b": 16,
+        "a": 0.5
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.shadow-2",
+      "aliases": [
+        "semantic.theme.ciel-nuit.shadow-2",
+        "color.theme-ciel-nuit.shadow-2"
+      ],
+      "api": "KoderaTokens.cielNuit.shadow2",
+      "type": "color",
+      "value": {
+        "r": 2,
+        "g": 4,
+        "b": 16,
+        "a": 0.62
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t1-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t1-bg",
+        "color.theme-ciel-nuit.t1-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.t1Bg",
+      "type": "color",
+      "value": {
+        "r": 28,
+        "g": 37,
+        "b": 64,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t1-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t1-fg",
+        "color.theme-ciel-nuit.t1-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.t1Fg",
+      "type": "color",
+      "value": {
+        "r": 169,
+        "g": 187,
+        "b": 255,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t2-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t2-bg",
+        "color.theme-ciel-nuit.t2-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.t2Bg",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 42,
+        "b": 29,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t2-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t2-fg",
+        "color.theme-ciel-nuit.t2-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.t2Fg",
+      "type": "color",
+      "value": {
+        "r": 99,
+        "g": 206,
+        "b": 147,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t3-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t3-bg",
+        "color.theme-ciel-nuit.t3-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.t3Bg",
+      "type": "color",
+      "value": {
+        "r": 44,
+        "g": 36,
+        "b": 19,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t3-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t3-fg",
+        "color.theme-ciel-nuit.t3-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.t3Fg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 178,
+        "b": 101,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t4-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t4-bg",
+        "color.theme-ciel-nuit.t4-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.t4Bg",
+      "type": "color",
+      "value": {
+        "r": 51,
+        "g": 26,
+        "b": 26,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t4-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t4-fg",
+        "color.theme-ciel-nuit.t4-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.t4Fg",
+      "type": "color",
+      "value": {
+        "r": 241,
+        "g": 145,
+        "b": 131,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t5-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t5-bg",
+        "color.theme-ciel-nuit.t5-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.t5Bg",
+      "type": "color",
+      "value": {
+        "r": 33,
+        "g": 42,
+        "b": 51,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t5-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t5-fg",
+        "color.theme-ciel-nuit.t5-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.t5Fg",
+      "type": "color",
+      "value": {
+        "r": 185,
+        "g": 198,
+        "b": 212,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t6-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t6-bg",
+        "color.theme-ciel-nuit.t6-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.t6Bg",
+      "type": "color",
+      "value": {
+        "r": 38,
+        "g": 48,
+        "b": 58,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.t6-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.t6-fg",
+        "color.theme-ciel-nuit.t6-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.t6Fg",
+      "type": "color",
+      "value": {
+        "r": 232,
+        "g": 239,
+        "b": 246,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.elevated",
+      "aliases": [
+        "semantic.theme.ciel-nuit.elevated",
+        "color.theme-ciel-nuit.elevated"
+      ],
+      "api": "KoderaTokens.cielNuit.elevated",
+      "type": "color",
+      "value": {
+        "r": 27,
+        "g": 33,
+        "b": 56,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.scrim",
+      "aliases": [
+        "semantic.theme.ciel-nuit.scrim",
+        "color.theme-ciel-nuit.scrim"
+      ],
+      "api": "KoderaTokens.cielNuit.scrim",
+      "type": "color",
+      "value": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0.6
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.border-input",
+      "aliases": [
+        "semantic.theme.ciel-nuit.border-input",
+        "color.theme-ciel-nuit.border-input"
+      ],
+      "api": "KoderaTokens.cielNuit.borderInput",
+      "type": "color",
+      "value": {
+        "r": 110,
+        "g": 125,
+        "b": 148,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.placeholder",
+      "aliases": [
+        "semantic.theme.ciel-nuit.placeholder",
+        "color.theme-ciel-nuit.placeholder"
+      ],
+      "api": "KoderaTokens.cielNuit.placeholder",
+      "type": "color",
+      "value": {
+        "r": 143,
+        "g": 155,
+        "b": 174,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.disabled",
+      "aliases": [
+        "semantic.theme.ciel-nuit.disabled",
+        "color.theme-ciel-nuit.muted-2"
+      ],
+      "api": "KoderaTokens.cielNuit.disabled",
+      "type": "color",
+      "value": {
+        "r": 36,
+        "g": 44,
+        "b": 67,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.on-disabled",
+      "aliases": [
+        "semantic.theme.ciel-nuit.on-disabled",
+        "color.theme-ciel-nuit.ink-3"
+      ],
+      "api": "KoderaTokens.cielNuit.onDisabled",
+      "type": "color",
+      "value": {
+        "r": 151,
+        "g": 163,
+        "b": 181,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-1",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-1",
+        "color.theme-ciel-nuit.cursor-1"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor1",
+      "type": "color",
+      "value": {
+        "r": 22,
+        "g": 113,
+        "b": 186,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-1-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-1-soft",
+        "color.theme-ciel-nuit.cursor-1-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor1Soft",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 37,
+        "b": 54,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-2",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-2",
+        "color.theme-ciel-nuit.cursor-2"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor2",
+      "type": "color",
+      "value": {
+        "r": 124,
+        "g": 82,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-2-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-2-soft",
+        "color.theme-ciel-nuit.cursor-2-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor2Soft",
+      "type": "color",
+      "value": {
+        "r": 36,
+        "g": 27,
+        "b": 62,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-3",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-3",
+        "color.theme-ciel-nuit.cursor-3"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor3",
+      "type": "color",
+      "value": {
+        "r": 20,
+        "g": 121,
+        "b": 132,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-3-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-3-soft",
+        "color.theme-ciel-nuit.cursor-3-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor3Soft",
+      "type": "color",
+      "value": {
+        "r": 15,
+        "g": 38,
+        "b": 44,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-4",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-4",
+        "color.theme-ciel-nuit.cursor-4"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor4",
+      "type": "color",
+      "value": {
+        "r": 193,
+        "g": 53,
+        "b": 123,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-4-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-4-soft",
+        "color.theme-ciel-nuit.cursor-4-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor4Soft",
+      "type": "color",
+      "value": {
+        "r": 50,
+        "g": 23,
+        "b": 40,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-5",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-5",
+        "color.theme-ciel-nuit.cursor-5"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor5",
+      "type": "color",
+      "value": {
+        "r": 177,
+        "g": 83,
+        "b": 16,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-5-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-5-soft",
+        "color.theme-ciel-nuit.cursor-5-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor5Soft",
+      "type": "color",
+      "value": {
+        "r": 46,
+        "g": 30,
+        "b": 18,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-6",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-6",
+        "color.theme-ciel-nuit.cursor-6"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor6",
+      "type": "color",
+      "value": {
+        "r": 21,
+        "g": 123,
+        "b": 91,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.cursor-6-soft",
+      "aliases": [
+        "semantic.theme.ciel-nuit.cursor-6-soft",
+        "color.theme-ciel-nuit.cursor-6-soft"
+      ],
+      "api": "KoderaTokens.cielNuit.cursor6Soft",
+      "type": "color",
+      "value": {
+        "r": 17,
+        "g": 41,
+        "b": 34,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-1-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-1-bg",
+        "color.theme-ciel-nuit.tag-1-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag1Bg",
+      "type": "color",
+      "value": {
+        "r": 35,
+        "g": 27,
+        "b": 60,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-1-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-1-fg",
+        "color.theme-ciel-nuit.tag-1-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag1Fg",
+      "type": "color",
+      "value": {
+        "r": 213,
+        "g": 200,
+        "b": 250,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-2-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-2-bg",
+        "color.theme-ciel-nuit.tag-2-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag2Bg",
+      "type": "color",
+      "value": {
+        "r": 16,
+        "g": 40,
+        "b": 46,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-2-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-2-fg",
+        "color.theme-ciel-nuit.tag-2-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag2Fg",
+      "type": "color",
+      "value": {
+        "r": 159,
+        "g": 224,
+        "b": 234,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-3-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-3-bg",
+        "color.theme-ciel-nuit.tag-3-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag3Bg",
+      "type": "color",
+      "value": {
+        "r": 49,
+        "g": 23,
+        "b": 40,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-3-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-3-fg",
+        "color.theme-ciel-nuit.tag-3-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag3Fg",
+      "type": "color",
+      "value": {
+        "r": 240,
+        "g": 185,
+        "b": 220,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-4-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-4-bg",
+        "color.theme-ciel-nuit.tag-4-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag4Bg",
+      "type": "color",
+      "value": {
+        "r": 18,
+        "g": 38,
+        "b": 56,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-4-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-4-fg",
+        "color.theme-ciel-nuit.tag-4-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag4Fg",
+      "type": "color",
+      "value": {
+        "r": 168,
+        "g": 213,
+        "b": 245,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-5-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-5-bg",
+        "color.theme-ciel-nuit.tag-5-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag5Bg",
+      "type": "color",
+      "value": {
+        "r": 43,
+        "g": 24,
+        "b": 54,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-5-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-5-fg",
+        "color.theme-ciel-nuit.tag-5-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag5Fg",
+      "type": "color",
+      "value": {
+        "r": 228,
+        "g": 190,
+        "b": 245,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-6-bg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-6-bg",
+        "color.theme-ciel-nuit.tag-6-bg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag6Bg",
+      "type": "color",
+      "value": {
+        "r": 30,
+        "g": 40,
+        "b": 20,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.tag-6-fg",
+      "aliases": [
+        "semantic.theme.ciel-nuit.tag-6-fg",
+        "color.theme-ciel-nuit.tag-6-fg"
+      ],
+      "api": "KoderaTokens.cielNuit.tag6Fg",
+      "type": "color",
+      "value": {
+        "r": 199,
+        "g": 222,
+        "b": 160,
+        "a": 1
+      },
+      "colorSpace": "sRGB"
+    },
+    {
       "path": "space.1",
       "aliases": [
         "space.1"
@@ -5275,6 +7771,610 @@
       "reason": "outside the native format 1 surface"
     },
     {
+      "path": "color.theme-ciel.page",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "color.theme-ciel.surface",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.sunken",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.muted",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.muted-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.hairline",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.border-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.border-strong",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.inverse-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.rail-line",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ink-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ink-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ink-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.on-inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.on-inverse-dim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.action",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.action-hover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.accent-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.accent-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ok-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.bad-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ok",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ok-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ok-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.ok-border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.warn",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.warn-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.warn-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.bad",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.bad-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.bad-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.shadow-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.shadow-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.t6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.scrim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-1-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-2-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-3-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-4-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-5",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-5-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-6",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.cursor-6-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.tag-6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.page",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "color.theme-ciel-nuit.surface",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.sunken",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.muted",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.muted-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.hairline",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.border-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.border-strong",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.inverse-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.rail-line",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ink-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ink-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ink-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.on-inverse",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.on-inverse-dim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.action",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.action-hover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.accent-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.accent-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ok-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.bad-on-dark",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ok",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ok-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ok-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.ok-border",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.warn",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.warn-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.warn-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.bad",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.bad-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.bad-ink",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.shadow-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.shadow-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.t6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.elevated",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.border-input",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.placeholder",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.scrim",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-1",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-1-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-2",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-2-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-3",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-3-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-4",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-4-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-5",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-5-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-6",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.cursor-6-soft",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-1-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-1-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-2-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-2-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-3-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-3-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-4-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-4-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-5-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-5-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-6-bg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.tag-6-fg",
+      "reason": "outside the native format 1 surface"
+    },
+    {
       "path": "semantic.surface.page",
       "reason": "outside the native format 1 surface"
     },
@@ -5375,6 +8475,14 @@
       "reason": "gradient: no native approximation"
     },
     {
+      "path": "semantic.theme.ciel.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
+      "path": "semantic.theme.ciel-nuit.page-grad",
+      "reason": "gradient: no native approximation"
+    },
+    {
       "path": "semantic.elevation.light.raised",
       "reason": "elevation: no native approximation"
     },
@@ -5420,6 +8528,38 @@
     },
     {
       "path": "semantic.elevation.black.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel-nuit.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel-nuit.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel-nuit.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "semantic.elevation.ciel-nuit.dialog",
       "reason": "elevation: no native approximation"
     },
     {
@@ -5532,6 +8672,38 @@
     },
     {
       "path": "shadow.theme-black.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel.dialog",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel-nuit.raised",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel-nuit.overlay",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel-nuit.drawer",
+      "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "shadow.theme-ciel-nuit.dialog",
       "reason": "elevation: no native approximation"
     },
     {

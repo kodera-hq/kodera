@@ -11,7 +11,8 @@
 //             contrast gate's own self-test (each way it must fail, fails),
 //             the theme registry every generator reads,
 //             the shell themes' own contract, elevation and breakpoints, and
-//             the Givre & Nuit properties (no gradient, dark steps, rail, radii)
+//             the Givre & Nuit properties (no gradient, dark steps, rail, radii),
+//             and the Sky Glass family's foundation contract
 //
 // Every gate runs even when an earlier one fails, so one command tells you
 // everything that is wrong rather than one thing at a time.
@@ -44,6 +45,7 @@ const gates = [
       'test/cursor-and-tag-palettes.selftest.mjs',
       'test/native-generation.selftest.mjs',
       'test/givre-nuit.selftest.mjs',
+      'test/sky-glass.selftest.mjs',
     ],
   ],
 ];

@@ -3413,6 +3413,2024 @@
       "bg": "semantic.theme.black.tag-6-bg",
       "label": "black: focus ring core on the painted tag-6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
       "min": 3
+    },
+    {
+      "id": "theme.ciel/studio-selection",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.ok-soft",
+      "label": "ciel: selected workspace room and navigation text",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/surface",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: focus ring core on surface — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/sunken",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: focus ring core on sunken — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/page",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: focus ring core on page — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/hairline",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.hairline",
+      "label": "ciel: focus ring core on hairline — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/muted",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: focus ring core on muted — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/muted-2",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.muted-2",
+      "label": "ciel: focus ring core on muted-2 — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/accent-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.accent-soft",
+      "label": "ciel: focus ring core on the painted accent-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/ok-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.ok-soft",
+      "label": "ciel: focus ring core on the painted ok-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/warn-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.warn-soft",
+      "label": "ciel: focus ring core on the painted warn-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/bad-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.bad-soft",
+      "label": "ciel: focus ring core on the painted bad-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/t1-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.t1-bg",
+      "label": "ciel: focus ring core on the painted t1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/t2-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.t2-bg",
+      "label": "ciel: focus ring core on the painted t2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/t3-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.t3-bg",
+      "label": "ciel: focus ring core on the painted t3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/t4-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.t4-bg",
+      "label": "ciel: focus ring core on the painted t4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/t5-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.t5-bg",
+      "label": "ciel: focus ring core on the painted t5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring/t6-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.t6-bg",
+      "label": "ciel: focus ring core on the painted t6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring-on-inverse/inverse",
+      "fg": "spec:focus-ring-on-inverse.ciel.indicator",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: on-inverse focus ring core on inverse — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring-on-inverse/inverse-2",
+      "fg": "spec:focus-ring-on-inverse.ciel.indicator",
+      "bg": "semantic.theme.ciel.inverse-2",
+      "label": "ciel: on-inverse focus ring core on inverse-2 — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/focus-ring-on-inverse/bad",
+      "fg": "spec:focus-ring-on-inverse.ciel.indicator",
+      "bg": "semantic.theme.ciel.bad",
+      "label": "ciel: on-inverse focus ring core on bad — the variant a danger control on an inverse panel (Quitter) or a danger toast action is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/ink/page",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/page",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: ink-2 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/page",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: ink-3 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/page",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: accent-ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/surface",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/surface",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: ink-2 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/surface",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: ink-3 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/surface",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: accent-ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/sunken",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/sunken",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: ink-2 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/sunken",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: ink-3 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/sunken",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: accent-ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/muted",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/muted",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: ink-2 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/muted",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: ink-3 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/muted",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: accent-ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/muted-2",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.muted-2",
+      "label": "ciel: ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/muted-2",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.muted-2",
+      "label": "ciel: ink-2 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/muted-2",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.muted-2",
+      "label": "ciel: ink-3 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/muted-2",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.muted-2",
+      "label": "ciel: accent-ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/hairline",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.hairline",
+      "label": "ciel: ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/hairline",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.hairline",
+      "label": "ciel: ink-2 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/hairline",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.hairline",
+      "label": "ciel: ink-3 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/hairline",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.hairline",
+      "label": "ciel: accent-ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-inverse/inverse",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: on-inverse text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-inverse/inverse-2",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.inverse-2",
+      "label": "ciel: on-inverse text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-inverse-dim/inverse",
+      "fg": "semantic.theme.ciel.on-inverse-dim",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: on-inverse-dim text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-inverse-dim/inverse-2",
+      "fg": "semantic.theme.ciel.on-inverse-dim",
+      "bg": "semantic.theme.ciel.inverse-2",
+      "label": "ciel: on-inverse-dim text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ok-on-dark/inverse",
+      "fg": "semantic.theme.ciel.ok-on-dark",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: ok-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ok-on-dark/inverse-2",
+      "fg": "semantic.theme.ciel.ok-on-dark",
+      "bg": "semantic.theme.ciel.inverse-2",
+      "label": "ciel: ok-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/bad-on-dark/inverse",
+      "fg": "semantic.theme.ciel.bad-on-dark",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: bad-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/bad-on-dark/inverse-2",
+      "fg": "semantic.theme.ciel.bad-on-dark",
+      "bg": "semantic.theme.ciel.inverse-2",
+      "label": "ciel: bad-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ok/ok-soft",
+      "fg": "semantic.theme.ciel.ok",
+      "bg": "semantic.theme.ciel.ok-soft",
+      "label": "ciel: ok status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/ok/surface",
+      "fg": "semantic.theme.ciel.ok",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: ok status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/ok-ink/ok-soft",
+      "fg": "semantic.theme.ciel.ok-ink",
+      "bg": "semantic.theme.ciel.ok-soft",
+      "label": "ciel: ok label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/warn/warn-soft",
+      "fg": "semantic.theme.ciel.warn",
+      "bg": "semantic.theme.ciel.warn-soft",
+      "label": "ciel: warn status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/warn/surface",
+      "fg": "semantic.theme.ciel.warn",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: warn status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/warn-ink/warn-soft",
+      "fg": "semantic.theme.ciel.warn-ink",
+      "bg": "semantic.theme.ciel.warn-soft",
+      "label": "ciel: warn label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/bad/surface",
+      "fg": "semantic.theme.ciel.bad",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: bad status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/bad-ink/bad-soft",
+      "fg": "semantic.theme.ciel.bad-ink",
+      "bg": "semantic.theme.ciel.bad-soft",
+      "label": "ciel: bad label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/accent-soft",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.accent-soft",
+      "label": "ciel: accent text on accent tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/t1-fg/t1-bg",
+      "fg": "semantic.theme.ciel.t1-fg",
+      "bg": "semantic.theme.ciel.t1-bg",
+      "label": "ciel: avatar palette 1 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/t2-fg/t2-bg",
+      "fg": "semantic.theme.ciel.t2-fg",
+      "bg": "semantic.theme.ciel.t2-bg",
+      "label": "ciel: avatar palette 2 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/t3-fg/t3-bg",
+      "fg": "semantic.theme.ciel.t3-fg",
+      "bg": "semantic.theme.ciel.t3-bg",
+      "label": "ciel: avatar palette 3 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/t4-fg/t4-bg",
+      "fg": "semantic.theme.ciel.t4-fg",
+      "bg": "semantic.theme.ciel.t4-bg",
+      "label": "ciel: avatar palette 4 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/t5-fg/t5-bg",
+      "fg": "semantic.theme.ciel.t5-fg",
+      "bg": "semantic.theme.ciel.t5-bg",
+      "label": "ciel: avatar palette 5 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/t6-fg/t6-bg",
+      "fg": "semantic.theme.ciel.t6-fg",
+      "bg": "semantic.theme.ciel.t6-bg",
+      "label": "ciel: avatar palette 6 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-inverse/action",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.action",
+      "label": "ciel: reference button or badge label on action",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-inverse/action-hover",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.action-hover",
+      "label": "ciel: reference button or badge label on action-hover",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/action/surface",
+      "fg": "semantic.theme.ciel.action",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: primary button fill against surface, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/action/page",
+      "fg": "semantic.theme.ciel.action",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: primary button fill against page, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel/on-inverse/bad",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.bad",
+      "label": "ciel: reference button or badge label on bad",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/icon-ink-4/surface",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: informative icon on surface; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/icon-ink-4/sunken",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: informative icon on sunken; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/icon-ink-4/muted",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: informative icon on muted; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/icon-ink-3/accent-soft",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.accent-soft",
+      "label": "ciel: informative icon on accent-soft; the selected room row, decided ink-3 (unselected rows keep ink-4 on surface, sunken and muted)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/indicator-ok-on-dark/inverse",
+      "fg": "semantic.theme.ciel.ok-on-dark",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: connected-room status indicator on inverse, reference line 294; decided ok-on-dark (the 4.5:1 text row above covers the same pair)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/focus-ring/elevated",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: focus ring core on elevated — the opaque tone that sits against the control, as [data-theme=\"ciel\"] paints it (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/ink/elevated",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/elevated",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: ink-2 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/elevated",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: ink-3 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/elevated",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: accent-ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/border-input/surface",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: control boundary on surface — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/border-input/sunken",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: control boundary on sunken — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/border-input/muted",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: control boundary on muted — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/border-input/elevated",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: control boundary on elevated — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/placeholder/surface",
+      "fg": "semantic.theme.ciel.placeholder",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: input placeholder on a field drawn on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/placeholder/sunken",
+      "fg": "semantic.theme.ciel.placeholder",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: input placeholder on a field drawn on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/placeholder/muted",
+      "fg": "semantic.theme.ciel.placeholder",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: input placeholder on a field drawn on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/placeholder/elevated",
+      "fg": "semantic.theme.ciel.placeholder",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: input placeholder on a field drawn on elevated",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/on-disabled/disabled",
+      "fg": "semantic.theme.ciel.on-disabled",
+      "bg": "semantic.theme.ciel.disabled",
+      "label": "ciel: disabled control label on the disabled fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ok-ink/elevated",
+      "fg": "semantic.theme.ciel.ok-ink",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: ok-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/warn-ink/elevated",
+      "fg": "semantic.theme.ciel.warn-ink",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: warn-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/bad-ink/elevated",
+      "fg": "semantic.theme.ciel.bad-ink",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: bad-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/icon-ink-4/elevated",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: ink-4 informative icon on elevated (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/ink/accent-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.accent-soft",
+      "label": "ciel: ink text on accent-soft — a decision callout, a selected palette option, a focused message",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/accent-soft",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.accent-soft",
+      "label": "ciel: ink-3 text or icon on accent-soft — the time of a focused message, the meta of a selected option, the icon of a selected row",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/warn-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.warn-soft",
+      "label": "ciel: ink text on warn-soft — a search match highlight, a commented passage, a warning callout",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ok-ink/surface",
+      "fg": "semantic.theme.ciel.ok-ink",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: ok-ink text on surface — a success hint under a field, a presence label",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ok-ink/muted",
+      "fg": "semantic.theme.ciel.ok-ink",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: ok-ink text on muted — a room active-speaker label on a hovered row, a presence label on a muted field",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/inverse/on-inverse",
+      "fg": "semantic.theme.ciel.inverse",
+      "bg": "semantic.theme.ciel.on-inverse",
+      "label": "ciel: inverse icon and label on the on-inverse pressed plate — a muted or deafened call toggle",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/cursor-1/surface",
+      "fg": "semantic.theme.ciel.cursor-1",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: collaborator 1 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-1/sunken",
+      "fg": "semantic.theme.ciel.cursor-1",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: collaborator 1 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/on-inverse/cursor-1",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.cursor-1",
+      "label": "ciel: collaborator 1 cursor name flag label on cursor-1",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/cursor-1-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.cursor-1-soft",
+      "label": "ciel: ink text on collaborator 1 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/cursor-1-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.cursor-1-soft",
+      "label": "ciel: focus ring core on the painted cursor-1-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-2/surface",
+      "fg": "semantic.theme.ciel.cursor-2",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: collaborator 2 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-2/sunken",
+      "fg": "semantic.theme.ciel.cursor-2",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: collaborator 2 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/on-inverse/cursor-2",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.cursor-2",
+      "label": "ciel: collaborator 2 cursor name flag label on cursor-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/cursor-2-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.cursor-2-soft",
+      "label": "ciel: ink text on collaborator 2 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/cursor-2-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.cursor-2-soft",
+      "label": "ciel: focus ring core on the painted cursor-2-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-3/surface",
+      "fg": "semantic.theme.ciel.cursor-3",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: collaborator 3 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-3/sunken",
+      "fg": "semantic.theme.ciel.cursor-3",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: collaborator 3 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/on-inverse/cursor-3",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.cursor-3",
+      "label": "ciel: collaborator 3 cursor name flag label on cursor-3",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/cursor-3-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.cursor-3-soft",
+      "label": "ciel: ink text on collaborator 3 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/cursor-3-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.cursor-3-soft",
+      "label": "ciel: focus ring core on the painted cursor-3-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-4/surface",
+      "fg": "semantic.theme.ciel.cursor-4",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: collaborator 4 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-4/sunken",
+      "fg": "semantic.theme.ciel.cursor-4",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: collaborator 4 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/on-inverse/cursor-4",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.cursor-4",
+      "label": "ciel: collaborator 4 cursor name flag label on cursor-4",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/cursor-4-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.cursor-4-soft",
+      "label": "ciel: ink text on collaborator 4 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/cursor-4-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.cursor-4-soft",
+      "label": "ciel: focus ring core on the painted cursor-4-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-5/surface",
+      "fg": "semantic.theme.ciel.cursor-5",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: collaborator 5 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-5/sunken",
+      "fg": "semantic.theme.ciel.cursor-5",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: collaborator 5 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/on-inverse/cursor-5",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.cursor-5",
+      "label": "ciel: collaborator 5 cursor name flag label on cursor-5",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/cursor-5-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.cursor-5-soft",
+      "label": "ciel: ink text on collaborator 5 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/cursor-5-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.cursor-5-soft",
+      "label": "ciel: focus ring core on the painted cursor-5-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-6/surface",
+      "fg": "semantic.theme.ciel.cursor-6",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: collaborator 6 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/cursor-6/sunken",
+      "fg": "semantic.theme.ciel.cursor-6",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: collaborator 6 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/on-inverse/cursor-6",
+      "fg": "semantic.theme.ciel.on-inverse",
+      "bg": "semantic.theme.ciel.cursor-6",
+      "label": "ciel: collaborator 6 cursor name flag label on cursor-6",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink/cursor-6-soft",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.cursor-6-soft",
+      "label": "ciel: ink text on collaborator 6 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/cursor-6-soft",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.cursor-6-soft",
+      "label": "ciel: focus ring core on the painted cursor-6-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/tag-1-fg/tag-1-bg",
+      "fg": "semantic.theme.ciel.tag-1-fg",
+      "bg": "semantic.theme.ciel.tag-1-bg",
+      "label": "ciel: non-status categorical tag 1 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/tag-1-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.tag-1-bg",
+      "label": "ciel: focus ring core on the painted tag-1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/tag-2-fg/tag-2-bg",
+      "fg": "semantic.theme.ciel.tag-2-fg",
+      "bg": "semantic.theme.ciel.tag-2-bg",
+      "label": "ciel: non-status categorical tag 2 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/tag-2-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.tag-2-bg",
+      "label": "ciel: focus ring core on the painted tag-2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/tag-3-fg/tag-3-bg",
+      "fg": "semantic.theme.ciel.tag-3-fg",
+      "bg": "semantic.theme.ciel.tag-3-bg",
+      "label": "ciel: non-status categorical tag 3 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/tag-3-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.tag-3-bg",
+      "label": "ciel: focus ring core on the painted tag-3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/tag-4-fg/tag-4-bg",
+      "fg": "semantic.theme.ciel.tag-4-fg",
+      "bg": "semantic.theme.ciel.tag-4-bg",
+      "label": "ciel: non-status categorical tag 4 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/tag-4-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.tag-4-bg",
+      "label": "ciel: focus ring core on the painted tag-4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/tag-5-fg/tag-5-bg",
+      "fg": "semantic.theme.ciel.tag-5-fg",
+      "bg": "semantic.theme.ciel.tag-5-bg",
+      "label": "ciel: non-status categorical tag 5 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/tag-5-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.tag-5-bg",
+      "label": "ciel: focus ring core on the painted tag-5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel/tag-6-fg/tag-6-bg",
+      "fg": "semantic.theme.ciel.tag-6-fg",
+      "bg": "semantic.theme.ciel.tag-6-bg",
+      "label": "ciel: non-status categorical tag 6 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/tag-6-bg",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.tag-6-bg",
+      "label": "ciel: focus ring core on the painted tag-6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/studio-selection",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.ok-soft",
+      "label": "ciel-nuit: selected workspace room and navigation text",
+      "min": 4.5
+    },
+    {
+      "id": "focus-ring-halo/theme.ciel-nuit.surface",
+      "fg": "spec:focus-ring.ciel-nuit.outer",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: the ring's outermost tone alone on surface, at its own alpha. Inverted like the Givre rows, and for the same reason: a 35 % halo is not the indicator, and if it ever clears 3:1 the two-tone construction is doing nothing and someone has to say which tone the indicator is",
+      "min": 3.0,
+      "expect": "fail"
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/surface",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: focus ring core on surface — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/sunken",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: focus ring core on sunken — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/page",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: focus ring core on page — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/hairline",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.hairline",
+      "label": "ciel-nuit: focus ring core on hairline — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/muted",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: focus ring core on muted — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/muted-2",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.muted-2",
+      "label": "ciel-nuit: focus ring core on muted-2 — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/accent-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.accent-soft",
+      "label": "ciel-nuit: focus ring core on the painted accent-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/ok-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.ok-soft",
+      "label": "ciel-nuit: focus ring core on the painted ok-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/warn-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.warn-soft",
+      "label": "ciel-nuit: focus ring core on the painted warn-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/bad-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.bad-soft",
+      "label": "ciel-nuit: focus ring core on the painted bad-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/t1-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.t1-bg",
+      "label": "ciel-nuit: focus ring core on the painted t1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/t2-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.t2-bg",
+      "label": "ciel-nuit: focus ring core on the painted t2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/t3-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.t3-bg",
+      "label": "ciel-nuit: focus ring core on the painted t3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/t4-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.t4-bg",
+      "label": "ciel-nuit: focus ring core on the painted t4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/t5-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.t5-bg",
+      "label": "ciel-nuit: focus ring core on the painted t5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/t6-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.t6-bg",
+      "label": "ciel-nuit: focus ring core on the painted t6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring-on-inverse/inverse",
+      "fg": "spec:focus-ring-on-inverse.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: on-inverse focus ring core on inverse — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring-on-inverse/inverse-2",
+      "fg": "spec:focus-ring-on-inverse.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.inverse-2",
+      "label": "ciel-nuit: on-inverse focus ring core on inverse-2 — the variant a control on an inverse panel is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring-on-inverse/bad",
+      "fg": "spec:focus-ring-on-inverse.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.bad",
+      "label": "ciel-nuit: on-inverse focus ring core on bad — the variant a danger control on an inverse panel (Quitter) or a danger toast action is drawn with, where the normal core is the wrong side of the ground (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/ink/page",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/page",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: ink-2 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/page",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: ink-3 text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/page",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: accent-ink text on page",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/surface",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/surface",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: ink-2 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/surface",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: ink-3 text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/surface",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: accent-ink text on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/sunken",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/sunken",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: ink-2 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/sunken",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: ink-3 text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/sunken",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: accent-ink text on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/muted",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/muted",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: ink-2 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/muted",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: ink-3 text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/muted",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: accent-ink text on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/muted-2",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.muted-2",
+      "label": "ciel-nuit: ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/muted-2",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.muted-2",
+      "label": "ciel-nuit: ink-2 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/muted-2",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.muted-2",
+      "label": "ciel-nuit: ink-3 text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/muted-2",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.muted-2",
+      "label": "ciel-nuit: accent-ink text on muted-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/hairline",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.hairline",
+      "label": "ciel-nuit: ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/hairline",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.hairline",
+      "label": "ciel-nuit: ink-2 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/hairline",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.hairline",
+      "label": "ciel-nuit: ink-3 text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/hairline",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.hairline",
+      "label": "ciel-nuit: accent-ink text on hairline",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/inverse",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: on-inverse text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/inverse-2",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.inverse-2",
+      "label": "ciel-nuit: on-inverse text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse-dim/inverse",
+      "fg": "semantic.theme.ciel-nuit.on-inverse-dim",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: on-inverse-dim text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse-dim/inverse-2",
+      "fg": "semantic.theme.ciel-nuit.on-inverse-dim",
+      "bg": "semantic.theme.ciel-nuit.inverse-2",
+      "label": "ciel-nuit: on-inverse-dim text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ok-on-dark/inverse",
+      "fg": "semantic.theme.ciel-nuit.ok-on-dark",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: ok-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ok-on-dark/inverse-2",
+      "fg": "semantic.theme.ciel-nuit.ok-on-dark",
+      "bg": "semantic.theme.ciel-nuit.inverse-2",
+      "label": "ciel-nuit: ok-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/bad-on-dark/inverse",
+      "fg": "semantic.theme.ciel-nuit.bad-on-dark",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: bad-on-dark text on inverse",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/bad-on-dark/inverse-2",
+      "fg": "semantic.theme.ciel-nuit.bad-on-dark",
+      "bg": "semantic.theme.ciel-nuit.inverse-2",
+      "label": "ciel-nuit: bad-on-dark text on inverse-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ok/ok-soft",
+      "fg": "semantic.theme.ciel-nuit.ok",
+      "bg": "semantic.theme.ciel-nuit.ok-soft",
+      "label": "ciel-nuit: ok status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ok/surface",
+      "fg": "semantic.theme.ciel-nuit.ok",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: ok status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ok-ink/ok-soft",
+      "fg": "semantic.theme.ciel-nuit.ok-ink",
+      "bg": "semantic.theme.ciel-nuit.ok-soft",
+      "label": "ciel-nuit: ok label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/warn/warn-soft",
+      "fg": "semantic.theme.ciel-nuit.warn",
+      "bg": "semantic.theme.ciel-nuit.warn-soft",
+      "label": "ciel-nuit: warn status indicator on tint",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/warn/surface",
+      "fg": "semantic.theme.ciel-nuit.warn",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: warn status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/warn-ink/warn-soft",
+      "fg": "semantic.theme.ciel-nuit.warn-ink",
+      "bg": "semantic.theme.ciel-nuit.warn-soft",
+      "label": "ciel-nuit: warn label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/bad/surface",
+      "fg": "semantic.theme.ciel-nuit.bad",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: bad status indicator on surface",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/bad-ink/bad-soft",
+      "fg": "semantic.theme.ciel-nuit.bad-ink",
+      "bg": "semantic.theme.ciel-nuit.bad-soft",
+      "label": "ciel-nuit: bad label on tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/accent-soft",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.accent-soft",
+      "label": "ciel-nuit: accent text on accent tint",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/t1-fg/t1-bg",
+      "fg": "semantic.theme.ciel-nuit.t1-fg",
+      "bg": "semantic.theme.ciel-nuit.t1-bg",
+      "label": "ciel-nuit: avatar palette 1 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/t2-fg/t2-bg",
+      "fg": "semantic.theme.ciel-nuit.t2-fg",
+      "bg": "semantic.theme.ciel-nuit.t2-bg",
+      "label": "ciel-nuit: avatar palette 2 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/t3-fg/t3-bg",
+      "fg": "semantic.theme.ciel-nuit.t3-fg",
+      "bg": "semantic.theme.ciel-nuit.t3-bg",
+      "label": "ciel-nuit: avatar palette 3 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/t4-fg/t4-bg",
+      "fg": "semantic.theme.ciel-nuit.t4-fg",
+      "bg": "semantic.theme.ciel-nuit.t4-bg",
+      "label": "ciel-nuit: avatar palette 4 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/t5-fg/t5-bg",
+      "fg": "semantic.theme.ciel-nuit.t5-fg",
+      "bg": "semantic.theme.ciel-nuit.t5-bg",
+      "label": "ciel-nuit: avatar palette 5 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/t6-fg/t6-bg",
+      "fg": "semantic.theme.ciel-nuit.t6-fg",
+      "bg": "semantic.theme.ciel-nuit.t6-bg",
+      "label": "ciel-nuit: avatar palette 6 initials on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/action",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.action",
+      "label": "ciel-nuit: reference button or badge label on action",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/action-hover",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.action-hover",
+      "label": "ciel-nuit: reference button or badge label on action-hover",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/action/surface",
+      "fg": "semantic.theme.ciel-nuit.action",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: primary button fill against surface, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/action/page",
+      "fg": "semantic.theme.ciel-nuit.action",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: primary button fill against page, so the control is found without reading its label (non-text, 1.4.11)",
+      "min": 3.0
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/bad",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.bad",
+      "label": "ciel-nuit: reference button or badge label on bad",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/icon-ink-4/surface",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: informative icon on surface; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/icon-ink-4/sunken",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: informative icon on sunken; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/icon-ink-4/muted",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: informative icon on muted; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/icon-ink-4/accent-soft",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.accent-soft",
+      "label": "ciel-nuit: informative icon on accent-soft; search, room row and mobile navigation",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ok/inverse",
+      "fg": "semantic.theme.ciel-nuit.ok",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: connected-room status indicator, reference line 294",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/elevated",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: focus ring core on elevated — the opaque tone that sits against the control, as [data-theme=\"ciel-nuit\"] paints it (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ink/elevated",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/elevated",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: ink-2 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/elevated",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: ink-3 text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/elevated",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: accent-ink text on elevated (menu, popover, dialog)",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/border-input/surface",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: control boundary on surface — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/border-input/sunken",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: control boundary on sunken — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/border-input/muted",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: control boundary on muted — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/border-input/elevated",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: control boundary on elevated — the only edge of a field the user has to find (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/placeholder/surface",
+      "fg": "semantic.theme.ciel-nuit.placeholder",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: input placeholder on a field drawn on surface",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/placeholder/sunken",
+      "fg": "semantic.theme.ciel-nuit.placeholder",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: input placeholder on a field drawn on sunken",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/placeholder/muted",
+      "fg": "semantic.theme.ciel-nuit.placeholder",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: input placeholder on a field drawn on muted",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/placeholder/elevated",
+      "fg": "semantic.theme.ciel-nuit.placeholder",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: input placeholder on a field drawn on elevated",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/on-disabled/disabled",
+      "fg": "semantic.theme.ciel-nuit.on-disabled",
+      "bg": "semantic.theme.ciel-nuit.disabled",
+      "label": "ciel-nuit: disabled control label on the disabled fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ok-ink/elevated",
+      "fg": "semantic.theme.ciel-nuit.ok-ink",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: ok-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/warn-ink/elevated",
+      "fg": "semantic.theme.ciel-nuit.warn-ink",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: warn-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/bad-ink/elevated",
+      "fg": "semantic.theme.ciel-nuit.bad-ink",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: bad-ink on elevated — a status label or icon in a menu or dialog; on elevated, status draws its -ink role",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/icon-ink-4/elevated",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: ink-4 informative icon on elevated (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ink/accent-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.accent-soft",
+      "label": "ciel-nuit: ink text on accent-soft — a decision callout, a selected palette option, a focused message",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/accent-soft",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.accent-soft",
+      "label": "ciel-nuit: ink-3 text or icon on accent-soft — the time of a focused message, the meta of a selected option, the icon of a selected row",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/warn-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.warn-soft",
+      "label": "ciel-nuit: ink text on warn-soft — a search match highlight, a commented passage, a warning callout",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ok-ink/surface",
+      "fg": "semantic.theme.ciel-nuit.ok-ink",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: ok-ink text on surface — a success hint under a field, a presence label",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ok-ink/muted",
+      "fg": "semantic.theme.ciel-nuit.ok-ink",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: ok-ink text on muted — a room active-speaker label on a hovered row, a presence label on a muted field",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/inverse/on-inverse",
+      "fg": "semantic.theme.ciel-nuit.inverse",
+      "bg": "semantic.theme.ciel-nuit.on-inverse",
+      "label": "ciel-nuit: inverse icon and label on the on-inverse pressed plate — a muted or deafened call toggle",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-1/surface",
+      "fg": "semantic.theme.ciel-nuit.cursor-1",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: collaborator 1 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-1/sunken",
+      "fg": "semantic.theme.ciel-nuit.cursor-1",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: collaborator 1 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/cursor-1",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.cursor-1",
+      "label": "ciel-nuit: collaborator 1 cursor name flag label on cursor-1",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/cursor-1-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.cursor-1-soft",
+      "label": "ciel-nuit: ink text on collaborator 1 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/cursor-1-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.cursor-1-soft",
+      "label": "ciel-nuit: focus ring core on the painted cursor-1-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-2/surface",
+      "fg": "semantic.theme.ciel-nuit.cursor-2",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: collaborator 2 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-2/sunken",
+      "fg": "semantic.theme.ciel-nuit.cursor-2",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: collaborator 2 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/cursor-2",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.cursor-2",
+      "label": "ciel-nuit: collaborator 2 cursor name flag label on cursor-2",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/cursor-2-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.cursor-2-soft",
+      "label": "ciel-nuit: ink text on collaborator 2 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/cursor-2-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.cursor-2-soft",
+      "label": "ciel-nuit: focus ring core on the painted cursor-2-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-3/surface",
+      "fg": "semantic.theme.ciel-nuit.cursor-3",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: collaborator 3 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-3/sunken",
+      "fg": "semantic.theme.ciel-nuit.cursor-3",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: collaborator 3 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/cursor-3",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.cursor-3",
+      "label": "ciel-nuit: collaborator 3 cursor name flag label on cursor-3",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/cursor-3-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.cursor-3-soft",
+      "label": "ciel-nuit: ink text on collaborator 3 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/cursor-3-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.cursor-3-soft",
+      "label": "ciel-nuit: focus ring core on the painted cursor-3-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-4/surface",
+      "fg": "semantic.theme.ciel-nuit.cursor-4",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: collaborator 4 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-4/sunken",
+      "fg": "semantic.theme.ciel-nuit.cursor-4",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: collaborator 4 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/cursor-4",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.cursor-4",
+      "label": "ciel-nuit: collaborator 4 cursor name flag label on cursor-4",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/cursor-4-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.cursor-4-soft",
+      "label": "ciel-nuit: ink text on collaborator 4 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/cursor-4-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.cursor-4-soft",
+      "label": "ciel-nuit: focus ring core on the painted cursor-4-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-5/surface",
+      "fg": "semantic.theme.ciel-nuit.cursor-5",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: collaborator 5 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-5/sunken",
+      "fg": "semantic.theme.ciel-nuit.cursor-5",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: collaborator 5 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/cursor-5",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.cursor-5",
+      "label": "ciel-nuit: collaborator 5 cursor name flag label on cursor-5",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/cursor-5-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.cursor-5-soft",
+      "label": "ciel-nuit: ink text on collaborator 5 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/cursor-5-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.cursor-5-soft",
+      "label": "ciel-nuit: focus ring core on the painted cursor-5-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-6/surface",
+      "fg": "semantic.theme.ciel-nuit.cursor-6",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: collaborator 6 cursor caret, presence ring and pill edge on surface (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/cursor-6/sunken",
+      "fg": "semantic.theme.ciel-nuit.cursor-6",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: collaborator 6 cursor caret, presence ring and pill edge on sunken (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/on-inverse/cursor-6",
+      "fg": "semantic.theme.ciel-nuit.on-inverse",
+      "bg": "semantic.theme.ciel-nuit.cursor-6",
+      "label": "ciel-nuit: collaborator 6 cursor name flag label on cursor-6",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink/cursor-6-soft",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.cursor-6-soft",
+      "label": "ciel-nuit: ink text on collaborator 6 selection highlight",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/cursor-6-soft",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.cursor-6-soft",
+      "label": "ciel-nuit: focus ring core on the painted cursor-6-soft ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/tag-1-fg/tag-1-bg",
+      "fg": "semantic.theme.ciel-nuit.tag-1-fg",
+      "bg": "semantic.theme.ciel-nuit.tag-1-bg",
+      "label": "ciel-nuit: non-status categorical tag 1 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/tag-1-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.tag-1-bg",
+      "label": "ciel-nuit: focus ring core on the painted tag-1-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/tag-2-fg/tag-2-bg",
+      "fg": "semantic.theme.ciel-nuit.tag-2-fg",
+      "bg": "semantic.theme.ciel-nuit.tag-2-bg",
+      "label": "ciel-nuit: non-status categorical tag 2 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/tag-2-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.tag-2-bg",
+      "label": "ciel-nuit: focus ring core on the painted tag-2-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/tag-3-fg/tag-3-bg",
+      "fg": "semantic.theme.ciel-nuit.tag-3-fg",
+      "bg": "semantic.theme.ciel-nuit.tag-3-bg",
+      "label": "ciel-nuit: non-status categorical tag 3 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/tag-3-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.tag-3-bg",
+      "label": "ciel-nuit: focus ring core on the painted tag-3-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/tag-4-fg/tag-4-bg",
+      "fg": "semantic.theme.ciel-nuit.tag-4-fg",
+      "bg": "semantic.theme.ciel-nuit.tag-4-bg",
+      "label": "ciel-nuit: non-status categorical tag 4 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/tag-4-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.tag-4-bg",
+      "label": "ciel-nuit: focus ring core on the painted tag-4-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/tag-5-fg/tag-5-bg",
+      "fg": "semantic.theme.ciel-nuit.tag-5-fg",
+      "bg": "semantic.theme.ciel-nuit.tag-5-bg",
+      "label": "ciel-nuit: non-status categorical tag 5 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/tag-5-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.tag-5-bg",
+      "label": "ciel-nuit: focus ring core on the painted tag-5-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/tag-6-fg/tag-6-bg",
+      "fg": "semantic.theme.ciel-nuit.tag-6-fg",
+      "bg": "semantic.theme.ciel-nuit.tag-6-bg",
+      "label": "ciel-nuit: non-status categorical tag 6 label on fill",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/tag-6-bg",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.tag-6-bg",
+      "label": "ciel-nuit: focus ring core on the painted tag-6-bg ground — a control sits on these too, so the ring is claimed to clear them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "focus-ring-halo/theme.ciel.surface",
+      "fg": "spec:focus-ring.ciel.outer",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: the ring's outermost tone alone on surface, at its own alpha. Inverted like the Givre rows, and for the same reason: a 35 % halo is not the indicator, and if it ever clears 3:1 the two-tone construction is doing nothing and someone has to say which tone the indicator is",
+      "min": 3,
+      "expect": "fail"
     }
   ],
   "measurements": [
@@ -4086,6 +6104,454 @@
       "label": "black: bad fill colour as an icon on elevated; capability probe, the decided usage is bad-ink",
       "kind": "capability",
       "purpose": "On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/ink-4/page",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: ink-4 text on page; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-4/surface",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: ink-4 text on surface; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-4/sunken",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.sunken",
+      "label": "ciel: ink-4 text on sunken; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-4/muted",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.muted",
+      "label": "ciel: ink-4 text on muted; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-4/muted-2",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.muted-2",
+      "label": "ciel: ink-4 text on muted-2; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-4/hairline",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.theme.ciel.hairline",
+      "label": "ciel: ink-4 text on hairline; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/border/surface",
+      "fg": "semantic.theme.ciel.border",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: border sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/border-soft/surface",
+      "fg": "semantic.theme.ciel.border-soft",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: border-soft sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/border-strong/surface",
+      "fg": "semantic.theme.ciel.border-strong",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: border-strong sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/rail-line/inverse",
+      "fg": "semantic.theme.ciel.rail-line",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: rail-line sole meaningful boundary capability probe on inverse; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Rail separators, room framing and track; reference lines 147, 355, 365, 381, 1714. Not the sole semantic indication of state.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/shadow-1/surface",
+      "fg": "semantic.theme.ciel.shadow-1",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: shadow-1 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Decorative elevation color; no foreground content or sole control boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/shadow-2/surface",
+      "fg": "semantic.theme.ciel.shadow-2",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: shadow-2 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Decorative popover elevation color; reference conversation dock line 1663. Blur is not a solid boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/ok-border/ok-soft",
+      "fg": "semantic.theme.ciel.ok-border",
+      "bg": "semantic.theme.ciel.ok-soft",
+      "label": "ciel: ok-border sole meaningful boundary capability probe on ok-soft; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Status badge decoration; status is carried by visible text; reference line 96.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/bad/bad-soft",
+      "fg": "semantic.theme.ciel.bad",
+      "bg": "semantic.theme.ciel.bad-soft",
+      "label": "ciel: bad status indicator on tint",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Status dot on a danger tint capability. Observed danger tint text/icons use bad-ink; reference lines 1910, 2063, 2146.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/action/surface",
+      "fg": "semantic.theme.ciel.action",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: action inline link on surface",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/white/action",
+      "fg": "color.white",
+      "bg": "semantic.theme.ciel.action",
+      "label": "ciel: white label on action button",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/action-hover/surface",
+      "fg": "semantic.theme.ciel.action-hover",
+      "bg": "semantic.theme.ciel.surface",
+      "label": "ciel: action-hover inline link on surface",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel/white/action-hover",
+      "fg": "color.white",
+      "bg": "semantic.theme.ciel.action-hover",
+      "label": "ciel: white label on action-hover button",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.ciel.inverse",
+      "fg": "spec:focus-ring-on-inverse.ciel.outer",
+      "bg": "semantic.theme.ciel.inverse",
+      "label": "ciel: the on-inverse ring's outermost tone alone on the inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.ciel/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds “the halo is never the indicator” on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.ciel.inverse-2",
+      "fg": "spec:focus-ring-on-inverse.ciel.outer",
+      "bg": "semantic.theme.ciel.inverse-2",
+      "label": "ciel: the on-inverse ring's outermost tone alone on the second inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.ciel/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds “the halo is never the indicator” on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.ciel.bad",
+      "fg": "spec:focus-ring-on-inverse.ciel.outer",
+      "bg": "semantic.theme.ciel.bad",
+      "label": "ciel: the on-inverse ring's outermost tone alone on bad, at its own alpha",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: The outer softening of the on-inverse ring, at 35 %, measured alone on the danger control fill (Quitter). It is not the indicator: the opaque core is, and theme.ciel/focus-ring-on-inverse/bad gates that core at 3:1.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/scrim/page",
+      "fg": "semantic.theme.ciel.scrim",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: scrim composited over the page, reported only",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: The overlay behind a dialog dims what it covers and carries no meaning; the dialog itself sits on elevated, whose text rows are normative."
+    },
+    {
+      "id": "theme.ciel/ok/elevated",
+      "fg": "semantic.theme.ciel.ok",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: ok fill colour as an icon on elevated; capability probe, the decided usage is ok-ink",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: On elevated a status icon or label draws ok-ink, which the 4.5:1 row above gates. The ok fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/warn/elevated",
+      "fg": "semantic.theme.ciel.warn",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: warn fill colour as an icon on elevated; capability probe, the decided usage is warn-ink",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: On elevated a status icon or label draws warn-ink, which the 4.5:1 row above gates. The warn fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/bad/elevated",
+      "fg": "semantic.theme.ciel.bad",
+      "bg": "semantic.theme.ciel.elevated",
+      "label": "ciel: bad fill colour as an icon on elevated; capability probe, the decided usage is bad-ink",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre light theme whose reasoning it inherits: On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ink-4/page",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: ink-4 text on page; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-4/surface",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: ink-4 text on surface; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-4/sunken",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.sunken",
+      "label": "ciel-nuit: ink-4 text on sunken; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-4/muted",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.muted",
+      "label": "ciel-nuit: ink-4 text on muted; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-4/muted-2",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.muted-2",
+      "label": "ciel-nuit: ink-4 text on muted-2; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-4/hairline",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.theme.ciel-nuit.hairline",
+      "label": "ciel-nuit: ink-4 text on hairline; text capability probe, reference uses this role for icons",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Unsupported running-text capability only. Observed icon strokes use the 3:1 rows below; reference lines 172, 203, 314 and 2256.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/border/surface",
+      "fg": "semantic.theme.ciel-nuit.border",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: border sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/border-soft/surface",
+      "fg": "semantic.theme.ciel-nuit.border-soft",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: border-soft sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/border-strong/surface",
+      "fg": "semantic.theme.ciel-nuit.border-strong",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: border-strong sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Decorative card, panel and separator outlines; reference lines 161, 171 and 785. A control relying only on this edge needs a separate component assessment.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/rail-line/inverse",
+      "fg": "semantic.theme.ciel-nuit.rail-line",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: rail-line sole meaningful boundary capability probe on inverse; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Rail separators, room framing and track; reference lines 147, 355, 365, 381, 1714. Not the sole semantic indication of state.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/shadow-1/surface",
+      "fg": "semantic.theme.ciel-nuit.shadow-1",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: shadow-1 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Decorative elevation color; no foreground content or sole control boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/shadow-2/surface",
+      "fg": "semantic.theme.ciel-nuit.shadow-2",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: shadow-2 sole meaningful boundary capability probe on surface; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Decorative popover elevation color; reference conversation dock line 1663. Blur is not a solid boundary.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ok-border/ok-soft",
+      "fg": "semantic.theme.ciel-nuit.ok-border",
+      "bg": "semantic.theme.ciel-nuit.ok-soft",
+      "label": "ciel-nuit: ok-border sole meaningful boundary capability probe on ok-soft; decorative usage still needs component review",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Status badge decoration; status is carried by visible text; reference line 96.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/bad/bad-soft",
+      "fg": "semantic.theme.ciel-nuit.bad",
+      "bg": "semantic.theme.ciel-nuit.bad-soft",
+      "label": "ciel-nuit: bad status indicator on tint",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Status dot on a danger tint capability. Observed danger tint text/icons use bad-ink; reference lines 1910, 2063, 2146.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/action/surface",
+      "fg": "semantic.theme.ciel-nuit.action",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: action inline link on surface",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/white/action",
+      "fg": "color.white",
+      "bg": "semantic.theme.ciel-nuit.action",
+      "label": "ciel-nuit: white label on action button",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/action-hover/surface",
+      "fg": "semantic.theme.ciel-nuit.action-hover",
+      "bg": "semantic.theme.ciel-nuit.surface",
+      "label": "ciel-nuit: action-hover inline link on surface",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Inline-text capability only; actual reference actions use a colored button fill and on-inverse label (lines 342, 1758, 2636). Inline content links use accent-ink.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/white/action-hover",
+      "fg": "color.white",
+      "bg": "semantic.theme.ciel-nuit.action-hover",
+      "label": "ciel-nuit: white label on action-hover button",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: Pure white label capability. Actual buttons use theme-specific on-inverse; normative rows measure that value.",
+      "thresholdForComparison": 4.5
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.ciel-nuit.inverse",
+      "fg": "spec:focus-ring-on-inverse.ciel-nuit.outer",
+      "bg": "semantic.theme.ciel-nuit.inverse",
+      "label": "ciel-nuit: the on-inverse ring's outermost tone alone on the inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.ciel-nuit/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds “the halo is never the indicator” on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.ciel-nuit.inverse-2",
+      "fg": "spec:focus-ring-on-inverse.ciel-nuit.outer",
+      "bg": "semantic.theme.ciel-nuit.inverse-2",
+      "label": "ciel-nuit: the on-inverse ring's outermost tone alone on the second inverse panel, at its own alpha",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: The outer softening of the on-inverse ring, at 35 %, measured alone. It is not the indicator: the opaque core is, and theme.ciel-nuit/focus-ring-on-inverse/inverse and /inverse-2 gate that core at 3:1. This tone carries no inverted row of its own, unlike the default ring's halo: that one stays below 3:1 on all 54 theme-and-ground combinations it was measured over, while this one reaches 3.04:1 on dark.inverse and 3.15:1 on black.inverse-2, so a row asserting it stays below 3:1 would be false. Both inverse panels carry a row, in every theme, so each figure quoted for this tone is derived here rather than copied into prose. What holds “the halo is never the indicator” on the two grounds where an inverted row cannot is the opaque core, which test/color-math.selftest.mjs asserts across every theme and every variant.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "focus-ring-on-inverse-halo/theme.ciel-nuit.bad",
+      "fg": "spec:focus-ring-on-inverse.ciel-nuit.outer",
+      "bg": "semantic.theme.ciel-nuit.bad",
+      "label": "ciel-nuit: the on-inverse ring's outermost tone alone on bad, at its own alpha",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: The outer softening of the on-inverse ring, at 35 %, measured alone on the danger control fill (Quitter). It is not the indicator: the opaque core is, and theme.ciel-nuit/focus-ring-on-inverse/bad gates that core at 3:1.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/scrim/page",
+      "fg": "semantic.theme.ciel-nuit.scrim",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: scrim composited over the page, reported only",
+      "kind": "decorative",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: The overlay behind a dialog dims what it covers and carries no meaning; the dialog itself sits on elevated, whose text rows are normative."
+    },
+    {
+      "id": "theme.ciel-nuit/ok/elevated",
+      "fg": "semantic.theme.ciel-nuit.ok",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: ok fill colour as an icon on elevated; capability probe, the decided usage is ok-ink",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: On elevated a status icon or label draws ok-ink, which the 4.5:1 row above gates. The ok fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/warn/elevated",
+      "fg": "semantic.theme.ciel-nuit.warn",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: warn fill colour as an icon on elevated; capability probe, the decided usage is warn-ink",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: On elevated a status icon or label draws warn-ink, which the 4.5:1 row above gates. The warn fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/bad/elevated",
+      "fg": "semantic.theme.ciel-nuit.bad",
+      "bg": "semantic.theme.ciel-nuit.elevated",
+      "label": "ciel-nuit: bad fill colour as an icon on elevated; capability probe, the decided usage is bad-ink",
+      "kind": "capability",
+      "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
       "thresholdForComparison": 3
     }
   ]

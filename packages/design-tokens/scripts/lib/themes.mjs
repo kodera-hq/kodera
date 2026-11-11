@@ -25,6 +25,12 @@ export const THEME_FAMILIES = Object.freeze({
     material: 'flat',
     gradient: 'none',
   }),
+  ciel: Object.freeze({
+    // "Ethereal Sky Glass" (docs/specs/ethereal-sky-glass.md): translucent
+    // materials over a sky, and a gradient held to the controlled grammar.
+    material: 'glass',
+    gradient: 'controlled',
+  }),
 });
 
 const MODES = ['light', 'dark', 'black'];
@@ -42,6 +48,8 @@ export const THEME_REGISTRY = Object.freeze(
     { id: 'light', family: 'givre', mode: 'light', default: true },
     { id: 'dark', family: 'givre', mode: 'dark' },
     { id: 'black', family: 'givre', mode: 'black' },
+    { id: 'ciel', family: 'ciel', mode: 'light' },
+    { id: 'ciel-nuit', family: 'ciel', mode: 'dark' },
   ].map((theme) => Object.freeze({ default: false, ...theme, scheme: SCHEME_OF[theme.mode] })),
 );
 

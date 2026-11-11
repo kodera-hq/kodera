@@ -8,6 +8,8 @@ export const themes = Object.freeze([
   Object.freeze({ id: "light", family: "givre", mode: "light", scheme: "light", default: true }),
   Object.freeze({ id: "dark", family: "givre", mode: "dark", scheme: "dark", default: false }),
   Object.freeze({ id: "black", family: "givre", mode: "black", scheme: "dark", default: false }),
+  Object.freeze({ id: "ciel", family: "ciel", mode: "light", scheme: "light", default: false }),
+  Object.freeze({ id: "ciel-nuit", family: "ciel", mode: "dark", scheme: "dark", default: false }),
 ]);
 
 /** The `[data-theme]` attribute values, in the same order. */
@@ -19,6 +21,7 @@ export const defaultTheme = "light";
 /** What each family allows, and the themes it holds. */
 export const themeFamilies = Object.freeze({
   "givre": Object.freeze({ material: "flat", gradient: "none", themes: Object.freeze(["light","dark","black"]) }),
+  "ciel": Object.freeze({ material: "glass", gradient: "controlled", themes: Object.freeze(["ciel","ciel-nuit"]) }),
 });
 
 /** The theme of `family` in `mode`, or undefined when that family has none. */

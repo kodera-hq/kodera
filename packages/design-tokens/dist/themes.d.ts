@@ -4,8 +4,8 @@
 // the next build and caught by `npm run check:drift`.
 
 /** A `[data-theme]` attribute value. */
-export type ThemeId = 'light' | 'dark' | 'black';
-export type ThemeFamily = 'givre';
+export type ThemeId = 'light' | 'dark' | 'black' | 'ciel' | 'ciel-nuit';
+export type ThemeFamily = 'givre' | 'ciel';
 export type ThemeMode = 'light' | 'dark' | 'black';
 export type ThemeScheme = 'light' | 'dark';
 
@@ -21,9 +21,9 @@ export interface ThemeInfo {
 
 export interface ThemeFamilyInfo {
   /** `flat`: opaque surfaces only. `glass`: translucent materials are allowed. */
-  readonly material: 'flat';
+  readonly material: 'flat' | 'glass';
   /** `none`: every gradient is one colour. `controlled`: the bounded gradient grammar applies. */
-  readonly gradient: 'none';
+  readonly gradient: 'none' | 'controlled';
   readonly themes: readonly ThemeId[];
 }
 

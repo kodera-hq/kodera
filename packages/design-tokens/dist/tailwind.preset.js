@@ -9,7 +9,7 @@
 // not exist emits NO CSS and NO error — for `border-*` the element falls back
 // to preflight's `border: 0 solid #e5e7eb`, a light grey line on our page.
 //
-// The c-* colors follow the complete light/dark/black CSS theme boundary.
+// The c-* colors follow the complete light/dark/black/ciel/ciel-nuit CSS theme boundary.
 // Legacy colors remain static. The elevation shadows (raised, overlay, drawer,
 // dialog) follow the theme too. Breakpoints are supplied; z-index is not.
 
