@@ -6,6 +6,7 @@
 //   drift     dist/ is exactly what tokens.json generates
 //   units     the token-resolution guard, CSS parity with the design drop, the
 //             colour maths the contrast gate rests on, the control rings, the
+//             worst-case bound for a translucent background, the
 //             contrast gate's own self-test (each way it must fail, fails),
 //             the theme registry every generator reads,
 //             the shell themes' own contract, elevation and breakpoints, and
@@ -33,6 +34,7 @@ const gates = [
       'test/css-parity.selftest.mjs',
       'test/color-math.selftest.mjs',
       'test/control-selection-ring.selftest.mjs',
+      'test/backdrop-contrast.selftest.mjs',
       'test/check-contrast.selftest.mjs',
       'test/theme-registry.selftest.mjs',
       'test/theme-contract.selftest.mjs',

@@ -2,8 +2,17 @@
 // Contrast gate — WCAG 2.1 relative luminance, the same maths as
 // kodera-visio/scripts/check-contrast.py, run over contrast-pairs.json.
 //
-// The five ways a contrast suite lies, and what stops each here:
+// The six ways a contrast suite lies, and what stops each here:
 //
+//   A translucent surface is measured as its tint.  A background that is not
+//     opaque is refused outright: what is painted there depends on what lies
+//     behind it, and a row that named only the tint would be measured against
+//     a ground no user ever sees. The one way through is to say what can lie
+//     behind — an explicit, non-empty `backdropSet` of OPAQUE extremes, with
+//     any translucent `layers` stacked in between — and the row is then
+//     measured over every extreme and over the bounds of every blend of them,
+//     and held to the MINIMUM. scripts/lib/backdrop.mjs holds the maths and
+//     docs/adr/0003 the argument, including what it does not cover.
 //   A translucent colour is measured as if it were opaque.  Every foreground
 //     is composited onto its background before it is measured, at whatever
 //     alpha the colour itself carries. There is no per-row field to omit and
@@ -53,11 +62,13 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, loadTokens, indexTokens, resolve, parseColor, composite, contrastRatio, toHex } from './lib/tokens.mjs';
 import { SPEC_COLORS } from './lib/spec.mjs';
+import { worstCaseContrast } from './lib/backdrop.mjs';
 
 const tree = loadTokens();
 const index = indexTokens(tree);
 
-const { pairs } = JSON.parse(readFileSync(join(ROOT, 'contrast-pairs.json'), 'utf8'));
+const register = JSON.parse(readFileSync(join(ROOT, 'contrast-pairs.json'), 'utf8'));
+const { pairs } = register;
 
 const allowFile = join(ROOT, 'contrast-known-failures.json');
 const allowlist = existsSync(allowFile) ? JSON.parse(readFileSync(allowFile, 'utf8')) : { failures: [] };
@@ -122,6 +133,97 @@ function colorOf(ref) {
   return parseColor(resolve(ref, index));
 }
 
+const isOpaque = (color) => (color.a ?? 1) >= 1;
+
+/**
+ * The members of a backdrop set, resolved: `[{ ref, color }]`, every one opaque.
+ * Throws a phrase that completes "… is translucent and …", so each refusal
+ * reads as one sentence about the row it stopped.
+ */
+function backdropMembers(members, what) {
+  if (!Array.isArray(members)) throw new Error(`${what} must be the name of a declared set or a list of opaque colours`);
+  if (members.length === 0) throw new Error(`${what} is empty: with no extreme there is nothing to measure against`);
+  return members.map((ref) => {
+    let color;
+    try {
+      color = colorOf(ref);
+    } catch (error) {
+      throw new Error(`${what} member ${JSON.stringify(ref)} does not resolve: ${error.message}`);
+    }
+    if (!isOpaque(color)) {
+      throw new Error(`${what} member ${JSON.stringify(ref)} is not opaque: an extreme is a colour that is actually painted`);
+    }
+    return { ref, color };
+  });
+}
+
+// The named sets, resolved once. A set that is malformed is a problem of its
+// own, whether or not a row binds it, and a set no row binds is stale: both are
+// reported below the table, like an orphaned allowlist entry.
+const declaredSets = register.backdropSets ?? {};
+const backdropSets = new Map();
+const setProblems = [];
+for (const [name, set] of Object.entries(declaredSets)) {
+  const entry = { backdrops: null, error: null, used: false };
+  try {
+    if (set === null || typeof set !== 'object' || Array.isArray(set)) throw new Error('must be an object with a `purpose` and `members`');
+    if (typeof set.purpose !== 'string' || !set.purpose.trim()) throw new Error('has no purpose: say what the extremes are the extremes of');
+    entry.backdrops = backdropMembers(set.members, 'the set');
+  } catch (error) {
+    entry.error = error.message;
+    setProblems.push(`backdropSets.${name}: ${error.message}`);
+  }
+  backdropSets.set(name, entry);
+}
+
+/** What the row says can lie behind its translucent background. */
+function backdropsOf(pair) {
+  const binding = pair.backdropSet;
+  if (binding === undefined) {
+    // The refusal this gate has always made, with the way out named.
+    throw new Error(
+      `background "${pair.bg}" is translucent; a row measures against what is actually painted there — ` +
+        'bind a backdropSet of opaque extremes to measure the worst case over',
+    );
+  }
+  const refuse = (reason) => new Error(`background "${pair.bg}" is translucent and ${reason}`);
+  if (typeof binding === 'string') {
+    const entry = backdropSets.get(binding);
+    if (!entry) {
+      const names = [...backdropSets.keys()];
+      throw refuse(`backdropSet ${JSON.stringify(binding)} is not declared; contrast-pairs.json declares ${names.length ? names.join(', ') : 'no set'}`);
+    }
+    entry.used = true;
+    if (entry.error) throw refuse(`backdropSet ${JSON.stringify(binding)} is not a usable set: ${entry.error}`);
+    return { backdrops: entry.backdrops, name: `"${binding}"` };
+  }
+  try {
+    return { backdrops: backdropMembers(binding, 'its backdropSet'), name: 'its own set' };
+  } catch (error) {
+    throw refuse(error.message);
+  }
+}
+
+/** A translucent layer of a row's stack: its colour, and the saturation its own backdrop filter applies. */
+function paintOf(ref) {
+  return { ref, color: colorOf(ref), saturation: 1, extras: [] };
+}
+
+/** The translucent layers a row stacks between the backdrop and its background, bottom first. */
+function layersOf(pair) {
+  if (pair.layers === undefined) return [];
+  if (!Array.isArray(pair.layers) || pair.layers.length === 0) {
+    throw new Error('`layers` must be a non-empty list of translucent colours, bottom first; leave it out when nothing is stacked');
+  }
+  return pair.layers.map((ref) => {
+    const paint = paintOf(ref);
+    if (isOpaque(paint.color)) {
+      throw new Error(`layer "${ref}" is opaque: it hides the backdrop, so bind it as the backdrop instead of stacking it`);
+    }
+    return paint;
+  });
+}
+
 const rows = [];
 let hardFailures = 0;
 
@@ -129,18 +231,47 @@ for (const pair of pairs) {
   const row = { ...pair, ratio: null, verdict: null, note: '' };
 
   try {
-    const bg = colorOf(pair.bg);
-    // A translucent background would be measured as the colour behind it and
-    // nothing would say so — the same silence this gate exists to break.
-    if ((bg.a ?? 1) < 1) {
-      throw new Error(`background "${pair.bg}" is translucent; a row measures against what is actually painted there`);
+    const ground = paintOf(pair.bg);
+    if (isOpaque(ground.color)) {
+      // Nothing shows through an opaque ground, so a binding here would claim
+      // a worst case that was never measured.
+      if (pair.backdropSet !== undefined || pair.layers !== undefined) {
+        throw new Error(
+          `background "${pair.bg}" is opaque, so its ${pair.backdropSet !== undefined ? 'backdropSet' : 'layers'} ` +
+            'would measure nothing — remove the binding',
+        );
+      }
+      const bg = ground.color;
+      // Unconditional. A row cannot opt out of compositing, because the one that
+      // did is how a 1.78:1 focus ring passed at 6.70:1.
+      const fg = composite(colorOf(pair.fg), bg);
+      row.fgHex = toHex(fg);
+      row.bgHex = toHex(bg);
+      row.ratio = contrastRatio(fg, bg);
+    } else {
+      // A translucent background would be measured as the colour behind it and
+      // nothing would say so — the same silence this gate exists to break. It
+      // is measured only over a declared set of what can lie behind it, and
+      // held to the worst case.
+      const { backdrops, name } = backdropsOf(pair);
+      const foreground = colorOf(pair.fg);
+      if (!isOpaque(foreground)) {
+        throw new Error(
+          `foreground "${pair.fg}" is translucent on the translucent background "${pair.bg}": the extremes do not ` +
+            'bound a colour that moves with the ground under it — measure an opaque foreground',
+        );
+      }
+      const worst = worstCaseContrast({
+        foreground,
+        layers: [...layersOf(pair), ground],
+        backdrops,
+        extras: ground.extras,
+      });
+      row.fgHex = toHex(foreground);
+      row.bgHex = toHex(worst.background);
+      row.ratio = worst.ratio;
+      row.measuredOver = `minimum of ${worst.measured} backgrounds over ${name}; worst: ${worst.worst}`;
     }
-    // Unconditional. A row cannot opt out of compositing, because the one that
-    // did is how a 1.78:1 focus ring passed at 6.70:1.
-    const fg = composite(colorOf(pair.fg), bg);
-    row.fgHex = toHex(fg);
-    row.bgHex = toHex(bg);
-    row.ratio = contrastRatio(fg, bg);
   } catch (error) {
     // Not a SKIP. A row that cannot be measured is a row that is not guarding
     // anything, and a suite of unmeasurable rows exits 0 on every palette.
@@ -208,6 +339,12 @@ for (const pair of pairs) {
 // waiting to cover a different failure.
 const orphans = [...allowed.values()].filter((f) => !f.used);
 
+// A backdrop set no row binds is the same kind of leftover: extremes declared
+// for a surface that is no longer measured over them.
+for (const [name, entry] of backdropSets) {
+  if (!entry.used && !entry.error) setProblems.push(`backdropSets.${name}: declared, but no row binds it — delete the set or measure something over it`);
+}
+
 // --- Report -----------------------------------------------------------------
 const w = (s, n) => String(s).padEnd(n);
 const COL = { id: 36, fg: 9, bg: 9, ratio: 7, min: 5, verdict: 10 };
@@ -225,6 +362,7 @@ for (const row of rows) {
     `${w(row.id, COL.id)}${w(row.fgHex ?? '—', COL.fg)}${w(row.bgHex ?? '—', COL.bg)}` +
       `${w(ratio, COL.ratio)}${w(row.min.toFixed(1), COL.min)}${w(row.verdict, COL.verdict)}${row.label}`,
   );
+  if (row.measuredOver) console.log(`${' '.repeat(COL.id)}↳ ${row.measuredOver}`);
   if (row.note && row.verdict !== 'FORBIDDEN') console.log(`${' '.repeat(COL.id)}↳ ${row.note}`);
 }
 
@@ -246,9 +384,14 @@ if (orphans.length) {
 // its own. `process.exit()` does not wait for a pipe: on a platform where pipe
 // writes are asynchronous it cuts a table longer than the pipe buffer, and the
 // rows a reader — or a self-test — most needs are the ones at the end.
-if (hardFailures || orphans.length) {
+if (setProblems.length) {
+  console.error('\nBackdrop sets in contrast-pairs.json that are not sets:');
+  for (const problem of setProblems) console.error(`  FAIL  ${problem}`);
+}
+
+if (hardFailures || orphans.length || setProblems.length) {
   console.error(
-    `\n${hardFailures + orphans.length} contrast problem(s). Fix the token, or add the pair to ` +
+    `\n${hardFailures + orphans.length + setProblems.length} contrast problem(s). Fix the token, or add the pair to ` +
       'contrast-known-failures.json with a reason. Nothing here passes by being quiet.',
   );
   process.exitCode = 1;
