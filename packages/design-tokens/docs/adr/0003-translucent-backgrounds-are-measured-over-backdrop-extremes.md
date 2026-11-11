@@ -21,6 +21,7 @@ The "Ethereal Sky Glass" family (`docs/specs/ethereal-sky-glass.md`) is built on
 4. The gate carries each extreme up through the stack — each layer's `saturate()` amount applied first, then the layer painted over the result — and measures the foreground on: every extreme as painted, **the darkest any blend can be**, **the lightest any blend can be**, and, for a material, the opaque fallback it paints when the glass is off. The row's ratio is the **minimum**. The existing thresholds apply unchanged: 4.5:1 for text, 3:1 for a boundary or an indicator.
 5. If the foreground's luminance lies strictly between the darkest and the lightest blend, the row measures **1:1**: some blend matches the foreground, whatever the two ends measure.
 6. A binding on an opaque background is refused, and a named set no row binds fails the gate: neither may sit in the register claiming a worst case that was never measured.
+7. A gradient is the same case with nothing laid on top. A row whose `bg` is a gradient is measured over its stops and the bounds of every blend between them, with no set to bind; and every stop of a gradient that a glass theme paints must be a member of each backdrop set declared for that theme, or the materials are measured over a sky narrower than the one on screen.
 
 `scripts/lib/backdrop.mjs` holds the maths. `test/backdrop-contrast.selftest.mjs` pins it by worked numbers and by brute force; `test/check-contrast.selftest.mjs` holds every refusal above.
 
