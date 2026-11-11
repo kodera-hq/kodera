@@ -108,6 +108,8 @@ profiles complete. It includes public Community channels, read-only announcement
 staff-only Core Kodera channels, explicit-grant Design Partners channels and the
 `office-hours` voice room. Its provisioning manifest records this structure; the
 server remains the authority that creates the rows and emits member/channel sets.
+Bootstrap also creates the canonical tenant in `provisioning`; public web entry
+remains gated until an authorized operator verifies the real backend and activates it.
 The web image already enforces `VITE_AUTH_MODE=oidc` and `VITE_ENABLE_MSW=0`.
 
 Before starting this profile, the operator must have:
@@ -149,13 +151,16 @@ operator environment, bootstrap and then enroll:
 ```bash
 python manage.py bootstrap_community_workspace --owner-user-id <existing-owner-uuid> \
   --settings config.settings.deploy_operator
-python manage.py enrol_tenant_agent --organisation community \
+python manage.py tenant_status --settings config.settings.deploy_operator list
+python manage.py enrol_tenant_agent --organisation community --tenant <community-tenant-uuid> \
   --staff-identity <authorized-staff-identity-uuid> \
   --token-file /secure/new-community-agent-token \
   --settings config.settings.deploy_operator
 ```
 
-The enrollment command creates a new mode-0600 file and refuses to overwrite one;
+Select the `community` tenant UUID from the status listing; the agent must be
+bound to that tenant as well as the organization. The enrollment command creates
+a new mode-0600 file and refuses to overwrite one;
 it does not print the issued token. Prepare the separate Synapse administrator
 token and the Keycloak `synapse` client's issued secret in equally protected files.
 Then generate configuration from the repository root:
@@ -231,6 +236,22 @@ authorized Matrix IDs in `members`. Verify the matching room power levels too.
 Complete signup/email/OTP, Matrix SSO, support ticket creation and voice-room
 checks before switching public traffic. A configuration render or database
 bootstrap is not proof that these services are ready.
+
+After the staged accounts complete Matrix SSO and the agent's member/channel
+commands are acknowledged successfully, record the readiness transition:
+
+```bash
+python manage.py tenant_status --settings config.settings.deploy_operator set \
+  --staff-identity <authorized-staff-identity-uuid> --tenant <community-tenant-uuid> \
+  --to active --reason 'Community backend acceptance verified'
+```
+
+This existing operator command requires the `staff_operator` grant and audits the
+transition. Confirm `tenant_status list` reports the canonical tenant as `active`,
+then verify an ordinary verified user's `/api/v1/auth/me` tenant entry is ready
+and the real web client opens the Community workspace. An inactive tenant must
+keep the workspace readiness gate closed; do not bypass it with a fixture or
+manual database update.
 
 ### Governance rollback
 
