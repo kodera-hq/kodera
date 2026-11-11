@@ -251,3 +251,8 @@ config/settings/deploy_worker.py
 !room_access/rooms.py
 !room_access/server.py
 !room_access/service.py
+# Canonical community membership and support are API paths; operator commands stay excluded.
+!apps/orgs/community.py
+!apps/support/community.py
+!apps/support/api/community.py
+!apps/support/triage.py
