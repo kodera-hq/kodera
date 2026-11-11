@@ -8,10 +8,14 @@
 //     opaque is refused outright: what is painted there depends on what lies
 //     behind it, and a row that named only the tint would be measured against
 //     a ground no user ever sees. The one way through is to say what can lie
-//     behind — an explicit, non-empty `backdropSet` of OPAQUE extremes, with
-//     any translucent `layers` stacked in between — and the row is then
-//     measured over every extreme and over the bounds of every blend of them,
-//     and held to the MINIMUM. scripts/lib/backdrop.mjs holds the maths and
+//     behind — a `backdropSet`, declared once by name for one registered theme,
+//     of OPAQUE extremes, with any translucent `layers` stacked in between —
+//     and the row is then measured over every extreme and over the bounds of
+//     every blend of them, and held to the MINIMUM. Whose extremes a row is
+//     measured over is decided by the ground, never by the row: a ground that
+//     belongs to a theme is measured over that theme's set, and a list of
+//     colours written into the row is refused, because it is how a row would
+//     pick the extremes it passes on. scripts/lib/backdrop.mjs holds the maths and
 //     docs/adr/0003 the argument, including what it does not cover. A gradient
 //     is the same case without a surface on top: a row whose `bg` is a gradient
 //     is measured over its stops and the bounds of every blend between them,
@@ -68,8 +72,8 @@ import { ROOT, loadTokens, indexTokens, resolve, parseColor, composite, contrast
 import { SPEC_COLORS } from './lib/spec.mjs';
 import { worstCaseContrast } from './lib/backdrop.mjs';
 import { materialAddress, resolveMaterial } from './lib/material.mjs';
-import { resolveGradient, gradientOwner } from './lib/gradient.mjs';
-import { THEMES, familyRules } from './lib/themes.mjs';
+import { resolveGradient } from './lib/gradient.mjs';
+import { THEMES, familyRules, themeOfPath } from './lib/themes.mjs';
 
 const tree = loadTokens();
 const index = indexTokens(tree);
@@ -144,11 +148,11 @@ const isOpaque = (color) => (color.a ?? 1) >= 1;
 
 /**
  * The members of a backdrop set, resolved: `[{ ref, color }]`, every one opaque.
- * Throws a phrase that completes "… is translucent and …", so each refusal
- * reads as one sentence about the row it stopped.
+ * Throws a phrase that completes "the set …" / "the gradient … ", so each
+ * refusal reads as one sentence about what it stopped.
  */
 function backdropMembers(members, what) {
-  if (!Array.isArray(members)) throw new Error(`${what} must be the name of a declared set or a list of opaque colours`);
+  if (!Array.isArray(members)) throw new Error(`${what} has no list of members`);
   if (members.length === 0) throw new Error(`${what} is empty: with no extreme there is nothing to measure against`);
   return members.map((ref) => {
     let color;
@@ -164,17 +168,27 @@ function backdropMembers(members, what) {
   });
 }
 
-// The named sets, resolved once. A set that is malformed is a problem of its
-// own, whether or not a row binds it, and a set no row binds is stale: both are
-// reported below the table, like an orphaned allowlist entry.
+// The named sets, resolved once. A set is a claim about ONE theme — these are
+// the lightest and darkest things that theme paints behind a surface — so a set
+// that names no theme, or a theme the registry does not hold, is not a set. A
+// set that is malformed is a problem of its own, whether or not a row binds it,
+// and a set no row binds is stale: both are reported below the table, like an
+// orphaned allowlist entry.
 const declaredSets = register.backdropSets ?? {};
 const backdropSets = new Map();
 const setProblems = [];
 for (const [name, set] of Object.entries(declaredSets)) {
-  const entry = { backdrops: null, error: null, used: false, theme: set?.theme ?? null };
+  const entry = { backdrops: null, error: null, used: false, theme: null };
   try {
-    if (set === null || typeof set !== 'object' || Array.isArray(set)) throw new Error('must be an object with a `purpose` and `members`');
+    if (set === null || typeof set !== 'object' || Array.isArray(set)) throw new Error('must be an object with a `theme`, a `purpose` and `members`');
     if (typeof set.purpose !== 'string' || !set.purpose.trim()) throw new Error('has no purpose: say what the extremes are the extremes of');
+    if (set.theme === undefined || set.theme === null) {
+      throw new Error(`names no theme: a set holds the extremes of one registered theme (${THEMES.join(', ')})`);
+    }
+    if (!THEMES.includes(set.theme)) {
+      throw new Error(`names the theme ${JSON.stringify(set.theme)}, which the registry does not hold (${THEMES.join(', ')})`);
+    }
+    entry.theme = set.theme;
     entry.backdrops = backdropMembers(set.members, 'the set');
   } catch (error) {
     entry.error = error.message;
@@ -183,8 +197,34 @@ for (const [name, set] of Object.entries(declaredSets)) {
   backdropSets.set(name, entry);
 }
 
-/** What the row says can lie behind its translucent background `ground`. */
-function backdropsOf(pair, ground) {
+/**
+ * The one theme a row's stack belongs to, or null when no surface in it belongs
+ * to any. Read from the ground and from every layer under it, by where each
+ * token lives: the ground decides, and a layer of another theme is refused,
+ * because a row is measured in one theme or it is measured in none.
+ */
+function themeOfStack(pair, ground, layers) {
+  let theme = ground.theme;
+  for (const layer of layers) {
+    if (layer.theme === null) continue;
+    if (theme === null) theme = layer.theme;
+    else if (layer.theme !== theme) {
+      throw new Error(`background "${pair.bg}" is stacked over "${layer.ref}", a surface of the "${layer.theme}" theme, not of "${theme}"`);
+    }
+  }
+  return theme;
+}
+
+/**
+ * What the row says can lie behind its translucent background.
+ *
+ * There is one form: the name of a set declared under `backdropSets`. A list
+ * written into the row is refused on every ground. When the stack belongs to a
+ * theme — and a material, a theme role and a theme primitive all do — the set
+ * must be that theme's. Nothing here is skipped for a missing value: every set
+ * that reaches this point names a registered theme, or it failed above.
+ */
+function backdropsOf(pair, theme) {
   const binding = pair.backdropSet;
   if (binding === undefined) {
     // The refusal this gate has always made, with the way out named.
@@ -194,26 +234,25 @@ function backdropsOf(pair, ground) {
     );
   }
   const refuse = (reason) => new Error(`background "${pair.bg}" is translucent and ${reason}`);
-  if (typeof binding === 'string') {
-    const entry = backdropSets.get(binding);
-    if (!entry) {
-      const names = [...backdropSets.keys()];
-      throw refuse(`backdropSet ${JSON.stringify(binding)} is not declared; contrast-pairs.json declares ${names.length ? names.join(', ') : 'no set'}`);
-    }
-    entry.used = true;
-    if (entry.error) throw refuse(`backdropSet ${JSON.stringify(binding)} is not a usable set: ${entry.error}`);
-    // A set declared for one theme holds that theme's extremes. A material of
-    // another theme measured over it would pass against a sky it is never on.
-    if (entry.theme !== null && ground.theme !== null && entry.theme !== ground.theme) {
-      throw refuse(`backdropSet ${JSON.stringify(binding)} holds the extremes of the "${entry.theme}" theme, not of "${ground.theme}"`);
-    }
-    return { backdrops: entry.backdrops, name: `"${binding}"` };
+  if (Array.isArray(binding)) {
+    throw refuse(
+      'its backdropSet is a list: a backdrop set is declared once, by name, under backdropSets, for the theme whose extremes it holds',
+    );
   }
-  try {
-    return { backdrops: backdropMembers(binding, 'its backdropSet'), name: 'its own set' };
-  } catch (error) {
-    throw refuse(error.message);
+  if (typeof binding !== 'string') throw refuse('its backdropSet must be the name of a set declared under backdropSets');
+  const entry = backdropSets.get(binding);
+  if (!entry) {
+    const names = [...backdropSets.keys()];
+    throw refuse(`backdropSet ${JSON.stringify(binding)} is not declared; contrast-pairs.json declares ${names.length ? names.join(', ') : 'no set'}`);
   }
+  entry.used = true;
+  if (entry.error) throw refuse(`backdropSet ${JSON.stringify(binding)} is not a usable set: ${entry.error}`);
+  // A set holds one theme's extremes. A surface of another theme measured over
+  // it would pass against a sky it is never on.
+  if (theme !== null && entry.theme !== theme) {
+    throw refuse(`backdropSet ${JSON.stringify(binding)} holds the extremes of the "${entry.theme}" theme, not of "${theme}"`);
+  }
+  return { backdrops: entry.backdrops, name: `"${binding}"` };
 }
 
 /**
@@ -228,9 +267,12 @@ function backdropsOf(pair, ground) {
  */
 function paintOf(ref) {
   const token = typeof ref === 'string' ? index.get(ref) : undefined;
+  // Whose surface this is, by where the token lives — for every kind of layer,
+  // so the theme a row is measured in never depends on how the layer is read.
+  const theme = themeOfPath(ref);
   if (token?.type === 'gradient') {
     // Opaque, and not one colour: measured as a ground only, over its own stops.
-    return { ref, theme: gradientOwner(ref), gradient: resolveGradient(token, index), color: null, saturation: 1, extras: [] };
+    return { ref, theme, gradient: resolveGradient(token, index), color: null, saturation: 1, extras: [] };
   }
   if (token?.type === 'material') {
     const address = materialAddress(ref);
@@ -238,13 +280,13 @@ function paintOf(ref) {
     const material = resolveMaterial(address.theme, address.level, index);
     return {
       ref,
-      theme: address.theme,
+      theme,
       color: material.paint,
       saturation: material.saturation,
       extras: material.alpha < 1 ? [{ ref: `its opaque fallback over ${material.canvas.ref}`, color: material.fallback }] : [],
     };
   }
-  return { ref, theme: null, color: colorOf(ref), saturation: 1, extras: [] };
+  return { ref, theme, color: colorOf(ref), saturation: 1, extras: [] };
 }
 
 /** The translucent layers a row stacks between the backdrop and its background, bottom first. */
@@ -352,7 +394,8 @@ for (const pair of pairs) {
       // nothing would say so — the same silence this gate exists to break. It
       // is measured only over a declared set of what can lie behind it, and
       // held to the worst case.
-      const { backdrops, name } = backdropsOf(pair, ground);
+      const layers = layersOf(pair);
+      const { backdrops, name } = backdropsOf(pair, themeOfStack(pair, ground, layers));
       const foreground = colorOf(pair.fg);
       if (!isOpaque(foreground)) {
         throw new Error(
@@ -362,7 +405,7 @@ for (const pair of pairs) {
       }
       const worst = worstCaseContrast({
         foreground,
-        layers: [...layersOf(pair), ground],
+        layers: [...layers, ground],
         backdrops,
         extras: ground.extras,
       });

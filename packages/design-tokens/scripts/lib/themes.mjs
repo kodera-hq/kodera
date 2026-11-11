@@ -100,6 +100,30 @@ export function themesOfFamily(family) {
   return THEMES.filter((id) => themeInfo(id).family === family);
 }
 
+/**
+ * The theme a reference belongs to, read from where the token lives — a theme
+ * role, an elevation level or a material (`semantic.<group>.<theme>.*`), a
+ * theme primitive (`color.theme-<theme>.*`, `shadow.theme-<theme>.*`,
+ * `material.theme-<theme>.*`) or a composed role (`spec:<role>.<theme>.<tone>`).
+ * Null for a reference that belongs to no theme: a shared ramp, a literal.
+ *
+ * A reference that is shaped like a themed one and names a theme the registry
+ * does not hold is an error, not "no theme": a gate that read it as unthemed
+ * would stop asking whose extremes it is measured over.
+ */
+export function themeOfPath(ref) {
+  if (typeof ref !== 'string') return null;
+  let id = null;
+  const spec = /^spec:[a-z-]+\.([a-z0-9-]+)\.[a-z]+$/.exec(ref);
+  const seg = ref.split('.');
+  if (spec) [, id] = spec;
+  else if (seg[0] === 'semantic' && ['theme', 'elevation', 'material'].includes(seg[1]) && seg.length > 2) [, , id] = seg;
+  else if (['color', 'shadow', 'material'].includes(seg[0]) && seg[1]?.startsWith('theme-')) id = seg[1].slice('theme-'.length);
+  if (id === null) return null;
+  if (!THEMES.includes(id)) throw new Error(`"${ref}" names the theme "${id}", which the registry does not hold (${THEMES.join(', ')})`);
+  return id;
+}
+
 /** The selector a theme's block is declared under. The default theme also owns `:root`. */
 export function themeSelector(id) {
   const attribute = `[data-theme="${themeInfo(id).id}"]`;

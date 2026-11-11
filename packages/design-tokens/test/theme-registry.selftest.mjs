@@ -28,6 +28,7 @@ import {
   themeSelector,
   familyRules,
   assertThemeGroups,
+  themeOfPath,
 } from '../scripts/lib/themes.mjs';
 import * as published from '../dist/themes.js';
 
@@ -79,6 +80,35 @@ test('an unknown theme or family is an error, never a silent default', () => {
   assert.throws(() => assertThemeGroups('expected complete theme set', [...THEMES].reverse()), /expected complete theme set: /);
   assert.throws(() => assertThemeGroups('expected complete theme set', []), /tokens\.json declares none/);
   assert.throws(() => assertThemeGroups('expected complete theme set', undefined), /tokens\.json declares none/);
+});
+
+test('the theme a reference belongs to is read from where it lives, and never guessed', () => {
+  for (const [ref, theme] of [
+    ['semantic.theme.light.scrim', 'light'],
+    ['semantic.theme.ciel-nuit.page-grad', 'ciel-nuit'],
+    ['semantic.elevation.dark.overlay', 'dark'],
+    ['semantic.material.ciel.bar', 'ciel'],
+    ['material.theme-ciel-nuit.dialog', 'ciel-nuit'],
+    ['color.theme-ciel.glass', 'ciel'],
+    ['color.theme-ciel-nuit.glass', 'ciel-nuit'],
+    ['shadow.theme-black.raised', 'black'],
+    ['spec:focus-ring.ciel.indicator', 'ciel'],
+    ['spec:focus-ring-on-inverse.ciel-nuit.outer', 'ciel-nuit'],
+    // No theme: a shared ramp, a legacy role, a literal, a non-string.
+    ['color.slate.500', null],
+    ['semantic.surface.default', null],
+    ['rgba(255, 255, 255, 0.72)', null],
+    ['#FFFFFF', null],
+    [undefined, null],
+  ]) {
+    assert.equal(themeOfPath(ref), theme, `${ref}: ${theme ?? 'no theme'}`);
+  }
+  // Shaped like a themed reference, for a theme that is not registered: an
+  // error. Read as "no theme" it would stop a gate asking whose extremes apply.
+  assert.throws(() => themeOfPath('semantic.theme.sepia.scrim'), /"semantic\.theme\.sepia\.scrim" names the theme "sepia", which the registry does not hold/);
+  assert.throws(() => themeOfPath('color.theme-ciel-jour.glass'), /names the theme "ciel-jour", which the registry does not hold/);
+  assert.throws(() => themeOfPath('material.theme-sepia.bar'), /names the theme "sepia"/);
+  assert.throws(() => themeOfPath('spec:focus-ring.sepia.indicator'), /names the theme "sepia"/);
 });
 
 /**
