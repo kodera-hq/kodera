@@ -242,12 +242,16 @@ if (orphans.length) {
   for (const o of orphans) console.error(`  FAIL  ${o.id}`);
 }
 
+// The verdict is set on `process.exitCode` and the process is left to end on
+// its own. `process.exit()` does not wait for a pipe: on a platform where pipe
+// writes are asynchronous it cuts a table longer than the pipe buffer, and the
+// rows a reader — or a self-test — most needs are the ones at the end.
 if (hardFailures || orphans.length) {
   console.error(
     `\n${hardFailures + orphans.length} contrast problem(s). Fix the token, or add the pair to ` +
       'contrast-known-failures.json with a reason. Nothing here passes by being quiet.',
   );
-  process.exit(1);
+  process.exitCode = 1;
+} else {
+  console.log('\nOK — every pair either clears its minimum or carries a written reason.');
 }
-
-console.log('\nOK — every pair either clears its minimum or carries a written reason.');
