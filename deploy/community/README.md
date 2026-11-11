@@ -162,7 +162,7 @@ Then generate configuration from the repository root:
 
 ```bash
 bash deploy/community/kodera-deploy.sh --template community \
-  --domain community.example.org --support-mailbox support@example.org \
+  --domain community.example.org --matrix-domain example.org --support-mailbox support@example.org \
   --oidc-origin https://id.example.org \
   --oidc-issuer https://id.example.org/realms/community \
   --staff-issuer https://id.example.org/realms/kodera-staff \
@@ -184,6 +184,14 @@ and omit the governance profile. When manually adapting `.env.example` for an
 unrelated isolated self-host, leave the three `KODERA_DEFAULT_COMMUNITY_*` values,
 the two agent credential values and the Synapse OIDC client secret empty, then
 start without `--profile community-governance`.
+
+`KODERA_MATRIX_DOMAIN` is the base domain, such as `kodera.io`, while
+`KODERA_DOMAIN` is the full tenant hostname, such as `community.kodera.io`.
+The web client derives the Matrix server name by prefixing the tenant slug;
+passing the full hostname as its base domain would duplicate `community` and
+prevent Matrix login. The generator and preflight refuse that mismatch for the
+canonical template. Caddy routes Matrix and room-access on the tenant hostname;
+a Matrix client-discovery 404 intentionally falls back to this same origin.
 
 In canonical mode, Synapse requires the configured Community issuer and one OIDC
 provider, forces PKCE, disables password login and public Matrix registration,

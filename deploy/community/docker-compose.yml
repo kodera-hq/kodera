@@ -178,8 +178,8 @@ services:
         VITE_CORE_API_URL: https://${KODERA_DOMAIN:-chat.example.org}/api/v1
         VITE_OIDC_CLIENT_ID: ${KODERA_OIDC_CLIENT_ID:-console}
         VITE_KEYCLOAK_URL: ${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}
-        VITE_MATRIX_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
-        VITE_TENANT_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
+        VITE_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
+        VITE_TENANT_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
     command:
       - "--port"
       - "8080"
@@ -192,7 +192,7 @@ services:
       - "--provider-origin"
       - "${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}"
       - "--matrix-domain"
-      - "${KODERA_DOMAIN:-chat.example.org}"
+      - "${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}"
     restart: unless-stopped
 
   room-access:

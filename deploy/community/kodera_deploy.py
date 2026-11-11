@@ -48,6 +48,9 @@ def generate(args):
     if template_id is not None and template_id not in WORKSPACE_TEMPLATES:
         raise ValueError('Invalid workspace template')
     host = domain(args.domain)
+    matrix_domain = domain(getattr(args, 'matrix_domain', None) or (host.split('.', 1)[1] if host.count('.') >= 2 else host))
+    if template_id == 'community' and host != 'community.' + matrix_domain:
+        raise ValueError('Community host must be community.<matrix-domain>')
     issuer = https(args.oidc_issuer)
     origin = https(args.oidc_origin, True)
     if not issuer.startswith(origin + '/'):
@@ -69,6 +72,7 @@ def generate(args):
     if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', client_id):
         raise ValueError('Invalid OIDC client identifier')
     values = dict(KODERA_OIDC_CLIENT_ID=client_id, KODERA_DOMAIN=host, KODERA_ACME_EMAIL=args.support_mailbox,
+                  KODERA_MATRIX_DOMAIN=matrix_domain,
                   DJANGO_ALLOWED_HOSTS=host+',127.0.0.1', KODERA_OIDC_PROVIDER_ORIGIN=origin,
                   KODERA_AUTH_TRUST="'"+trust_json+"'")
     staff = getattr(args, 'staff_issuer', None)
@@ -77,7 +81,7 @@ def generate(args):
         entry.get('issuer') == staff and entry.get('lane') == 'staff' for entry in trust
     )):
         raise ValueError('Staff issuer must be admitted on the staff trust lane')
-    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_SECRET_KEYS, check.SYNAPSE_OIDC_SECRET)})
+    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_SECRET_KEYS, check.SYNAPSE_OIDC_SECRET_ENV_KEY)})
     if template_id == 'community':
         if issuer != origin + '/realms/community':
             raise ValueError('Community bootstrap requires the canonical Community issuer')
@@ -88,7 +92,7 @@ def generate(args):
         values.update(KODERA_DEFAULT_COMMUNITY_ORG_SLUG='community',
                       KODERA_DEFAULT_COMMUNITY_ISSUER=issuer,
                       KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=owner)
-        for key, option in (('KODERA_AGENT_TOKEN', 'agent_token_file'), ('KODERA_SYNAPSE_TOKEN', 'synapse_token_file'), (check.SYNAPSE_OIDC_SECRET, 'synapse_oidc_secret_file')):
+        for key, option in (('KODERA_AGENT_TOKEN', 'agent_token_file'), ('KODERA_SYNAPSE_TOKEN', 'synapse_token_file'), (check.SYNAPSE_OIDC_SECRET_ENV_KEY, 'synapse_oidc_secret_file')):
             token_file = getattr(args, option, None)
             if not token_file or Path(token_file).stat().st_size > 4096:
                 raise ValueError('Community bootstrap requires --' + option.replace('_', '-'))
@@ -189,9 +193,10 @@ def selftest():
         def args(**changes):
             data = dict(domain='chat.example.org', oidc_issuer='https://id.example.org/realms/studio', oidc_origin='https://id.example.org', support_mailbox='support@example.org', trust_file=str(trust), env_file=str(Path(tmp)/secrets.token_hex(8)))
             if changes.get('template') == 'community':
-                data.update(oidc_issuer='https://id.example.org/realms/community', owner_user_id='00000000-0000-4000-8000-000000000001', agent_token_file=str(credential), synapse_token_file=str(credential), synapse_oidc_secret_file=str(credential))
+                data.update(domain='community.example.org', oidc_issuer='https://id.example.org/realms/community', owner_user_id='00000000-0000-4000-8000-000000000001', agent_token_file=str(credential), synapse_token_file=str(credential), synapse_oidc_secret_file=str(credential))
             return argparse.Namespace(**(data | changes))
         path = generate(args())
+        assert 'KODERA_MATRIX_DOMAIN=example.org' in generate(args(domain='example.org')).read_text()
         assert path.stat().st_mode & 0o777 == 0o600
         content = path.read_text()
         assert 'CHANGE_ME_' not in '\n'.join(line for line in content.splitlines() if not line.startswith('#'))
@@ -217,7 +222,7 @@ def selftest():
             if template_id == 'community':
                 assert manifest['readOnlyChannels'] == ['announcements']
                 assert 'KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community' in configured.read_text()
-        for changes in (dict(owner_user_id=None), dict(oidc_issuer='https://id.example.org/realms/studio'), dict(agent_token_file=None), dict(synapse_token_file=None)):
+        for changes in (dict(owner_user_id=None), dict(oidc_issuer='https://id.example.org/realms/studio'), dict(agent_token_file=None), dict(synapse_token_file=None), dict(matrix_domain='community.example.org')):
             try:
                 generate(args(template='community', **changes))
             except ValueError:
@@ -245,7 +250,7 @@ def selftest():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ['env-file', 'domain', 'oidc-issuer', 'oidc-origin', 'support-mailbox', 'trust-file', 'oidc-client-id', 'owner-user-id', 'agent-token-file', 'synapse-token-file', 'synapse-oidc-secret-file', 'staff-issuer']:
+    for name in ['env-file', 'domain', 'matrix-domain', 'oidc-issuer', 'oidc-origin', 'support-mailbox', 'trust-file', 'oidc-client-id', 'owner-user-id', 'agent-token-file', 'synapse-token-file', 'synapse-oidc-secret-file', 'staff-issuer']:
         parser.add_argument('--'+name, default='kodera-generated.conf' if name == 'env-file' else None)
     parser.add_argument('--template', choices=tuple(WORKSPACE_TEMPLATES))
     parser.add_argument('--generate-only', action='store_true')

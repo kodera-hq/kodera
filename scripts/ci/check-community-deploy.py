@@ -77,7 +77,7 @@ COMMUNITY_KEYS = (
     "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID",
 )
 AGENT_SECRET_KEYS = ("KODERA_AGENT_TOKEN", "KODERA_SYNAPSE_TOKEN")
-SYNAPSE_OIDC_SECRET = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
+SYNAPSE_OIDC_SECRET_ENV_KEY = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
 
 # A pulled image is pinned by tag and digest, so `docker compose pull` cannot drift.
 PINNED_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")
@@ -270,7 +270,7 @@ def check_community_deploy(
         if svc is None:
             continue
         raw_block = "\n".join(svc.raw_lines)
-        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET):
+        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY):
             if forbidden in svc.environment or forbidden in raw_block:
                 errors.append(
                     f"ADR-0003 isolation violation: forbidden secret '{forbidden}' in service '{core_svc_name}'"
@@ -377,6 +377,8 @@ def check_community_deploy(
         web_block = "\n".join(web_svc.raw_lines)
         if "VITE_KEYCLOAK_URL: ${KODERA_OIDC_PROVIDER_ORIGIN:?" not in web_block:
             errors.append("service 'web' must build VITE_KEYCLOAK_URL from KODERA_OIDC_PROVIDER_ORIGIN")
+        if "VITE_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?" not in web_block:
+            errors.append("service 'web' must build VITE_MATRIX_DOMAIN from the tenant base domain")
         if not re.search(
             r'"--provider-origin"\n\s*- "\$\{KODERA_OIDC_PROVIDER_ORIGIN:\?', web_block
         ):
@@ -385,7 +387,7 @@ def check_community_deploy(
     # The module is installed exclusively from the local, read-only tree on every start.
     synapse = services.get("synapse")
     if synapse is not None:
-        for key in (*COMMUNITY_KEYS[:2], SYNAPSE_OIDC_SECRET):
+        for key in (*COMMUNITY_KEYS[:2], SYNAPSE_OIDC_SECRET_ENV_KEY):
             if synapse.environment.get(key) != "${" + key + ":-}":
                 errors.append("service 'synapse' must consume " + key)
         block = "\n".join(synapse.raw_lines)
@@ -454,7 +456,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     for key in example:
         if key == "KODERA_STAFF_ISSUER" and not actual.get(key, "").strip("'\""):
             continue
-        if key in (*COMMUNITY_KEYS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET) and not community_enabled:
+        if key in (*COMMUNITY_KEYS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY) and not community_enabled:
             if actual.get(key, "").strip("'\""):
                 errors.append("Community issuer and owner require KODERA_DEFAULT_COMMUNITY_ORG_SLUG")
             continue
@@ -486,6 +488,8 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
         issuer = actual.get(COMMUNITY_KEYS[1], "").strip("'\"")
         if slug != "community":
             errors.append("KODERA_DEFAULT_COMMUNITY_ORG_SLUG must be community")
+        if actual.get("KODERA_DOMAIN", "").strip("'\"") != "community." + actual.get("KODERA_MATRIX_DOMAIN", "").strip("'\""):
+            errors.append("KODERA_DOMAIN must match community.KODERA_MATRIX_DOMAIN")
         if not _deployable_issuer(issuer) or not issuer.endswith("/realms/community"):
             errors.append("KODERA_DEFAULT_COMMUNITY_ISSUER must name the public Community realm")
         try:
@@ -763,7 +767,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
         else f"{key}=" if key == "KODERA_STAFF_ISSUER"
-        else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET)
+        else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY)
         else f"{key}=filled-value-{i}"
         for i, key in enumerate(parse_env_example(env_text)[0])
     ) + "\n"
@@ -774,19 +778,25 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         source = env_text if label == "a placeholder is left" else filled
         got = preflight_env(env_text, mutate(source))
         if expected not in got:
-            print(f"[FAIL] preflight case '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
+            print(f"[FAIL] preflight case '{label}' did not report the expected error", file=sys.stderr)
+            return 1
+        if any("filled-value" in err or "example.net" in err for err in got):
+            print(f"[FAIL] preflight case '{label}' printed a value", file=sys.stderr)
             return 1
 
     canonical = filled.replace("KODERA_DEFAULT_COMMUNITY_ORG_SLUG=\n", "KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community\n")
     canonical = canonical.replace("KODERA_DEFAULT_COMMUNITY_ISSUER=\n", "KODERA_DEFAULT_COMMUNITY_ISSUER=https://id.example.net/realms/community\n")
     canonical = canonical.replace("KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=\n", "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=00000000-0000-4000-8000-000000000001\n")
     canonical = canonical.replace("https://id.example.net/realms/acme", "https://id.example.net/realms/community")
-    for key in (*AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET):
+    canonical = re.sub(r"(?m)^KODERA_DOMAIN=.*$", "KODERA_DOMAIN=community.example.net", canonical)
+    canonical = re.sub(r"(?m)^KODERA_MATRIX_DOMAIN=.*$", "KODERA_MATRIX_DOMAIN=example.net", canonical)
+    for key in (*AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY):
         canonical = canonical.replace(key + "=\n", key + "=synthetic-issued-token-for-test-only\n")
     if preflight_env(env_text, canonical):
         print("[FAIL] canonical Community preflight refused valid public configuration", file=sys.stderr)
         return 1
     community_mutations = [
+        ("wrong base domain", canonical.replace("KODERA_MATRIX_DOMAIN=example.net", "KODERA_MATRIX_DOMAIN=community.example.net"), "KODERA_DOMAIN must match"),
         ("missing owner", canonical.replace("00000000-0000-4000-8000-000000000001", ""), "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID"),
         ("wrong slug", canonical.replace("ORG_SLUG=community", "ORG_SLUG=wrong"), "KODERA_DEFAULT_COMMUNITY_ORG_SLUG"),
         ("foreign issuer", canonical.replace("ISSUER=https://id.example.net/realms/community", "ISSUER=https://other.example.net/realms/community"), "customer trust lane"),
@@ -795,9 +805,6 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     for label, value, expected in community_mutations:
         if not any(expected in error for error in preflight_env(env_text, value)):
             print("[FAIL] Community preflight mutation survived: " + label, file=sys.stderr)
-            return 1
-        if any("filled-value" in err or "example.net" in err for err in got):
-            print(f"[FAIL] preflight case '{label}' printed a value: {got}", file=sys.stderr)
             return 1
 
     for label, mutate, expected_substring in mutations:
