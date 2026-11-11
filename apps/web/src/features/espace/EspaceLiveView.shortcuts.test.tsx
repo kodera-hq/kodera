@@ -155,7 +155,7 @@ function renderView(
 
 /** The composer, named by the channel shown: the way to read which channel is open. */
 const composerOf = (name: string) =>
-  screen.getByRole('combobox', { name: `Message dans #${name}` }) as HTMLInputElement
+  screen.getByRole('textbox', { name: `Message dans #${name}` }) as HTMLInputElement
 const said = () => document.querySelector('p[aria-live="polite"].sr-only')?.textContent
 
 describe('Alt and the arrows', () => {
@@ -218,7 +218,7 @@ describe('Alt and the arrows', () => {
     expect(document.body).toHaveFocus()
     await user.click(composerOf('général'))
     await user.keyboard('{Alt>}{ArrowUp}{/Alt}')
-    expect(screen.queryByRole('combobox', { name: /Message dans/ })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: /Message dans/ })).toBeNull()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('divers')
     expect(screen.getByRole('heading', { level: 1 })).toHaveFocus()
     // Back to a channel with a composer, the focus stays where it is.

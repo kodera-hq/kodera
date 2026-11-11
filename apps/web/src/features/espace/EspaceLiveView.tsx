@@ -1,3 +1,6 @@
+import { transformOutsideCode } from '../messaging/formatting'
+import { RichComposerInput } from '../messaging/RichComposerInput'
+import { UniversalSearch } from '../command-palette/UniversalSearch'
 import { demoMessages } from '../../app/demoMessages'
 import type { ChannelDoc, ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
 import { StudioNavigation } from '../workspace/StudioNavigation'
@@ -61,7 +64,7 @@ import { TimelineDivider } from '../../ui/TimelineDivider/TimelineDivider'
 import { TimelineMessage } from '../../ui/TimelineMessage/TimelineMessage'
 import type { ThreadParticipant } from '../../ui/TimelineMessage/TimelineMessage'
 import { useNarrowViewport } from '../../app/useNarrowViewport'
-import { ChannelSearch, withdrawn } from '../workspace/ChannelSearch'
+import { withdrawn } from '../workspace/ChannelSearch'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import { OrganisationHeader } from '../workspace/OrganisationHeader'
 import { categoryLabel, channelLabel, currentChannel } from '../workspace/workspace'
@@ -1470,13 +1473,25 @@ function MountedEspaceLiveView({
     if (activeRoomId !== null) activeStore.loadMembers?.(activeRoomId)
   }
 
+  const [attachmentRoom, setAttachmentRoom] = useState<string | null>(null)
+  const [composerRoom, setComposerRoom] = useState(activeRoomId)
+  if (composerRoom !== activeRoomId) {
+    setComposerRoom(activeRoomId)
+    setAttachmentRoom(null)
+  }
+  const attachmentStaged = activeRoomId !== null && attachmentRoom === activeRoomId
+  const inviteTrigger = useRef<HTMLButtonElement>(null)
+  const canInvite =
+    activeRoom !== undefined && activeChannel != null && !focusedDocs && !navigationUnsettled
+  const openInvitation = () => inviteTrigger.current?.click()
+
   function submitChannelComposer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     // A « :nom: » still in the text, pasted for instance, goes as its emoji. The mentions are read
     // from the text as typed, so a member whose name holds a code is still named.
     const typed = composerText.trim()
-    const trimmed = replaceShortcodes(typed)
-    if (trimmed === '' || activeRoomId === null || navigationUnsettled) return
+    const trimmed = transformOutsideCode(typed, replaceShortcodes)
+    if (trimmed === '' || activeRoomId === null || navigationUnsettled || attachmentStaged) return
     activeStore.setTyping?.(activeRoomId, false)
     if (draft.editing !== null) {
       // An edit started in another room is dropped, never sent here, as an edit or as a message.
@@ -1505,7 +1520,7 @@ function MountedEspaceLiveView({
   function submitThreadComposer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const typed = threadText.trim()
-    const trimmed = replaceShortcodes(typed)
+    const trimmed = transformOutsideCode(typed, replaceShortcodes)
     if (trimmed === '' || activeRoomId === null || openThreadRootId === null) return
     if (navigationUnsettled) return
     const rootId = openThreadRootId
@@ -1913,7 +1928,7 @@ function MountedEspaceLiveView({
   }, [])
 
   /** `ArrowUp` in the empty channel composer: the newest own message, edited. */
-  function composerKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+  function composerKeyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
     if (event.key !== 'ArrowUp' || event.altKey || event.ctrlKey || event.metaKey) return
     if (event.shiftKey || composerText !== '' || draft.editing !== null) return
     if (composing(event) || navigationUnsettled) return
@@ -1982,7 +1997,37 @@ function MountedEspaceLiveView({
         <h2 id={sidebarHeadingId} className="sr-only">
           {t('console.workspace.sidebar.title')}
         </h2>
-        <ChannelSearch entries={searchEntries} onChoose={openFromSearch} shortcut={!narrow} />
+        <UniversalSearch
+          entries={searchEntries}
+          onChoose={openFromSearch}
+          shortcut={!narrow}
+          actions={[
+            ...(onChangeCanvasMode
+              ? [{ id: 'docs', label: 'Docs', open: () => onChangeCanvasMode('docs') }]
+              : []),
+            ...(canInvite
+              ? [
+                  {
+                    id: 'invite',
+                    label: t('console.workspace.channel-invite.action-open'),
+                    open: openInvitation,
+                  },
+                ]
+              : []),
+            ...mentionCandidates.map((member) => ({
+              id: `member:${member.userId}`,
+              label: `@${member.label}`,
+              open: () => {
+                insertInComposer.current?.(`@${member.label} `)
+              },
+            })),
+          ]}
+          documents={(onOpenDocument ? documents : []).map((doc) => ({
+            id: doc.id,
+            label: doc.title,
+            open: () => openStudioDocument?.(doc),
+          }))}
+        />
         <StudioNavigation
           compact={narrow}
           section="primary"
@@ -2305,6 +2350,7 @@ function MountedEspaceLiveView({
             {activeRoom !== undefined && activeChannel != null && !focusedDocs ? (
               <ChannelInviteDialog
                 key={`${org}:${activeRoom.roomId}`}
+                triggerRef={inviteTrigger}
                 org={org}
                 channel={activeChannel}
                 room={activeRoom}
@@ -2552,7 +2598,12 @@ function MountedEspaceLiveView({
                           channel: activeChannelName,
                         })}
                       </label>
-                      <MentionInput
+                      <RichComposerInput
+                        scope={activeRoomId ?? 'none'}
+                        onInvite={canInvite ? openInvitation : undefined}
+                        onStagingChange={(staged) =>
+                          setAttachmentRoom(staged ? activeRoomId : null)
+                        }
                         id={composerInputId}
                         aria-describedby={simulation ? demoGuidanceId : undefined}
                         value={composerText}
@@ -2639,7 +2690,7 @@ function MountedEspaceLiveView({
                               ? 'console.workspace.composer.action-save'
                               : 'console.workspace.composer.action-send'
                           )}
-                          disabled={navigationUnsettled}
+                          disabled={navigationUnsettled || attachmentStaged}
                           className="ml-auto"
                         />
                       </div>

@@ -46,7 +46,7 @@ test('creates a workspace, sends a message and returns to community', async ({ p
   await expect(page).toHaveURL(/\/qa-product-team\/workspace/)
   await expect(page.getByRole('heading', { name: 'general', exact: true })).toBeVisible()
   await page
-    .getByRole('combobox', { name: 'Message dans #general', exact: true })
+    .getByRole('textbox', { name: 'Message dans #general', exact: true })
     .fill('First message in our new workspace')
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
   await expect(page.getByRole('log')).toContainText('First message in our new workspace')
@@ -99,7 +99,7 @@ test('mobile onboarding keeps the current conversation behind an accessible moda
   await page.getByRole('menuitem', { name: /Créer.*nouvel espace/ }).click()
   await expect(page.getByRole('dialog')).toBeInViewport()
   await expect(
-    page.getByRole('combobox', { name: 'Message dans #announcements', exact: true })
+    page.getByRole('textbox', { name: 'Message dans #announcements', exact: true })
   ).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.keyboard.press('Escape')

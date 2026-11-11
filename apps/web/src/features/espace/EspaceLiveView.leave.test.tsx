@@ -382,9 +382,7 @@ describe('leaving the workspace during a live call', () => {
     expect(screen.getByRole('region', { name: 'Appel en cours' })).toBeVisible()
     expect(room.disconnect).not.toHaveBeenCalled()
     // The held navigation is over: the composer is not left locked as if one were under way.
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: /Message dans/ })).toBeEnabled()
-    )
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /Message dans/ })).toBeEnabled())
     expect(screen.getByRole('button', { name: 'Envoyer' })).toBeEnabled()
   })
 

@@ -24,7 +24,7 @@ import { useWorkspaceSettingsRuntime, type WorkspaceSettingsRuntime } from './se
 import { settingsCopy } from './settingsMessages'
 import type { WorkspaceSettingsProps } from './WorkspaceSettingsHost'
 
-type Section = 'profile' | 'appearance' | 'audio' | 'members' | 'extensions' | 'hosting'
+export type Section = 'profile' | 'appearance' | 'audio' | 'members' | 'extensions' | 'hosting'
 const PERSONAL: Section[] = ['profile', 'appearance', 'audio']
 const WORKSPACE: Section[] = ['members', 'extensions', 'hosting']
 const LINK =
@@ -232,11 +232,16 @@ export default function WorkspaceSettings({
   role,
   onClose,
   returnFocus,
-}: WorkspaceSettingsProps & { onClose: () => void; returnFocus: RefObject<HTMLElement | null> }) {
+  initialSection = 'profile',
+}: WorkspaceSettingsProps & {
+  onClose: () => void
+  returnFocus: RefObject<HTMLElement | null>
+  initialSection?: Section
+}) {
   const narrow = useNarrowViewport()
   const { i18n } = useTranslation()
   const copy = settingsCopy(i18n.resolvedLanguage)
-  const [section, setSection] = useState<Section>('profile')
+  const [section, setSection] = useState<Section>(initialSection)
   const [studio, setStudio] = useState(false)
   const studioTrigger = useRef<HTMLButtonElement>(null)
   const closeStudio = () => {

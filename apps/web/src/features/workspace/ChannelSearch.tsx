@@ -19,7 +19,7 @@ import { TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
 export interface ChannelSearchEntry {
   id: string
   label: string
-  kind: 'text' | 'audio'
+  kind: 'text' | 'audio' | 'command'
   /** The category's label, read after the name to tell two channels of the same name apart. */
   category?: string
 }
@@ -31,6 +31,11 @@ export interface ChannelSearchProps {
   onChoose: (entry: ChannelSearchEntry) => HTMLElement | null
   /** Whether `Ctrl K` opens this search. Only one search on a screen listens. */
   shortcut: boolean
+  title?: string
+  queryLabel?: string
+  emptyLabel?: string
+  footer?: string | undefined
+  match?: typeof matchingEntries
 }
 
 /** Lower case, accents dropped: « general » finds « Général ». */
@@ -103,7 +108,16 @@ function SpeakerIcon() {
   )
 }
 
-export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProps) {
+export function ChannelSearch({
+  entries,
+  onChoose,
+  shortcut,
+  title,
+  queryLabel,
+  footer,
+  emptyLabel,
+  match = matchingEntries,
+}: ChannelSearchProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -116,7 +130,7 @@ export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProp
   const returnFocusTo = useRef<HTMLElement | null>(null)
   const listId = useId()
   const optionId = (index: number) => `${listId}-${index}`
-  const found = useMemo(() => matchingEntries(entries, query), [entries, query])
+  const found = useMemo(() => match(entries, query), [entries, query, match])
   const highlighted = Math.min(active, Math.max(found.length - 1, 0))
 
   function show(opener: Element | null) {
@@ -165,6 +179,9 @@ export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProp
       setActive(next)
       // A long list scrolls with the highlight, so the highlighted option stays in view.
       document.getElementById(optionId(next))?.scrollIntoView({ block: 'nearest' })
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      setActive(event.key === 'Home' ? 0 : Math.max(0, found.length - 1))
     } else if (event.key === 'Enter') {
       event.preventDefault()
       choose(found[highlighted])
@@ -205,7 +222,7 @@ export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProp
       <Dialog
         open={open}
         onOpenChange={setOpen}
-        title={t('console.workspace.search.title')}
+        title={title ?? t('console.workspace.search.title')}
         closeLabel={t('console.common.action-close')}
         initialFocus={field}
         returnFocusTo={returnFocusTo}
@@ -217,7 +234,7 @@ export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProp
               ref={field}
               type="text"
               role="combobox"
-              aria-label={t('console.workspace.search.label-query')}
+              aria-label={queryLabel ?? t('console.workspace.search.label-query')}
               aria-autocomplete="list"
               aria-expanded={found.length > 0}
               aria-controls={listId}
@@ -267,9 +284,9 @@ export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProp
                     : 'text-c-ink-2'
                 )}
               >
-                {entry.kind === 'text' ? (
+                {entry.kind !== 'audio' ? (
                   <span aria-hidden="true" className="w-4 shrink-0 text-center text-c-ink-3">
-                    #
+                    {entry.kind === 'command' ? '›' : '#'}
                   </span>
                 ) : (
                   <SpeakerIcon />
@@ -283,10 +300,11 @@ export function ChannelSearch({ entries, onChoose, shortcut }: ChannelSearchProp
               </li>
             ))}
           </ul>
+          {footer ? <p className="px-2 text-xs text-c-ink-3">{footer}</p> : null}
           {/* Mounted with the dialog and kept in the accessibility tree while empty (`sr-only`,
               not `hidden`), so a screen reader hears the words when they come. */}
           <p role="status" className="px-2 text-sm text-c-ink-3 empty:sr-only">
-            {found.length === 0 ? t('console.workspace.search.label-empty') : null}
+            {found.length === 0 ? (emptyLabel ?? t('console.workspace.search.label-empty')) : null}
           </p>
         </div>
       </Dialog>

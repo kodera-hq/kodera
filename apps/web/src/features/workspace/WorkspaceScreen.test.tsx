@@ -1203,7 +1203,9 @@ describe('a workspace whose tenant is being prepared (quick-workspace W2)', () =
     // Nor can the search reach a channel whose room does not exist.
     await user.click(screen.getByRole('button', { name: 'Rechercher' }))
     await user.keyboard('bien')
-    expect(await screen.findByText('Aucun salon ne porte ce nom.')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Aucune destination ni commande ne correspond.')
+    ).toBeInTheDocument()
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(beginMatrixSignIn).not.toHaveBeenCalled()
     expect(fetchImpl).not.toHaveBeenCalled()
@@ -1307,10 +1309,10 @@ describe('a workspace whose tenant is being prepared (quick-workspace W2)', () =
     renderScreen()
     await user.click(await screen.findByRole('button', { name: 'Rechercher' }))
     await user.keyboard('dét')
-    expect(await screen.findByText('Aucun salon ne porte ce nom.')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /^#détente/ })).toBeNull()
     await user.clear(screen.getByRole('combobox'))
     await user.keyboard('gén')
-    expect(await screen.findByText('Aucun salon ne porte ce nom.')).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /^#général/ })).toBeNull()
     await user.clear(screen.getByRole('combobox'))
     await user.keyboard('bien')
     expect(await screen.findByRole('option', { name: /bienvenue/ })).toBeInTheDocument()

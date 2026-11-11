@@ -496,7 +496,7 @@ it('returns_channel_draft_after_module_navigation', async () => {
     expect(getMatrixSession()).toBe(matrixSession)
 
     const firstStore = stores[0]!
-    const composer = await screen.findByRole('combobox')
+    const composer = await screen.findByRole('textbox')
     await user.type(composer, DRAFT)
     expect(composer).toHaveValue(DRAFT)
     expect(network.writes).toEqual([])
@@ -549,9 +549,7 @@ it('returns_channel_draft_after_module_navigation', async () => {
     expect(getMatrixSession()).toBe(matrixSession)
     expect(network.writes).toEqual([])
     expect(network.unexpected).toEqual([])
-    expect(await screen.findByRole('combobox'), 'DraftLostAcrossModuleNavigation').toHaveValue(
-      DRAFT
-    )
+    expect(await screen.findByRole('textbox'), 'DraftLostAcrossModuleNavigation').toHaveValue(DRAFT)
   } catch (error) {
     primaryFailure = { error }
   } finally {
@@ -1111,7 +1109,7 @@ async function composedHarness(
     }
     const view = render(tree())
     unmount = view.unmount
-    await screen.findByRole('combobox', {
+    await screen.findByRole('textbox', {
       name: i18n.t('console.workspace.composer.label-message', { channel: 'General' }),
     })
     await waitFor(() => expect(lease).toBeDefined())
@@ -1152,7 +1150,7 @@ async function composedHarness(
         return lease!
       },
       get composer() {
-        return screen.getByRole('combobox', {
+        return screen.getByRole('textbox', {
           name: i18n.t('console.workspace.composer.label-message', {
             channel: currentChannel === SECOND_CHANNEL ? 'Second' : 'General',
           }),

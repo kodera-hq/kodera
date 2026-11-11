@@ -1,3 +1,4 @@
+import { caretInsideCode } from '../messaging/formatting'
 // The composer's text field with its two lists (V1 bar M8, workspace audit item 4): typing « @ »
 // opens the channel's members under the caret's word, and choosing one writes « @Name » into the
 // text; typing « : » and two characters of a shortcode opens the matching emoji, and choosing one
@@ -17,9 +18,10 @@ import { insertMention, matchingMembers, mentionAt } from './mentions'
 import type { MentionCandidate } from './mentions'
 
 export interface MentionInputProps extends Omit<
-  InputHTMLAttributes<HTMLInputElement>,
+  InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>,
   'value' | 'onChange' | 'role'
 > {
+  multiline?: boolean
   id: string
   value: string
   onValueChange: (value: string) => void
@@ -49,6 +51,7 @@ type Option =
 
 export function MentionInput({
   id,
+  multiline = false,
   value,
   onValueChange,
   members,
@@ -62,7 +65,7 @@ export function MentionInput({
   ...rest
 }: MentionInputProps) {
   const listId = useId()
-  const input = useRef<HTMLInputElement>(null)
+  const input = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
   const [caret, setCaret] = useState<number | null>(null)
   const [active, setActive] = useState(0)
   /**
@@ -108,7 +111,7 @@ export function MentionInput({
     input.current.setSelectionRange(at, at)
   }, [value])
 
-  function follow(element: HTMLInputElement) {
+  function follow(element: HTMLInputElement | HTMLTextAreaElement) {
     setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart : null)
   }
 
@@ -149,7 +152,7 @@ export function MentionInput({
     write(next.text, next.caret)
   }
 
-  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
+  function keyDown(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
     if (open) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
@@ -175,17 +178,21 @@ export function MentionInput({
 
   const optionId = (index: number) => `${listId}-${index}`
 
+  const Field = multiline ? 'textarea' : 'input'
   return (
     <div className="relative min-w-0 flex-1">
-      <input
+      <Field
         {...rest}
-        ref={input}
+        ref={(element: HTMLInputElement | HTMLTextAreaElement | null) => {
+          input.current = element
+        }}
         id={id}
-        type="text"
-        role="combobox"
+        {...(multiline ? { rows: 3 } : { type: 'text' })}
+        role={multiline ? 'textbox' : 'combobox'}
         aria-autocomplete="list"
-        aria-expanded={open}
-        aria-controls={open ? listId : undefined}
+        aria-expanded={multiline ? undefined : open || rest['aria-expanded'] || false}
+        aria-haspopup={multiline ? 'listbox' : undefined}
+        aria-controls={open ? listId : rest['aria-controls']}
         {...(open ? { 'aria-activedescendant': optionId(highlighted) } : {})}
         value={value}
         onChange={(event) => {
@@ -196,7 +203,8 @@ export function MentionInput({
           if (mentionAt(text, at) === null && shortcodeAt(text, at) === null) setDismissed(null)
           // Mid-composition, the input method owns the text: writing it now would double it.
           const composing = (event.nativeEvent as InputEvent).isComposing === true
-          const closed = composing ? null : closeShortcode(text, at)
+          const closed =
+            composing || (multiline && caretInsideCode(text, at)) ? null : closeShortcode(text, at)
           if (closed !== null) {
             write(closed.text, closed.caret)
             return
