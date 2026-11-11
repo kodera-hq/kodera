@@ -2,24 +2,38 @@ import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { createServer, type ViteDevServer } from 'vite'
 import { fileURLToPath } from 'node:url'
-import { realpathSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 let server: ViteDevServer
 let origin: string
+let cacheDir: string
+const fixtureEnvKeys = [
+  'VITE_AUTH_MODE',
+  'VITE_ENABLE_MSW',
+  'VITE_CORE_API_URL',
+  'VITE_KEYCLOAK_URL',
+  'VITE_OIDC_CLIENT_ID',
+] as const
+let previousEnv: Record<string, string | undefined> = {}
 const issuer = 'https://identity.example.test/realms/community'
 const worker = `self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));self.addEventListener('fetch',event=>{if(new URL(event.request.url).pathname==='/legacy-probe')event.respondWith(new Response('simulated'));});`
-test.beforeAll(async () => {
+test.beforeAll(async ({ browser }) => {
   const port = 4193 + test.info().workerIndex
   origin = `http://127.0.0.1:${port}`
+  previousEnv = Object.fromEntries(fixtureEnvKeys.map((key) => [key, process.env[key]]))
   process.env.VITE_AUTH_MODE = 'oidc'
   process.env.VITE_ENABLE_MSW = '0'
   process.env.VITE_CORE_API_URL = origin + '/api/v1'
   process.env.VITE_KEYCLOAK_URL = 'https://identity.example.test'
   process.env.VITE_OIDC_CLIENT_ID = 'console'
   const root = fileURLToPath(new URL('../..', import.meta.url))
+  cacheDir = mkdtempSync(resolve(tmpdir(), 'kodera-community-auth-'))
   server = await createServer({
     root,
+    envDir: false,
+    cacheDir,
     server: {
       host: '127.0.0.1',
       port,
@@ -52,9 +66,44 @@ test.beforeAll(async () => {
     ],
   })
   await server.listen()
+  // A listening dev server still has a cold asynchronous module graph. Prove readiness in a
+  // disposable context, so behavioral assertions never include compilation or share auth state.
+  const context = await browser.newContext()
+  try {
+    await context.route('**/*', (route) =>
+      new URL(route.request().url()).origin === origin ? route.continue() : route.abort()
+    )
+    const page = await context.newPage()
+    const failures: string[] = []
+    page.on('pageerror', (error) => failures.push(error.name))
+    page.on('requestfailed', (request) => failures.push(new URL(request.url()).pathname))
+    page.on('response', (response) => {
+      if (response.status() >= 400)
+        failures.push(`${response.status()} ${new URL(response.url()).pathname}`)
+    })
+    try {
+      await page.goto(origin + '/community/workspace')
+      await expect(page.getByRole('heading', { name: 'Kodera Community' })).toBeVisible({
+        timeout: 20_000,
+      })
+    } catch (error) {
+      console.error('Community fixture failed to become ready', failures.slice(-20))
+      throw error
+    }
+  } finally {
+    await context.close()
+  }
 })
 test.afterAll(async () => {
-  await server?.close()
+  try {
+    await server?.close()
+  } finally {
+    if (cacheDir) rmSync(cacheDir, { recursive: true, force: true })
+    for (const key of fixtureEnvKeys) {
+      if (previousEnv[key] === undefined) delete process.env[key]
+      else process.env[key] = previousEnv[key]
+    }
+  }
 })
 
 for (const locale of ['fr', 'en'] as const) {
@@ -116,6 +165,8 @@ for (const locale of ['fr', 'en'] as const) {
       expect(url.searchParams.get('state')).toBeTruthy()
       expect(url.searchParams.get('redirect_uri')).toBe(origin + '/auth/callback')
       expect(url.searchParams.get('client_id')).toBe('console')
+      // Observing the request does not mean its navigation has committed yet.
+      await expect(page).toHaveTitle('Identity flow')
       await page.goto(origin + '/__worker-install')
       expect(await page.evaluate(() => sessionStorage.getItem('kodera.web.auth.returnTo'))).toBe(
         '/community/workspace'
