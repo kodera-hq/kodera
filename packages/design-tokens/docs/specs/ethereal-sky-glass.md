@@ -73,9 +73,36 @@ Nothing is an inline style. The preset adds `material-<level>` and `material-<le
 
 ### How a material is measured
 
-`contrast-pairs.json` declares, per glass theme, a **backdrop set**: everything the theme paints that can lie behind one of its materials — the page, the grounds content sits on, running ink, the near-black rail. Every level of every theme is held to the same seven rows: `ink`, `ink-2`, `ink-3` and `accent-ink` at 4.5:1, an `ink-4` icon, the control boundary and the focus ring core at 3:1. A translucent level is measured over its theme's set, on the worst ground, and on its opaque fallback (`docs/adr/0003`). Two stacks are measured as well: a dialog over the scrim, and a popover over a panel.
+`contrast-pairs.json` declares, per glass theme, a **backdrop set**: everything the theme paints that can lie behind one of its materials — the page and both ends of its sky, the grounds content sits on, running ink, the near-black rail. A set is declared by name for one registered theme, and the theme of the ground selects it: a material cannot be measured over another theme's set, nor over a list of colours written into its row. Every level of every theme is held to the same seven rows: `ink`, `ink-2`, `ink-3` and `accent-ink` at 4.5:1, an `ink-4` icon, the control boundary and the focus ring core at 3:1. A translucent level is measured over its theme's set, on the worst ground, and on its opaque fallback (`docs/adr/0003`). Two stacks are measured as well: a dialog over the scrim, and a popover over a panel.
 
 The initial alphas are what that gate allows with the rail in the set: 0.92 to 0.97 in `ciel`, 0.90 to 0.96 in `ciel-nuit`. They are a floor found by the gate, not a look. A more transparent material needs a narrower claim about what lies behind it, or different inks, and either is a design decision.
+
+## The sky
+
+Givre paints no gradient (D-UI3), and that holds exactly as before for `light`, `dark`, `black` and for any gradient that belongs to no theme. The ciel family paints one, under a grammar narrow enough that a surface over it can still be measured:
+
+- **bounded**: at most four stops;
+- **named**: every stop is a reference to an opaque colour primitive of the same theme — `color.theme-<theme>.sky-zenith`, the page, `color.theme-<theme>.sky-horizon` — never a raw colour, because a stop is a ground text can sit on;
+- **anchored**: positions rise strictly from 0 to 1, and the angle is declared;
+- **measured**: every stop is one of the theme's backdrop extremes, so the materials are measured over both ends of the sky, and `ink`, `ink-2`, `ink-3`, `accent-ink` and the focus ring core are held to their minimum straight on the gradient, over its stops and every blend between them.
+
+The grammar gate holds the first three, the contrast gate the fourth. The gradient passes through the flat page colour, so a client that paints `--c-page` alone is on the sky.
+
+## Spring motion
+
+`motion.spring.snappy`, `.gentle` and `.bouncy` hold the physics of a mass on a damped spring: stiffness, damping, mass. That is what every platform can consume; a duration and a cubic curve are what one platform draws. The build solves the equation once and emits, per spring, `--spring-<name>`, a `linear()` easing sampled over the time the spring takes to settle, and `--spring-<name>-duration`. CSS animates `transform` and `opacity` with the pair, and no script.
+
+| | stiffness | damping | mass | damping ratio | settles in | overshoot |
+|---|---|---|---|---|---|---|
+| `snappy` | 420 | 34 | 1 | 0.83 | 400 ms | under 1 % |
+| `gentle` | 170 | 26 | 1 | 1.00 | 650 ms | none |
+| `bouncy` | 300 | 18 | 1 | 0.52 | 700 ms | 15 % |
+
+`--spring-<name>` is declared as the plain `ease-out`, which every client can draw and which never overshoots. The sampled curve is enabled under `@supports (transition-timing-function: linear(0, 1))` and disabled again under `prefers-reduced-motion: reduce`. The grammar gate refuses a spring that takes more than 1500 ms to settle or overshoots by more than 25 %.
+
+## Native
+
+Additive members of the format the apps already pin, `kodera-native-tokens/1`: palettes for the two new themes, the registry as `KoderaTokens.Theme`, `KoderaTokens.MaterialSet.<theme>.<level>` with the opaque `fallback` beside the glass parameters, and `KoderaTokens.Motion.<name>` with the damping ratio and the response a platform spring takes. A material's shadow and the sky gradient have no native binding in this format. A native system material is not the filter chain the contrast gate models; a surface drawn with one needs its own check.
 
 ## Acceptance
 
@@ -84,6 +111,8 @@ The initial alphas are what that gate allows with the rail in the set: 0.92 to 0
 - `test/sky-glass.selftest.mjs`: the family's foundation contract and the material tier — source, stylesheet, preset and rows — each clause with a mutation that asserts its own message, and a sandbox build refusing an incomplete tier.
 - `test/check-grammar.selftest.mjs`: every way a material is not a material.
 - `test/check-contrast.selftest.mjs` and `test/backdrop-contrast.selftest.mjs`: the worst-case gate and its maths.
+- `test/givre-nuit.selftest.mjs`: D-UI3, scoped to the givre family and as strict there as it was.
+- `test/spring-motion.selftest.mjs`: the sampled curve against a numerical integration of the same spring, and the stylesheet's defaults.
 
 ## Consumers
 
