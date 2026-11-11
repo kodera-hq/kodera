@@ -81,7 +81,7 @@ def generate(args):
         entry.get('issuer') == staff and entry.get('lane') == 'staff' for entry in trust
     )):
         raise ValueError('Staff issuer must be admitted on the staff trust lane')
-    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_SECRET_KEYS, check.SYNAPSE_OIDC_SECRET_ENV_KEY)})
+    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_ENV_NAMES, check.SYNAPSE_OIDC_ENV_NAME)})
     if template_id == 'community':
         if issuer != origin + '/realms/community':
             raise ValueError('Community bootstrap requires the canonical Community issuer')
@@ -92,7 +92,7 @@ def generate(args):
         values.update(KODERA_DEFAULT_COMMUNITY_ORG_SLUG='community',
                       KODERA_DEFAULT_COMMUNITY_ISSUER=issuer,
                       KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=owner)
-        for key, option in (('KODERA_AGENT_TOKEN', 'agent_token_file'), ('KODERA_SYNAPSE_TOKEN', 'synapse_token_file'), (check.SYNAPSE_OIDC_SECRET_ENV_KEY, 'synapse_oidc_secret_file')):
+        for key, option in (('KODERA_AGENT_TOKEN', 'agent_token_file'), ('KODERA_SYNAPSE_TOKEN', 'synapse_token_file'), (check.SYNAPSE_OIDC_ENV_NAME, 'synapse_oidc_secret_file')):
             token_file = getattr(args, option, None)
             if not token_file or Path(token_file).stat().st_size > 4096:
                 raise ValueError('Community bootstrap requires --' + option.replace('_', '-'))

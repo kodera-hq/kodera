@@ -76,8 +76,9 @@ COMMUNITY_KEYS = (
     "KODERA_DEFAULT_COMMUNITY_ORG_SLUG", "KODERA_DEFAULT_COMMUNITY_ISSUER",
     "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID",
 )
-AGENT_SECRET_KEYS = ("KODERA_AGENT_TOKEN", "KODERA_SYNAPSE_TOKEN")
-SYNAPSE_OIDC_SECRET_ENV_KEY = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
+# Environment variable names only; credential values are never kept in these constants.
+AGENT_ENV_NAMES = ("KODERA_AGENT_TOKEN", "KODERA_SYNAPSE_TOKEN")
+SYNAPSE_OIDC_ENV_NAME = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
 
 # A pulled image is pinned by tag and digest, so `docker compose pull` cannot drift.
 PINNED_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")
@@ -270,7 +271,7 @@ def check_community_deploy(
         if svc is None:
             continue
         raw_block = "\n".join(svc.raw_lines)
-        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY):
+        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME):
             if forbidden in svc.environment or forbidden in raw_block:
                 errors.append(
                     f"ADR-0003 isolation violation: forbidden secret '{forbidden}' in service '{core_svc_name}'"
@@ -302,7 +303,7 @@ def check_community_deploy(
                 errors.append("tenant-agent missing runtime guard: " + guard)
         if agent.environment.get("KODERA_APPS") != "matrix":
             errors.append("tenant-agent must use Matrix-only reconciliation")
-        for key in AGENT_SECRET_KEYS:
+        for key in AGENT_ENV_NAMES:
             if agent.environment.get(key) != "${" + key + ":-}":
                 errors.append("tenant-agent must consume isolated " + key)
         if "docker.sock" in block:
@@ -387,7 +388,7 @@ def check_community_deploy(
     # The module is installed exclusively from the local, read-only tree on every start.
     synapse = services.get("synapse")
     if synapse is not None:
-        for key in (*COMMUNITY_KEYS[:2], SYNAPSE_OIDC_SECRET_ENV_KEY):
+        for key in (*COMMUNITY_KEYS[:2], SYNAPSE_OIDC_ENV_NAME):
             if synapse.environment.get(key) != "${" + key + ":-}":
                 errors.append("service 'synapse' must consume " + key)
         block = "\n".join(synapse.raw_lines)
@@ -456,7 +457,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     for key in example:
         if key == "KODERA_STAFF_ISSUER" and not actual.get(key, "").strip("'\""):
             continue
-        if key in (*COMMUNITY_KEYS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY) and not community_enabled:
+        if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
             if actual.get(key, "").strip("'\""):
                 errors.append("Community issuer and owner require KODERA_DEFAULT_COMMUNITY_ORG_SLUG")
             continue
@@ -734,7 +735,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             lambda c, e, cf, key=key: (c.replace("      " + key + ": ${" + key + ":-}\n", "", 1), e, cf),
             "service 'migrate' must consume " + key,
         ))
-    for key in AGENT_SECRET_KEYS:
+    for key in AGENT_ENV_NAMES:
         mutations.append((
             "leak isolated agent credential " + key,
             lambda c, e, cf, key=key: (c.replace("      KODERA_EDITION: community\n", "      KODERA_EDITION: community\n      " + key + ": ${" + key + "}\n", 1), e, cf),
@@ -767,7 +768,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
         else f"{key}=" if key == "KODERA_STAFF_ISSUER"
-        else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY)
+        else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}=filled-value-{i}"
         for i, key in enumerate(parse_env_example(env_text)[0])
     ) + "\n"
@@ -790,7 +791,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     canonical = canonical.replace("https://id.example.net/realms/acme", "https://id.example.net/realms/community")
     canonical = re.sub(r"(?m)^KODERA_DOMAIN=.*$", "KODERA_DOMAIN=community.example.net", canonical)
     canonical = re.sub(r"(?m)^KODERA_MATRIX_DOMAIN=.*$", "KODERA_MATRIX_DOMAIN=example.net", canonical)
-    for key in (*AGENT_SECRET_KEYS, SYNAPSE_OIDC_SECRET_ENV_KEY):
+    for key in (*AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME):
         canonical = canonical.replace(key + "=\n", key + "=synthetic-issued-token-for-test-only\n")
     if preflight_env(env_text, canonical):
         print("[FAIL] canonical Community preflight refused valid public configuration", file=sys.stderr)
