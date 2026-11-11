@@ -3,6 +3,8 @@ import { useId, useMemo, useState } from 'react'
 import { Button } from '@/ui/Button/Button'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { StatusPill } from '@/ui/StatusPill/StatusPill'
+import { BrandIcon } from '@/ui/icons/BrandIcon'
+import { EXTENSION_BRANDS } from './extensionBrand'
 import { ModuleGlyph } from '@/ui/icons/ModuleGlyph'
 import { WebhookSignatureTester } from './WebhookSignatureTester'
 import {
@@ -159,6 +161,7 @@ export function ExtensionsCatalogPanel({
                     }
                   >
                     <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                      <BrandIcon name={EXTENSION_BRANDS[ext.id]} decorative />
                       <span
                         className={
                           isSelected
@@ -203,6 +206,7 @@ export function ExtensionsCatalogPanel({
             className="flex flex-col gap-3 rounded-md border border-c-border bg-c-sunken p-4"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
+              <BrandIcon name={EXTENSION_BRANDS[selectedExtension.id]} decorative />
               <div className="flex flex-col gap-1">
                 <span className="text-md font-semibold text-c-ink">
                   {selectedExtension.name} ({selectedExtension.slashCommand})
