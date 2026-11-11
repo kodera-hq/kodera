@@ -309,8 +309,40 @@ const HELD = [
   ['focus-ring', 'spec:focus-ring.%.indicator', 3],
 ];
 
+/** The row ids the material tier owns: `material.<theme>.<level>/<what>`. */
+const MATERIAL_ROW = /^material\.([a-z0-9-]+)\.([a-z]+)\/(.+)$/;
+
 function checkMaterialRows(source, contrast) {
   const sets = contrast.backdropSets ?? {};
+
+  // Every row in the `material.` namespace, not a list someone keeps: a row
+  // added later — a new stack, a new role — is held to the same bar the day it
+  // is added, and cannot arrive exempt, inverted, loosened or measured on
+  // something that is not the material its id names.
+  const owned = contrast.pairs.filter((row) => row.id.startsWith('material.'));
+  assert.ok(owned.length >= THEMES.length * LEVELS.length * HELD.length, `only ${owned.length} material rows were read, so this sweep would pass vacuously`);
+  for (const row of owned) {
+    const [, theme, level] = MATERIAL_ROW.exec(row.id) ?? [];
+    assert.ok(THEMES.includes(theme) && LEVELS.includes(level), `${row.id}: a material row is named material.<theme>.<level>/<what>`);
+    assert.ok([3, 4.5].includes(row.min), `${row.id}: a minimum of 3 or 4.5, not ${row.min}`);
+    assert.equal(row.exempt, undefined, `${row.id}: no exemption on a material`);
+    assert.equal(row.expect, undefined, `${row.id}: no inverted acceptance on a material`);
+    assert.equal(row.bg, `semantic.material.${theme}.${level}`, `${row.id}: measured on the material its id names, by the name a consumer uses`);
+    if (declared(source, theme, level).alpha < 1) {
+      assert.equal(row.backdropSet, theme, `${row.id}: a translucent material is measured over its own theme's set`);
+      assert.equal(sets[theme]?.theme, theme, `${row.id}: backdropSets.${theme} holds the extremes of its own theme`);
+    } else {
+      assert.equal(row.backdropSet, undefined, `${row.id}: an opaque material binds no set`);
+      assert.equal(row.layers, undefined, `${row.id}: nothing shows through an opaque material`);
+    }
+  }
+  assert.equal(
+    contrast.measurements.filter((row) => row.id.startsWith('material.')).length,
+    0,
+    'a material is never a non-normative measurement: every material row is held to a minimum',
+  );
+
+  // Completeness: the rows every level must have. The sweep above holds them.
   for (const theme of THEMES) {
     const glass = themeInfo(theme).family === 'ciel';
     if (glass) {
@@ -328,15 +360,8 @@ function checkMaterialRows(source, contrast) {
         const row = contrast.pairs.find((candidate) => candidate.id === id);
         assert.ok(row, `${id}: every material level is held to this row`);
         assert.equal(row.fg, fg.replace('%', theme), `${id}: measures its own theme's ${name}`);
-        assert.equal(row.bg, `semantic.material.${theme}.${level}`, `${id}: measured on the material, by the name a consumer uses`);
         assert.equal(row.min, min, `${id}: a minimum of ${min}`);
-        assert.equal(row.exempt, undefined, `${id}: no exemption`);
-        assert.equal(row.expect, undefined, `${id}: no inverted acceptance`);
-        if (declared(source, theme, level).alpha < 1) {
-          assert.equal(row.backdropSet, theme, `${id}: a translucent material is measured over its own theme's set`);
-        } else {
-          assert.equal(row.backdropSet, undefined, `${id}: an opaque material binds no set`);
-        }
+        assert.equal(row.layers, undefined, `${id}: the level itself, with nothing stacked under it`);
       }
     }
   }
@@ -513,7 +538,62 @@ test('every material clause fails on its own mutation', () => {
   );
   assert.throws(
     () => checkMaterialRows(tree, editRow('material.ciel.dialog/ink', (row) => (row.bg = 'semantic.theme.ciel.elevated'))),
-    /material\.ciel\.dialog\/ink: measured on the material, by the name a consumer uses/,
+    /material\.ciel\.dialog\/ink: measured on the material its id names, by the name a consumer uses/,
+  );
+  // The sweep: rows OUTSIDE the required list are held to the same bar. Each
+  // of these is a row nobody listed, arriving in the namespace with a way out.
+  const addRow = (row) =>
+    mutate(register, (r) =>
+      r.pairs.push({ id: 'material.ciel.bar/placeholder', fg: 'semantic.theme.ciel.placeholder', bg: 'semantic.material.ciel.bar', label: 'scratch', min: 4.5, backdropSet: 'ciel', ...row }),
+    );
+  assert.doesNotThrow(() => checkMaterialRows(tree, addRow({})), 'a well-formed extra row is accepted, so the refusals below are about what they change');
+  assert.throws(() => checkMaterialRows(tree, addRow({ exempt: true })), /material\.ciel\.bar\/placeholder: no exemption on a material/);
+  assert.throws(() => checkMaterialRows(tree, addRow({ expect: 'fail' })), /material\.ciel\.bar\/placeholder: no inverted acceptance on a material/);
+  assert.throws(() => checkMaterialRows(tree, addRow({ min: 1.5 })), /material\.ciel\.bar\/placeholder: a minimum of 3 or 4\.5, not 1\.5/);
+  assert.throws(
+    () => checkMaterialRows(tree, addRow({ bg: 'semantic.theme.ciel.surface', backdropSet: undefined })),
+    /material\.ciel\.bar\/placeholder: measured on the material its id names/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, addRow({ bg: 'semantic.material.ciel.dialog' })),
+    /material\.ciel\.bar\/placeholder: measured on the material its id names/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, addRow({ backdropSet: 'ciel-nuit' })),
+    /material\.ciel\.bar\/placeholder: a translucent material is measured over its own theme's set/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, addRow({ backdropSet: ['semantic.theme.ciel.surface'] })),
+    /material\.ciel\.bar\/placeholder: a translucent material is measured over its own theme's set/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, addRow({ id: 'material.ciel.sheet/ink' })),
+    /material\.ciel\.sheet\/ink: a material row is named material\.<theme>\.<level>\/<what>/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, addRow({ id: 'material.light.bar/placeholder', fg: 'semantic.theme.light.placeholder', bg: 'semantic.material.light.bar' })),
+    /material\.light\.bar\/placeholder: an opaque material binds no set/,
+  );
+  // The stacked rows that ship are in the sweep too, not only the ones added here.
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel.dialog/ink+scrim', (row) => (row.exempt = true))),
+    /material\.ciel\.dialog\/ink\+scrim: no exemption on a material/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel-nuit.popover/ink-3+panel', (row) => (row.expect = 'fail'))),
+    /material\.ciel-nuit\.popover\/ink-3\+panel: no inverted acceptance on a material/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, mutate(register, (r) => r.measurements.push({ id: 'material.ciel.bar/ink-4', fg: 'semantic.theme.ciel.ink-4', bg: 'semantic.material.ciel.bar', kind: 'capability', purpose: 'x' }))),
+    /a material is never a non-normative measurement/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, mutate(register, (r) => (r.backdropSets.ciel.theme = 'ciel-nuit'))),
+    /backdropSets\.ciel holds the extremes of its own theme/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel.bar/ink', (row) => (row.layers = ['semantic.theme.ciel.scrim']))),
+    /material\.ciel\.bar\/ink: the level itself, with nothing stacked under it/,
   );
   assert.throws(
     () => checkMaterialRows(tree, mutate(register, (r) => (r.backdropSets.ciel.members = r.backdropSets.ciel.members.filter((m) => !m.endsWith('.page'))))),
@@ -521,7 +601,7 @@ test('every material clause fails on its own mutation', () => {
   );
   assert.throws(
     () => checkMaterialRows(tree, mutate(register, (r) => delete r.backdropSets['ciel-nuit'])),
-    /backdropSets\.ciel-nuit: a glass theme declares what can lie behind its materials/,
+    /material\.ciel-nuit\.bar\/ink: backdropSets\.ciel-nuit holds the extremes of its own theme/,
   );
 
   checkMaterialSource(tree);
