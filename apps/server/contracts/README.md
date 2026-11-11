@@ -513,6 +513,10 @@ secrets and CA key, and green CI in its own repository (ADR-0001).
   (migrations `orgs.0018` and `orgs.0019`). A request that names one of them was accepted and is
   now refused. Both lists are now pinned to one list of the labels of `kodera.io` in Core's tests,
   so they cannot drift apart again.
+- Adds `check-contract-parity.sh` and its self-test: every copy of a contract under
+  `apps/server/contracts/` and `apps/web/contracts/` is compared with `packages/api-contract/`,
+  each drifted or missing file is named, and one changed byte in any copy is refused. The
+  workflows still run their own `cmp -s` lines; no contract changes.
 
 
 ## Monorepo execution
