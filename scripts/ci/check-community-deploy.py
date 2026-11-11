@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import sys
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,7 +69,16 @@ REQUIRED_SECRET_ENV_KEYS = (
 HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse")
 
 # Public configuration that has no usable default: the operator's own identity provider.
-REQUIRED_PLACEHOLDER_KEYS = ("KODERA_AUTH_TRUST",)
+REQUIRED_PLACEHOLDER_KEYS = (
+    "KODERA_AUTH_TRUST", "KODERA_DEFAULT_COMMUNITY_ISSUER", "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID",
+)
+COMMUNITY_KEYS = (
+    "KODERA_DEFAULT_COMMUNITY_ORG_SLUG", "KODERA_DEFAULT_COMMUNITY_ISSUER",
+    "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID",
+)
+# Environment variable names only; credential values are never kept in these constants.
+AGENT_ENV_NAMES = ("KODERA_AGENT_TOKEN", "KODERA_SYNAPSE_TOKEN")
+SYNAPSE_OIDC_ENV_NAME = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
 
 # A pulled image is pinned by tag and digest, so `docker compose pull` cannot drift.
 PINNED_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")
@@ -216,6 +226,8 @@ def check_community_deploy(
             errors.append(
                 f"public config key {pub_key} in .env.example must be '{expected_val}' (got '{actual_val}')"
             )
+    if env_map.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG") != "community":
+        errors.append(".env.example must opt into the canonical community workspace")
 
     for sec_key in REQUIRED_SECRET_ENV_KEYS:
         if sec_key not in env_map:
@@ -259,7 +271,7 @@ def check_community_deploy(
         if svc is None:
             continue
         raw_block = "\n".join(svc.raw_lines)
-        for forbidden in ISOLATED_ROOM_ACCESS_SECRETS:
+        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME):
             if forbidden in svc.environment or forbidden in raw_block:
                 errors.append(
                     f"ADR-0003 isolation violation: forbidden secret '{forbidden}' in service '{core_svc_name}'"
@@ -281,10 +293,39 @@ def check_community_deploy(
                     f"service 'room-access' must consume isolated secret '{isolated_key}'"
                 )
 
+    agent = services.get("tenant-agent")
+    if agent is None:
+        errors.append("missing required service 'tenant-agent'")
+    else:
+        block = "\n".join(agent.raw_lines)
+        for guard in ('profiles: [community-governance]', 'command: ["python", "-m", "tenant_agent", "run"]', '- agent_state:/state'):
+            if guard not in block:
+                errors.append("tenant-agent missing runtime guard: " + guard)
+        if agent.environment.get("KODERA_APPS") != "matrix":
+            errors.append("tenant-agent must use Matrix-only reconciliation")
+        for key in AGENT_ENV_NAMES:
+            if agent.environment.get(key) != "${" + key + ":-}":
+                errors.append("tenant-agent must consume isolated " + key)
+        if "docker.sock" in block:
+            errors.append("tenant-agent Matrix profile must not mount the Docker socket")
+        for dependency, condition in (("server", "service_healthy"), ("synapse", "service_healthy"), ("agent-state-init", "service_completed_successfully")):
+            if agent.depends_on_conditions.get(dependency) != condition:
+                errors.append("tenant-agent must wait for " + dependency)
+
     # 3. Migration isolation: migrate uses Dockerfile.migrator with restart: "no"
     #    and server depends_on migrate with condition: service_completed_successfully
     migrate_svc = services.get("migrate")
     if migrate_svc is not None:
+        block = "\n".join(migrate_svc.raw_lines)
+        if "python manage.py bootstrap_community_workspace --settings config.settings.deploy" not in block:
+            errors.append("service 'migrate' must bootstrap the canonical Community workspace")
+        if 'if [ -n "$$KODERA_DEFAULT_COMMUNITY_ORG_SLUG" ]; then' not in block:
+            errors.append("service 'migrate' must guard Community bootstrap with the configured slug")
+        for key in COMMUNITY_KEYS:
+            if migrate_svc.environment.get(key) != "${" + key + ":-}":
+                errors.append(f"service 'migrate' must consume {key}")
+        if "${KODERA_AUTH_TRUST:?" not in migrate_svc.environment.get("KODERA_AUTH_TRUST", ""):
+            errors.append("service 'migrate' must require public trust for Community bootstrap")
         if migrate_svc.dockerfile != "Dockerfile.migrator":
             errors.append(
                 f"service 'migrate' must build from 'Dockerfile.migrator' (got '{migrate_svc.dockerfile}')"
@@ -296,6 +337,9 @@ def check_community_deploy(
 
     server_svc = services.get("server")
     if server_svc is not None:
+        for key in COMMUNITY_KEYS[:2]:
+            if server_svc.environment.get(key) != "${" + key + ":-}":
+                errors.append(f"service 'server' must consume {key}")
         migrate_cond = server_svc.depends_on_conditions.get("migrate")
         if migrate_cond != "service_completed_successfully":
             errors.append(
@@ -334,6 +378,8 @@ def check_community_deploy(
         web_block = "\n".join(web_svc.raw_lines)
         if "VITE_KEYCLOAK_URL: ${KODERA_OIDC_PROVIDER_ORIGIN:?" not in web_block:
             errors.append("service 'web' must build VITE_KEYCLOAK_URL from KODERA_OIDC_PROVIDER_ORIGIN")
+        if "VITE_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?" not in web_block:
+            errors.append("service 'web' must build VITE_MATRIX_DOMAIN from the tenant base domain")
         if not re.search(
             r'"--provider-origin"\n\s*- "\$\{KODERA_OIDC_PROVIDER_ORIGIN:\?', web_block
         ):
@@ -342,6 +388,9 @@ def check_community_deploy(
     # The module is installed exclusively from the local, read-only tree on every start.
     synapse = services.get("synapse")
     if synapse is not None:
+        for key in (*COMMUNITY_KEYS[:2], SYNAPSE_OIDC_ENV_NAME):
+            if synapse.environment.get(key) != "${" + key + ":-}":
+                errors.append("service 'synapse' must consume " + key)
         block = "\n".join(synapse.raw_lines)
         for guard in (
             "../../packages/synapse-policy:/opt/kodera-policy:ro",
@@ -383,8 +432,11 @@ def check_synapse_policy_source(source: str) -> list[str]:
         'MODULE = "kodera_synapse_policy.KoderaPolicy"',
         '"room_access_user_id": f"@kodera-rooms:{server}"',
         '"agent_user_id": f"@kodera-agent:{server}"',
-        'version("kodera-synapse-policy") != "0.1.4"',
-        'yaml.safe_dump(configure(document)',
+        'version("kodera-synapse-policy") != "0.1.5"',
+        'yaml.safe_dump(configure(document, os.environ)',
+        '"pkce_method": "always"',
+        '"allow_existing_users": False',
+        '"localpart_template": "{{ user.sub | lower }}"',
     )
     return ["Synapse configuration missing policy guard: " + guard for guard in required if guard not in source]
 
@@ -400,8 +452,15 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     """Check an operator's .env against .env.example. Names keys, never values."""
     example, _ = parse_env_example(env_example_text)
     actual, parse_errors = parse_env_example(env_text)
+    community_enabled = bool(actual.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG", "").strip("'\""))
     errors = [err.replace(".env.example", ".env").split(":", 1)[0] + ": malformed or duplicate" for err in parse_errors]
     for key in example:
+        if key == "KODERA_STAFF_ISSUER" and not actual.get(key, "").strip("'\""):
+            continue
+        if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
+            if actual.get(key, "").strip("'\""):
+                errors.append("Community issuer and owner require KODERA_DEFAULT_COMMUNITY_ORG_SLUG")
+            continue
         value = actual.get(key, "").strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
             value = value[1:-1]
@@ -425,6 +484,41 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
                     errors.append(f"KODERA_AUTH_TRUST entry {index} issuer is not a public https URL")
         elif key == "KODERA_OIDC_PROVIDER_ORIGIN" and not _deployable_issuer(value):
             errors.append("KODERA_OIDC_PROVIDER_ORIGIN is not a public https origin")
+    if community_enabled:
+        slug = actual.get(COMMUNITY_KEYS[0], "").strip("'\"")
+        issuer = actual.get(COMMUNITY_KEYS[1], "").strip("'\"")
+        if slug != "community":
+            errors.append("KODERA_DEFAULT_COMMUNITY_ORG_SLUG must be community")
+        if actual.get("KODERA_DOMAIN", "").strip("'\"") != "community." + actual.get("KODERA_MATRIX_DOMAIN", "").strip("'\""):
+            errors.append("KODERA_DOMAIN must match community.KODERA_MATRIX_DOMAIN")
+        if not _deployable_issuer(issuer) or not issuer.endswith("/realms/community"):
+            errors.append("KODERA_DEFAULT_COMMUNITY_ISSUER must name the public Community realm")
+        try:
+            uuid.UUID(actual.get(COMMUNITY_KEYS[2], "").strip("'\""))
+        except ValueError:
+            errors.append("KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID must be an existing user UUID")
+        try:
+            trust = json.loads(actual.get("KODERA_AUTH_TRUST", "").strip("'\""))
+            admitted = isinstance(trust, list) and any(
+                isinstance(entry, dict) and entry.get("lane") == "customer" and entry.get("issuer") == issuer
+                for entry in trust
+            )
+        except ValueError:
+            admitted = False
+        if not admitted:
+            errors.append("KODERA_DEFAULT_COMMUNITY_ISSUER must be admitted on the customer trust lane")
+    staff = actual.get("KODERA_STAFF_ISSUER", "").strip("'\"")
+    if staff:
+        try:
+            entries = json.loads(actual.get("KODERA_AUTH_TRUST", "").strip("'\""))
+            admitted_staff = isinstance(entries, list) and any(
+                isinstance(entry, dict) and entry.get("lane") == "staff" and entry.get("issuer") == staff
+                for entry in entries
+            )
+        except ValueError:
+            admitted_staff = False
+        if not _deployable_issuer(staff) or not staff.endswith("/realms/kodera-staff") or not admitted_staff:
+            errors.append("KODERA_STAFF_ISSUER must name the exact trusted staff realm")
     return errors
 
 
@@ -591,7 +685,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "server stops requiring KODERA_AUTH_TRUST",
-            lambda c, e, cf: (re.sub(r"(?m)^      KODERA_AUTH_TRUST: .*\n", "", c, count=1), e, cf),
+            lambda c, e, cf: (re.sub(r"(?m)^      KODERA_AUTH_TRUST: .*\n", "", c), e, cf),
             "service 'server' must require KODERA_AUTH_TRUST",
         ),
         (
@@ -626,6 +720,33 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "missing room-policy guard",
         ))
 
+    for guard in (
+        "python manage.py bootstrap_community_workspace --settings config.settings.deploy",
+        'if [ -n "$$KODERA_DEFAULT_COMMUNITY_ORG_SLUG" ]; then',
+    ):
+        mutations.append((
+            "remove canonical bootstrap guard " + guard,
+            lambda c, e, cf, guard=guard: (c.replace(guard, "removed-bootstrap-guard", 1), e, cf),
+            "service 'migrate' must",
+        ))
+    for key in COMMUNITY_KEYS:
+        mutations.append((
+            "remove Community bootstrap setting " + key,
+            lambda c, e, cf, key=key: (c.replace("      " + key + ": ${" + key + ":-}\n", "", 1), e, cf),
+            "service 'migrate' must consume " + key,
+        ))
+    for key in AGENT_ENV_NAMES:
+        mutations.append((
+            "leak isolated agent credential " + key,
+            lambda c, e, cf, key=key: (c.replace("      KODERA_EDITION: community\n", "      KODERA_EDITION: community\n      " + key + ": ${" + key + "}\n", 1), e, cf),
+            "ADR-0003 isolation violation: forbidden secret",
+        ))
+    mutations.append((
+        "agent reconciliation mode removed",
+        lambda c, e, cf: (c.replace("KODERA_APPS: matrix", "KODERA_APPS: docs,meet", 1), e, cf),
+        "tenant-agent must use Matrix-only reconciliation",
+    ))
+
     preflight_cases: list[tuple[str, Callable[[str], str], str]] = [
         ("a placeholder is left", lambda env: env, "DJANGO_SECRET_KEY still holds a CHANGE_ME_ placeholder"),
         ("a key is missing", lambda env: re.sub(r"(?m)^LIVEKIT_API_SECRET=.*\n?", "", env), "LIVEKIT_API_SECRET is not set"),
@@ -646,6 +767,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     filled = "\n".join(
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
+        else f"{key}=" if key == "KODERA_STAFF_ISSUER"
+        else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}=filled-value-{i}"
         for i, key in enumerate(parse_env_example(env_text)[0])
     ) + "\n"
@@ -656,10 +779,33 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         source = env_text if label == "a placeholder is left" else filled
         got = preflight_env(env_text, mutate(source))
         if expected not in got:
-            print(f"[FAIL] preflight case '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
+            print(f"[FAIL] preflight case '{label}' did not report the expected error", file=sys.stderr)
             return 1
         if any("filled-value" in err or "example.net" in err for err in got):
-            print(f"[FAIL] preflight case '{label}' printed a value: {got}", file=sys.stderr)
+            print(f"[FAIL] preflight case '{label}' printed a value", file=sys.stderr)
+            return 1
+
+    canonical = filled.replace("KODERA_DEFAULT_COMMUNITY_ORG_SLUG=\n", "KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community\n")
+    canonical = canonical.replace("KODERA_DEFAULT_COMMUNITY_ISSUER=\n", "KODERA_DEFAULT_COMMUNITY_ISSUER=https://id.example.net/realms/community\n")
+    canonical = canonical.replace("KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=\n", "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=00000000-0000-4000-8000-000000000001\n")
+    canonical = canonical.replace("https://id.example.net/realms/acme", "https://id.example.net/realms/community")
+    canonical = re.sub(r"(?m)^KODERA_DOMAIN=.*$", "KODERA_DOMAIN=community.example.net", canonical)
+    canonical = re.sub(r"(?m)^KODERA_MATRIX_DOMAIN=.*$", "KODERA_MATRIX_DOMAIN=example.net", canonical)
+    for key in (*AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME):
+        canonical = canonical.replace(key + "=\n", key + "=synthetic-issued-token-for-test-only\n")
+    if preflight_env(env_text, canonical):
+        print("[FAIL] canonical Community preflight refused valid public configuration", file=sys.stderr)
+        return 1
+    community_mutations = [
+        ("wrong base domain", canonical.replace("KODERA_MATRIX_DOMAIN=example.net", "KODERA_MATRIX_DOMAIN=community.example.net"), "KODERA_DOMAIN must match"),
+        ("missing owner", canonical.replace("00000000-0000-4000-8000-000000000001", ""), "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID"),
+        ("wrong slug", canonical.replace("ORG_SLUG=community", "ORG_SLUG=wrong"), "KODERA_DEFAULT_COMMUNITY_ORG_SLUG"),
+        ("foreign issuer", canonical.replace("ISSUER=https://id.example.net/realms/community", "ISSUER=https://other.example.net/realms/community"), "customer trust lane"),
+        ("wrong trust lane", canonical.replace('"lane":"customer"', '"lane":"staff"'), "customer trust lane"),
+    ]
+    for label, value, expected in community_mutations:
+        if not any(expected in error for error in preflight_env(env_text, value)):
+            print("[FAIL] Community preflight mutation survived: " + label, file=sys.stderr)
             return 1
 
     for label, mutate, expected_substring in mutations:
@@ -677,7 +823,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
 
     print(
         f"OK: deploy/community stack valid, {len(mutations)} negative selftest mutations refused, "
-        f"{len(preflight_cases)} preflight cases reported."
+        f"{len(preflight_cases) + len(community_mutations)} preflight cases reported."
     )
     return 0
 
@@ -735,7 +881,7 @@ def main() -> int:
             print("[FAIL] " + error, file=sys.stderr)
         return 1
     if args.selftest:
-        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.4'):
+        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.5'):
             if not check_synapse_policy_source(policy_source.replace(guard, "removed")):
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1
