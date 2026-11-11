@@ -90,7 +90,10 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Install Playwright browsers
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        run: |
+          python3 scripts/prepare-ubuntu-apt.selftest.py
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS python3 scripts/prepare-ubuntu-apt.py
+          npx playwright install --with-deps chromium
       - name: Run full Playwright E2E suite
         working-directory: apps/web
         run: KODERA_SKIP_PRECOMPRESS=1 npm run test:e2e
@@ -113,7 +116,10 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Install Playwright Chromium
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        run: |
+          python3 scripts/prepare-ubuntu-apt.selftest.py
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_OS python3 scripts/prepare-ubuntu-apt.py
+          npx playwright install --with-deps chromium
       - name: Verify isolated fixture configuration and refusal mutation
         run: python3 apps/web/tests/espace/stack/bin/runtime.selftest.py
       - name: Run real-service audio proof and muted-sender mutation
