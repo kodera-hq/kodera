@@ -25,6 +25,7 @@ export function registerInteractiveDemo(demo: InteractiveDemo | undefined): void
 }
 
 export function isDemoActive(slug?: string): boolean {
+  if (import.meta.env.VITE_AUTH_MODE === 'oidc') return false
   return active.some((demo) => slug === undefined || demo.slug === slug)
 }
 
@@ -36,6 +37,7 @@ export function createDemoWorkspaceStore(
   slug: string,
   workspace: Workspace
 ): EspaceStoreLike | undefined {
+  if (import.meta.env.VITE_AUTH_MODE === 'oidc') return undefined
   const demo = active.find((entry) => entry.slug === slug)
   if (!demo) return undefined
   let store = stores.get(slug)

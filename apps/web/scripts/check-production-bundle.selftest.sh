@@ -34,6 +34,28 @@ grep -q "OK" "$tmp/oidc.log" || fail "the production build did not report OK"
 [ -f "$tmp/oidc/mockServiceWorker.js" ] &&
   fail "a production build emitted mockServiceWorker.js at its dist root"
 
+# The retirement helper admits one inert filename comparison, never a runtime import or
+# registration. Even an extra occurrence inside that same bootstrap must be rejected.
+retirement_asset="$(grep -l 'kodera.web.legacy-worker-reload' "$tmp/oidc/assets/"*.js)"
+[ -f "$retirement_asset" ] || fail "the production retirement helper was not emitted once"
+cp "$retirement_asset" "$tmp/retirement-pristine.js"
+printf '\nvoid "mockServiceWorker.js";\n' >> "$retirement_asset"
+if "$check" --scan-only "$tmp/oidc" >"$tmp/retirement-mutation.log" 2>&1; then
+  fail "an extra worker marker inside the retirement asset was admitted"
+fi
+grep -q "found 'mockServiceWorker'" "$tmp/retirement-mutation.log" ||
+  fail "worker mutation did not reach its intended guard"
+cp "$tmp/retirement-pristine.js" "$retirement_asset"
+for marker in 'mockServiceWorker.js' 'MOCK_ACTIVATE' 'INTEGRITY_CHECK_REQUEST'; do
+  printf 'void "%s";\n' "$marker" > "$tmp/oidc/assets/worker-runtime-mutation.js"
+  if "$check" --scan-only "$tmp/oidc" >"$tmp/worker-runtime-mutation.log" 2>&1; then
+    fail "a worker runtime marker outside the retirement helper was admitted"
+  fi
+done
+rm "$tmp/oidc/assets/worker-runtime-mutation.js"
+"$check" --scan-only "$tmp/oidc" >"$tmp/retirement-restored.log" 2>&1 ||
+  fail "the pristine retirement asset was not restored"
+
 if "$check" --mode mock "$tmp/mock" >"$tmp/mock.log" 2>&1; then
   cat "$tmp/mock.log" >&2
   fail "a mock build (VITE_AUTH_MODE=mock VITE_ENABLE_MSW=1) was not rejected"

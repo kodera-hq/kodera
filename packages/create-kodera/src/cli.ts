@@ -39,6 +39,53 @@ export const TEMPLATES = Object.freeze({
     connectors: ['uptime-incident-bridge'],
     roles: ['Coordinator', 'Responder'],
   },
+  community: {
+    channels: [
+      'announcements',
+      'general',
+      'developers-community',
+      'support',
+      'extensions',
+      'self-hosting',
+      'show-and-tell',
+      'office-hours',
+      'dev',
+      'strategy',
+      'ops-oncall',
+      'partner-dinum',
+      'partner-octo',
+    ],
+    connectors: [],
+    roles: ['Owner', 'Administrator', 'Member'],
+    categories: [
+      {
+        name: 'Community',
+        visibility: 'members',
+        channels: [
+          'announcements',
+          'general',
+          'developers-community',
+          'support',
+          'extensions',
+          'self-hosting',
+          'show-and-tell',
+          'office-hours',
+        ],
+      },
+      {
+        name: 'Core Kodera',
+        visibility: 'restricted',
+        channels: ['dev', 'strategy', 'ops-oncall'],
+      },
+      {
+        name: 'Design Partners',
+        visibility: 'restricted',
+        channels: ['partner-dinum', 'partner-octo'],
+      },
+    ],
+    readOnlyChannels: ['announcements'],
+    voiceChannels: ['office-hours'],
+  },
 })
 export type TemplateId = keyof typeof TEMPLATES
 export type Options = Record<string, string | boolean>
@@ -154,6 +201,7 @@ export function plan(options: Options) {
     }
   }
   if (options.cloud) {
+    if (id === 'community') throw new Error('INVALID_TEMPLATE')
     const name = scalar(options.org, 80).trim()
     if (!name) throw new Error('INVALID_ORGANIZATION')
     const slug = name
@@ -291,18 +339,18 @@ export async function generate(options: Options) {
       await writeFile(join(output, name), await readFile(join(ASSETS, name)), {
         flag: 'wx',
       })
+    const intent: Record<string, unknown> = {
+      templateId: prepared.templateId,
+      channels: prepared.channels,
+      roles: prepared.roles,
+      enabledConnectors: prepared.connectors,
+    }
+    for (const key of ['categories', 'readOnlyChannels', 'voiceChannels'] as const)
+      if (key in prepared)
+        intent[key] = (prepared as Record<string, unknown>)[key]
     await writeFile(
       join(output, 'workspace-template.json'),
-      JSON.stringify(
-        {
-          templateId: prepared.templateId,
-          channels: prepared.channels,
-          roles: prepared.roles,
-          enabledConnectors: prepared.connectors,
-        },
-        null,
-        2,
-      ) + '\n',
+      JSON.stringify(intent, null, 2) + '\n',
       { flag: 'wx' },
     )
     await writeFile(
@@ -434,6 +482,11 @@ export async function selftest() {
     assert.throws(() => publicHttps('https://user:password@id.example.org')),
   )
   test(() => assert.throws(() => plan({ ...base, template: 'unknown' })))
+  test(() =>
+    assert.throws(() =>
+      plan({ cloud: true, org: 'Cinema', template: 'community' }),
+    ),
+  )
   test(() =>
     assert.equal(
       plan({ ...base, template: 'audiovisual-production' }).connectors[0],

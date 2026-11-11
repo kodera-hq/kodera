@@ -3,7 +3,7 @@
   "versions": {
     "core": "0.41.0",
     "agent": "0.5.0",
-    "policy": "0.1.4",
+    "policy": "0.1.5",
     "sdk": "0.1.0"
   },
   "connectors": [
@@ -241,7 +241,7 @@
             "title": "Identity and room policy",
             "paragraphs": [
               "An external Keycloak-style OIDC issuer can provide identity. WebAuthn/hwk assurance belongs to the configured identity policy, not to a badge or local UI assertion. Community brings no identity provider.",
-              "synapse-policy 0.1.4 enforces the configured room policy alongside the room-access service. Authenticated membership and grants come from the control plane; local previews grant none."
+              "synapse-policy 0.1.5 enforces the configured room policy alongside the room-access service. Authenticated membership and grants come from the control plane; local previews grant none."
             ],
             "callout": "Clients and SDK use Apache-2.0; server and Synapse policy use AGPL-3.0-or-later. Enterprise Edition has a separate commercial licence.",
             "language": "",
@@ -455,7 +455,7 @@
             "title": "Identité et politique des salons",
             "paragraphs": [
               "Un émetteur OIDC externe de type Keycloak peut fournir l’identité. L’assurance WebAuthn/hwk relève de la politique d’identité configurée, jamais d’un badge ou d’une assertion locale de l’interface. Community ne fournit pas de fournisseur d’identité.",
-              "synapse-policy 0.1.4 applique la politique de salon configurée avec le service room-access. Les appartenances authentifiées et les droits viennent du plan de contrôle ; les aperçus locaux n’en accordent aucun."
+              "synapse-policy 0.1.5 applique la politique de salon configurée avec le service room-access. Les appartenances authentifiées et les droits viennent du plan de contrôle ; les aperçus locaux n’en accordent aucun."
             ],
             "callout": "Les clients et le SDK utilisent Apache-2.0 ; le serveur et la politique Synapse utilisent AGPL-3.0-or-later. Enterprise Edition dispose d’une licence commerciale distincte.",
             "language": "",

@@ -12,7 +12,7 @@ The create-kodera package is a local pre-release. Run node packages/create-koder
 
 @kodera/extension-sdk 0.1.0 uses HMAC-SHA256, v1= signatures over timestamp.rawBody, a 300-second window, bounded in-memory signature/delivery replay protection and signed body routing metadata. Native GitHub sha256= signs rawBody and is not wire-compatible. Production needs durable idempotency and resolved-address egress policy; lexical SSRF checks do not pin DNS.
 
-synapse-policy 0.1.4 enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and EmergencyFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.
+synapse-policy 0.1.5 enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and EmergencyFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.
 
 Clients/Rust/SDK: Apache-2.0. Server and Synapse policy: AGPL-3.0-or-later. Enterprise Edition: separate commercial licence. Never commit environment secrets, private keys or real tenant identifiers. No secrets belong in prompts, example payloads or theme codes.
 

@@ -58,7 +58,7 @@ export function WorkspaceMenu({
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{entry.name}</span>
                   <span className="block truncate text-xs text-c-ink-3">
-                    {entry.slug === 'community' ? 'community.kodera.io' : entry.slug}
+                    {entry.slug === 'community' ? copy.communitySupport : entry.slug}
                   </span>
                 </span>
                 <Menu.ItemIndicator aria-hidden="true" className="w-4 shrink-0 text-c-accent-ink">

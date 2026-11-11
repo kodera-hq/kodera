@@ -1,6 +1,7 @@
 const messages = {
   en: {
     workspaces: 'Workspaces',
+    communitySupport: 'Community & Support',
     create: '+ Create or configure a workspace',
     settings: 'Workspace settings…',
     extensions: 'Connectors & extensions',
@@ -14,6 +15,7 @@ const messages = {
   },
   fr: {
     workspaces: 'Espaces de travail',
+    communitySupport: 'Communauté & Support',
     create: '+ Créer ou configurer un nouvel espace',
     settings: 'Réglages de l’espace…',
     extensions: 'Connecteurs & Extensions',
