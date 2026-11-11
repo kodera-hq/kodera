@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from apps.identity.models import Identity, User
 from apps.identity.selectors import is_storable_subject
+from apps.tenancy.models import Tenant
 from apps.workspaces.channel_access import READ_ONLY
 from apps.workspaces.models import Category, Channel, ResourcePolicy, ResourcePolicyRule, Workspace
 from services.identity.access_tokens import VerifiedAccessToken
@@ -32,7 +33,7 @@ CATEGORIES = (
             "office-hours",
         ),
     ),
-    ("core_kodera", "Core Kodera", ("dev", "strategy", "ops-oncall")),
+    ("core_kodera", "Core Kodera", ("dev", "strategy", "ops-oncall", "kodera-git-tracker")),
     ("design_partners", "Design Partners", ("partner-dinum", "partner-octo")),
 )
 
@@ -110,6 +111,29 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
         or organisation.deleted_at is not None
     ):
         raise ValueError("Existing community binding must be reconciled by an operator")
+    tenant, _ = Tenant.objects.get_or_create(
+        slug="community",
+        defaults={
+            "organisation": organisation,
+            "is_default_community": True,
+            "name": "Kodera Community",
+            "status": "provisioning",
+            "status_changed_at": timezone.now(),
+            "pack_code": "workspace",
+            "capacity_tier_code": "S",
+            "apps": ["messaging"],
+            "realm": "community",
+            "locale": "en",
+        },
+    )
+    if (
+        not tenant.is_default_community
+        or tenant.organisation_id != organisation.id
+        or tenant.realm != "community"
+        or tenant.apps != ["messaging"]
+        or tenant.status in {"deleted", "decommissioning"}
+    ):
+        raise ValueError("Existing community tenant binding requires operator reconciliation")
     workspace, _ = Workspace.objects.get_or_create(organisation=organisation)
     if workspace.default_policy_id is None:
         workspace.default_policy = ResourcePolicy.objects.create(

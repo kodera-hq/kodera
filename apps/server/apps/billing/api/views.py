@@ -165,19 +165,27 @@ def _member_read(
     scope: str,
     target_urn: str,
     read: Callable[[], Any],
+    allow_community: bool = False,
 ) -> Any:
     """Authenticate, refuse the staff lane, then read as a member: in that order, so neither an
     unknown caller nor a staff token can tell an existing identifier from an absent one."""
     verified, lane = verify_configured_token(_bearer(request), trusted=settings.KODERA_AUTH_TRUST)
     verified, lane = lanes.admit(verified, lane)
-    if lane == "staff":
+    from apps.orgs.community import is_community
+
+    shared = allow_community and (owner := organisation()) is not None and is_community(owner)
+    if lane == "staff" and not shared:
         record_staff_denial(
             verified=verified, target_urn=target_urn, request_id=request_id, scope=scope
         )
         raise _RefusedError()
     try:
         found = read_as_member(
-            verified=verified, organisation=organisation, scope=scope, read=lambda _: read()
+            verified=verified,
+            organisation=organisation,
+            scope=scope,
+            read=lambda _: read(),
+            allow_community=shared,
         )
     except BillingForbiddenError as refused:
         record_member_denial(refused=refused, target_urn=target_urn, request_id=request_id)
@@ -221,7 +229,12 @@ prices = _catalogue(
 
 
 def _organisation_list(
-    operation: Operation, scope: str, filters: dict[str, frozenset[str] | None], read: Any
+    operation: Operation,
+    scope: str,
+    filters: dict[str, frozenset[str] | None],
+    read: Any,
+    *,
+    allow_community: bool = False,
 ) -> Any:
     @declares(operation)
     def view(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
@@ -243,6 +256,7 @@ def _organisation_list(
                 scope=scope,
                 target_urn=f"urn:kodera:organisation:{organisation_id}",
                 read=page,
+                allow_community=allow_community,
             )
 
         return _answer(request, operation, produce)

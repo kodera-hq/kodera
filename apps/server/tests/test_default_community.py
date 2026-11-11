@@ -55,7 +55,7 @@ def signup(subject="member"):
 def test_bootstrap_idempotence_and_private_policies(community):
     assert bootstrap_community_workspace().id == community.workspace.id
     assert Category.objects.count() == 3
-    assert Channel.objects.count() == 13
+    assert Channel.objects.count() == 14
     announcement = resolve(Channel.objects.get(name="announcements").id)
     assert announcement.read_only
     assert not {"message.react", "channel.history"} & announcement.denied
@@ -127,7 +127,14 @@ def test_member_visibility_and_engine_acl(community):
         _, channels = channel_set_input(community.workspace.id)
     announcement = next(channel for channel in channels if channel["name"] == "announcements")
     assert announcement["read_only"] and verified.subject not in announcement["exempt"]
-    for name in ("dev", "strategy", "ops-oncall", "partner-dinum", "partner-octo"):
+    for name in (
+        "dev",
+        "strategy",
+        "ops-oncall",
+        "kodera-git-tracker",
+        "partner-dinum",
+        "partner-octo",
+    ):
         restricted = next(channel for channel in channels if channel["name"] == name)
         assert restricted["audience"] == "listed" and verified.subject not in restricted["members"]
 
@@ -300,7 +307,7 @@ def test_staff_http_profile_only_exposes_community(community, settings, http_sig
     assert [m["organisation"]["slug"] for m in data["organisations"]] == ["community"]
 
 
-def test_cross_realm_exception_is_only_opted_in_at_workspace_read(community):
+def test_cross_realm_exception_requires_explicit_selector_opt_in(community):
     from test_customer_persistence_models import anchor, anchor_models, identity
 
     from apps.orgs.actor_selectors import TenantCallerNotFoundError, read_tenant_caller
@@ -347,3 +354,68 @@ def test_bootstrap_rejects_canonical_channel_drift_preserving_custom_resources(c
         bootstrap_community_workspace()
     custom.refresh_from_db()
     assert custom.name == "custom" and custom.category_id is None
+
+
+@pytest.mark.parametrize("lane", ["canonical", "customer", "staff"])
+def test_real_tenant_listing_is_canonical_and_membership_scoped(
+    community, settings, http_signer, frozen_clock, lane
+):
+    from customer_http_fixtures import configure, token as signed_token, trust_entry
+    from django.test import Client
+    from test_customer_persistence_models import anchor, anchor_models, identity
+    from test_workspace_onboarding import conformance_errors
+
+    from apps.tenancy.models import Tenant
+
+    other, _, members = anchor(anchor_models())
+    if lane == "canonical":
+        issuer, subject = ISSUER, "tenant-reader"
+        signup(subject)
+    elif lane == "customer":
+        principal = identity(anchor_models(), other, members[0].user)
+        issuer, subject = principal.issuer, principal.subject
+        ensure_community_membership(verified=token(subject, issuer))
+    else:
+        issuer, subject = "https://identity.staff.test/realms/kodera-staff", "tenant-reader"
+        Identity.objects.create(
+            user=members[0].user,
+            issuer=issuer,
+            realm="kodera-staff",
+            subject=subject,
+            email=members[0].user.email,
+        )
+        ensure_community_membership(verified=token(subject, issuer))
+    configure(
+        settings,
+        [trust_entry(http_signer, issuer, lane="staff" if lane == "staff" else "customer")],
+    )
+    headers = {"HTTP_AUTHORIZATION": "Bearer " + signed_token(http_signer, issuer, subject)}
+    client = Client()
+    path = f"/api/v1/organisations/{community.organisation.id}/tenants"
+    response = client.get(path, **headers)
+    assert response.status_code == 200, response.content
+    assert conformance_errors(response, "/organisations/{organisation_id}/tenants", "get") == []
+    rows = response.json()["data"]
+    assert len(rows) == 1 and rows[0]["slug"] == "community"
+    assert rows[0]["status"] == "provisioning" and rows[0]["apps"] == ["messaging"]
+    tenant = Tenant.objects.get(id=rows[0]["id"])
+    assert tenant.is_default_community and tenant.organisation_id == community.organisation.id
+    assert bootstrap_community_workspace().id == community.workspace.id
+    assert Tenant.objects.filter(slug="community").count() == 1
+    # Only this tenant-list read is opened: ordinary organisation financial and metadata reads
+    # retain their existing issuer and staff gates.
+    if lane != "canonical":
+        for suffix in ("invoices", "subscriptions"):
+            assert client.get(
+                f"/api/v1/organisations/{community.organisation.id}/{suffix}", **headers
+            ).status_code in (403, 404)
+    if lane != "customer":
+        assert client.get(f"/api/v1/organisations/{other.id}/tenants", **headers).status_code in (
+            403,
+            404,
+        )
+    Membership.objects.filter(
+        organisation=community.organisation,
+        user_id=Identity.objects.get(issuer=issuer, subject=subject).user_id,
+    ).update(state="suspended")
+    assert client.get(path, **headers).status_code == 404

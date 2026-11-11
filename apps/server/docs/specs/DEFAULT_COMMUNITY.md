@@ -17,13 +17,26 @@ there is no synthetic administrator. Repeated runs preserve IDs and explicit
 partner grants. Drift in canonical category visibility or channel category, kind,
 lifecycle or policy mode fails with an operator-reconciliation error; bootstrap
 does not silently accept a public private-room policy or alter custom resources.
+Bootstrap also creates the canonical `community` Tenant with `apps=[messaging]`
+and status `provisioning`. It never claims a homeserver is live. After the
+operator verifies Synapse SSO, membership reconciliation and channel acknowledgements,
+list its real ID with `python manage.py tenant_status --settings
+config.settings.deploy_operator list`, enroll the agent with that `--tenant` ID,
+and promote it using `python manage.py tenant_status --settings
+config.settings.deploy_operator set --staff-identity <operator-identity>
+--tenant <tenant-id> --to active --reason "Community backend acceptance verified"`.
+The existing audited command requires a current staff operator grant. Until then
+the web workspace stays in provisioning. The canonical tenant list admits current
+community members from their actual issuer; all other tenant lists retain isolation.
+
 The command queues membership and channel sets; the enrolled
 tenant agent must acknowledge real rooms before messaging is ready.
 
 The Community category contains announcements, general, developers-community,
 support, extensions, self-hosting, show-and-tell and the office-hours audio room.
 Announcements allows member history and reactions while posts require an
-administrator. Core Kodera is explicitly granted to community owners/admins;
+administrator. Core Kodera includes the private `kodera-git-tracker` channel for
+operator-configured verified provider activity. Core Kodera is explicitly granted to community owners/admins;
 Design Partners starts with no member grants. Assign partner access explicitly.
 
 ## Account and API verification

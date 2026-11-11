@@ -21,4 +21,4 @@ class Command(BaseCommand):
             workspace = bootstrap_community_workspace(owner_user_id=UUID(raw) if raw else None)
         except (ValueError, ObjectDoesNotExist) as error:
             raise CommandError(str(error)) from None
-        self.stdout.write(self.style.SUCCESS(f"Community workspace ready: {workspace.id}"))
+        self.stdout.write(self.style.SUCCESS(f"Community workspace configured: {workspace.id}"))

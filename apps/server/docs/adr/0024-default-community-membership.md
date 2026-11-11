@@ -1,6 +1,6 @@
 # Default community membership
 
-Status: Accepted
+**Status:** Accepted
 
 Supersedes ADR-0006 and ADR-0015 only for the explicitly configured first-party
 community organisation. Other organisation identities remain issuer-bound.
@@ -10,7 +10,10 @@ community organisation. Other organisation identities remain issuer-bound.
 `KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community` enables the canonical workspace.
 `KODERA_DEFAULT_COMMUNITY_ISSUER` names its exact trusted `/realms/community`
 issuer. The database admits this reserved name only on an explicitly marked
-first-party row; ordinary organisation intake continues to reject it.
+first-party row; ordinary organisation intake continues to reject it. The same
+narrow marked-row exemption reserves the canonical tenant slug. Its initial
+provisioning status is promoted only by an audited operator command after
+real backend acceptance; database bootstrap is not a readiness assertion.
 
 Bootstrap requires an existing enabled owner person. It preserves the database
 owner and slug reservation invariants, creates the public channels, restricts
@@ -25,7 +28,7 @@ contact data, never an account-linking key. The GET profile bootstrap writes in
 its own short transaction before the existing coherent read snapshot.
 
 Only the exact canonical organisation admits a cross-issuer membership for its
-workspace read and support bridge. Staff profile reads expose this community
+workspace read, canonical tenant list and support bridge. Staff profile reads expose this community
 membership alone. Other organisation operations retain their issuer and role
 checks. The support bridge stores a real ticket, applies a serialized quota of
 five tickets per person per hour across identities, and returns only its ID and
