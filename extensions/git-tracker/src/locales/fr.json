@@ -1,0 +1,15 @@
+{
+  "push": "Branche principale mise à jour",
+  "pull_opened": "Demande de fusion ouverte",
+  "pull_ready": "Demande de fusion prête à relire",
+  "pull_merged": "Demande de fusion intégrée",
+  "pull_closed": "Demande de fusion fermée",
+  "review_approved": "Relecture approuvée",
+  "review_changes_requested": "Modifications demandées",
+  "review_commented": "Relecture envoyée",
+  "issue_opened": "Ticket ouvert",
+  "issue_closed": "Ticket fermé",
+  "release": "Version publiée",
+  "failed": "CI en échec",
+  "recovered": "CI rétablie"
+}

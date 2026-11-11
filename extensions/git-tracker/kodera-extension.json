@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "kodera.extension.v1",
+  "id": "git-tracker",
+  "name": "Git Tracker",
+  "version": "0.1.0",
+  "description": "Verified GitHub and GitLab activity cards with durable delivery.",
+  "scopes": ["messages:write", "webhooks:incoming"],
+  "events": ["release.published", "ci.workflow_failed"],
+  "commands": [],
+  "webhookUrl": "https://extensions.example.test/hooks/git-tracker"
+}
