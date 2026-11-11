@@ -17,6 +17,10 @@
 //                        and the reader has not asked for less; every level
 //                        held to the same rows, over a set that contains the
 //                        canvas it is declared over
+//   a sky                a gradient under the controlled grammar: a zenith, the
+//                        page and a horizon, each a named colour of the theme,
+//                        each a backdrop extreme, with text held to its minimum
+//                        straight on it
 //
 // Each clause has a mutation below that asserts its own message.
 
@@ -338,6 +342,57 @@ function checkMaterialRows(source, contrast) {
   }
 }
 
+// --- The sky ---------------------------------------------------------------------
+
+/** The stops of a theme's page gradient, as the source writes them. */
+const skyStops = (source, theme) => source.color[`theme-${theme}`]['page-grad'].$value;
+const ON_THE_SKY = [
+  ['ink', 'semantic.theme.%.ink', 4.5],
+  ['ink-2', 'semantic.theme.%.ink-2', 4.5],
+  ['ink-3', 'semantic.theme.%.ink-3', 4.5],
+  ['accent-ink', 'semantic.theme.%.accent-ink', 4.5],
+  ['focus-ring', 'spec:focus-ring.%.indicator', 3],
+];
+
+function checkSky(source, contrast, styles) {
+  const index = indexTokens(source);
+  for (const theme of CIEL) {
+    const stops = skyStops(source, theme);
+    const refs = stops.map((stop) => aliasTarget(stop.color));
+    assert.ok(stops.length >= 2 && stops.length <= 4, `${theme}.page-grad: between two and four stops, not ${stops.length}`);
+    refs.forEach((ref, i) => {
+      assert.ok(ref?.startsWith(`color.theme-${theme}.`), `${theme}.page-grad: stop ${i} is ${JSON.stringify(stops[i].color)}, not a named colour of its own theme`);
+    });
+    assert.equal(refs[0], `color.theme-${theme}.sky-zenith`, `${theme}.page-grad: starts at the zenith`);
+    assert.equal(refs.at(-1), `color.theme-${theme}.sky-horizon`, `${theme}.page-grad: ends at the horizon`);
+    assert.ok(refs.includes(`color.theme-${theme}.page`), `${theme}.page-grad: passes through the flat page colour, so a client that paints --c-page alone is on the sky`);
+    assert.equal(source.semantic.theme[theme]['page-grad'].$value, `{color.theme-${theme}.page-grad}`, `${theme}: the page-grad role names its own theme's sky`);
+
+    const members = contrast.backdropSets?.[theme]?.members ?? [];
+    for (const ref of refs) {
+      const role = ref.replace(`color.theme-${theme}.`, `semantic.theme.${theme}.`);
+      assert.ok(members.includes(ref) || members.includes(role), `backdropSets.${theme}: the sky stop ${ref} is not one of its extremes`);
+    }
+
+    for (const [name, fg, min] of ON_THE_SKY) {
+      const id = `theme.${theme}/${name}/page-grad`;
+      const row = contrast.pairs.find((candidate) => candidate.id === id);
+      assert.ok(row, `${id}: text straight on the sky is held to this row`);
+      assert.equal(row.fg, fg.replace('%', theme), `${id}: measures its own theme's ${name}`);
+      assert.equal(row.bg, `semantic.theme.${theme}.page-grad`, `${id}: measured on the gradient, so over every stop`);
+      assert.equal(row.min, min, `${id}: a minimum of ${min}`);
+      assert.equal(row.exempt ?? row.expect, undefined, `${id}: no exemption and no inverted acceptance`);
+    }
+
+    const painted = stops.map((stop, i) => `${resolve(refs[i], index)} ${Number((stop.position * 100).toFixed(4))}%`).join(',');
+    const angle = source.color[`theme-${theme}`]['page-grad'].$extensions['io.kodera.css-gradient'].angle;
+    assert.ok(
+      themeBlock(styles, theme).includes(`  --c-page-grad: linear-gradient(${angle},${painted});`),
+      `${theme}: --c-page-grad is the sky tokens.json declares`,
+    );
+  }
+}
+
 /** A sandbox build of a mutated source; hands back the finished process. */
 function build(source) {
   const dir = mkdtempSync(join(tmpdir(), 'sky-glass-'));
@@ -472,6 +527,53 @@ test('every material clause fails on its own mutation', () => {
   checkMaterialSource(tree);
   checkMaterialCss(tree, css);
   checkMaterialRows(tree, register);
+});
+
+test('each ciel theme paints a controlled sky whose stops are backdrop extremes, with text held on it', () => checkSky(tree, register, css));
+
+test('every sky clause fails on its own mutation', () => {
+  const edited = (edit) => mutate(tree, edit);
+  assert.throws(
+    () => checkSky(edited((t) => (skyStops(t, 'ciel')[0].color = '#E0ECFB')), register, css),
+    /ciel\.page-grad: stop 0 is "#E0ECFB", not a named colour of its own theme/,
+  );
+  assert.throws(
+    () => checkSky(edited((t) => (skyStops(t, 'ciel-nuit')[2].color = '{color.theme-dark.muted}')), register, css),
+    /ciel-nuit\.page-grad: stop 2 is "\{color\.theme-dark\.muted\}", not a named colour of its own theme/,
+  );
+  assert.throws(
+    () => checkSky(edited((t) => skyStops(t, 'ciel').reverse()), register, css),
+    /ciel\.page-grad: starts at the zenith/,
+  );
+  assert.throws(
+    () => checkSky(edited((t) => (skyStops(t, 'ciel')[1].color = '{color.theme-ciel.muted}')), register, css),
+    /ciel\.page-grad: passes through the flat page colour/,
+  );
+  assert.throws(
+    () => checkSky(edited((t) => skyStops(t, 'ciel').push({ color: '{color.theme-ciel.sky-horizon}', position: 1 }, { color: '{color.theme-ciel.sky-horizon}', position: 1 })), register, css),
+    /ciel\.page-grad: between two and four stops, not 5/,
+  );
+  assert.throws(
+    () => checkSky(edited((t) => (t.semantic.theme.ciel['page-grad'].$value = '{color.theme-ciel-nuit.page-grad}')), register, css),
+    /ciel: the page-grad role names its own theme's sky/,
+  );
+  assert.throws(
+    () => checkSky(tree, mutate(register, (r) => (r.backdropSets.ciel.members = r.backdropSets.ciel.members.filter((m) => !m.endsWith('sky-zenith')))), css),
+    /backdropSets\.ciel: the sky stop color\.theme-ciel\.sky-zenith is not one of its extremes/,
+  );
+  assert.throws(
+    () => checkSky(tree, mutate(register, (r) => (r.pairs = r.pairs.filter((row) => row.id !== 'theme.ciel-nuit/ink-3/page-grad'))), css),
+    /theme\.ciel-nuit\/ink-3\/page-grad: text straight on the sky is held to this row/,
+  );
+  assert.throws(
+    () => checkSky(tree, mutate(register, (r) => (r.pairs.find((row) => row.id === 'theme.ciel/ink/page-grad').bg = 'semantic.theme.ciel.page')), css),
+    /theme\.ciel\/ink\/page-grad: measured on the gradient, so over every stop/,
+  );
+  assert.throws(
+    () => checkSky(tree, register, css.replace(/(\[data-theme="ciel"\] \{\n(?:.*\n)*?  --c-page-grad: )linear-gradient\([^;]+\);/, '$1linear-gradient(180deg,#EEF5FC 0%,#EEF5FC 100%);')),
+    /ciel: --c-page-grad is the sky tokens\.json declares/,
+  );
+  checkSky(tree, register, css);
 });
 
 test('the build refuses an incomplete material tier', () => {

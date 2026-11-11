@@ -6599,6 +6599,76 @@
       "layers": [
         "semantic.theme.ciel-nuit.scrim"
       ]
+    },
+    {
+      "id": "theme.ciel/ink/page-grad",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.theme.ciel.page-grad",
+      "label": "ciel: primary text straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-2/page-grad",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.theme.ciel.page-grad",
+      "label": "ciel: secondary text straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/ink-3/page-grad",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.theme.ciel.page-grad",
+      "label": "ciel: tertiary text straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/accent-ink/page-grad",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.theme.ciel.page-grad",
+      "label": "ciel: an inline link or accent label straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel/focus-ring/page-grad",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.theme.ciel.page-grad",
+      "label": "ciel: focus ring core straight on the sky, worst case over its stops and every blend between them (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "theme.ciel-nuit/ink/page-grad",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.theme.ciel-nuit.page-grad",
+      "label": "ciel-nuit: primary text straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-2/page-grad",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.theme.ciel-nuit.page-grad",
+      "label": "ciel-nuit: secondary text straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/ink-3/page-grad",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.theme.ciel-nuit.page-grad",
+      "label": "ciel-nuit: tertiary text straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/accent-ink/page-grad",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.theme.ciel-nuit.page-grad",
+      "label": "ciel-nuit: an inline link or accent label straight on the sky, worst case over its stops and every blend between them",
+      "min": 4.5
+    },
+    {
+      "id": "theme.ciel-nuit/focus-ring/page-grad",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.theme.ciel-nuit.page-grad",
+      "label": "ciel-nuit: focus ring core straight on the sky, worst case over its stops and every blend between them (non-text, 1.4.11)",
+      "min": 3
     }
   ],
   "measurements": [
@@ -7744,9 +7814,11 @@
   "backdropSets": {
     "ciel": {
       "theme": "ciel",
-      "purpose": "Everything the ciel theme paints that can lie behind one of its materials: the page a material is declared over, the lightest opaque ground (surface), the tinted grounds content sits on, and the darkest paints it has, running ink and the near-black rail. A material that floats over a photograph or an embedded frame is outside this set (docs/adr/0003).",
+      "purpose": "Everything the ciel theme paints that can lie behind one of its materials: the page a material is declared over, both ends of the sky that page is painted with, the lightest opaque ground (surface), the tinted grounds content sits on, and the darkest paints it has, running ink and the near-black rail. A material that floats over a photograph or an embedded frame is outside this set (docs/adr/0003).",
       "members": [
         "semantic.theme.ciel.page",
+        "color.theme-ciel.sky-zenith",
+        "color.theme-ciel.sky-horizon",
         "semantic.theme.ciel.surface",
         "semantic.theme.ciel.sunken",
         "semantic.theme.ciel.muted-2",
@@ -7756,9 +7828,11 @@
     },
     "ciel-nuit": {
       "theme": "ciel-nuit",
-      "purpose": "Everything the ciel-nuit theme paints that can lie behind one of its materials: the page a material is declared over, the grounds content sits on, the darkest paint it has (the rail) and the lightest (running ink). A material that floats over a photograph or an embedded frame is outside this set (docs/adr/0003).",
+      "purpose": "Everything the ciel-nuit theme paints that can lie behind one of its materials: the page a material is declared over, both ends of the sky that page is painted with, the grounds content sits on, the darkest paint it has (the rail) and the lightest (running ink). A material that floats over a photograph or an embedded frame is outside this set (docs/adr/0003).",
       "members": [
         "semantic.theme.ciel-nuit.page",
+        "color.theme-ciel-nuit.sky-zenith",
+        "color.theme-ciel-nuit.sky-horizon",
         "semantic.theme.ciel-nuit.surface",
         "semantic.theme.ciel-nuit.elevated",
         "semantic.theme.ciel-nuit.muted-2",

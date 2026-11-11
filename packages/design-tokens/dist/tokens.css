@@ -256,7 +256,9 @@
   --theme-black-tag-6-bg: #151D0D;
   --theme-black-tag-6-fg: #D3E6B2;
   --theme-ciel-page: #EEF5FC;
-  --theme-ciel-page-grad: linear-gradient(115deg,#EEF5FC 0%,#EEF5FC 45%,#EEF5FC 100%);
+  --theme-ciel-sky-zenith: #E0ECFB; /* The top of this theme's sky: the first stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-sky-horizon: #F9FCFF; /* The foot of this theme's sky: the last stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-page-grad: linear-gradient(180deg,#E0ECFB 0%,#EEF5FC 55%,#F9FCFF 100%);
   --theme-ciel-surface: #FFFFFF;
   --theme-ciel-sunken: #F5F9FD;
   --theme-ciel-muted: #EEF2F6;
@@ -332,7 +334,9 @@
   --theme-ciel-glass: #FFFFFF; /* The tint of this theme's materials. Opaque: each material level carries its own alpha (`material.theme-*`). */
   --theme-ciel-glass-edge: rgba(255,255,255,.72); /* The specular edge of a material: a hairline of light on its border. Decorative; a surface is never found by this edge alone. */
   --theme-ciel-nuit-page: #0E1120;
-  --theme-ciel-nuit-page-grad: linear-gradient(115deg,#0E1120 0%,#0E1120 45%,#0E1120 100%);
+  --theme-ciel-nuit-sky-zenith: #0A0D1A; /* The top of this theme's sky: the first stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-nuit-sky-horizon: #1A1E3A; /* The foot of this theme's sky: the last stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-nuit-page-grad: linear-gradient(180deg,#0A0D1A 0%,#0E1120 60%,#1A1E3A 100%);
   --theme-ciel-nuit-surface: #141A2D;
   --theme-ciel-nuit-sunken: #101524;
   --theme-ciel-nuit-muted: #1D243A;
@@ -918,7 +922,7 @@
 
 [data-theme="ciel"] {
   --c-page: #EEF5FC;
-  --c-page-grad: linear-gradient(115deg,#EEF5FC 0%,#EEF5FC 45%,#EEF5FC 100%);
+  --c-page-grad: linear-gradient(180deg,#E0ECFB 0%,#EEF5FC 55%,#F9FCFF 100%);
   --c-surface: #FFFFFF;
   --c-sunken: #F5F9FD;
   --c-muted: #EEF2F6;
@@ -1040,7 +1044,7 @@
 
 [data-theme="ciel-nuit"] {
   --c-page: #0E1120;
-  --c-page-grad: linear-gradient(115deg,#0E1120 0%,#0E1120 45%,#0E1120 100%);
+  --c-page-grad: linear-gradient(180deg,#0A0D1A 0%,#0E1120 60%,#1A1E3A 100%);
   --c-surface: #141A2D;
   --c-sunken: #101524;
   --c-muted: #1D243A;

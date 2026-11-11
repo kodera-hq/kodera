@@ -197,7 +197,9 @@ function cssValue(token) {
       // is a literal colour or a reference to one (scripts/lib/gradient.mjs);
       // either way the value painted is emitted, in the package's hex dialect.
       const { angle, stops } = resolveGradient(token, index);
-      return `linear-gradient(${angle},${stops.map((stop) => `${stop.color} ${stop.position * 100}%`).join(',')})`;
+      // Rounded to four decimals: 0.55 * 100 is 55.00000000000001 in binary floating point.
+      const percent = (position) => Number((position * 100).toFixed(4));
+      return `linear-gradient(${angle},${stops.map((stop) => `${stop.color} ${percent(stop.position)}%`).join(',')})`;
     }
     default:
       return String(value);

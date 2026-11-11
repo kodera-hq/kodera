@@ -695,13 +695,25 @@ assertFailsFor(
 // same minimum.
 const MATERIAL = 'semantic.material.ciel.bar';
 const materialRow = (extra = {}) => glassRow({ bg: MATERIAL, ...extra });
-/** The register reduced to the scratch row: nothing else can be red, no set is left unbound, no excuse is left orphaned. */
+/**
+ * The register reduced to the scratch row: nothing else can be red, no set is
+ * left unbound, no excuse is left orphaned. A theme whose set goes loses its
+ * sky as well — flattened to its page — because a sky with no set is a refusal
+ * of its own, and not the one under test.
+ */
 const onlyRow = (row, keepSets = []) => (dir) => {
   editRegister(dir, (data) => {
     data.pairs = [row];
     data.backdropSets = Object.fromEntries(Object.entries(data.backdropSets ?? {}).filter(([name]) => keepSets.includes(name)));
   });
   editAllowlist(dir, (failures) => failures.splice(0));
+  const tokens = readJson(dir, 'tokens.json');
+  for (const theme of Object.keys(tokens.semantic.theme)) {
+    if (keepSets.includes(theme)) continue;
+    const primitives = tokens.color[`theme-${theme}`];
+    for (const stop of primitives['page-grad'].$value) stop.color = primitives.page.$value;
+  }
+  writeJson(dir, 'tokens.json', tokens);
 };
 
 assertFailsFor(
@@ -725,8 +737,9 @@ assertFailsFor(
 test('a material is measured over its own theme\'s set, and its opaque fallback is one of the grounds', () => {
   const { status, output } = gateWith(onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel' }), ['ciel']));
   assert.equal(status, 0, output);
-  // Six extremes, the darkest and the lightest blend, and the fallback.
-  assert.match(output, /↳ minimum of 9 backgrounds over "ciel"; worst: /);
+  // Every extreme of the set, the darkest and the lightest blend, and the fallback.
+  const extremes = readJson(ROOT, 'contrast-pairs.json').backdropSets.ciel.members.length;
+  assert.match(output, new RegExp(`↳ minimum of ${extremes + 3} backgrounds over "ciel"; worst: `));
   assert.match(output, /^1 pairs — 1 pass/m);
 });
 
@@ -769,6 +782,8 @@ const withSky = ({ zenith = '#D7E8FA', declare = true } = {}) => (dir) => {
     { color: '{color.theme-ciel.sky-horizon}', position: 1 },
   ];
   writeJson(dir, 'tokens.json', tokens);
+  // `declare: null` leaves the register alone, for a copy that has no ciel set at all.
+  if (declare === null) return;
   editRegister(dir, (data) => {
     const wanted = ['color.theme-ciel.sky-zenith', 'color.theme-ciel.sky-horizon'];
     data.backdropSets.ciel.members = [...data.backdropSets.ciel.members.filter((member) => !wanted.includes(member)), ...(declare ? wanted : [])];
@@ -791,10 +806,10 @@ test('a gradient ground is measured over its stops, and held to the minimum', ()
 assertFailsFor(
   'a darker stop pushes text on the gradient under its minimum',
   (dir) => {
-    withSky({ zenith: '#B9D3EE' })(dir);
     // The register reduced to this row, and one that keeps the theme's set
     // bound: the shipped materials over the same sky are not what is under test.
     onlyRow(skyRow(), ['ciel'])(dir);
+    withSky({ zenith: '#B9D3EE' })(dir);
     editPairs(dir, (pairs) => pairs.push(glassRow({ id: 'scratch/keeps-the-set-bound', fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel' })));
   },
   [
@@ -818,8 +833,9 @@ assertFailsFor(
 assertFailsFor(
   'a glass theme that paints a gradient and declares no backdrop set fails the gate',
   (dir) => {
-    withSky()(dir);
+    // The register is reduced first, which flattens every sky; then ciel gets one back.
     onlyRow(glassRow({ bg: 'semantic.theme.ciel.surface', fg: 'semantic.theme.ciel.ink' }))(dir);
+    withSky({ declare: null })(dir);
   },
   [/semantic\.theme\.ciel\.page-grad: "ciel" paints a gradient and declares no backdrop set, so nothing is measured over it/, /^1 contrast problem\(s\)/m],
 );
