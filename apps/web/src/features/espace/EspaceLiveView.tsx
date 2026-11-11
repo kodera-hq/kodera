@@ -1,3 +1,4 @@
+import { demoMessages } from '../../app/demoMessages'
 import type { ChannelDoc, ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
 import { StudioNavigation } from '../workspace/StudioNavigation'
 import { studioMessages } from '../workspace/studioMessages'
@@ -175,6 +176,7 @@ function AntennaIcon() {
 }
 
 export interface EspaceStoreLike {
+  readonly simulation?: boolean
   getInitialDocuments?: () => ChannelDocsWorkspace
   publishDocument?: (roomId: string, doc: ChannelDoc) => Promise<void>
   /** Optional call capability supplied by local preview adapters. */
@@ -845,6 +847,9 @@ function MountedEspaceLiveView({
 }: EspaceLiveViewProps) {
   const memory = useEspaceDraftMemory()
   const { t, i18n } = useTranslation()
+  const demoCopy = demoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const simulation = injectedStore?.simulation === true
+  const demoGuidanceId = useId()
   const composerInputId = useId()
   /** « Mentionner »: writes « @ » in the channel's composer and opens its member list. */
   const startMention = useRef<() => void>(null)
@@ -1557,7 +1562,9 @@ function MountedEspaceLiveView({
           occupants={occupants.map((occupant) => ({
             ...occupant,
             onlineLabel: activeStore.isOnline?.(occupant.id)
-              ? t('console.workspace.presence.online')
+              ? simulation
+                ? demoCopy.presence
+                : t('console.workspace.presence.online')
               : undefined,
           }))}
           occupantsLabel={t('console.workspace.audio.label-occupants', { room: label })}
@@ -2280,7 +2287,9 @@ function MountedEspaceLiveView({
                           identity={face.userId}
                           onlineLabel={
                             activeStore.isOnline?.(face.userId)
-                              ? t('console.workspace.presence.online')
+                              ? simulation
+                                ? demoCopy.presence
+                                : t('console.workspace.presence.online')
                               : undefined
                           }
                           anonymous={face.name === undefined}
@@ -2430,7 +2439,9 @@ function MountedEspaceLiveView({
                           key={row.key}
                           onlineLabel={
                             activeStore.isOnline?.(row.message.sender)
-                              ? t('console.workspace.presence.online')
+                              ? simulation
+                                ? demoCopy.presence
+                                : t('console.workspace.presence.online')
                               : undefined
                           }
                           document={documents.find(
@@ -2522,6 +2533,11 @@ function MountedEspaceLiveView({
                     in a muted well (docs/specs/workspace-dark-roles.md); its input edge stays, at
                     3.21 / 3.71 / 3.26 : 1 on that well, since a text field needs a boundary
                     (WCAG 1.4.11). */}
+                    {simulation ? (
+                      <p id={demoGuidanceId} className="mb-2 text-xs text-c-ink-2">
+                        {demoCopy.composer}
+                      </p>
+                    ) : null}
                     <div
                       ref={composerBox}
                       className={cx(
@@ -2538,6 +2554,7 @@ function MountedEspaceLiveView({
                       </label>
                       <MentionInput
                         id={composerInputId}
+                        aria-describedby={simulation ? demoGuidanceId : undefined}
                         value={composerText}
                         onValueChange={(text) => {
                           updateDraft({
@@ -2564,9 +2581,13 @@ function MountedEspaceLiveView({
                               'aria-keyshortcuts':
                                 'Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown',
                             })}
-                        placeholder={t('console.workspace.composer.placeholder-message', {
-                          channel: activeChannelName,
-                        })}
+                        placeholder={
+                          simulation
+                            ? demoCopy.placeholder
+                            : t('console.workspace.composer.placeholder-message', {
+                                channel: activeChannelName,
+                              })
+                        }
                         // Read-only, not `disabled`, while the address is undecided: a disabled
                         // field drops the focus to the page, and a channel shortcut pressed while
                         // writing must leave it in the field. Sending is refused at submit.
@@ -2690,13 +2711,15 @@ function MountedEspaceLiveView({
               className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs font-medium text-c-ink-2"
             >
               <span className="text-c-ok-ink">
-                {t('console.workspace.members.online-count', {
-                  count: roster.filter((member) => memberProfile(member).presence !== 'offline')
-                    .length,
-                })}
+                {simulation
+                  ? demoCopy.roster
+                  : t('console.workspace.members.online-count', {
+                      count: roster.filter((member) => memberProfile(member).presence !== 'offline')
+                        .length,
+                    })}
               </span>
               <span className="text-c-ink-3">
-                {profileCopy.offline} (
+                {simulation ? demoCopy.presence : profileCopy.offline} (
                 {roster.filter((member) => memberProfile(member).presence === 'offline').length})
               </span>
             </div>
@@ -2745,7 +2768,9 @@ function MountedEspaceLiveView({
                                     member.presence === 'offline'
                                       ? undefined
                                       : member.presence === 'online'
-                                        ? t('console.workspace.presence.online')
+                                        ? simulation
+                                          ? demoCopy.presence
+                                          : t('console.workspace.presence.online')
                                         : profileCopy[member.presence]
                                   }
                                 />
@@ -2788,7 +2813,9 @@ function MountedEspaceLiveView({
                   key={threadRootMessage.key}
                   onlineLabel={
                     activeStore.isOnline?.(threadRootMessage.sender)
-                      ? t('console.workspace.presence.online')
+                      ? simulation
+                        ? demoCopy.presence
+                        : t('console.workspace.presence.online')
                       : undefined
                   }
                   message={threadRootMessage}
@@ -2822,7 +2849,12 @@ function MountedEspaceLiveView({
                       listLabel={t('console.workspace.composer.label-mention-list')}
                       emojiListLabel={t('console.workspace.composer.label-emoji-list')}
                       onMentionStart={loadMembers}
-                      placeholder={t('console.workspace.thread.composer-placeholder')}
+                      placeholder={
+                        simulation
+                          ? demoCopy.placeholder
+                          : t('console.workspace.thread.composer-placeholder')
+                      }
+                      aria-describedby={simulation ? demoGuidanceId : undefined}
                       disabled={navigationUnsettled}
                       className={cx(
                         'min-w-0 flex-1 rounded-lg border border-c-border-input bg-c-muted px-3 py-2 text-md text-c-ink',
@@ -2850,7 +2882,9 @@ function MountedEspaceLiveView({
                   key={reply.key}
                   onlineLabel={
                     activeStore.isOnline?.(reply.sender)
-                      ? t('console.workspace.presence.online')
+                      ? simulation
+                        ? demoCopy.presence
+                        : t('console.workspace.presence.online')
                       : undefined
                   }
                   message={reply}

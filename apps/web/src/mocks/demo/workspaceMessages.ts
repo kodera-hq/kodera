@@ -1,3 +1,5 @@
+import { SUPPORT_EMAIL } from '../../app/supportContact'
+
 /** Copy for the local demonstration conversation. */
 export const workspaceDemoMessages = {
   fr: {
@@ -11,19 +13,19 @@ export const workspaceDemoMessages = {
     claireTime: 'Il y a 12 min',
     elenaTime: 'Il y a 5 min',
     welcome:
-      'Bienvenue dans votre espace. Échangez avec votre équipe ici, ou ouvrez Docs pour préparer vos documents.',
+      'Bienvenue dans cet espace de démonstration. Essayez une conversation simulée ou ouvrez Docs ; les modifications restent dans cette session du navigateur.',
     community: {
       announcements: [
-        'Bienvenue dans Kodera Community. Les annonces officielles et les notes de release sont regroupées ici.',
-        'Avant la prochaine revue, consultez les changements du contrat API et signalez les points de migration dans #support.',
+        'Exemple simulé d’annonces et de notes de version dans Kodera Community. Ce salon ne diffuse pas d’annonces officielles.',
+        `Simulation locale : essayez un échange dans #support. Pour toute question réelle sur le produit, écrivez à ${SUPPORT_EMAIL}.`,
       ],
       'developers-community': [
         'Bienvenue ! Partagez ici vos questions de développement, d’architecture et d’API.',
         'Pour une proposition de contrat, joignez un exemple de requête et de réponse ; nous pouvons discuter des limites du control plane avant la revue.',
       ],
       support: [
-        'Bienvenue au support produit. Décrivez le comportement attendu et les étapes de reproduction sans secret ni donnée personnelle.',
-        'Le triage automatisé classe le ticket et regroupe les doublons ; le rapport destiné à l’ingénierie conserve uniquement des champs structurés autorisés.',
+        `Exemple simulé de support produit : aucun ticket n’est créé ni transmis. Pour une demande réelle, écrivez à ${SUPPORT_EMAIL}.`,
+        'Exemple de parcours de triage, sans automatisation active : les messages restent dans cette session du navigateur (sessionStorage), sans être vus par une équipe de support.',
       ],
       extensions: [
         'Bienvenue dans le salon SDK TypeScript, webhooks signés et connecteurs Frame.io, GitHub et Qonto.',
@@ -70,19 +72,19 @@ export const workspaceDemoMessages = {
     claireTime: '12 min ago',
     elenaTime: '5 min ago',
     welcome:
-      'Welcome to your workspace. Talk with your team here, or open Docs to prepare your documents.',
+      'Welcome to this demo workspace. Try a simulated conversation or open Docs; changes stay in this browser session.',
     community: {
       announcements: [
-        'Welcome to Kodera Community. Official announcements and release notes belong here.',
-        'Before the next review, read the API contract changes and raise migration questions in #support.',
+        'Simulated example of announcements and release notes in Kodera Community. This channel does not publish official announcements.',
+        `Local simulation: try a conversation in #support. For real product questions, email ${SUPPORT_EMAIL}.`,
       ],
       'developers-community': [
         'Welcome! Ask development, architecture and API questions here.',
         'For a contract proposal, include a request and response example so we can discuss control-plane boundaries before review.',
       ],
       support: [
-        'Welcome to product support. Share expected behavior and reproduction steps without secrets or personal data.',
-        'Automated triage classifies tickets and groups duplicates; the engineering report contains only approved structured fields.',
+        `Simulated product support example: no ticket is created or sent. For a real request, email ${SUPPORT_EMAIL}.`,
+        'Example triage workflow, with no active automation: messages stay in this browser session (sessionStorage) and are not seen by a support team.',
       ],
       extensions: [
         'Welcome to TypeScript SDK, signed webhooks and Frame.io, GitHub and Qonto connectors.',
