@@ -126,6 +126,12 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
                 visibility="organisation" if key == "community" else "restricted",
             )
             category.save(update_fields=["default_policy"])
+        expected_visibility = "organisation" if key == "community" else "restricted"
+        if (
+            category.default_policy is None
+            or category.default_policy.visibility != expected_visibility
+        ):
+            raise ValueError("Canonical category policy drift requires operator reconciliation")
         if key == "core_kodera":
             # Explicit administrator membership grants; ordinary signup never promotes staff roles.
             for member in Membership.objects.filter(
@@ -138,7 +144,7 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
                     policy=category.default_policy, kind="allow_member", membership=member
                 )
         for index, channel_name in enumerate(channels):
-            channel, _ = Channel.objects.get_or_create(
+            channel, created = Channel.objects.get_or_create(
                 workspace=workspace,
                 template_key=channel_name.replace("-", "_"),
                 defaults={
@@ -149,6 +155,15 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
                     "lifecycle": "active",
                 },
             )
+            expected_kind = "audio" if channel_name == "office-hours" else "text"
+            expected_mode = "explicit" if channel_name == "announcements" else "inherit"
+            if (
+                channel.category_id != category.id
+                or channel.kind != expected_kind
+                or channel.lifecycle != "active"
+                or (not created and channel.policy_mode != expected_mode)
+            ):
+                raise ValueError("Canonical channel drift requires operator reconciliation")
             if channel_name == "announcements":
                 if channel.explicit_policy_id is None:
                     channel.explicit_policy = ResourcePolicy.objects.create(
@@ -156,6 +171,11 @@ def bootstrap_community_workspace(*, owner_user_id: UUID | None = None) -> Works
                     )
                     channel.policy_mode = "explicit"
                     channel.save(update_fields=["explicit_policy", "policy_mode"])
+                if (
+                    channel.explicit_policy is None
+                    or channel.explicit_policy.visibility != "organisation"
+                ):
+                    raise ValueError("Canonical announcement policy drift requires reconciliation")
                 for capability in READ_ONLY:
                     ResourcePolicyRule.objects.get_or_create(
                         policy=channel.explicit_policy,

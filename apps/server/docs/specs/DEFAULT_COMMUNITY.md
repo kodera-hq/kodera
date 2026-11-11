@@ -14,7 +14,10 @@ community issuer in `KODERA_AUTH_TRUST`, then set:
 Run `python manage.py bootstrap_community_workspace`. Alternatively pass the
 owner UUID using `--owner-user-id`. First creation requires a real existing owner;
 there is no synthetic administrator. Repeated runs preserve IDs and explicit
-partner grants. The command queues membership and channel sets; the enrolled
+partner grants. Drift in canonical category visibility or channel category, kind,
+lifecycle or policy mode fails with an operator-reconciliation error; bootstrap
+does not silently accept a public private-room policy or alter custom resources.
+The command queues membership and channel sets; the enrolled
 tenant agent must acknowledge real rooms before messaging is ready.
 
 The Community category contains announcements, general, developers-community,

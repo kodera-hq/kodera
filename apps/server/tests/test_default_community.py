@@ -315,3 +315,35 @@ def test_cross_realm_exception_is_only_opted_in_at_workspace_read(community):
     )
     with transaction.atomic(), pytest.raises(TenantCallerNotFoundError):
         read_tenant_caller(verified=verified, organisation_id=community.organisation.id)
+
+
+def test_bootstrap_rejects_private_category_visibility_drift(community):
+    for key in ("core_kodera", "design_partners"):
+        policy = Category.objects.get(template_key=key).default_policy
+        policy.visibility = "organisation"
+        policy.save(update_fields=["visibility"])
+        with pytest.raises(ValueError, match="category policy drift"):
+            bootstrap_community_workspace()
+        policy.visibility = "restricted"
+        policy.save(update_fields=["visibility"])
+
+
+def test_bootstrap_rejects_canonical_channel_drift_preserving_custom_resources(community):
+    custom = Channel.objects.create(
+        workspace=community.workspace, name="custom", kind="text", position=20, lifecycle="active"
+    )
+    announcement = Channel.objects.get(template_key="announcements")
+    original_category = announcement.category_id
+    announcement.category = Category.objects.get(template_key="core_kodera")
+    announcement.position = 30
+    announcement.save(update_fields=["category", "position"])
+    with pytest.raises(ValueError, match="channel drift"):
+        bootstrap_community_workspace()
+    announcement.category_id = original_category
+    announcement.policy_mode = "inherit"
+    announcement.explicit_policy = None
+    announcement.save(update_fields=["category", "policy_mode", "explicit_policy"])
+    with pytest.raises(ValueError, match="channel drift"):
+        bootstrap_community_workspace()
+    custom.refresh_from_db()
+    assert custom.name == "custom" and custom.category_id is None
