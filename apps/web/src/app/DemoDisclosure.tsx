@@ -15,6 +15,7 @@ export function DemoDisclosure({
   surface?: RailSurface
 }) {
   const { i18n } = useTranslation()
+  if (import.meta.env.VITE_AUTH_MODE === 'oidc') return null
   const simulatedWorkspace = surface === 'workspace' && (mswEnabled() || authMode() === 'mock')
   if (!isDemoActive(org) && !simulatedWorkspace) return null
   const copy = demoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']

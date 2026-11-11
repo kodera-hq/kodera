@@ -48,8 +48,8 @@ def test_every_label_of_kodera_io_the_pattern_admits_is_reserved():
     )
 
 
-def organisation(slug):
-    return Organisation.objects.create(
+def organisation(slug, model=Organisation):
+    return model.objects.create(
         slug=slug, realm=slug, issuer=f"https://identity.customer.test/realms/{slug}", name="X"
     )
 
@@ -68,10 +68,14 @@ def test_es10_the_migration_stops_naming_the_held_labels():
     database could hold before this migration, and the refused forward run."""
     try:
         with transaction.atomic():
-            MigrationExecutor(connection).migrate([BEFORE])
-            organisation("status")
-            organisation("matrix")
-            organisation("acme-sa")
+            executor = MigrationExecutor(connection)
+            executor.migrate([BEFORE])
+            historical = executor.loader.project_state([BEFORE]).apps.get_model(
+                "orgs", "Organisation"
+            )
+            organisation("status", historical)
+            organisation("matrix", historical)
+            organisation("acme-sa", historical)
             with pytest.raises(RuntimeError) as stopped:
                 MigrationExecutor(connection).migrate([RESERVING])
             message = str(stopped.value)
@@ -91,10 +95,14 @@ def test_the_hosts_migration_stops_naming_the_held_hosts():
     """As above, for 0018: rolled back, then the schema restored to the leaf."""
     try:
         with transaction.atomic():
-            MigrationExecutor(connection).migrate([BEFORE_HOSTS])
-            organisation("ops-admin")
-            organisation("errors")
-            organisation("acme-sa")
+            executor = MigrationExecutor(connection)
+            executor.migrate([BEFORE_HOSTS])
+            historical = executor.loader.project_state([BEFORE_HOSTS]).apps.get_model(
+                "orgs", "Organisation"
+            )
+            organisation("ops-admin", historical)
+            organisation("errors", historical)
+            organisation("acme-sa", historical)
             with pytest.raises(RuntimeError) as stopped:
                 MigrationExecutor(connection).migrate([RESERVING_HOSTS])
             message = str(stopped.value)

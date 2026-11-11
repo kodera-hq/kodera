@@ -77,7 +77,7 @@ DISCOVERY_SCHEMAS = (
 # discovery is unchanged.
 # Rebound at 0.39.0: the staff actor of three examples is the demo crew's; discovery is unchanged.
 # Rebound at 0.40.0: instant claim and the Community reservation; discovery is unchanged.
-UNCHANGED_SHA = "5ba09c23fa51fed303778c097efd5a0265bb1ea321b36133124dd56cc24d0a75"
+UNCHANGED_SHA = "e9dd21c5fa047004bf81a6de24a8fa514607b7b4d8542e318d7883fb6c189c6c"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

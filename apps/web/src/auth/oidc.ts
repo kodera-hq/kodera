@@ -171,12 +171,21 @@ interface ClaimCallback {
   readonly result: Promise<void>
 }
 
-function managerFor(realm: string, protectedClaim = false): UserManager {
+function managerFor(realm: string, protectedClaim = false, registration = false): UserManager {
   return new UserManager({
     authority: `${keycloakUrl()}/realms/${realm}`,
     client_id: oidcClientId(),
     redirect_uri: redirectUri(),
     ...(protectedClaim ? { popup_redirect_uri: claimRedirectUri(), loadUserInfo: false } : {}),
+    // The registration flow uses the same state, nonce and S256 transaction as sign-in.
+    ...(registration
+      ? {
+          metadataSeed: {
+            authorization_endpoint: `${keycloakUrl()}/realms/${realm}/protocol/openid-connect/registrations`,
+          },
+        }
+      : {}),
+    disablePKCE: false,
     response_type: 'code',
     scope: 'openid profile email',
     // The access token lives in memory only, never in `localStorage`
@@ -208,7 +217,7 @@ export class OidcAuthAdapter implements AuthAdapter {
   #publishedAccessToken: string | undefined
   #listeners = new Set<() => void>()
   #restoration: Promise<boolean> | undefined
-  #signIn: { realm: string; request: Promise<void> } | undefined
+  #signIn: { realm: string; registration: boolean; request: Promise<void> } | undefined
   #expiringCallbacks = new Set<() => void>()
   #unwire: (() => void) | undefined
   #renewedCallbacks = new Set<() => void>()
@@ -408,9 +417,14 @@ export class OidcAuthAdapter implements AuthAdapter {
     return Object.freeze({ issuer, subject })
   }
 
-  async signIn(realm: string): Promise<void> {
+  async signIn(realm: string, options?: { registration?: boolean }): Promise<void> {
+    const registration = options?.registration === true
     if (!isRealmHint(realm)) throw new Error('Invalid realm identifier.')
-    if (this.#signIn?.realm === realm && this.#snapshot.status === 'pending')
+    if (
+      this.#signIn?.realm === realm &&
+      this.#signIn.registration === registration &&
+      this.#snapshot.status === 'pending'
+    )
       return this.#signIn.request
     this.#retireManager()
     this.#user = undefined
@@ -423,7 +437,7 @@ export class OidcAuthAdapter implements AuthAdapter {
       .then(() => {
         if (this.#snapshot.generation !== generation) return
         window.sessionStorage.setItem(REALM_KEY, realm)
-        const manager = managerFor(realm)
+        const manager = managerFor(realm, false, registration)
         this.#manager = manager
         this.#wireEvents(manager)
         return manager.signinRedirect()
@@ -443,7 +457,7 @@ export class OidcAuthAdapter implements AuthAdapter {
         }
         throw error
       })
-    this.#signIn = { realm, request }
+    this.#signIn = { realm, registration, request }
     this.#publish('pending', true)
     await request
   }

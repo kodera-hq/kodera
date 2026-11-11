@@ -847,3 +847,22 @@ describe('replacement setup failures', () => {
     }
   )
 })
+
+describe('community registration', () => {
+  it('uses the registration authorization endpoint with the same PKCE state store', async () => {
+    const adapter = new OidcAuthAdapter()
+    await adapter.signIn('community', { registration: true })
+    expect(constructorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authority: 'https://id.example.test/realms/community',
+        response_type: 'code',
+        disablePKCE: false,
+        metadataSeed: {
+          authorization_endpoint:
+            'https://id.example.test/realms/community/protocol/openid-connect/registrations',
+        },
+      })
+    )
+    expect(signinRedirect).toHaveBeenCalledTimes(1)
+  })
+})

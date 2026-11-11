@@ -27,14 +27,14 @@ MUTANTS = [
     ("aliases open to members", "return NOT_SPAM if user_id == self._agent else Codes.FORBIDDEN", "return NOT_SPAM", "test_member_cannot_create_a_room_alias"),
     ("directory open", "async def user_may_publish_room(self, user_id: str, room_id: str) -> Any:\n        return Codes.FORBIDDEN", "async def user_may_publish_room(self, user_id: str, room_id: str) -> Any:\n        return NOT_SPAM", "test_nobody_publishes_to_the_directory"),
     ("agent may encrypt", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "if event.type in ENCRYPTION and event.sender != self._agent:\n            return Codes.FORBIDDEN", "test_nobody_turns_on_encryption"),
-    ("federated ciphertext open", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN\n        if not event.is_state():\n            return NOT_SPAM", "if not event.is_state():\n            return NOT_SPAM\n        if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "test_no_federated_event_carries_ciphertext"),
+    ("federated ciphertext open", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "if event.type in ENCRYPTION and event.is_state():\n            return Codes.FORBIDDEN", "test_no_federated_event_carries_ciphertext"),
     ("spam check ignores encryption", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "if False:\n            return Codes.FORBIDDEN", "test_no_federated_event_carries_ciphertext"),
     ("agent creates encrypted rooms", "if room_config is not None and _asks_for_encryption(room_config):", "if False:", "test_nobody_creates_an_encrypted_room"),
     ("any initial state is encryption", 'state.get("type") == "m.room.encryption"', 'state.get("type") is not None', "test_agent_creates_a_room_with_other_initial_state"),
-    ("rules allow encryption", 'return event.type not in ENCRYPTION, None', "return True, None", "test_no_event_turns_on_encryption"),
+    ("rules allow encryption", 'return event.type not in ENCRYPTION and self._governance_allows(event, state_events), None', "return True, None", "test_no_event_turns_on_encryption"),
     ("rules allow turning encryption on", 'frozenset({"m.room.encryption", "m.room.encrypted"})', 'frozenset({"m.room.encrypted"})', "test_no_event_turns_on_encryption"),
     ("rules allow ciphertext", 'frozenset({"m.room.encryption", "m.room.encrypted"})', 'frozenset({"m.room.encryption"})', "test_no_event_carries_ciphertext"),
-    ("rules refuse everything", 'return event.type not in ENCRYPTION, None', "return False, None", "test_rules_allow_every_other_event"),
+    ("rules refuse everything", 'return event.type not in ENCRYPTION and self._governance_allows(event, state_events), None', "return False, None", "test_rules_allow_every_other_event"),
     ("join rule open", 'content.get("join_rule") != "invite"', "False", "test_member_cannot_open_a_room"),
     ("world readable open", '== "world_readable"', '== "never"', "test_member_cannot_open_a_room"),
     ("aliases open", "event.type in LOCKED_STATE\n            or", "", "test_member_cannot_open_a_room"),
@@ -52,6 +52,13 @@ MUTANTS = [
     ("non-joined member invites into channel", '_membership_of(state.get(("m.room.member", inviter))) != "join"', "False", "test_non_joined_member_cannot_invite_into_policy_authorized_channel"),
     ("federated channel invites refused when allowed", 'or policy_content.get("allow_federated_invites") is True', "", "test_joined_member_invites_federated_user_when_federated_invites_allowed"),
     ("federated channel invites open without federated policy", 'policy_content.get("allow_federated_invites") is True', "True", "test_joined_member_cannot_invite_federated_user_without_federated_policy"),
+    ("announcement posting open", 'if content["read_only"] and (', 'if False and (', "test_announcement_member_cannot_post_or_edit_even_with_permissive_levels"),
+    ("private membership open", 'if target not in content["members"]:', 'if False:', "test_private_room_refuses_unlisted_membership_even_with_invitation"),
+    ("private invites open", 'if policy_content.get("audience") == "listed" and (', 'if False and (', "test_private_room_cannot_be_opened_through_member_invite_policy"),
+    ("untrusted policy author accepted", 'if getattr(policy_event, "sender", None) != self._agent:', 'if False:', "test_untrusted_governance_author_fails_closed"),
+    ("malformed governance open", 'if not self._governance_valid(policy_event):\n            return False', 'if not self._governance_valid(policy_event):\n            return True', "test_malformed_governance_fails_closed"),
+    ("private join callback open", 'if content["audience"] == "listed" and user not in content["members"]:', 'if False:', "test_private_room_cannot_be_opened_through_member_invite_policy"),
+    ("frozen policy ignored", 'return isinstance(content, Mapping) and any(', 'return isinstance(content, dict) and any(', "test_frozen_synapse_event_content_enforces_governance"),
 ]
 
 
@@ -68,7 +75,7 @@ def main() -> int:
             (package / "__init__.py").write_text(original.replace(before, after))
             shutil.copytree(ROOT / "tests", pathlib.Path(tmp) / "tests")
             result = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py"],
+                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py"],
                 cwd=tmp,
                 env={"PYTHONPATH": str(pathlib.Path(tmp) / "src"), "PATH": "/usr/bin:/bin"},
                 capture_output=True,

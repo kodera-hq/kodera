@@ -27,6 +27,7 @@ from apps.orgs.api.membership_detail import membership
 from apps.orgs.api.memberships import membership_directory
 from apps.orgs.api.notice_contacts import notice_contacts
 from apps.orgs.api.owner_claims import consume_owner_claim
+from apps.support.api.community import community_support_tickets
 from apps.support.api.views import support_tickets
 from apps.workspaces.api import administration as structure
 from apps.workspaces.api.instant_claim import instant_claim
@@ -55,6 +56,7 @@ urlpatterns = [
     path("api/v1/owner-claims/actions/consume", consume_owner_claim),
     # Support tickets (docs/specs/SUPPORT_TICKETS.md): createSupportTicket only.
     path("api/v1/support/tickets", support_tickets),
+    path("api/v1/community/support/tickets", community_support_tickets),
     # Invitations (docs/specs/INVITATIONS.md).
     path(
         "api/v1/organisations/<uuid:organisation_id>/invitations",

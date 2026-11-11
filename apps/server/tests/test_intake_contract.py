@@ -34,7 +34,7 @@ def registry_rows():
 
 def test_the_version_is_at_least_the_one_that_aligned_the_intake():
     version = tuple(int(part) for part in contract()["info"]["version"].split("."))
-    assert version == (0, 40, 0), "version"
+    assert version == (0, 41, 0), "version"
 
 
 def test_the_intake_exposes_one_bounded_non_secret_operation_reference():

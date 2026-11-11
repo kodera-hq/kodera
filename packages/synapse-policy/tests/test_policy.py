@@ -67,6 +67,7 @@ def test_registers_every_callback_it_relies_on():
     assert set(api.callbacks) == {
         "user_may_create_room",
         "user_may_invite",
+        "user_may_join_room",
         "user_may_send_3pid_invite",
         "user_may_create_room_alias",
         "user_may_publish_room",
@@ -129,12 +130,12 @@ def test_only_room_access_and_the_agent_write_occupancy():
     assert run(policy().check_event_for_spam(kodera_state("io.kodera.room.occupancy", ROOM_ACCESS, occupancy))) == FORBIDDEN
 
 
-def test_version_is_0_1_4():
-    assert __version__ == "0.1.4"
+def test_version_is_0_1_5():
+    assert __version__ == "0.1.5"
     pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     if pyproject.exists():
         meta = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        assert meta["project"]["version"] == "0.1.4"
+        assert meta["project"]["version"] == "0.1.5"
 
 
 @pytest.mark.parametrize(

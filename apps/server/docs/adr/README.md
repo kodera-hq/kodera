@@ -28,6 +28,8 @@ One file per decision, numbered, never edited after acceptance except to change 
 | [0022](0022-payment-link-creation-asks-the-provider-from-the-api.md) | Payment link creation asks the provider from the API, outside the replay step | Proposed |
 | [0023](0023-matrix-server-name-is-the-tenant-slug.md) | The Matrix server name is the tenant's slug (partly supersedes ADR-0018) | Accepted |
 
+| [0024](0024-default-community-membership.md) | Canonical community membership and explicit identity binding | Accepted |
+
 Source: `deployment operations/ARCHITECTURE_STRATEGY_2026-09-02.md` (v5), sections 3.1, 3.4, 5, 6, and Appendix A.
 
 The active cross-repository execution map is `IMPLEMENTATION_PLAN.md` on `internal architecture records` main; in this workspace it is the project roadmap. Numbered ADR titles and their original product wording are preserved as decision records; current product prose uses Kodera.
