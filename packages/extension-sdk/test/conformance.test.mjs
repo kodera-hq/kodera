@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createHmac } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -127,7 +128,7 @@ function discoverExtensions() {
   });
 }
 
-test('conformance: dynamically discovers all 10 official extensions under extensions/*', () => {
+test('conformance: dynamically discovers all 11 official extensions under extensions/*', () => {
   const discovered = discoverExtensions();
   const dirNames = discovered.map((item) => item.dirName);
 
@@ -135,6 +136,7 @@ test('conformance: dynamically discovers all 10 official extensions under extens
     'docs-collab-announcer',
     'frameio-review-bridge',
     'gdrive-document-share',
+    'git-tracker',
     'github-release-notifier',
     'github-repo-tracker',
     'hello-webhook',
@@ -150,7 +152,7 @@ test('conformance: dynamically discovers all 10 official extensions under extens
   }
 });
 
-test('conformance: every extension manifest passes validateManifest, SSRF checks, and global uniqueness across all 10 extensions', () => {
+test('conformance: every extension manifest passes validateManifest, SSRF checks, and global uniqueness across all 11 extensions', () => {
   const discovered = discoverExtensions();
   const seenCanonicalIds = new Set();
   const seenSlugs = new Set();
@@ -211,7 +213,10 @@ test('conformance: every extension manifest passes validateManifest, SSRF checks
     );
     seenWebhookUrls.add(validated.webhookUrl);
 
-    assert.ok(validated.commands.length > 0, `Extension ${item.dirName} must register at least one slash command`);
+    if (item.dirName === 'git-tracker') {
+      assert.deepEqual(validated.scopes, ['messages:write', 'webhooks:incoming']);
+      assert.deepEqual(validated.commands, []);
+    } else assert.ok(validated.commands.length > 0, `Extension ${item.dirName} must register at least one slash command`);
     for (const cmd of validated.commands) {
       assert.match(cmd.name, /^[a-z0-9][a-z0-9-]{1,31}$/);
       assert.ok(
@@ -222,7 +227,7 @@ test('conformance: every extension manifest passes validateManifest, SSRF checks
     }
   }
 
-  assert.equal(seenCanonicalIds.size, 10);
+  assert.equal(seenCanonicalIds.size, 11);
   assert.deepEqual(
     [...seenCommands].sort(),
     [
@@ -246,11 +251,25 @@ test('conformance: every extension index.mjs exports valid handlers and rejects 
   for (const item of discovered) {
     const rawManifest = JSON.parse(readFileSync(item.manifestPath, 'utf8'));
     const { validated } = normalizeAndValidateExtensionManifest(rawManifest);
+    if (item.dirName === 'git-tracker') {
+      const mod = await import(pathToFileURL(item.entryPath).href);
+      const tracker = mod.createGitTracker({
+        provider: 'github', secret: CONFORMANCE_SECRET, hookId: 'conformance', channelId: 'private-channel',
+        repositories: [{ slug: 'example/project', defaultBranch: 'main' }],
+        deliveryStore: mod.createMemoryDeliveryStore(), client: { async postChannelMessage() {} },
+      });
+      const rawBody = JSON.stringify({ repository: { full_name: 'example/project' }, action: 'opened', issue: { number: 1 } });
+      const headers = { 'x-github-event': 'issues', 'x-github-delivery': 'native-delivery', 'x-hub-signature-256': `sha256=${createHmac('sha256', CONFORMANCE_SECRET).update(rawBody).digest('hex')}` };
+      await assert.rejects(tracker.receive({ headers, rawBody: rawBody + ' ' }), { code: 'INVALID_SIGNATURE' });
+      assert.equal((await tracker.receive({ headers, rawBody })).status, 'queued');
+      assert.equal((await tracker.receive({ headers: { ...headers, 'x-github-delivery': 'changed-unsigned-id' }, rawBody })).status, 'duplicate');
+      continue;
+    }
     const primaryCommand = validated.commands[0].name;
 
     const mod = await import(pathToFileURL(item.entryPath).href);
 
-    // Resolve exported slash command object across all 10 official extensions
+    // Resolve exported slash command object across all 11 official extensions
     const exportedCommand =
       mod.frameioReviewCommand ??
       mod.docPadCommand ??
@@ -266,7 +285,7 @@ test('conformance: every extension index.mjs exports valid handlers and rejects 
     assert.equal(exportedCommand.name, primaryCommand);
     assert.equal(typeof exportedCommand.handler, 'function');
 
-    // Resolve or instantiate webhook handler across all 10 official extensions
+    // Resolve or instantiate webhook handler across all 11 official extensions
     const handlerFactory =
       mod.createFrameioWebhookHandler ??
       mod.createDocsCollabWebhookHandler ??

@@ -1,0 +1,15 @@
+{
+  "push": "Repository updated",
+  "pull_opened": "Pull request opened",
+  "pull_ready": "Pull request ready for review",
+  "pull_merged": "Pull request merged",
+  "pull_closed": "Pull request closed",
+  "review_approved": "Review approved",
+  "review_changes_requested": "Review requested changes",
+  "review_commented": "Review submitted",
+  "issue_opened": "Issue opened",
+  "issue_closed": "Issue closed",
+  "release": "Release published",
+  "failed": "CI failed",
+  "recovered": "CI recovered"
+}
