@@ -6,7 +6,7 @@
 
 An external Keycloak-style OIDC issuer can provide identity. WebAuthn/hwk assurance belongs to the configured identity policy, not to a badge or local UI assertion. Community brings no identity provider.
 
-synapse-policy 0.1.4 enforces the configured room policy alongside the room-access service. Authenticated membership and grants come from the control plane; local previews grant none.
+synapse-policy 0.1.5 enforces the configured room policy alongside the room-access service. Authenticated membership and grants come from the control plane; local previews grant none.
 
 > Clients and SDK use Apache-2.0; server and Synapse policy use AGPL-3.0-or-later. Enterprise Edition has a separate commercial licence.
 
