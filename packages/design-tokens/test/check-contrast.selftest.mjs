@@ -50,8 +50,8 @@ const writeJson = (dir, file, data) => writeFileSync(join(dir, file), JSON.strin
  * note it wants cannot tell "the gate said this" from "the gate said this among
  * other things".
  */
-function assertFailsFor(name, mutate, expected, absent = []) {
-  test(name, () => {
+function assertFailsFor(name, mutate, expected, absent = [], options = {}) {
+  test(name, options, () => {
     const dir = scratch();
     try {
       mutate(dir);
@@ -866,3 +866,118 @@ assertFailsFor(
   },
   [/layer "semantic\.theme\.ciel\.page-grad" is opaque: it hides the backdrop/, /^1 contrast problem\(s\)/m],
 );
+
+// --- Whose extremes a set holds ------------------------------------------------
+//
+// A backdrop set is a claim about one theme: these are the lightest and darkest
+// things THIS theme paints behind a surface. So the binding is a property of the
+// ground, not of how the row happens to spell it. A translucent ground that
+// belongs to a theme — a material, a theme role such as the scrim, a theme
+// primitive — is measured over a set declared by name for that same theme, and
+// over nothing else: not over another theme's set, not over a set that names no
+// theme or a theme the registry does not hold, and not over a list written into
+// the row, which would let any row pick the friendlier extremes it passes on.
+//
+// One refusal per route. Written before the gate refuses them: until it does,
+// each is marked as a known gap, and the marker comes off in the change that
+// closes it.
+const NOT_REFUSED_YET = { todo: 'the gate does not refuse this binding yet' };
+const SCRIM = 'semantic.theme.light.scrim';
+const LIGHT_EXTREMES = ['semantic.theme.light.page', 'semantic.theme.light.inverse'];
+/** Declare `backdropSets.scratch`, and add the scratch row with `row` on top. */
+const scratchSet = (set, row) => (dir) => {
+  editRegister(dir, (data) => {
+    data.backdropSets = { ...(data.backdropSets ?? {}), scratch: { purpose: 'Scratch-only.', members: LIGHT_EXTREMES, ...set } };
+  });
+  editPairs(dir, (pairs) => pairs.push(glassRow(row)));
+};
+const A_LIST = /is translucent and its backdropSet is a list: a backdrop set is declared once, by name, under backdropSets, for the theme whose extremes it holds/;
+
+assertFailsFor(
+  'a material bound to a list of colours written into the row is refused',
+  addGlassRow({ bg: MATERIAL, fg: 'semantic.theme.ciel.ink', backdropSet: ['semantic.theme.ciel.surface'] }),
+  [new RegExp(`background "${rx(MATERIAL)}" `), A_LIST, /^1 contrast problem\(s\)/m],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a material primitive bound to a list written into the row is refused',
+  addGlassRow({ bg: 'material.theme-ciel.bar', fg: 'semantic.theme.ciel.ink', backdropSet: ['semantic.theme.ciel.surface'] }),
+  [/background "material\.theme-ciel\.bar" /, A_LIST, /^1 contrast problem\(s\)/m],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a translucent theme role that is not a material, bound to a list written into the row, is refused',
+  addGlassRow({ bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: ['semantic.theme.light.inverse'] }),
+  [new RegExp(`background "${rx(SCRIM)}" `), A_LIST, /^1 contrast problem\(s\)/m],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a list written into the row is refused on a ground that belongs to no theme as well',
+  addGlassRow({ backdropSet: LIGHT_EXTREMES }),
+  [new RegExp(`background "${rx(GLASS)}" `), A_LIST, /^1 contrast problem\(s\)/m],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a set that names no theme is not a set, and a themed ground bound to it is refused',
+  scratchSet({}, { bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'scratch' }),
+  [
+    /backdropSets\.scratch: names no theme: a set holds the extremes of one registered theme \(light, dark, black, ciel, ciel-nuit\)/,
+    new RegExp(`background "${rx(SCRIM)}" is translucent and backdropSet "scratch" is not a usable set: names no theme`),
+  ],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a set that names a theme the registry does not hold is not a set',
+  scratchSet({ theme: 'sepia' }, { bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'scratch' }),
+  [
+    /backdropSets\.scratch: names the theme "sepia", which the registry does not hold \(light, dark, black, ciel, ciel-nuit\)/,
+    new RegExp(`background "${rx(SCRIM)}" is translucent and backdropSet "scratch" is not a usable set: names the theme "sepia"`),
+  ],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a translucent theme role bound to another theme\'s set is refused',
+  addGlassRow({ bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'ciel' }),
+  [
+    new RegExp(`background "${rx(SCRIM)}" is translucent and backdropSet "ciel" holds the extremes of the "ciel" theme, not of "light"`),
+    /^1 contrast problem\(s\)/m,
+  ],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a material primitive bound to another theme\'s set is refused',
+  addGlassRow({ bg: 'material.theme-ciel.bar', fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel-nuit' }),
+  [/background "material\.theme-ciel\.bar" is translucent and backdropSet "ciel-nuit" holds the extremes of the "ciel-nuit" theme, not of "ciel"/, /^1 contrast problem\(s\)/m],
+  [],
+  NOT_REFUSED_YET,
+);
+
+assertFailsFor(
+  'a layer of another theme under a material is refused: a row is measured in one theme',
+  addGlassRow({ bg: MATERIAL, fg: 'semantic.theme.ciel.ink', layers: ['semantic.theme.ciel-nuit.scrim'], backdropSet: 'ciel' }),
+  [new RegExp(`background "${rx(MATERIAL)}" is stacked over "semantic\\.theme\\.ciel-nuit\\.scrim", a surface of the "ciel-nuit" theme, not of "ciel"`), /^1 contrast problem\(s\)/m],
+  [],
+  NOT_REFUSED_YET,
+);
+
+test('a translucent theme role is measured over its own theme\'s named set', NOT_REFUSED_YET, () => {
+  const { status, output } = gateWith(
+    scratchSet({ theme: 'light' }, { bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'scratch', min: 3 }),
+  );
+  assert.equal(status, 0, output);
+  assert.match(output, /↳ minimum of 4 backgrounds over "scratch"; worst: /);
+});
