@@ -184,10 +184,14 @@ def power_levels(channel: dict[str, Any], synapse: Synapse, exempt: list[str]) -
     }
 
 
-def policy(channel: dict[str, Any], exempt: list[str]) -> dict[str, Any]:
+def policy(channel: dict[str, Any], exempt: list[str], members: frozenset[str]) -> dict[str, Any]:
     return {
         "version": 1,
         "kind": channel["kind"],
+        "read_only": channel["read_only"],
+        "audience": channel["audience"],
+        "members": sorted(members) if channel["audience"] == "listed" else [],
+        "exempt": sorted(exempt),
         "listen_only": channel["listen_only"],
         "may_publish": sorted(exempt) if channel["listen_only"] else [],
         "archived": channel["archived"],
@@ -404,7 +408,7 @@ class Channels:
         )
         exempt = sorted(u for s in channel["exempt"] if (u := synapse.user_id(s)) in users)
         state = (
-            (POLICY, policy(channel, exempt)),
+            (POLICY, policy(channel, exempt, users)),
             (POWER_LEVELS, power_levels(channel, synapse, exempt)),
             ("m.room.name", {"name": channel["name"]}),
             ("m.room.topic", {"topic": channel["topic"]}),

@@ -1,6 +1,7 @@
 """Nonsecret common HTTP defaults; each profile validates its own environment."""
 
 import ipaddress
+import os
 
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
@@ -53,3 +54,10 @@ LOGGING = {
     "root": {"handlers": ["stderr"]},
     "loggers": {"django.request": {"level": "ERROR"}},
 }
+
+# Explicit opt-in; the canonical workspace is provisioned by an operator command.
+KODERA_DEFAULT_COMMUNITY_ORG_SLUG = os.environ.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG", "")
+KODERA_DEFAULT_COMMUNITY_ISSUER = os.environ.get("KODERA_DEFAULT_COMMUNITY_ISSUER", "")
+KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
+    "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID", ""
+)

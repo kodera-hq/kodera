@@ -8,7 +8,12 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.utils.http import parse_etags
 
-from apps.identity.services import CustomerReadForbiddenError, UnknownCustomerError, read_customer
+from apps.identity.services import (
+    CustomerReadForbiddenError,
+    UnknownCustomerError,
+    read_customer,
+    read_staff_community,
+)
 from core.api import lanes, problems
 from core.api.scopes import declares
 from core.db.ids import new_uuid7
@@ -70,7 +75,10 @@ def me(request: HttpRequest) -> HttpResponse:
             )
             verified, lane = lanes.admit(verified, lane)
             if lane == "staff":
-                response = _problem(403, request_id)
+                content = serialize_customer(read_staff_community(verified=verified))
+                projection = json.loads(content)
+                projection["staff"] = True
+                response = HttpResponse(json.dumps(projection), content_type="application/json")
             else:
                 content = serialize_customer(
                     read_customer(

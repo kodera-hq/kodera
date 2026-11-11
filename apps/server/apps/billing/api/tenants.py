@@ -17,7 +17,11 @@ from .create_tenant import create as create_tenant
 from .views import REQUEST_ID, _organisation_list, _problem, _resource
 
 _list_tenants = _organisation_list(
-    op.LIST_TENANTS, "tenant:read", {"status": selectors.TENANT_STATUSES}, selectors.list_tenants
+    op.LIST_TENANTS,
+    "tenant:read",
+    {"status": selectors.TENANT_STATUSES},
+    selectors.list_tenants,
+    allow_community=True,
 )
 
 

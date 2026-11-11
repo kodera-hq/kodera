@@ -65,6 +65,15 @@ def read_setup(*, organisation_id: UUID, issuer: str) -> Setup:
     owner's confirmation, read in the caller's transaction."""
     if not connection.in_atomic_block:
         raise RuntimeError("the setup state is read in the caller's transaction")
+    from apps.orgs.community import canonical_community
+
+    community = canonical_community()
+    if community is not None and community.id == organisation_id and community.issuer == issuer:
+        return (
+            Setup("ready", None)
+            if is_trusted_issuer(issuer, trusted=settings.KODERA_AUTH_TRUST)
+            else Setup("failed", "issuer_untrusted")
+        )
     return derive_setup(
         latest_status=latest_job_status(organisation_id=organisation_id, kind=REALM_JOB),
         issuer_trusted=is_trusted_issuer(issuer, trusted=settings.KODERA_AUTH_TRUST),
