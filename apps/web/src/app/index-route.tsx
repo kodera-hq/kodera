@@ -22,6 +22,11 @@ export const indexRoute = createRoute({
     if (!(await authAdapter.restoreSession())) {
       if (isDemoActive('community'))
         throw redirect({ to: '/$org/workspace', params: { org: 'community' } })
+      if (
+        import.meta.env.VITE_AUTH_MODE === 'oidc' &&
+        window.location.hostname === 'community.kodera.io'
+      )
+        throw redirect({ to: '/login', search: { org: 'community' } })
       throw redirect({ to: '/login' })
     }
     const { me, generation, credentialGeneration } = await loadCurrentUser()
@@ -35,10 +40,17 @@ export const indexRoute = createRoute({
       throw new DOMException('Credential authority ended.', 'AbortError')
     const demoRealm =
       current.user?.realm && isDemoActive(current.user.realm) ? current.user.realm : 'community'
+    const communityHost =
+      import.meta.env.VITE_AUTH_MODE === 'oidc' &&
+      window.location.hostname === 'community.kodera.io'
     const first =
+      (communityHost
+        ? me.organisations.find(({ organisation }) => organisation.slug === 'community')
+        : undefined) ??
       (isDemoActive(demoRealm)
         ? me.organisations.find(({ organisation }) => organisation.slug === demoRealm)
-        : undefined) ?? me.organisations[0]
+        : undefined) ??
+      me.organisations[0]
     if (first === undefined) {
       throw redirect({ to: '/login' })
     }

@@ -33,7 +33,7 @@ it('contains only workspaces, workspace creation, and settings', async () => {
     'true'
   )
   expect(screen.getByText('KC')).toHaveAttribute('aria-hidden', 'true')
-  expect(screen.getByText('community.kodera.io')).toBeInTheDocument()
+  expect(screen.getByText('Communauté & Support')).toBeInTheDocument()
   expect(screen.queryByText('Theme Studio')).not.toBeInTheDocument()
   expect(screen.queryByText('Connecteurs & Extensions')).not.toBeInTheDocument()
   await user.click(screen.getByRole('menuitemradio', { name: /Product Team/ }))

@@ -144,6 +144,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /organisations/:organisation_id/dpa',
   'POST /organisations/:organisation_id/tenants',
   'POST /support/tickets',
+  'POST /community/support/tickets',
   'POST /invitations/:invitation_id/actions/resend',
   'POST /invitations/accept',
   'GET /organisations/:organisation_id/workspace',
@@ -516,6 +517,10 @@ export const handlers: HttpHandler[] = [
     problem('https://kodera.io/problems/billing-enabled')
   ),
 
+  // The private ticket form is unavailable in simulation builds.
+  http.post(`${BASE}/community/support/tickets`, () =>
+    problem('https://kodera.io/problems/forbidden')
+  ),
   http.post(`${BASE}/support/tickets`, ({ request }) =>
     isCommunityRequest(request)
       ? problem('https://kodera.io/problems/forbidden')
