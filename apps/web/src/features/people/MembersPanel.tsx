@@ -400,7 +400,7 @@ export function MembersPanel({
                       </span>
                     </TableHeaderCell>
                     <TableCell className="max-w-[240px] truncate">
-                      {member.email === undefined || member.email.length === 0 ? '—' : member.email}
+                      {member.email == null || member.email.length === 0 ? '—' : member.email}
                     </TableCell>
                     <TableCell>
                       <Badge>{t(ROLE_LABEL[member.role])}</Badge>
