@@ -49,7 +49,7 @@ export function BrandIcon({
           src={entry.src}
           alt={decorative ? '' : entry.label}
           aria-hidden={decorative || undefined}
-          className={name === 'frameio' ? 'h-8 w-16 object-contain' : 'h-8 w-8 object-contain'}
+          className={name === 'frameio' ? 'h-8 w-12 object-contain' : 'h-8 w-8 object-contain'}
         />
       ) : (
         <svg
