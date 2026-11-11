@@ -83,7 +83,7 @@ export interface AuthAdapter {
    * (ADR-0002): the browser leaves the page. Never resolves on success —
    * the round-trip continues at `/auth/callback`.
    */
-  signIn: (realm: string) => Promise<void>
+  signIn: (realm: string, options?: { registration?: boolean }) => Promise<void>
 
   /**
    * Dispatches the SDK transaction: interactive login starts a session; a

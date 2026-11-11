@@ -23,6 +23,14 @@ CIPHERTEXT = {
 failures = 0
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+opener = urllib.request.build_opener(NoRedirect)
+
+
 def call(method, path, token=None, body=None):
     request = urllib.request.Request(
         BASE + path, method=method, data=None if body is None else json.dumps(body).encode()
@@ -31,7 +39,7 @@ def call(method, path, token=None, body=None):
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(request) as response:
+        with opener.open(request, timeout=15) as response:
             return response.status, json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as error:
         return error.code, json.loads(error.read() or b"{}")
@@ -155,6 +163,36 @@ status, _ = call(
 check("not even the agent, a server admin, creates an encrypted room", status, 403)
 status, _ = call("PUT", f"/rooms/{channel_id}/state/m.room.join_rules/", agent, {"join_rule": "invite"})
 check("the agent changes channel state", status, 200)
+
+# Deliberately permissive levels prove that Community governance is an independent gate.
+PERMISSIVE = {"users_default": 0, "events_default": 0, "state_default": 0, "invite": 0}
+status, announcement = call("POST", "/createRoom", agent, {
+    "preset": "private_chat", "name": "announcements", "power_level_content_override": PERMISSIVE,
+})
+check("agent creates announcement room", status, 200)
+announcement_id = announcement.get("room_id", "!missing")
+for user, token in ((ALICE, alice), (BOB, bob)):
+    check("agent invites announcement member", call("POST", f"/rooms/{announcement_id}/invite", agent, {"user_id": user})[0], 200)
+    check("announcement member joins", call("POST", f"/rooms/{announcement_id}/join", token)[0], 200)
+announcement_policy = {"version": 1, "kind": "text", "read_only": True, "audience": "all", "members": [], "exempt": [BOB]}
+check("agent publishes announcement governance", call("PUT", f"/rooms/{announcement_id}/state/io.kodera.room.policy/", agent, announcement_policy)[0], 200)
+check("announcement member cannot post with permissive levels", call("PUT", f"/rooms/{announcement_id}/send/m.room.message/community-denied", alice, {"msgtype": "m.text", "body": "refuse"})[0], 403)
+check("announcement member cannot edit state with permissive levels", call("PUT", f"/rooms/{announcement_id}/state/m.room.topic/", alice, {"topic": "refuse"})[0], 403)
+status, posted = call("PUT", f"/rooms/{announcement_id}/send/m.room.message/community-staff", bob, {"msgtype": "m.text", "body": "announcement"})
+check("explicit announcement publisher can post", status, 200)
+check("announcement member can react", call("PUT", f"/rooms/{announcement_id}/send/m.reaction/community-reaction", alice, {"m.relates_to": {"rel_type": "m.annotation", "event_id": posted.get("event_id", "$missing"), "key": "ok"}})[0], 200)
+
+status, private = call("POST", "/createRoom", agent, {"preset": "private_chat", "name": "staff-private", "power_level_content_override": PERMISSIVE})
+check("agent creates private room", status, 200)
+private_id = private.get("room_id", "!missing")
+for user in (ALICE, BOB):
+    check("agent stages private invitation", call("POST", f"/rooms/{private_id}/invite", agent, {"user_id": user})[0], 200)
+private_policy = {"version": 1, "kind": "text", "read_only": False, "audience": "listed", "members": [BOB], "exempt": [], "allow_member_invites": True}
+check("agent publishes restricted audience", call("PUT", f"/rooms/{private_id}/state/io.kodera.room.policy/", agent, private_policy)[0], 200)
+check("unlisted user cannot join even with stale invitation", call("POST", f"/rooms/{private_id}/join", alice)[0], 403)
+check("explicit private member can join", call("POST", f"/rooms/{private_id}/join", bob)[0], 200)
+check("private member cannot invite unlisted user", call("POST", f"/rooms/{private_id}/invite", bob, {"user_id": CAROL})[0], 403)
+check("unlisted member cannot read private state", call("GET", f"/rooms/{private_id}/state", alice)[0], 403)
 
 print(f"{'all checks passed' if not failures else f'{failures} check(s) failed'}")
 sys.exit(1 if failures else 0)

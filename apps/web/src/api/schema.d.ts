@@ -1674,6 +1674,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/community/support/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a triaged ticket from the canonical community
+         * @description Requires an active persisted membership of the explicitly configured first-party
+         *     community. Customer and staff issuers are eligible without cross-tenant grants.
+         *     Idempotency and a database-serialized limit of five tickets per person per rolling
+         *     hour apply across all of that person's identities. No free text or contact data
+         *     appears in the response. No GitHub issue is published by this operation.
+         */
+        post: operations["createCommunitySupportTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/support/tickets": {
         parameters: {
             query?: never;
@@ -6557,6 +6581,27 @@ export interface components {
             contact_email?: string | null;
             /** @enum {string} */
             locale?: "fr" | "en";
+        };
+        /**
+         * @example {
+         *       "id": "11111111-1111-4111-8111-111111111111",
+         *       "state": "open",
+         *       "priority": "P1",
+         *       "queue": "identity-access",
+         *       "confirmation": "ticket-created"
+         *     }
+         */
+        CommunitySupportTicketReceipt: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            state: "open";
+            /** @enum {string} */
+            priority: "P0" | "P1" | "P2" | "P3";
+            /** @enum {string} */
+            queue: "security-incident" | "infra-sre" | "identity-access" | "billing-ops" | "product-engineering" | "compliance-dpo";
+            /** @constant */
+            confirmation: "ticket-created";
         };
         /**
          * SupportTicket
@@ -12027,6 +12072,64 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createCommunitySupportTicket: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupportTicketCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description A persisted ticket and its zero-PII triage classification. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommunitySupportTicketReceipt"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];

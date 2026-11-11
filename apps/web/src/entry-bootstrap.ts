@@ -70,7 +70,62 @@ async function releaseOrdinaryPage(entry?: BootEntry): Promise<void> {
   await boot(entry)
 }
 
+/** Retires only the old simulation worker; unrelated workers and real OIDC state survive. */
+export async function retireLegacyWorker(): Promise<'ready' | 'reload' | 'blocked'> {
+  const marker = 'kodera.web.legacy-worker-reload'
+  const legacy = (worker: ServiceWorker | null | undefined): boolean => {
+    if (!worker) return false
+    try {
+      const url = new URL(worker.scriptURL)
+      return url.origin === location.origin && url.pathname.endsWith('/mockServiceWorker.js')
+    } catch {
+      return false
+    }
+  }
+  const service = navigator.serviceWorker
+  const controlled = legacy(service?.controller)
+  try {
+    const keys = Array.from({ length: sessionStorage.length }, (_, index) =>
+      sessionStorage.key(index)
+    )
+    for (const key of keys) {
+      if (key?.startsWith('msw:') || key?.startsWith('kodera.demo.')) sessionStorage.removeItem(key)
+    }
+    if (service) {
+      const registrations = await service.getRegistrations()
+      await Promise.all(
+        registrations
+          .filter((registration) =>
+            [registration.active, registration.waiting, registration.installing].some(legacy)
+          )
+          .map((registration) => registration.unregister())
+      )
+    }
+    if (controlled) {
+      // Storage must prove a persistent loop guard before a reload is allowed.
+      if (sessionStorage.getItem(marker) === '1') return 'blocked'
+      sessionStorage.setItem(marker, '1')
+      if (sessionStorage.getItem(marker) !== '1') return 'blocked'
+      location.reload()
+      return 'reload'
+    }
+    sessionStorage.removeItem(marker)
+    return 'ready'
+  } catch {
+    return controlled ? 'blocked' : 'ready'
+  }
+}
+
 async function startEntry(): Promise<void> {
+  if (import.meta.env.VITE_AUTH_MODE === 'oidc' || import.meta.env.VITE_ENABLE_MSW !== '1') {
+    const retirement = await retireLegacyWorker()
+    if (retirement === 'reload') return
+    if (retirement === 'blocked') {
+      cleanLocation()
+      showRecovery()
+      return
+    }
+  }
   let secret = ''
   const journey = import.meta.env.VITE_FIRST_OWNER_JOURNEY === '1'
   // Read before cleanup, which never changes the path: only an entry that can use the fragment

@@ -10,6 +10,7 @@ import {
   Outlet,
   createRoute,
   notFound,
+  redirect,
   useRouter,
   useRouterState,
 } from '@tanstack/react-router'
@@ -34,6 +35,7 @@ import { clearReauthenticationFromError } from './reauthenticationMarker'
 import { RouteError } from './RouteError'
 import { RouteFocus } from './RouteFocus'
 import { loadCurrentUser } from './currentUser'
+import { isPublicCommunityMember, sessionCoversOrganisation } from './communityAccess'
 import { SessionLoading } from './SessionLoading'
 import { rootRoute } from './root-route'
 import { surfaceOf } from './railModules'
@@ -100,7 +102,11 @@ export const orgRoute = createRoute({
       retainedBranch &&
       !resumingExpiredNavigation &&
       session.status === 'ready' &&
-      session.user?.realm === params.org &&
+      sessionCoversOrganisation(
+        session.user?.realm,
+        params.org,
+        import.meta.env.VITE_AUTH_MODE === 'oidc'
+      ) &&
       authAdapter.getAccessToken() === undefined
     )
       return { holdExpiredRoute: true }
@@ -114,21 +120,30 @@ export const orgRoute = createRoute({
       retained &&
       !resumingExpiredNavigation &&
       session.status === 'ready' &&
-      session.user?.realm === params.org &&
+      sessionCoversOrganisation(
+        session.user?.realm,
+        params.org,
+        import.meta.env.VITE_AUTH_MODE === 'oidc'
+      ) &&
       authAdapter.getAccessToken() === undefined
     )
       beforeSignIn()
-    // No session at all, OR a live one for a DIFFERENT realm — the
-    // organisation switcher's own case (§4.6: "Switching organisation
-    // re-authenticates against the other realm when the current token does
-    // not cover it"). A single-realm token never covers a second
-    // organisation, so a mismatch here is never a false positive.
+    // Tenant organisations require their own issuer. The shared community is the
+    // narrow exception: Core verifies its persisted membership in the loader.
     const restored = await authAdapter.restoreSession()
     const needsSignIn =
       !restored ||
       authAdapter.getAccessToken() === undefined ||
-      authAdapter.getUser()?.realm !== params.org
+      !sessionCoversOrganisation(
+        authAdapter.getUser()?.realm,
+        params.org,
+        import.meta.env.VITE_AUTH_MODE === 'oidc'
+      )
     if (needsSignIn) {
+      if (params.org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
+        rememberReturnTo(location.href)
+        throw redirect({ to: '/login', search: { org: 'community' } })
+      }
       rememberReturnTo(location.href)
       // Awaited so the loader below never runs in the gap: `signIn` resolves
       // once the browser navigation to the identity provider has been
@@ -207,7 +222,11 @@ function useMfaGuard(
   identity: AuthIdentity | undefined,
   organisationSlug: string
 ): boolean {
-  return isCurrentIdentityMfaEnrolled(me, identity, organisationSlug) || isMfaEnrolledLocally()
+  return (
+    isPublicCommunityMember(me, identity, organisationSlug) ||
+    isCurrentIdentityMfaEnrolled(me, identity, organisationSlug) ||
+    isMfaEnrolledLocally()
+  )
 }
 
 function OrgLayout() {
@@ -262,7 +281,11 @@ function OrgLayoutContent() {
       const current = authAdapter.getSnapshot()
       if (
         current.status !== 'ready' ||
-        current.user?.realm !== org ||
+        !sessionCoversOrganisation(
+          current.user?.realm,
+          org,
+          import.meta.env.VITE_AUTH_MODE === 'oidc'
+        ) ||
         authAdapter.getAccessToken() !== undefined
       )
         return
@@ -316,7 +339,7 @@ function OrgLayoutContent() {
   // should never actually land on but a safe fallback all the same.
   function switchOrganisation(slug: string) {
     trackOrganisationSwitched(me.organisations.length)
-    const area = pathname.split('/')[2] ?? 'home'
+    const area = slug === 'community' ? 'workspace' : (pathname.split('/')[2] ?? 'home')
     void router.navigate({ href: `/${slug}/${area}` })
   }
 

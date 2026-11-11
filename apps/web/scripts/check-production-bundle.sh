@@ -157,6 +157,8 @@ LITERALS=(
   "mock-authorization-code"
   "mock-idp"
   "mockServiceWorker"
+  "MOCK_ACTIVATE"
+  "INTEGRITY_CHECK_REQUEST"
   # The demo organisation's own mark (`src/mocks/demo/brand/vercelli-mark.svg`,
   # imported `?inline` by `src/mocks/demo/branding.ts`). Groupe Vercelli is
   # fictional and belongs to the demo seed; the Core contract carries no
@@ -261,7 +263,28 @@ fi
 
 found=0
 for literal in "${LITERALS[@]}"; do
-  matches="$(grep -rl -F -- "$literal" "${jsFiles[@]}" 2>/dev/null || true)"
+  if [ "$literal" = "mockServiceWorker" ]; then
+    # One inert filename comparison in the import-free bootstrap retires obsolete workers.
+    # No other occurrence is admitted, including a second marker in that same asset.
+    matches="$(python3 - "${jsFiles[@]}" <<'PY'
+import pathlib
+import re
+import sys
+
+for name in sys.argv[1:]:
+    code = pathlib.Path(name).read_text()
+    if (all(marker in code for marker in (
+            'ENTRY_HEAD_MARKUP_MISSING', 'kodera.web.legacy-worker-reload',
+            '.getRegistrations()', '.unregister()'))
+            and code.count('mockServiceWorker') == 1):
+        code = re.sub(r'([\"\'`])/mockServiceWorker\.js\1', '"retired-worker"', code)
+    if 'mockServiceWorker' in code:
+        print(name)
+PY
+)"
+  else
+    matches="$(grep -rl -F -- "$literal" "${jsFiles[@]}" 2>/dev/null || true)"
+  fi
   if [ -n "$matches" ]; then
     found=1
     echo "check-production-bundle: found '$literal' in:" >&2

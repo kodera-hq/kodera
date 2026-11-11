@@ -182,6 +182,7 @@ class VerifiedAccessToken:
     email_verified: bool = False
     authorized_party: str | None = None
     mfa_enrolled: bool | None = None
+    email: str | None = None
 
 
 class RegisteredFactorReason(StrEnum):
@@ -409,6 +410,7 @@ def verify_access_token(compact: str, *, admitted: IssuerKeySnapshot) -> Verifie
             acr,
             auth_time,
             email_verified=_verified_contact(payload),
+            email=_optional_string(payload, "email"),
             authorized_party=_optional_string(payload, "azp"),
             mfa_enrolled=_optional_boolean(payload, "kodera_mfa_enrolled"),
         )
