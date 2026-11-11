@@ -70,10 +70,18 @@ services:
       - -c
       - |
         python manage.py migrate --noinput --settings config.settings.deploy &&
-        python manage.py migrate --noinput --settings config.settings.deploy_operator
+        python manage.py migrate --noinput --settings config.settings.deploy_operator &&
+        if [ -n "$$KODERA_DEFAULT_COMMUNITY_ORG_SLUG" ]; then
+          python manage.py bootstrap_community_workspace --settings config.settings.deploy
+        fi
     restart: "no"
     environment:
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}
+      KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
+      KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
+      KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID: ${KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID:-}
+      KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in operator configuration}
+      KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
       KODERA_BILLING_ENABLED: "false"
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
@@ -95,6 +103,9 @@ services:
       KODERA_EDITION: community
       KODERA_BILLING_ENABLED: "false"
       KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in .env (README.md, Sign-in)}
+      KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
+      KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
+      KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
@@ -112,6 +123,51 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  agent-state-init:
+    profiles: [community-governance]
+    mem_limit: 64m
+    build:
+      context: ../../apps/server
+      dockerfile: Dockerfile
+    user: "0:0"
+    command: ["python", "-c", "import os; os.chown('/state', 10001, 10001); os.chmod('/state', 0o700)"]
+    restart: "no"
+    volumes:
+      - agent_state:/state
+
+  tenant-agent:
+    profiles: [community-governance]
+    mem_limit: 256m
+    build:
+      context: ../../apps/server
+      dockerfile: Dockerfile
+    command: ["python", "-m", "tenant_agent", "run"]
+    restart: unless-stopped
+    environment:
+      KODERA_APPS: matrix
+      KODERA_CORE_URL: http://server:8000
+      KODERA_AGENT_TOKEN: ${KODERA_AGENT_TOKEN:-}
+      KODERA_AGENT_STATE_DIR: /state
+      KODERA_COMPOSE_PROJECT: community
+      KODERA_SYNAPSE_URL: http://synapse:8008
+      KODERA_SYNAPSE_TOKEN: ${KODERA_SYNAPSE_TOKEN:-}
+      KODERA_MATRIX_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
+      KODERA_ROOM_ACCESS_USER: "@kodera-rooms:${KODERA_DOMAIN:-chat.example.org}"
+      LIVEKIT_URL: http://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in operator configuration}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in operator configuration}
+    volumes:
+      - agent_state:/state
+    depends_on:
+      agent-state-init:
+        condition: service_completed_successfully
+      server:
+        condition: service_healthy
+      synapse:
+        condition: service_healthy
+      livekit:
+        condition: service_started
 
   web:
     mem_limit: 128m
@@ -185,6 +241,9 @@ services:
       SYNAPSE_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
       SYNAPSE_REPORT_STATS: "no"
       PYTHONPATH: /tmp/kodera-policy
+      KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
+      KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
+      KODERA_SYNAPSE_OIDC_CLIENT_SECRET: ${KODERA_SYNAPSE_OIDC_CLIENT_SECRET:-}
     volumes:
       - synapse_data:/data
       - ../../packages/synapse-policy:/opt/kodera-policy:ro
@@ -209,6 +268,7 @@ services:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
 volumes:
+  agent_state:
   caddy_data:
   caddy_config:
   postgres_data:

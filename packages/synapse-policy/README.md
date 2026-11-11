@@ -19,7 +19,23 @@ A Synapse module that keeps a Kodera instance's rooms under its control plane's 
 
 **To-device messages are not room events**, and Synapse (v1.163.0) offers a module no callback for them. A client can still send encrypted to-device messages, but without `m.room.encrypted` no room carries ciphertext.
 
-**Read-only channels are not this module's job.** Posting is governed by the room's power levels, which the agent sets.
+**Community governance supplements room power levels.** The tenant agent writes
+additive `read_only`, `audience`, `members` and `exempt` fields to
+`io.kodera.room.policy`. In a read-only room, normal members cannot post messages,
+stickers or change state; reactions and their own joins/leaves remain possible.
+Explicit exempt publishers and joined users with an explicit power level of at
+least 50 may post, subject to Matrix's own authorization. `users_default` never
+promotes everyone past this additional gate.
+
+For `audience: listed`, only the explicit Matrix IDs in `members` may join, even
+with a stale invitation. A member may invite only when both they and the invitee
+are listed and the existing member-invite policy allows it. The tenant agent can
+reconcile membership. Invalid governance or a policy authored by anyone else
+fails closed. Legacy policies without these additive fields retain their existing
+behavior; deploy the matching server policy producer before opening Community
+traffic. The module handles Synapse's immutable mappings and tuples as well as
+ordinary JSON test data. Native room power levels and invite-only join rules
+remain mandatory.
 
 ## Configure
 

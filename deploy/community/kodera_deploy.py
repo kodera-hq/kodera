@@ -10,6 +10,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
+import uuid
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +71,31 @@ def generate(args):
     values = dict(KODERA_OIDC_CLIENT_ID=client_id, KODERA_DOMAIN=host, KODERA_ACME_EMAIL=args.support_mailbox,
                   DJANGO_ALLOWED_HOSTS=host+',127.0.0.1', KODERA_OIDC_PROVIDER_ORIGIN=origin,
                   KODERA_AUTH_TRUST="'"+trust_json+"'")
+    staff = getattr(args, 'staff_issuer', None)
+    values['KODERA_STAFF_ISSUER'] = https(staff) if staff else ''
+    if staff and (not staff.endswith('/realms/kodera-staff') or not any(
+        entry.get('issuer') == staff and entry.get('lane') == 'staff' for entry in trust
+    )):
+        raise ValueError('Staff issuer must be admitted on the staff trust lane')
+    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_SECRET_KEYS, check.SYNAPSE_OIDC_SECRET)})
+    if template_id == 'community':
+        if issuer != origin + '/realms/community':
+            raise ValueError('Community bootstrap requires the canonical Community issuer')
+        try:
+            owner = str(uuid.UUID(getattr(args, 'owner_user_id', None) or ''))
+        except ValueError:
+            raise ValueError('Community bootstrap requires --owner-user-id of an existing user') from None
+        values.update(KODERA_DEFAULT_COMMUNITY_ORG_SLUG='community',
+                      KODERA_DEFAULT_COMMUNITY_ISSUER=issuer,
+                      KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=owner)
+        for key, option in (('KODERA_AGENT_TOKEN', 'agent_token_file'), ('KODERA_SYNAPSE_TOKEN', 'synapse_token_file'), (check.SYNAPSE_OIDC_SECRET, 'synapse_oidc_secret_file')):
+            token_file = getattr(args, option, None)
+            if not token_file or Path(token_file).stat().st_size > 4096:
+                raise ValueError('Community bootstrap requires --' + option.replace('_', '-'))
+            token = Path(token_file).read_text().strip()
+            if not re.fullmatch(r'[A-Za-z0-9._~+/=-]{32,4096}', token):
+                raise ValueError('Invalid issued credential file for ' + key)
+            values[key] = token
     lines = []
     for line in TEMPLATE.read_text().splitlines():
         if line.startswith('#') and 'CHANGE_ME_' in line:
@@ -100,8 +126,12 @@ def generate(args):
         template = WORKSPACE_TEMPLATES[template_id]
         try:
             with manifest.open('x') as stream:
-                json.dump(dict(templateId=template_id, channels=template['channels'],
-                               roles=template['roles'], enabledConnectors=template['connectors']), stream, indent=2)
+                intent = dict(templateId=template_id, channels=template['channels'],
+                              roles=template['roles'], enabledConnectors=template['connectors'])
+                for key in ('categories', 'readOnlyChannels', 'voiceChannels'):
+                    if key in template:
+                        intent[key] = template[key]
+                json.dump(intent, stream, indent=2)
                 stream.write('\n')
         except OSError:
             target.unlink()
@@ -121,13 +151,45 @@ def selftest():
         'room_access_user_id': '@kodera-rooms:chat.example.org',
     }}
     assert configure(configured) == configured and len(configured['modules']) == 2
+    community_environment = {
+        'KODERA_DEFAULT_COMMUNITY_ORG_SLUG': 'community',
+        'KODERA_DEFAULT_COMMUNITY_ISSUER': 'https://id.example.org/realms/community',
+        'KODERA_SYNAPSE_OIDC_CLIENT_SECRET': 'synthetic-issued-token-for-test-only',
+    }
+    oidc = configure({'server_name': 'chat.example.org'}, community_environment)
+    provider = oidc['oidc_providers'][0]
+    assert provider['pkce_method'] == 'always' and provider['allow_existing_users'] is False
+    assert provider['user_mapping_provider']['config']['localpart_template'] == '{{ user.sub | lower }}'
+    assert oidc['password_config']['enabled'] is False and oidc['enable_registration'] is False
+    assert configure(oidc, community_environment) == oidc and len(oidc['oidc_providers']) == 1
+    for values in (
+        dict(community_environment, KODERA_DEFAULT_COMMUNITY_ISSUER='http://id.example.org/realms/community'),
+        dict(community_environment, KODERA_SYNAPSE_OIDC_CLIENT_SECRET=''),
+        dict(community_environment, KODERA_DEFAULT_COMMUNITY_ORG_SLUG='other'),
+    ):
+        try:
+            configure({'server_name': 'chat.example.org'}, values)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Unsafe Community OIDC configuration accepted')
+    try:
+        configure({'server_name': 'chat.example.org', 'oidc_providers': [{'idp_id': 'unrelated'}]}, community_environment)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Unrelated identity provider silently replaced')
     for guard in ('--no-index', 'PYTHONPATH: /tmp/kodera-policy', 'python /opt/community/configure_synapse.py /data/homeserver.yaml'):
         assert check.check_community_deploy(compose.replace(guard, 'removed'), TEMPLATE.read_text(), Path(__file__).with_name('Caddyfile').read_text())
     with tempfile.TemporaryDirectory(prefix='kodera-deploy-test-') as tmp:
         trust = Path(tmp)/'public-trust.json'
-        trust.write_text(json.dumps([dict(lane='customer', issuer='https://id.example.org/realms/studio', public_jwks={'keys':[{'kty':'RSA','n':'public-test-modulus','e':'AQAB'}]})]))
+        trust.write_text(json.dumps([dict(lane='customer', issuer='https://id.example.org/realms/'+realm, public_jwks={'keys':[{'kty':'RSA','n':'public-test-modulus','e':'AQAB'}]}) for realm in ('studio', 'community')]))
+        credential = Path(tmp)/'synthetic-credential.txt'
+        credential.write_text('synthetic-issued-token-for-test-only')
         def args(**changes):
             data = dict(domain='chat.example.org', oidc_issuer='https://id.example.org/realms/studio', oidc_origin='https://id.example.org', support_mailbox='support@example.org', trust_file=str(trust), env_file=str(Path(tmp)/secrets.token_hex(8)))
+            if changes.get('template') == 'community':
+                data.update(oidc_issuer='https://id.example.org/realms/community', owner_user_id='00000000-0000-4000-8000-000000000001', agent_token_file=str(credential), synapse_token_file=str(credential), synapse_oidc_secret_file=str(credential))
             return argparse.Namespace(**(data | changes))
         path = generate(args())
         assert path.stat().st_mode & 0o777 == 0o600
@@ -152,6 +214,16 @@ def selftest():
             manifest = json.loads(Path(str(configured) + '.workspace-template.json').read_text())
             assert manifest['templateId'] == template_id
             assert manifest['channels'] == WORKSPACE_TEMPLATES[template_id]['channels']
+            if template_id == 'community':
+                assert manifest['readOnlyChannels'] == ['announcements']
+                assert 'KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community' in configured.read_text()
+        for changes in (dict(owner_user_id=None), dict(oidc_issuer='https://id.example.org/realms/studio'), dict(agent_token_file=None), dict(synapse_token_file=None)):
+            try:
+                generate(args(template='community', **changes))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid Community bootstrap input accepted')
         try:
             generate(args(template='unknown'))
         except ValueError:
@@ -168,12 +240,12 @@ def selftest():
             assert not Path(occupied.env_file).exists()
         else:
             raise AssertionError('Existing template manifest overwritten')
-    print('PASS: 17 deployment generation and refusal checks')
+    print('PASS: deployment generation, Community bootstrap and refusal checks')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ['env-file', 'domain', 'oidc-issuer', 'oidc-origin', 'support-mailbox', 'trust-file', 'oidc-client-id']:
+    for name in ['env-file', 'domain', 'oidc-issuer', 'oidc-origin', 'support-mailbox', 'trust-file', 'oidc-client-id', 'owner-user-id', 'agent-token-file', 'synapse-token-file', 'synapse-oidc-secret-file', 'staff-issuer']:
         parser.add_argument('--'+name, default='kodera-generated.conf' if name == 'env-file' else None)
     parser.add_argument('--template', choices=tuple(WORKSPACE_TEMPLATES))
     parser.add_argument('--generate-only', action='store_true')
@@ -192,7 +264,8 @@ def main():
         print('Generated configuration with mode 0600. External OIDC issuer required.')
         if args.template:
             print('Workspace template intent: '+str(target)+'.workspace-template.json (not remotely provisioned)')
-        print('docker compose --env-file '+shlex.quote(str(target.resolve()))+' -f '+shlex.quote(str(Path(__file__).with_name('docker-compose.yml')))+' up -d')
+        profile = ' --profile community-governance' if args.template == 'community' else ''
+        print('docker compose --env-file '+shlex.quote(str(target.resolve()))+' -f '+shlex.quote(str(Path(__file__).with_name('docker-compose.yml')))+profile+' up -d')
         return 0
     except (ValueError, OSError, TypeError) as error:
         print('Configuration refused: '+str(error).split('\n')[0], file=sys.stderr)
