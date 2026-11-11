@@ -11,7 +11,7 @@ class ConfigError(Exception):
 
 # The La Suite apps whose accounts the agent converges, named as the tenant record's `apps` names
 # them (deployment profiles): `meet` is the app Kodera sells as Visio.
-APPS = frozenset({"docs", "meet"})
+APPS = frozenset({"docs", "meet", "matrix"})
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ class Config:
     livekit_secret: str
     # The apps this tenant runs: an engine it does not run is never asked, so its absence does
     # not fail every member set.
-    apps: frozenset[str] = APPS
+    apps: frozenset[str] = frozenset({"docs", "meet"})
     docs_service: str = "docs-backend"
     meet_service: str = "meet-backend"
     docker_socket: str = "/var/run/docker.sock"
@@ -56,6 +56,10 @@ class Config:
             raise ConfigError("KODERA_APPS names no app")
         if not apps <= APPS:
             raise ConfigError(f"KODERA_APPS names unknown apps: {sorted(apps - APPS)}")
+
+        if "matrix" in apps:
+            for name in ("KODERA_SYNAPSE_URL", "KODERA_SYNAPSE_TOKEN", "KODERA_MATRIX_SERVER_NAME"):
+                need(name)
 
         return cls(
             apps=apps,

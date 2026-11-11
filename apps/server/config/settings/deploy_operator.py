@@ -41,7 +41,7 @@ MIDDLEWARE: list[str] = []
 # (settle_complimentary_order, BILLING_MODEL.md §4.2), with the two
 # applications its schema depends on. Engine intents for the tenant agent's staff commands
 # (enrol_tenant_agent, revoke_tenant_agent: ADR-0016); every application it imports is already
-# here, but for workspaces, which only its Agent API path reaches. Not the API's others.
+# here. Workspaces supports canonical community provisioning; its HTTP routes stay excluded.
 INSTALLED_APPS = [
     "apps.identity",
     "apps.orgs",
@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "apps.billing",
     "apps.support",
     "apps.engine_intents",
+    "apps.workspaces",
 ]
 
 KODERA_LOOPBACK_ISSUERS = False
@@ -94,3 +95,10 @@ KODERA_REALM_SETUP_REDIRECT = setup_redirect_from_environment(os.environ, KODERA
 # run_realm_deliveries command refuses to run; a malformed origin stops the process.
 KODERA_REALM_WORKER_SECRET_DIR = os.environ.get("KODERA_REALM_WORKER_SECRET_DIR") or None
 KODERA_REALM_ORIGINS = realm_origins_from_environment(os.environ)
+
+# Canonical provisioning is opt-in and needs the same exact binding as the API process.
+KODERA_DEFAULT_COMMUNITY_ORG_SLUG = os.environ.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG", "")
+KODERA_DEFAULT_COMMUNITY_ISSUER = os.environ.get("KODERA_DEFAULT_COMMUNITY_ISSUER", "")
+KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
+    "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID", ""
+)

@@ -33,8 +33,11 @@ def member_left(membership: Membership, *, reason: str) -> None:
     from apps.engine_intents.services import emit_member_left
     from apps.workspaces import channel_sets
 
+    from .community import refresh_community_staff_grants
+
     # The workspace row and the channel set's input before the heads, which the member set takes
     # first (ESPACE_STRUCTURE.md §13.5); then the member set, then the channel set.
+    refresh_community_staff_grants(membership.organisation_id)
     prepared = channel_sets.prepare(membership.organisation_id)
     emit_member_left(membership, reason=reason)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
@@ -57,6 +60,9 @@ def member_set_changed(*, organisation_id: UUID, reason: str) -> None:
     from apps.engine_intents.services import emit_member_set
     from apps.workspaces import channel_sets
 
+    from .community import refresh_community_staff_grants
+
+    refresh_community_staff_grants(organisation_id)
     prepared = channel_sets.prepare(organisation_id)
     emit_member_set(organisation_id=organisation_id, reason=reason)
     channel_sets.emit_prepared(prepared, reason=CHANNEL_SET_REASON)
@@ -67,6 +73,9 @@ def channel_set_changed(*, organisation_id: UUID, reason: str) -> None:
     `exempt` names owners and admins. The workspace row first, then the channel set only."""
     from apps.workspaces import channel_sets
 
+    from .community import refresh_community_staff_grants
+
+    refresh_community_staff_grants(organisation_id)
     channel_sets.emit_prepared(channel_sets.prepare(organisation_id), reason=reason)
 
 

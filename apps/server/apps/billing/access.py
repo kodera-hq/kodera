@@ -58,6 +58,7 @@ def read_as_member[T](
     scope: str,
     read: Callable[[TenantCaller], T],
     roles: frozenset[str] | None = None,
+    allow_community: bool = False,
 ) -> T:
     """`read(caller)` in one read-only snapshot, once the caller may read `scope` here.
 
@@ -73,6 +74,25 @@ def read_as_member[T](
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        if allow_community:
+            from apps.orgs.actor_selectors import (
+                TenantCallerNotFoundError,
+                TenantCallerUnknownError,
+                read_tenant_caller,
+            )
+            from apps.orgs.community import is_community
+
+            owner = organisation()
+            if scope != "tenant:read" or owner is None or not is_community(owner):
+                raise BillingNotFoundError()
+            try:
+                shared_caller = read_tenant_caller(
+                    verified=verified, organisation_id=owner, allow_community=True
+                )
+            except (TenantCallerNotFoundError, TenantCallerUnknownError):
+                raise BillingNotFoundError() from None
+            require_role(shared_caller, roles=READERS[scope], scope=scope)
+            return read(shared_caller)
         if not is_storable_subject(verified.subject) or (
             current_identity(issuer=verified.issuer, subject=verified.subject) is None
         ):
@@ -138,3 +158,10 @@ def record_no_membership_denial(
             required_scope=scope,
             reason="role_missing",
         )
+
+
+def is_shared_community(organisation_id: UUID) -> bool:
+    """The sole cross-issuer billing read exception is the canonical tenant list."""
+    from apps.orgs.community import is_community
+
+    return is_community(organisation_id)

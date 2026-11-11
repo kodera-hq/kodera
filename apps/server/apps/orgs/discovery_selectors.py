@@ -28,7 +28,13 @@ def select_realms(kind: str, value: str) -> dict[str, Any]:
         return result
     try:
         # The realm's issuer at this deployment's identity provider (ADR-0006, ADR-0015).
-        expected_issuer = organisation_issuer(value)
+        from .community import configured_slug
+
+        expected_issuer = (
+            settings.KODERA_DEFAULT_COMMUNITY_ISSUER
+            if value == configured_slug()
+            else organisation_issuer(value)
+        )
     except RuntimeError:
         raise DiscoveryUnavailableError("configuration") from None
     with discovery_transaction(Deadline(), read_only=True):
@@ -38,7 +44,10 @@ def select_realms(kind: str, value: str) -> dict[str, Any]:
         if (
             organisation is not None
             and organisation.issuer == expected_issuer
-            and counting_realm_ready(organisation_id=organisation.id)
+            and (
+                counting_realm_ready(organisation_id=organisation.id)
+                or (organisation.is_default_community and _community_ready(organisation))
+            )
         ):
             result.update(
                 realm=value,
@@ -52,3 +61,15 @@ def select_realms(kind: str, value: str) -> dict[str, Any]:
                 },
             )
     return result
+
+
+def _community_ready(organisation: Organisation) -> bool:
+    from services.identity.trusted_issuers import is_trusted_issuer
+
+    from .community import configured_slug
+
+    return (
+        organisation.slug == configured_slug()
+        and organisation.state == "active"
+        and is_trusted_issuer(organisation.issuer, trusted=settings.KODERA_AUTH_TRUST)
+    )
