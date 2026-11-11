@@ -66,7 +66,7 @@ What makes it tractable is that the map is linear: it sends the convex hull of t
 ## Consequences
 
 - A glass surface is measurable, and the register says over what. A reviewer reads the set as a claim about what can pass behind the surface.
-- Glass over dark content costs opacity. With the near-black rail in a light theme's set, a white material needs roughly 0.89 alpha before tertiary ink clears 4.5:1. That is the design constraint the gate was asked to make visible, not a side effect of it.
+- Glass over dark content costs opacity. With the near-black rail in the `ciel` set, a white material needs an alpha of about 0.90 before tertiary ink clears 4.5:1 and about 0.92 before a control boundary clears 3:1. That is the design constraint the gate was asked to make visible, not a side effect of it.
 - A wider set can only lower a row's minimum. Narrowing a set to make a row pass is a visible edit to `contrast-pairs.json`.
 - Every row on a translucent background prints a second line naming the set and the worst ground, so the table says where each minimum came from.
 - Revisit when a material needs a filter this does not model, when native materials replace the exported parameters, or when a tighter lower bound than the floor is worth a convex minimisation.

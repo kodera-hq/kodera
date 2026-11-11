@@ -5431,6 +5431,1174 @@
       "label": "ciel: the ring's outermost tone alone on surface, at its own alpha. Inverted like the Givre rows, and for the same reason: a 35 % halo is not the indicator, and if it ever clears 3:1 the two-tone construction is doing nothing and someone has to say which tone the indicator is",
       "min": 3,
       "expect": "fail"
+    },
+    {
+      "id": "material.light.bar/ink",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.material.light.bar",
+      "label": "light: primary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.bar/ink-2",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.material.light.bar",
+      "label": "light: secondary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.bar/ink-3",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.material.light.bar",
+      "label": "light: tertiary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.bar/accent-ink",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.material.light.bar",
+      "label": "light: an inline link or accent label on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.bar/icon-ink-4",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.material.light.bar",
+      "label": "light: an informative icon (non-text, 1.4.11) on the bar material",
+      "min": 3
+    },
+    {
+      "id": "material.light.bar/border-input",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.material.light.bar",
+      "label": "light: a control boundary (non-text, 1.4.11) on the bar material",
+      "min": 3
+    },
+    {
+      "id": "material.light.bar/focus-ring",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.material.light.bar",
+      "label": "light: focus ring core on the bar material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.light.panel/ink",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.material.light.panel",
+      "label": "light: primary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.panel/ink-2",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.material.light.panel",
+      "label": "light: secondary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.panel/ink-3",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.material.light.panel",
+      "label": "light: tertiary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.panel/accent-ink",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.material.light.panel",
+      "label": "light: an inline link or accent label on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.panel/icon-ink-4",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.material.light.panel",
+      "label": "light: an informative icon (non-text, 1.4.11) on the panel material",
+      "min": 3
+    },
+    {
+      "id": "material.light.panel/border-input",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.material.light.panel",
+      "label": "light: a control boundary (non-text, 1.4.11) on the panel material",
+      "min": 3
+    },
+    {
+      "id": "material.light.panel/focus-ring",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.material.light.panel",
+      "label": "light: focus ring core on the panel material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.light.popover/ink",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.material.light.popover",
+      "label": "light: primary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.popover/ink-2",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.material.light.popover",
+      "label": "light: secondary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.popover/ink-3",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.material.light.popover",
+      "label": "light: tertiary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.popover/accent-ink",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.material.light.popover",
+      "label": "light: an inline link or accent label on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.popover/icon-ink-4",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.material.light.popover",
+      "label": "light: an informative icon (non-text, 1.4.11) on the popover material",
+      "min": 3
+    },
+    {
+      "id": "material.light.popover/border-input",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.material.light.popover",
+      "label": "light: a control boundary (non-text, 1.4.11) on the popover material",
+      "min": 3
+    },
+    {
+      "id": "material.light.popover/focus-ring",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.material.light.popover",
+      "label": "light: focus ring core on the popover material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.light.dialog/ink",
+      "fg": "semantic.theme.light.ink",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: primary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.dialog/ink-2",
+      "fg": "semantic.theme.light.ink-2",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: secondary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.dialog/ink-3",
+      "fg": "semantic.theme.light.ink-3",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: tertiary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.dialog/accent-ink",
+      "fg": "semantic.theme.light.accent-ink",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: an inline link or accent label on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.light.dialog/icon-ink-4",
+      "fg": "semantic.theme.light.ink-4",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: an informative icon (non-text, 1.4.11) on the dialog material",
+      "min": 3
+    },
+    {
+      "id": "material.light.dialog/border-input",
+      "fg": "semantic.theme.light.border-input",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: a control boundary (non-text, 1.4.11) on the dialog material",
+      "min": 3
+    },
+    {
+      "id": "material.light.dialog/focus-ring",
+      "fg": "spec:focus-ring.light.indicator",
+      "bg": "semantic.material.light.dialog",
+      "label": "light: focus ring core on the dialog material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.dark.bar/ink",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: primary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.bar/ink-2",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: secondary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.bar/ink-3",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: tertiary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.bar/accent-ink",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: an inline link or accent label on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.bar/icon-ink-4",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: an informative icon (non-text, 1.4.11) on the bar material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.bar/border-input",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: a control boundary (non-text, 1.4.11) on the bar material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.bar/focus-ring",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.material.dark.bar",
+      "label": "dark: focus ring core on the bar material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.dark.panel/ink",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: primary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.panel/ink-2",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: secondary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.panel/ink-3",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: tertiary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.panel/accent-ink",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: an inline link or accent label on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.panel/icon-ink-4",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: an informative icon (non-text, 1.4.11) on the panel material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.panel/border-input",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: a control boundary (non-text, 1.4.11) on the panel material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.panel/focus-ring",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.material.dark.panel",
+      "label": "dark: focus ring core on the panel material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.dark.popover/ink",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: primary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.popover/ink-2",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: secondary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.popover/ink-3",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: tertiary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.popover/accent-ink",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: an inline link or accent label on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.popover/icon-ink-4",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: an informative icon (non-text, 1.4.11) on the popover material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.popover/border-input",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: a control boundary (non-text, 1.4.11) on the popover material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.popover/focus-ring",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.material.dark.popover",
+      "label": "dark: focus ring core on the popover material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.dark.dialog/ink",
+      "fg": "semantic.theme.dark.ink",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: primary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.dialog/ink-2",
+      "fg": "semantic.theme.dark.ink-2",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: secondary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.dialog/ink-3",
+      "fg": "semantic.theme.dark.ink-3",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: tertiary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.dialog/accent-ink",
+      "fg": "semantic.theme.dark.accent-ink",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: an inline link or accent label on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.dark.dialog/icon-ink-4",
+      "fg": "semantic.theme.dark.ink-4",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: an informative icon (non-text, 1.4.11) on the dialog material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.dialog/border-input",
+      "fg": "semantic.theme.dark.border-input",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: a control boundary (non-text, 1.4.11) on the dialog material",
+      "min": 3
+    },
+    {
+      "id": "material.dark.dialog/focus-ring",
+      "fg": "spec:focus-ring.dark.indicator",
+      "bg": "semantic.material.dark.dialog",
+      "label": "dark: focus ring core on the dialog material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.black.bar/ink",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.material.black.bar",
+      "label": "black: primary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.bar/ink-2",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.material.black.bar",
+      "label": "black: secondary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.bar/ink-3",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.material.black.bar",
+      "label": "black: tertiary text on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.bar/accent-ink",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.material.black.bar",
+      "label": "black: an inline link or accent label on the bar material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.bar/icon-ink-4",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.material.black.bar",
+      "label": "black: an informative icon (non-text, 1.4.11) on the bar material",
+      "min": 3
+    },
+    {
+      "id": "material.black.bar/border-input",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.material.black.bar",
+      "label": "black: a control boundary (non-text, 1.4.11) on the bar material",
+      "min": 3
+    },
+    {
+      "id": "material.black.bar/focus-ring",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.material.black.bar",
+      "label": "black: focus ring core on the bar material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.black.panel/ink",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.material.black.panel",
+      "label": "black: primary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.panel/ink-2",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.material.black.panel",
+      "label": "black: secondary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.panel/ink-3",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.material.black.panel",
+      "label": "black: tertiary text on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.panel/accent-ink",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.material.black.panel",
+      "label": "black: an inline link or accent label on the panel material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.panel/icon-ink-4",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.material.black.panel",
+      "label": "black: an informative icon (non-text, 1.4.11) on the panel material",
+      "min": 3
+    },
+    {
+      "id": "material.black.panel/border-input",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.material.black.panel",
+      "label": "black: a control boundary (non-text, 1.4.11) on the panel material",
+      "min": 3
+    },
+    {
+      "id": "material.black.panel/focus-ring",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.material.black.panel",
+      "label": "black: focus ring core on the panel material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.black.popover/ink",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.material.black.popover",
+      "label": "black: primary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.popover/ink-2",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.material.black.popover",
+      "label": "black: secondary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.popover/ink-3",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.material.black.popover",
+      "label": "black: tertiary text on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.popover/accent-ink",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.material.black.popover",
+      "label": "black: an inline link or accent label on the popover material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.popover/icon-ink-4",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.material.black.popover",
+      "label": "black: an informative icon (non-text, 1.4.11) on the popover material",
+      "min": 3
+    },
+    {
+      "id": "material.black.popover/border-input",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.material.black.popover",
+      "label": "black: a control boundary (non-text, 1.4.11) on the popover material",
+      "min": 3
+    },
+    {
+      "id": "material.black.popover/focus-ring",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.material.black.popover",
+      "label": "black: focus ring core on the popover material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.black.dialog/ink",
+      "fg": "semantic.theme.black.ink",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: primary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.dialog/ink-2",
+      "fg": "semantic.theme.black.ink-2",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: secondary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.dialog/ink-3",
+      "fg": "semantic.theme.black.ink-3",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: tertiary text on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.dialog/accent-ink",
+      "fg": "semantic.theme.black.accent-ink",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: an inline link or accent label on the dialog material",
+      "min": 4.5
+    },
+    {
+      "id": "material.black.dialog/icon-ink-4",
+      "fg": "semantic.theme.black.ink-4",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: an informative icon (non-text, 1.4.11) on the dialog material",
+      "min": 3
+    },
+    {
+      "id": "material.black.dialog/border-input",
+      "fg": "semantic.theme.black.border-input",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: a control boundary (non-text, 1.4.11) on the dialog material",
+      "min": 3
+    },
+    {
+      "id": "material.black.dialog/focus-ring",
+      "fg": "spec:focus-ring.black.indicator",
+      "bg": "semantic.material.black.dialog",
+      "label": "black: focus ring core on the dialog material (non-text, 1.4.11)",
+      "min": 3
+    },
+    {
+      "id": "material.ciel.bar/ink",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: primary text on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.bar/ink-2",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: secondary text on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.bar/ink-3",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: tertiary text on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.bar/accent-ink",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: an inline link or accent label on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.bar/icon-ink-4",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: an informative icon (non-text, 1.4.11) on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.bar/border-input",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: a control boundary (non-text, 1.4.11) on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.bar/focus-ring",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.material.ciel.bar",
+      "label": "ciel: focus ring core on the bar material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/ink",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: primary text on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/ink-2",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: secondary text on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/ink-3",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: tertiary text on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/accent-ink",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: an inline link or accent label on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/icon-ink-4",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: an informative icon (non-text, 1.4.11) on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/border-input",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: a control boundary (non-text, 1.4.11) on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.panel/focus-ring",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.material.ciel.panel",
+      "label": "ciel: focus ring core on the panel material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/ink",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: primary text on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/ink-2",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: secondary text on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/ink-3",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: tertiary text on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/accent-ink",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: an inline link or accent label on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/icon-ink-4",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: an informative icon (non-text, 1.4.11) on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/border-input",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: a control boundary (non-text, 1.4.11) on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/focus-ring",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: focus ring core on the popover material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.popover/ink+panel",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: primary text on the popover material, stacked over a panel material it opens from",
+      "min": 4.5,
+      "backdropSet": "ciel",
+      "layers": [
+        "semantic.material.ciel.panel"
+      ]
+    },
+    {
+      "id": "material.ciel.popover/ink-3+panel",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.material.ciel.popover",
+      "label": "ciel: tertiary text on the popover material, stacked over a panel material it opens from",
+      "min": 4.5,
+      "backdropSet": "ciel",
+      "layers": [
+        "semantic.material.ciel.panel"
+      ]
+    },
+    {
+      "id": "material.ciel.dialog/ink",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: primary text on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/ink-2",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: secondary text on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/ink-3",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: tertiary text on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/accent-ink",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: an inline link or accent label on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/icon-ink-4",
+      "fg": "semantic.theme.ciel.ink-4",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: an informative icon (non-text, 1.4.11) on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/border-input",
+      "fg": "semantic.theme.ciel.border-input",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: a control boundary (non-text, 1.4.11) on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/focus-ring",
+      "fg": "spec:focus-ring.ciel.indicator",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: focus ring core on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel"
+    },
+    {
+      "id": "material.ciel.dialog/ink+scrim",
+      "fg": "semantic.theme.ciel.ink",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: primary text on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel",
+      "layers": [
+        "semantic.theme.ciel.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel.dialog/ink-2+scrim",
+      "fg": "semantic.theme.ciel.ink-2",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: secondary text on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel",
+      "layers": [
+        "semantic.theme.ciel.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel.dialog/ink-3+scrim",
+      "fg": "semantic.theme.ciel.ink-3",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: tertiary text on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel",
+      "layers": [
+        "semantic.theme.ciel.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel.dialog/accent-ink+scrim",
+      "fg": "semantic.theme.ciel.accent-ink",
+      "bg": "semantic.material.ciel.dialog",
+      "label": "ciel: an inline link or accent label on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel",
+      "layers": [
+        "semantic.theme.ciel.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel-nuit.bar/ink",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: primary text on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.bar/ink-2",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: secondary text on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.bar/ink-3",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: tertiary text on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.bar/accent-ink",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: an inline link or accent label on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.bar/icon-ink-4",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: an informative icon (non-text, 1.4.11) on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.bar/border-input",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: a control boundary (non-text, 1.4.11) on the bar material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.bar/focus-ring",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.material.ciel-nuit.bar",
+      "label": "ciel-nuit: focus ring core on the bar material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/ink",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: primary text on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/ink-2",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: secondary text on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/ink-3",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: tertiary text on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/accent-ink",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: an inline link or accent label on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/icon-ink-4",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: an informative icon (non-text, 1.4.11) on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/border-input",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: a control boundary (non-text, 1.4.11) on the panel material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.panel/focus-ring",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.material.ciel-nuit.panel",
+      "label": "ciel-nuit: focus ring core on the panel material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/ink",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: primary text on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/ink-2",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: secondary text on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/ink-3",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: tertiary text on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/accent-ink",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: an inline link or accent label on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/icon-ink-4",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: an informative icon (non-text, 1.4.11) on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/border-input",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: a control boundary (non-text, 1.4.11) on the popover material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/focus-ring",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: focus ring core on the popover material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.popover/ink+panel",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: primary text on the popover material, stacked over a panel material it opens from",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit",
+      "layers": [
+        "semantic.material.ciel-nuit.panel"
+      ]
+    },
+    {
+      "id": "material.ciel-nuit.popover/ink-3+panel",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.material.ciel-nuit.popover",
+      "label": "ciel-nuit: tertiary text on the popover material, stacked over a panel material it opens from",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit",
+      "layers": [
+        "semantic.material.ciel-nuit.panel"
+      ]
+    },
+    {
+      "id": "material.ciel-nuit.dialog/ink",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: primary text on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/ink-2",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: secondary text on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/ink-3",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: tertiary text on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/accent-ink",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: an inline link or accent label on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/icon-ink-4",
+      "fg": "semantic.theme.ciel-nuit.ink-4",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: an informative icon (non-text, 1.4.11) on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/border-input",
+      "fg": "semantic.theme.ciel-nuit.border-input",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: a control boundary (non-text, 1.4.11) on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/focus-ring",
+      "fg": "spec:focus-ring.ciel-nuit.indicator",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: focus ring core on the dialog material, worst case over everything the theme paints behind it and on its opaque fallback (non-text, 1.4.11)",
+      "min": 3,
+      "backdropSet": "ciel-nuit"
+    },
+    {
+      "id": "material.ciel-nuit.dialog/ink+scrim",
+      "fg": "semantic.theme.ciel-nuit.ink",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: primary text on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit",
+      "layers": [
+        "semantic.theme.ciel-nuit.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel-nuit.dialog/ink-2+scrim",
+      "fg": "semantic.theme.ciel-nuit.ink-2",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: secondary text on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit",
+      "layers": [
+        "semantic.theme.ciel-nuit.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel-nuit.dialog/ink-3+scrim",
+      "fg": "semantic.theme.ciel-nuit.ink-3",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: tertiary text on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit",
+      "layers": [
+        "semantic.theme.ciel-nuit.scrim"
+      ]
+    },
+    {
+      "id": "material.ciel-nuit.dialog/accent-ink+scrim",
+      "fg": "semantic.theme.ciel-nuit.accent-ink",
+      "bg": "semantic.material.ciel-nuit.dialog",
+      "label": "ciel-nuit: an inline link or accent label on the dialog material, stacked over the scrim that dims what the dialog covers",
+      "min": 4.5,
+      "backdropSet": "ciel-nuit",
+      "layers": [
+        "semantic.theme.ciel-nuit.scrim"
+      ]
     }
   ],
   "measurements": [
@@ -6553,6 +7721,50 @@
       "kind": "capability",
       "purpose": "Foundation row, mirrored from the Givre dark theme whose reasoning it inherits: On elevated a status icon or label draws bad-ink, which the 4.5:1 row above gates. The bad fill is gated as a 3:1 indicator on the base grounds only; dark bad drops below 3:1 on elevated, so menus and dialogs switch every status to its -ink role rather than deciding colour by colour. This row reports what the fill would measure there.",
       "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel/glass-edge/page",
+      "fg": "color.theme-ciel.glass-edge",
+      "bg": "semantic.theme.ciel.page",
+      "label": "ciel: the specular edge of a material against the page",
+      "kind": "decorative",
+      "purpose": "A hairline of light on a material's border. Decorative: a material is found by its ground, its shadow and its content, never by this edge alone.",
+      "thresholdForComparison": 3
+    },
+    {
+      "id": "theme.ciel-nuit/glass-edge/page",
+      "fg": "color.theme-ciel-nuit.glass-edge",
+      "bg": "semantic.theme.ciel-nuit.page",
+      "label": "ciel-nuit: the specular edge of a material against the page",
+      "kind": "decorative",
+      "purpose": "A hairline of light on a material's border. Decorative: a material is found by its ground, its shadow and its content, never by this edge alone.",
+      "thresholdForComparison": 3
     }
-  ]
+  ],
+  "backdropSets": {
+    "ciel": {
+      "theme": "ciel",
+      "purpose": "Everything the ciel theme paints that can lie behind one of its materials: the page a material is declared over, the lightest opaque ground (surface), the tinted grounds content sits on, and the darkest paints it has, running ink and the near-black rail. A material that floats over a photograph or an embedded frame is outside this set (docs/adr/0003).",
+      "members": [
+        "semantic.theme.ciel.page",
+        "semantic.theme.ciel.surface",
+        "semantic.theme.ciel.sunken",
+        "semantic.theme.ciel.muted-2",
+        "semantic.theme.ciel.ink",
+        "semantic.theme.ciel.inverse"
+      ]
+    },
+    "ciel-nuit": {
+      "theme": "ciel-nuit",
+      "purpose": "Everything the ciel-nuit theme paints that can lie behind one of its materials: the page a material is declared over, the grounds content sits on, the darkest paint it has (the rail) and the lightest (running ink). A material that floats over a photograph or an embedded frame is outside this set (docs/adr/0003).",
+      "members": [
+        "semantic.theme.ciel-nuit.page",
+        "semantic.theme.ciel-nuit.surface",
+        "semantic.theme.ciel-nuit.elevated",
+        "semantic.theme.ciel-nuit.muted-2",
+        "semantic.theme.ciel-nuit.inverse",
+        "semantic.theme.ciel-nuit.ink"
+      ]
+    }
+  }
 }

@@ -505,7 +505,7 @@ assertFailsFor(
 assertFailsFor(
   'a translucent background bound to a backdrop set nobody declared is refused',
   addGlassRow({ backdropSet: 'nowhere' }),
-  [...REFUSED_AS_TRANSLUCENT, /is translucent and backdropSet "nowhere" is not declared; contrast-pairs\.json declares no set/],
+  [...REFUSED_AS_TRANSLUCENT, /is translucent and backdropSet "nowhere" is not declared; contrast-pairs\.json declares (no set|[a-z-]+(, [a-z-]+)*)$/m],
 );
 
 assertFailsFor(
@@ -631,7 +631,7 @@ assertFailsFor(
 // --- Named backdrop sets -----------------------------------------------------
 const declareSet = (set) => (dir) =>
   editRegister(dir, (data) => {
-    data.backdropSets = { scratch: set };
+    data.backdropSets = { ...(data.backdropSets ?? {}), scratch: set };
   });
 const SCRATCH_SET = { purpose: 'Scratch-only: the light page and its darkest tint.', members: ['semantic.theme.light.page', 'semantic.theme.light.muted-2'] };
 
@@ -683,4 +683,68 @@ assertFailsFor(
     addGlassRow({ backdropSet: 'scratch' })(dir);
   },
   [/backdropSets\.scratch: the set is empty: with no extreme there is nothing to measure against/],
+);
+
+// --- Materials ---------------------------------------------------------------
+//
+// A material is the surface the stylesheet declares, read through the same
+// module the build reads it with. Three things are specific to it, and each is
+// broken once below: it is refused without a backdrop set like any other
+// translucent ground; the set it binds must be its own theme's; and the opaque
+// fallback it paints when the glass is off is a ground of its own, held to the
+// same minimum.
+const MATERIAL = 'semantic.material.ciel.bar';
+const materialRow = (extra = {}) => glassRow({ bg: MATERIAL, ...extra });
+/** The register reduced to the scratch row: nothing else can be red, no set is left unbound, no excuse is left orphaned. */
+const onlyRow = (row, keepSets = []) => (dir) => {
+  editRegister(dir, (data) => {
+    data.pairs = [row];
+    data.backdropSets = Object.fromEntries(Object.entries(data.backdropSets ?? {}).filter(([name]) => keepSets.includes(name)));
+  });
+  editAllowlist(dir, (failures) => failures.splice(0));
+};
+
+assertFailsFor(
+  'a translucent material with no backdrop set is refused, like any translucent ground',
+  onlyRow(materialRow()),
+  [
+    new RegExp(`background "${rx(MATERIAL)}" is translucent; a row measures against what is actually painted there`),
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a material measured over another theme\'s extremes is refused',
+  onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel-nuit' }), ['ciel-nuit']),
+  [
+    new RegExp(`background "${rx(MATERIAL)}" is translucent and backdropSet "ciel-nuit" holds the extremes of the "ciel-nuit" theme, not of "ciel"`),
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+test('a material is measured over its own theme\'s set, and its opaque fallback is one of the grounds', () => {
+  const { status, output } = gateWith(onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel' }), ['ciel']));
+  assert.equal(status, 0, output);
+  // Six extremes, the darkest and the lightest blend, and the fallback.
+  assert.match(output, /↳ minimum of 9 backgrounds over "ciel"; worst: /);
+  assert.match(output, /^1 pairs — 1 pass/m);
+});
+
+assertFailsFor(
+  'a material whose opaque fallback fails is refused even when the glass passes',
+  (dir) => {
+    // A thin glass declared over the near-black rail, measured over white
+    // alone. Lit from behind it is almost white and the ink is plain on it;
+    // with the glass off it is the tint laid over the rail, a dark grey the ink
+    // disappears into. Only the fallback can be the ground that fails.
+    const tokens = readJson(dir, 'tokens.json');
+    Object.assign(tokens.material['theme-ciel'].bar.$value, { alpha: 0.3, saturation: 1, canvas: '{color.theme-ciel.inverse}' });
+    writeJson(dir, 'tokens.json', tokens);
+    onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: ['semantic.theme.ciel.surface'] }))(dir);
+  },
+  [
+    /worst: its opaque fallback over color\.theme-ciel\.inverse/,
+    /↳ below the minimum and not in contrast-known-failures\.json/,
+    /^1 contrast problem\(s\)/m,
+  ],
 );

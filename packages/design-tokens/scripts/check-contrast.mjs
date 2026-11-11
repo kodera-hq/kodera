@@ -63,6 +63,7 @@ import { join } from 'node:path';
 import { ROOT, loadTokens, indexTokens, resolve, parseColor, composite, contrastRatio, toHex } from './lib/tokens.mjs';
 import { SPEC_COLORS } from './lib/spec.mjs';
 import { worstCaseContrast } from './lib/backdrop.mjs';
+import { materialAddress, resolveMaterial } from './lib/material.mjs';
 
 const tree = loadTokens();
 const index = indexTokens(tree);
@@ -164,7 +165,7 @@ const declaredSets = register.backdropSets ?? {};
 const backdropSets = new Map();
 const setProblems = [];
 for (const [name, set] of Object.entries(declaredSets)) {
-  const entry = { backdrops: null, error: null, used: false };
+  const entry = { backdrops: null, error: null, used: false, theme: set?.theme ?? null };
   try {
     if (set === null || typeof set !== 'object' || Array.isArray(set)) throw new Error('must be an object with a `purpose` and `members`');
     if (typeof set.purpose !== 'string' || !set.purpose.trim()) throw new Error('has no purpose: say what the extremes are the extremes of');
@@ -176,8 +177,8 @@ for (const [name, set] of Object.entries(declaredSets)) {
   backdropSets.set(name, entry);
 }
 
-/** What the row says can lie behind its translucent background. */
-function backdropsOf(pair) {
+/** What the row says can lie behind its translucent background `ground`. */
+function backdropsOf(pair, ground) {
   const binding = pair.backdropSet;
   if (binding === undefined) {
     // The refusal this gate has always made, with the way out named.
@@ -195,6 +196,11 @@ function backdropsOf(pair) {
     }
     entry.used = true;
     if (entry.error) throw refuse(`backdropSet ${JSON.stringify(binding)} is not a usable set: ${entry.error}`);
+    // A set declared for one theme holds that theme's extremes. A material of
+    // another theme measured over it would pass against a sky it is never on.
+    if (entry.theme !== null && ground.theme !== null && entry.theme !== ground.theme) {
+      throw refuse(`backdropSet ${JSON.stringify(binding)} holds the extremes of the "${entry.theme}" theme, not of "${ground.theme}"`);
+    }
     return { backdrops: entry.backdrops, name: `"${binding}"` };
   }
   try {
@@ -204,9 +210,31 @@ function backdropsOf(pair) {
   }
 }
 
-/** A translucent layer of a row's stack: its colour, and the saturation its own backdrop filter applies. */
+/**
+ * One layer of a row's stack as it is painted: its colour at its own alpha, and
+ * the saturation its backdrop filter applies to what lies behind it.
+ *
+ * A material is read through scripts/lib/material.mjs, the reader the build
+ * uses, so the gate measures the surface the stylesheet declares. A translucent
+ * material also brings its opaque fallback — the colour it shows when the glass
+ * is off — as a ground of its own: the reader who asked for less transparency
+ * gets that colour, and it is held to the same minimum.
+ */
 function paintOf(ref) {
-  return { ref, color: colorOf(ref), saturation: 1, extras: [] };
+  const token = typeof ref === 'string' ? index.get(ref) : undefined;
+  if (token?.type === 'material') {
+    const address = materialAddress(ref);
+    if (!address) throw new Error(`"${ref}" is a material outside the material tier`);
+    const material = resolveMaterial(address.theme, address.level, index);
+    return {
+      ref,
+      theme: address.theme,
+      color: material.paint,
+      saturation: material.saturation,
+      extras: material.alpha < 1 ? [{ ref: `its opaque fallback over ${material.canvas.ref}`, color: material.fallback }] : [],
+    };
+  }
+  return { ref, theme: null, color: colorOf(ref), saturation: 1, extras: [] };
 }
 
 /** The translucent layers a row stacks between the backdrop and its background, bottom first. */
@@ -253,7 +281,7 @@ for (const pair of pairs) {
       // nothing would say so — the same silence this gate exists to break. It
       // is measured only over a declared set of what can lie behind it, and
       // held to the worst case.
-      const { backdrops, name } = backdropsOf(pair);
+      const { backdrops, name } = backdropsOf(pair, ground);
       const foreground = colorOf(pair.fg);
       if (!isOpaque(foreground)) {
         throw new Error(
@@ -347,14 +375,14 @@ for (const [name, entry] of backdropSets) {
 
 // --- Report -----------------------------------------------------------------
 const w = (s, n) => String(s).padEnd(n);
-const COL = { id: 36, fg: 9, bg: 9, ratio: 7, min: 5, verdict: 10 };
+const COL = { id: 44, fg: 9, bg: 9, ratio: 7, min: 5, verdict: 10 };
 
 console.log('Contrast gate — WCAG 2.1, contrast-pairs.json over tokens.json');
-console.log('='.repeat(112));
+console.log('='.repeat(120));
 console.log(
   `${w('pair', COL.id)}${w('fg', COL.fg)}${w('bg', COL.bg)}${w('ratio', COL.ratio)}${w('min', COL.min)}${w('verdict', COL.verdict)}label`,
 );
-console.log('-'.repeat(112));
+console.log('-'.repeat(120));
 
 for (const row of rows) {
   const ratio = row.ratio === null ? '—' : row.ratio.toFixed(2);
@@ -367,7 +395,7 @@ for (const row of rows) {
 }
 
 const tally = rows.reduce((acc, r) => ({ ...acc, [r.verdict]: (acc[r.verdict] ?? 0) + 1 }), {});
-console.log('='.repeat(112));
+console.log('='.repeat(120));
 console.log(
   `${rows.length} pairs — ` +
     ['PASS', 'ALLOWED', 'EXEMPT', 'FORBIDDEN', 'FAIL']

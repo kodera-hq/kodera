@@ -329,6 +329,8 @@
   --theme-ciel-tag-5-fg: #6E2889;
   --theme-ciel-tag-6-bg: #EEF3E6;
   --theme-ciel-tag-6-fg: #3F571B;
+  --theme-ciel-glass: #FFFFFF; /* The tint of this theme's materials. Opaque: each material level carries its own alpha (`material.theme-*`). */
+  --theme-ciel-glass-edge: rgba(255,255,255,.72); /* The specular edge of a material: a hairline of light on its border. Decorative; a surface is never found by this edge alone. */
   --theme-ciel-nuit-page: #0E1120;
   --theme-ciel-nuit-page-grad: linear-gradient(115deg,#0E1120 0%,#0E1120 45%,#0E1120 100%);
   --theme-ciel-nuit-surface: #141A2D;
@@ -406,6 +408,8 @@
   --theme-ciel-nuit-tag-5-fg: #E4BEF5;
   --theme-ciel-nuit-tag-6-bg: #1E2814;
   --theme-ciel-nuit-tag-6-fg: #C7DEA0;
+  --theme-ciel-nuit-glass: #121830; /* The tint of this theme's materials. Opaque: each material level carries its own alpha (`material.theme-*`). */
+  --theme-ciel-nuit-glass-edge: rgba(255,255,255,.14); /* The specular edge of a material: a hairline of light on its border. Decorative; a surface is never found by this edge alone. */
 
   /* semantic — surfaces and boundaries */
   --bg-page: linear-gradient(115deg, var(--white) 0%, var(--white) 45%, var(--white) 100%);
@@ -634,6 +638,38 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(47,58,69,.35);
   --elevation-drawer: 0px 0px 64px -8px rgba(47,58,69,.35);
   --elevation-dialog: 0px 32px 80px -24px rgba(47,58,69,.35);
+  --material-bar-tint: #FFFFFF;
+  --material-bar-fallback: #FFFFFF;
+  --material-bar-blur: 0px;
+  --material-bar-saturate: 1;
+  --material-bar-border: #D9E1EA;
+  --material-bar-shadow: 0px 8px 24px -16px rgba(47,58,69,.25);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: #FFFFFF;
+  --material-panel-fallback: #FFFFFF;
+  --material-panel-blur: 0px;
+  --material-panel-saturate: 1;
+  --material-panel-border: #D9E1EA;
+  --material-panel-shadow: 0px 8px 24px -16px rgba(47,58,69,.25);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: #FFFFFF;
+  --material-popover-fallback: #FFFFFF;
+  --material-popover-blur: 0px;
+  --material-popover-saturate: 1;
+  --material-popover-border: #D9E1EA;
+  --material-popover-shadow: 0px 20px 50px -20px rgba(47,58,69,.35);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: #FFFFFF;
+  --material-dialog-fallback: #FFFFFF;
+  --material-dialog-blur: 0px;
+  --material-dialog-saturate: 1;
+  --material-dialog-border: #D9E1EA;
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(47,58,69,.35);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
 }
 
 [data-theme="dark"] {
@@ -724,6 +760,38 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(0,0,0,.62);
   --elevation-drawer: 0px 0px 64px -8px rgba(0,0,0,.62);
   --elevation-dialog: 0px 32px 80px -24px rgba(0,0,0,.62);
+  --material-bar-tint: #131823;
+  --material-bar-fallback: #131823;
+  --material-bar-blur: 0px;
+  --material-bar-saturate: 1;
+  --material-bar-border: #262E3C;
+  --material-bar-shadow: 0px 8px 24px -16px rgba(0,0,0,.5);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: #131823;
+  --material-panel-fallback: #131823;
+  --material-panel-blur: 0px;
+  --material-panel-saturate: 1;
+  --material-panel-border: #262E3C;
+  --material-panel-shadow: 0px 8px 24px -16px rgba(0,0,0,.5);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: #1B2130;
+  --material-popover-fallback: #1B2130;
+  --material-popover-blur: 0px;
+  --material-popover-saturate: 1;
+  --material-popover-border: #262E3C;
+  --material-popover-shadow: 0px 20px 50px -20px rgba(0,0,0,.62);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: #1B2130;
+  --material-dialog-fallback: #1B2130;
+  --material-dialog-blur: 0px;
+  --material-dialog-saturate: 1;
+  --material-dialog-border: #262E3C;
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(0,0,0,.62);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
 }
 
 [data-theme="black"] {
@@ -814,6 +882,38 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(0,0,0,.82);
   --elevation-drawer: 0px 0px 64px -8px rgba(0,0,0,.82);
   --elevation-dialog: 0px 32px 80px -24px rgba(0,0,0,.82);
+  --material-bar-tint: #0B0C0E;
+  --material-bar-fallback: #0B0C0E;
+  --material-bar-blur: 0px;
+  --material-bar-saturate: 1;
+  --material-bar-border: #24282D;
+  --material-bar-shadow: 0px 8px 24px -16px rgba(0,0,0,.7);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: #0B0C0E;
+  --material-panel-fallback: #0B0C0E;
+  --material-panel-blur: 0px;
+  --material-panel-saturate: 1;
+  --material-panel-border: #24282D;
+  --material-panel-shadow: 0px 8px 24px -16px rgba(0,0,0,.7);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: #141619;
+  --material-popover-fallback: #141619;
+  --material-popover-blur: 0px;
+  --material-popover-saturate: 1;
+  --material-popover-border: #24282D;
+  --material-popover-shadow: 0px 20px 50px -20px rgba(0,0,0,.82);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: #141619;
+  --material-dialog-fallback: #141619;
+  --material-dialog-blur: 0px;
+  --material-dialog-saturate: 1;
+  --material-dialog-border: #24282D;
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(0,0,0,.82);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
 }
 
 [data-theme="ciel"] {
@@ -904,6 +1004,38 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(30,64,104,.32);
   --elevation-drawer: 0px 0px 64px -8px rgba(30,64,104,.32);
   --elevation-dialog: 0px 32px 80px -24px rgba(30,64,104,.32);
+  --material-bar-tint: rgba(255, 255, 255, 0.92);
+  --material-bar-fallback: #FEFEFF;
+  --material-bar-blur: 20px;
+  --material-bar-saturate: 1.4;
+  --material-bar-border: rgba(255,255,255,.72);
+  --material-bar-shadow: 0px 8px 24px -16px rgba(30,64,104,.22);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: rgba(255, 255, 255, 0.94);
+  --material-panel-fallback: #FEFEFF;
+  --material-panel-blur: 28px;
+  --material-panel-saturate: 1.4;
+  --material-panel-border: rgba(255,255,255,.72);
+  --material-panel-shadow: 0px 8px 24px -16px rgba(30,64,104,.22);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: rgba(255, 255, 255, 0.95);
+  --material-popover-fallback: #FEFFFF;
+  --material-popover-blur: 32px;
+  --material-popover-saturate: 1.5;
+  --material-popover-border: rgba(255,255,255,.72);
+  --material-popover-shadow: 0px 20px 50px -20px rgba(30,64,104,.32);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: rgba(255, 255, 255, 0.97);
+  --material-dialog-fallback: #FEFFFF;
+  --material-dialog-blur: 40px;
+  --material-dialog-saturate: 1.5;
+  --material-dialog-border: rgba(255,255,255,.72);
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(30,64,104,.32);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
 }
 
 [data-theme="ciel-nuit"] {
@@ -994,4 +1126,126 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(2,4,16,.62);
   --elevation-drawer: 0px 0px 64px -8px rgba(2,4,16,.62);
   --elevation-dialog: 0px 32px 80px -24px rgba(2,4,16,.62);
+  --material-bar-tint: rgba(18, 24, 48, 0.9);
+  --material-bar-fallback: #12172E;
+  --material-bar-blur: 20px;
+  --material-bar-saturate: 1.4;
+  --material-bar-border: rgba(255,255,255,.14);
+  --material-bar-shadow: 0px 8px 24px -16px rgba(2,4,16,.5);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: rgba(18, 24, 48, 0.92);
+  --material-panel-fallback: #12172F;
+  --material-panel-blur: 28px;
+  --material-panel-saturate: 1.4;
+  --material-panel-border: rgba(255,255,255,.14);
+  --material-panel-shadow: 0px 8px 24px -16px rgba(2,4,16,.5);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: rgba(18, 24, 48, 0.94);
+  --material-popover-fallback: #12182F;
+  --material-popover-blur: 32px;
+  --material-popover-saturate: 1.5;
+  --material-popover-border: rgba(255,255,255,.14);
+  --material-popover-shadow: 0px 20px 50px -20px rgba(2,4,16,.62);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: rgba(18, 24, 48, 0.96);
+  --material-dialog-fallback: #12182F;
+  --material-dialog-blur: 40px;
+  --material-dialog-saturate: 1.5;
+  --material-dialog-border: rgba(255,255,255,.14);
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(2,4,16,.62);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
+}
+
+/* Materials: bar, panel, popover, dialog. Each theme block above declares every
+   level opaque: `--material-<level>-bg` is the fallback and `-backdrop` is
+   `none`. The glass is enabled here, only where the client can draw it, and
+   disabled again for a reader who asked for less transparency or more contrast,
+   or whose platform forces its colours. */
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-tint);
+    --material-bar-backdrop: blur(var(--material-bar-blur)) saturate(var(--material-bar-saturate));
+    --material-panel-bg: var(--material-panel-tint);
+    --material-panel-backdrop: blur(var(--material-panel-blur)) saturate(var(--material-panel-saturate));
+    --material-popover-bg: var(--material-popover-tint);
+    --material-popover-backdrop: blur(var(--material-popover-blur)) saturate(var(--material-popover-saturate));
+    --material-dialog-bg: var(--material-dialog-tint);
+    --material-dialog-backdrop: blur(var(--material-dialog-blur)) saturate(var(--material-dialog-saturate));
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-bar-backdrop: none;
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-panel-backdrop: none;
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-popover-backdrop: none;
+    --material-dialog-bg: var(--material-dialog-fallback);
+    --material-dialog-backdrop: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-bar-backdrop: none;
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-panel-backdrop: none;
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-popover-backdrop: none;
+    --material-dialog-bg: var(--material-dialog-fallback);
+    --material-dialog-backdrop: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-bar-backdrop: none;
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-panel-backdrop: none;
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-popover-backdrop: none;
+    --material-dialog-bg: var(--material-dialog-fallback);
+    --material-dialog-backdrop: none;
+  }
+}
+
+.material-bar {
+  background-color: var(--material-bar-bg);
+  -webkit-backdrop-filter: var(--material-bar-backdrop);
+  backdrop-filter: var(--material-bar-backdrop);
+  border: 1px solid var(--material-bar-border);
+  box-shadow: var(--material-bar-shadow);
+}
+
+.material-panel {
+  background-color: var(--material-panel-bg);
+  -webkit-backdrop-filter: var(--material-panel-backdrop);
+  backdrop-filter: var(--material-panel-backdrop);
+  border: 1px solid var(--material-panel-border);
+  box-shadow: var(--material-panel-shadow);
+}
+
+.material-popover {
+  background-color: var(--material-popover-bg);
+  -webkit-backdrop-filter: var(--material-popover-backdrop);
+  backdrop-filter: var(--material-popover-backdrop);
+  border: 1px solid var(--material-popover-border);
+  box-shadow: var(--material-popover-shadow);
+}
+
+.material-dialog {
+  background-color: var(--material-dialog-bg);
+  -webkit-backdrop-filter: var(--material-dialog-backdrop);
+  backdrop-filter: var(--material-dialog-backdrop);
+  border: 1px solid var(--material-dialog-border);
+  box-shadow: var(--material-dialog-shadow);
 }

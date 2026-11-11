@@ -17,7 +17,8 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { buildNative } from './lib/native.mjs';
-import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, aliasTarget } from './lib/tokens.mjs';
+import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, aliasTarget, toHex } from './lib/tokens.mjs';
+import { MATERIAL_LEVELS, resolveMaterial } from './lib/material.mjs';
 import { THEMES, THEME_REGISTRY, THEME_FAMILIES, DEFAULT_THEME, themeSelector, assertThemeGroups } from './lib/themes.mjs';
 import {
   SPEC,
@@ -63,6 +64,27 @@ for (const name of THEMES) {
     throw new Error(`${name}: incomplete theme role set`);
   }
 }
+
+// Materials are themed like elevation, in a tier of their own: a material is a
+// composite, not a colour (docs/specs/ethereal-sky-glass.md). Every theme
+// declares the same four levels — a flat family declares them opaque — so a
+// component can ask for a level without knowing which family is on screen.
+const materialGroups = tree.semantic?.material;
+assertThemeGroups('expected materials for the complete theme set', own(materialGroups));
+if (own(tree.material).join(',') !== THEMES.map((name) => `theme-${name}`).join(',')) {
+  throw new Error(`expected material primitives for the complete theme set: ${THEMES.map((name) => `material.theme-${name}`).join(', ')}`);
+}
+for (const name of THEMES) {
+  for (const [what, group] of [[name, materialGroups[name]], [`material.theme-${name}`, tree.material[`theme-${name}`]]]) {
+    if (own(group).join(',') !== MATERIAL_LEVELS.join(',')) {
+      throw new Error(`${what}: incomplete material level set; the levels are ${MATERIAL_LEVELS.join(', ')}`);
+    }
+  }
+}
+/** Every theme's four materials, resolved to what they paint. */
+const materials = Object.fromEntries(THEMES.map((name) => [name, MATERIAL_LEVELS.map((level) => resolveMaterial(name, level, index))]));
+/** The themes in which at least one level shows or filters what is behind it. */
+const glassThemes = THEMES.filter((name) => materials[name].some((material) => material.glass));
 
 const flat = (path) => {
   if (!byPath.has(path)) throw new Error(`build expects the token "${path}" and tokens.json does not define it`);
@@ -233,6 +255,83 @@ function focusRingDeclarations(theme) {
   });
 }
 
+// --- Materials --------------------------------------------------------------
+// A level is emitted as its parts, inside each theme block, plus the two
+// properties a surface actually paints with: `-bg` and `-backdrop`. Those two
+// START as the opaque fallback and no filter, in every theme. The glass is
+// switched on afterwards, under `@supports`, and switched back off for a reader
+// who asked for less transparency or more contrast, or whose platform forces
+// its colours — so the default is the surface that always reads, and
+// translucency is something a capable, willing client opts into.
+const MATERIAL_PARTS = ['tint', 'fallback', 'blur', 'saturate', 'border', 'shadow', 'bg', 'backdrop'];
+const materialProperty = (level, part) => `--material-${level}-${part}`;
+/** Every custom property the materials declare, in the order a theme block emits them. */
+const MATERIAL_VARIABLES = MATERIAL_LEVELS.flatMap((level) => MATERIAL_PARTS.map((part) => materialProperty(level, part)));
+
+function materialDeclarations(theme) {
+  return materials[theme].flatMap((material) => {
+    const { level, tint, alpha } = material;
+    const paint = alpha === 1 ? toHex(tint) : `rgba(${tint.r}, ${tint.g}, ${tint.b}, ${alpha})`;
+    const value = {
+      tint: paint,
+      fallback: toHex(material.fallback),
+      blur: `${material.blur}px`,
+      saturate: String(material.saturation),
+      border: material.border,
+      shadow: cssValue(byPath.get(material.shadow.path)),
+      bg: `var(${materialProperty(level, 'fallback')})`,
+      backdrop: 'none',
+    };
+    return MATERIAL_PARTS.map((part) => `  ${materialProperty(level, part)}: ${value[part]};`);
+  });
+}
+
+/** The two switching properties of every level, set to `on` (the glass) or off (the fallback). */
+function materialSwitch(on, indent) {
+  return MATERIAL_LEVELS.flatMap((level) => [
+    `${indent}${materialProperty(level, 'bg')}: var(${materialProperty(level, on ? 'tint' : 'fallback')});`,
+    `${indent}${materialProperty(level, 'backdrop')}: ${
+      on ? `blur(var(${materialProperty(level, 'blur')})) saturate(var(${materialProperty(level, 'saturate')}))` : 'none'
+    };`,
+  ]);
+}
+
+/** The reader preferences and platform modes under which every surface is opaque. */
+const OPAQUE_WHEN = ['(prefers-reduced-transparency: reduce)', '(prefers-contrast: more)', '(forced-colors: active)'];
+/** A client that can draw the glass at all. The prefixed form is Safari before 18. */
+const GLASS_SUPPORT = '((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px)))';
+
+function buildMaterialCss() {
+  // `:is()` keeps the specificity of one attribute selector, so these rules
+  // override a theme block by coming after it and by nothing else.
+  const selector = `:is(${glassThemes.map(themeSelector).join(', ')})`;
+  const glass = glassThemes.length
+    ? [
+        `@supports ${GLASS_SUPPORT} {\n  ${selector} {\n${materialSwitch(true, '    ').join('\n')}\n  }\n}`,
+        ...OPAQUE_WHEN.map((query) => `@media ${query} {\n  ${selector} {\n${materialSwitch(false, '    ').join('\n')}\n  }\n}`),
+      ]
+    : [];
+  const classes = MATERIAL_LEVELS.map(
+    (level) =>
+      `.material-${level} {\n` +
+      `  background-color: var(${materialProperty(level, 'bg')});\n` +
+      `  -webkit-backdrop-filter: var(${materialProperty(level, 'backdrop')});\n` +
+      `  backdrop-filter: var(${materialProperty(level, 'backdrop')});\n` +
+      `  border: 1px solid var(${materialProperty(level, 'border')});\n` +
+      `  box-shadow: var(${materialProperty(level, 'shadow')});\n` +
+      '}',
+  );
+  return [
+    `/* Materials: bar, panel, popover, dialog. Each theme block above declares every
+   level opaque: \`--material-<level>-bg\` is the fallback and \`-backdrop\` is
+   \`none\`. The glass is enabled here, only where the client can draw it, and
+   disabled again for a reader who asked for less transparency or more contrast,
+   or whose platform forces its colours. */`,
+    ...glass,
+    ...classes,
+  ].join('\n\n');
+}
+
 // --- dist/tokens.css --------------------------------------------------------
 const HEADER = `/* GENERATED FILE — DO NOT EDIT.
    Written by scripts/build.mjs from tokens.json, which is the source of truth.
@@ -286,10 +385,10 @@ function buildCss() {
     const elevation = elevationLevels.map(
       (level) => `  --elevation-${level}: ${cssValue(byPath.get(`semantic.elevation.${name}.${level}`))};`,
     );
-    return `${selector} {\n${[...values, ...focusRingDeclarations(name), ...elevation].join('\n')}\n}`;
+    return `${selector} {\n${[...values, ...focusRingDeclarations(name), ...elevation, ...materialDeclarations(name)].join('\n')}\n}`;
   }).join('\n\n');
 
-  return `${HEADER}\n:root {\n${body}\n}\n\n/* Complete shell themes, and the focus ring, which follows them; the legacy\n   variables above retain their values. */\n${themes}\n`;
+  return `${HEADER}\n:root {\n${body}\n}\n\n/* Complete shell themes, and the focus ring, which follows them; the legacy\n   variables above retain their values. */\n${themes}\n\n${buildMaterialCss()}\n`;
 }
 
 // --- dist/tailwind.preset.js ------------------------------------------------
@@ -370,6 +469,13 @@ function buildPreset() {
   for (const role of themeRoles) {
     if (byPath.get(`semantic.theme.${DEFAULT_THEME}.${role}`).type === 'color') colors[`c-${role}`] = `var(--c-${role})`;
   }
+  // A material's ground and its edge, as colours: `bg-material-bar` paints
+  // whichever of the glass and the fallback the stylesheet has switched on.
+  // The filter is not a colour; the `.material-<level>` class carries all of it.
+  for (const level of MATERIAL_LEVELS) {
+    colors[`material-${level}`] = `var(${materialProperty(level, 'bg')})`;
+    colors[`material-${level}-border`] = `var(${materialProperty(level, 'border')})`;
+  }
 
   // The themed shadow primitives are implementation values, like the theme
   // colour primitives: consumers use the elevation levels, each a `var()` so it
@@ -387,6 +493,7 @@ function buildPreset() {
     if (TAILWIND_SHADOWS.includes(level)) throw new Error(`elevation level "${level}" would replace Tailwind's own shadow-${level}`);
     shadows[level] = `var(--elevation-${level})`;
   }
+  for (const level of MATERIAL_LEVELS) shadows[`material-${level}`] = `var(${materialProperty(level, 'shadow')})`;
 
   const gradient = `linear-gradient(${SPEC.pageGradient.angle}, ${SPEC.pageGradient.stops
     .map(([path, stop]) => `${flat(path)} ${stop}`)
@@ -469,7 +576,9 @@ function buildTypes() {
   const vars = [...new Set([
     '--bg-page',
     ...RING_VARIABLES,
-    ...tokens.map((t) => `--${cssName(t.path)}`),
+    ...MATERIAL_VARIABLES,
+    // A material is emitted as its parts above, never as one property.
+    ...tokens.filter((t) => t.type !== 'material').map((t) => `--${cssName(t.path)}`),
   ])].sort();
   const paths = tokens.map((t) => t.path).sort();
 

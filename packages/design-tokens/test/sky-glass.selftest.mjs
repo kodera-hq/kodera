@@ -11,15 +11,25 @@
 //                        a shared ramp, never through another theme's
 //   the same bar         every contrast row its Givre twin is held to, at the
 //                        same minimum, and no exemption
+//   materials            four levels in every theme; opaque in the flat family;
+//                        emitted so that the opaque fallback is the default and
+//                        the glass is switched on only where it can be drawn
+//                        and the reader has not asked for less; every level
+//                        held to the same rows, over a set that contains the
+//                        canvas it is declared over
 //
 // Each clause has a mutation below that asserts its own message.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ROOT, indexTokens, resolve, aliasTarget } from '../scripts/lib/tokens.mjs';
+import { spawnSync } from 'node:child_process';
+import { ROOT, indexTokens, resolve, aliasTarget, parseColor, composite, toHex } from '../scripts/lib/tokens.mjs';
 import { THEMES, DEFAULT_THEME, themesOfFamily, themeInfo, themeSelector } from '../scripts/lib/themes.mjs';
+import { MATERIAL_LEVELS } from '../scripts/lib/material.mjs';
+import preset from '../dist/tailwind.preset.js';
 
 const tree = JSON.parse(readFileSync(join(ROOT, 'tokens.json'), 'utf8'));
 const register = JSON.parse(readFileSync(join(ROOT, 'contrast-pairs.json'), 'utf8'));
@@ -131,10 +141,352 @@ function checkBar(contrast) {
   }
 }
 
+// --- Materials -----------------------------------------------------------------
+
+/** The levels, restated: a fifth level, or a renamed one, has to be changed here too. */
+const LEVELS = ['bar', 'panel', 'popover', 'dialog'];
+const PARTS = ['tint', 'fallback', 'blur', 'saturate', 'border', 'shadow', 'bg', 'backdrop'];
+const OPAQUE_WHEN = ['(prefers-reduced-transparency: reduce)', '(prefers-contrast: more)', '(forced-colors: active)'];
+const SUPPORTS = '@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {';
+
+/** A material as the source declares it, read here without scripts/lib/material.mjs. */
+function declared(source, theme, level) {
+  const index = indexTokens(source);
+  const value = source.material[`theme-${theme}`][level].$value;
+  const color = (field) => parseColor(resolve(aliasTarget(value[field]), index));
+  return { ...value, tintColor: color('tint'), canvasColor: color('canvas') };
+}
+
+function checkMaterialSource(source) {
+  assert.deepEqual([...MATERIAL_LEVELS], LEVELS, 'the material levels are bar, panel, popover, dialog');
+  for (const theme of THEMES) {
+    assert.deepEqual(own(source.semantic.material[theme]), LEVELS, `${theme}: the four material levels, lowest first`);
+    for (const level of LEVELS) {
+      assert.equal(
+        source.semantic.material[theme][level].$value,
+        `{material.theme-${theme}.${level}}`,
+        `semantic.material.${theme}.${level}: the name of its own theme's level`,
+      );
+      const material = declared(source, theme, level);
+      assert.equal(material.canvas, `{color.theme-${theme}.page}`, `${theme}.${level}: declared over its own theme's page`);
+      if (themeInfo(theme).family === 'givre') {
+        assert.deepEqual(
+          [material.alpha, material.blur, material.saturation],
+          [1, '0px', 1],
+          `${theme}.${level}: a flat family's material is opaque, unblurred and unsaturated`,
+        );
+      }
+    }
+    // Each level at least as opaque as the one below it: what sits higher carries more.
+    for (let i = 1; i < LEVELS.length; i += 1) {
+      assert.ok(
+        declared(source, theme, LEVELS[i]).alpha >= declared(source, theme, LEVELS[i - 1]).alpha,
+        `${theme}: ${LEVELS[i]} must be at least as opaque as ${LEVELS[i - 1]}`,
+      );
+    }
+  }
+  for (const theme of themesOfFamily('ciel')) {
+    assert.ok(
+      LEVELS.some((level) => declared(source, theme, level).alpha < 1),
+      `${theme}: a glass family with no translucent level is a flat family under another name`,
+    );
+  }
+}
+
+/** The body of the one top-level at-rule that opens with `opener`. */
+function atRule(styles, opener) {
+  const parts = styles.split(`\n${opener}\n`);
+  assert.equal(parts.length, 2, `tokens.css: exactly one \`${opener}\` block`);
+  return { body: parts[1].split('\n}\n')[0], at: parts[0].length };
+}
+
+function checkMaterialCss(source, styles) {
+  const glassSelector = `:is(${themesOfFamily('ciel').map(themeSelector).join(', ')})`;
+
+  for (const theme of THEMES) {
+    const block = themeBlock(styles, theme);
+    for (const level of LEVELS) {
+      for (const part of PARTS) {
+        assert.equal(
+          (block.match(new RegExp(`^  --material-${level}-${part}: `, 'gm')) ?? []).length,
+          1,
+          `${theme}: --material-${level}-${part} declared once in the theme block`,
+        );
+      }
+      // The default, in every theme, is the surface that always reads.
+      assert.ok(
+        block.includes(`  --material-${level}-bg: var(--material-${level}-fallback);`),
+        `${theme}: --material-${level}-bg defaults to the opaque fallback`,
+      );
+      assert.ok(block.includes(`  --material-${level}-backdrop: none;`), `${theme}: --material-${level}-backdrop defaults to none`);
+
+      const material = declared(source, theme, level);
+      const fallback = toHex(composite({ ...material.tintColor, a: material.alpha }, material.canvasColor));
+      assert.ok(
+        block.includes(`  --material-${level}-fallback: ${fallback};`),
+        `${theme}: --material-${level}-fallback is the tint at its alpha over the canvas (${fallback})`,
+      );
+      if (material.alpha === 1) {
+        assert.ok(block.includes(`  --material-${level}-tint: ${fallback};`), `${theme}: an opaque material's tint is its fallback`);
+      } else {
+        const { r, g, b } = material.tintColor;
+        assert.ok(
+          block.includes(`  --material-${level}-tint: rgba(${r}, ${g}, ${b}, ${material.alpha});`),
+          `${theme}: --material-${level}-tint carries the material's alpha`,
+        );
+      }
+      assert.ok(block.includes(`  --material-${level}-blur: ${material.blur};`), `${theme}: --material-${level}-blur`);
+      assert.ok(block.includes(`  --material-${level}-saturate: ${material.saturation};`), `${theme}: --material-${level}-saturate`);
+    }
+  }
+
+  // The glass is switched on in one place: under @supports, for the glass family only.
+  const supports = atRule(styles, SUPPORTS);
+  assert.ok(supports.body.startsWith(`  ${glassSelector} {\n`), `the glass is enabled for ${glassSelector} and no other selector`);
+  assert.equal((supports.body.match(/\{$/gm) ?? []).length, 1, 'the @supports block holds one rule');
+  for (const level of LEVELS) {
+    assert.ok(supports.body.includes(`    --material-${level}-bg: var(--material-${level}-tint);`), `@supports: ${level} paints its tint`);
+    assert.ok(
+      supports.body.includes(`    --material-${level}-backdrop: blur(var(--material-${level}-blur)) saturate(var(--material-${level}-saturate));`),
+      `@supports: ${level} filters its backdrop, blur first`,
+    );
+  }
+  const enabled = [...styles.matchAll(/--material-[a-z]+-bg: var\(--material-[a-z]+-tint\);/g)];
+  assert.equal(enabled.length, LEVELS.length, 'the tint is switched on under @supports and nowhere else');
+  assert.equal((styles.match(/-backdrop: blur\(/g) ?? []).length, LEVELS.length, 'a backdrop filter is switched on under @supports and nowhere else');
+
+  // ...and off again, AFTER it, for each reader preference and platform mode.
+  for (const query of OPAQUE_WHEN) {
+    const media = atRule(styles, `@media ${query} {`);
+    assert.ok(media.at > supports.at, `@media ${query} must come after @supports, or the glass wins the cascade`);
+    assert.ok(media.body.startsWith(`  ${glassSelector} {\n`), `@media ${query}: resets ${glassSelector}`);
+    for (const level of LEVELS) {
+      assert.ok(media.body.includes(`    --material-${level}-bg: var(--material-${level}-fallback);`), `@media ${query}: ${level} is its opaque fallback`);
+      assert.ok(media.body.includes(`    --material-${level}-backdrop: none;`), `@media ${query}: ${level} filters nothing`);
+    }
+  }
+
+  // The classes paint with the switching properties and hold no value of their own.
+  for (const level of LEVELS) {
+    const rule = styles.split(`\n.material-${level} {\n`);
+    assert.equal(rule.length, 2, `.material-${level}: exactly one rule`);
+    const declarations = rule[1].split('\n}')[0].split('\n').map((line) => line.trim());
+    assert.deepEqual(
+      declarations,
+      [
+        `background-color: var(--material-${level}-bg);`,
+        `-webkit-backdrop-filter: var(--material-${level}-backdrop);`,
+        `backdrop-filter: var(--material-${level}-backdrop);`,
+        `border: 1px solid var(--material-${level}-border);`,
+        `box-shadow: var(--material-${level}-shadow);`,
+      ],
+      `.material-${level}: paints with the switching properties only`,
+    );
+  }
+}
+
+function checkMaterialPreset(config) {
+  const { colors, boxShadow } = config.theme.extend;
+  for (const level of LEVELS) {
+    assert.equal(colors[`material-${level}`], `var(--material-${level}-bg)`, `preset: material-${level} follows the switch, never one theme's tint`);
+    assert.equal(colors[`material-${level}-border`], `var(--material-${level}-border)`, `preset: material-${level}-border`);
+    assert.equal(boxShadow[`material-${level}`], `var(--material-${level}-shadow)`, `preset: shadow material-${level}`);
+  }
+}
+
+/** What every level is held to: the role, its minimum. */
+const HELD = [
+  ['ink', 'semantic.theme.%.ink', 4.5],
+  ['ink-2', 'semantic.theme.%.ink-2', 4.5],
+  ['ink-3', 'semantic.theme.%.ink-3', 4.5],
+  ['accent-ink', 'semantic.theme.%.accent-ink', 4.5],
+  ['icon-ink-4', 'semantic.theme.%.ink-4', 3],
+  ['border-input', 'semantic.theme.%.border-input', 3],
+  ['focus-ring', 'spec:focus-ring.%.indicator', 3],
+];
+
+function checkMaterialRows(source, contrast) {
+  const sets = contrast.backdropSets ?? {};
+  for (const theme of THEMES) {
+    const glass = themeInfo(theme).family === 'ciel';
+    if (glass) {
+      const set = sets[theme];
+      assert.ok(set, `backdropSets.${theme}: a glass theme declares what can lie behind its materials`);
+      assert.equal(set.theme, theme, `backdropSets.${theme}: bound to its own theme`);
+      assert.ok(
+        set.members.includes(`semantic.theme.${theme}.page`),
+        `backdropSets.${theme}: holds the page every material of the theme is declared over`,
+      );
+    }
+    for (const level of LEVELS) {
+      for (const [name, fg, min] of HELD) {
+        const id = `material.${theme}.${level}/${name}`;
+        const row = contrast.pairs.find((candidate) => candidate.id === id);
+        assert.ok(row, `${id}: every material level is held to this row`);
+        assert.equal(row.fg, fg.replace('%', theme), `${id}: measures its own theme's ${name}`);
+        assert.equal(row.bg, `semantic.material.${theme}.${level}`, `${id}: measured on the material, by the name a consumer uses`);
+        assert.equal(row.min, min, `${id}: a minimum of ${min}`);
+        assert.equal(row.exempt, undefined, `${id}: no exemption`);
+        assert.equal(row.expect, undefined, `${id}: no inverted acceptance`);
+        if (declared(source, theme, level).alpha < 1) {
+          assert.equal(row.backdropSet, theme, `${id}: a translucent material is measured over its own theme's set`);
+        } else {
+          assert.equal(row.backdropSet, undefined, `${id}: an opaque material binds no set`);
+        }
+      }
+    }
+  }
+}
+
+/** A sandbox build of a mutated source; hands back the finished process. */
+function build(source) {
+  const dir = mkdtempSync(join(tmpdir(), 'sky-glass-'));
+  try {
+    cpSync(join(ROOT, 'scripts'), join(dir, 'scripts'), { recursive: true });
+    writeFileSync(join(dir, 'tokens.json'), JSON.stringify(source));
+    return spawnSync(process.execPath, ['scripts/build.mjs'], { cwd: dir, encoding: 'utf8', env: {} });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 test('ciel is a family of two themes, light and dark, beside a complete givre', () => checkFamily());
 test('each ciel theme declares the roles of the default theme, through its own values', () => checkRoles(tree));
 test('each ciel theme has its own CSS block, carrying what tokens.json resolves to', () => checkCss(tree, css));
 test('each ciel theme is held to every contrast row of its Givre twin', () => checkBar(register));
+
+test('every theme declares the four materials, opaque in the flat family', () => checkMaterialSource(tree));
+test('the stylesheet defaults every material to its opaque fallback and switches the glass on last', () => checkMaterialCss(tree, css));
+test('the preset addresses a material through the switching properties', () => checkMaterialPreset(preset));
+test('every material level is held to the same rows, a translucent one over its own theme\'s set', () => checkMaterialRows(tree, register));
+
+test('every material clause fails on its own mutation', () => {
+  const bar = (t, theme) => t.material[`theme-${theme}`].bar.$value;
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => delete t.semantic.material.black.dialog)),
+    /black: the four material levels, lowest first/,
+  );
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => (t.semantic.material.ciel.bar.$value = '{material.theme-ciel.panel}'))),
+    /semantic\.material\.ciel\.bar: the name of its own theme's level/,
+  );
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => (bar(t, 'dark').alpha = 0.8))),
+    /dark\.bar: a flat family's material is opaque, unblurred and unsaturated/,
+  );
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => (bar(t, 'light').blur = '12px'))),
+    /light\.bar: a flat family's material is opaque, unblurred and unsaturated/,
+  );
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => (bar(t, 'ciel').canvas = '{color.theme-ciel.surface}'))),
+    /ciel\.bar: declared over its own theme's page/,
+  );
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => (bar(t, 'ciel-nuit').alpha = 0.99))),
+    /ciel-nuit: panel must be at least as opaque as bar/,
+  );
+  assert.throws(
+    () => checkMaterialSource(mutate(tree, (t) => LEVELS.forEach((level) => (t.material['theme-ciel'][level].$value.alpha = 1)))),
+    /ciel: a glass family with no translucent level is a flat family under another name/,
+  );
+
+  // The stylesheet. Each mutation is one way the opaque default stops being the default.
+  const ciel = '[data-theme="ciel"] {';
+  assert.throws(
+    () => checkMaterialCss(tree, css.replace('  --material-bar-bg: var(--material-bar-fallback);\n  --material-bar-backdrop: none;\n  --material-panel-tint: rgba(255', '  --material-bar-bg: var(--material-bar-tint);\n  --material-bar-backdrop: none;\n  --material-panel-tint: rgba(255')),
+    /ciel: --material-bar-bg defaults to the opaque fallback/,
+  );
+  assert.throws(
+    () => checkMaterialCss(tree, css.replace(SUPPORTS, '@media all {')),
+    /exactly one `@supports \(\(-webkit-backdrop-filter: blur\(1px\)\) or \(backdrop-filter: blur\(1px\)\)\) \{` block/,
+  );
+  assert.throws(
+    () => checkMaterialCss(tree, css.replace(':is([data-theme="ciel"], [data-theme="ciel-nuit"]) {\n    --material-bar-bg: var(--material-bar-tint);', ':is([data-theme="dark"], [data-theme="ciel"], [data-theme="ciel-nuit"]) {\n    --material-bar-bg: var(--material-bar-tint);')),
+    /the glass is enabled for :is\(\[data-theme="ciel"\], \[data-theme="ciel-nuit"\]\) and no other selector/,
+  );
+  for (const query of OPAQUE_WHEN) {
+    assert.throws(
+      () => checkMaterialCss(tree, css.replace(`@media ${query} {`, '@media (min-width: 1px) {')),
+      new RegExp(`exactly one \`@media ${query.replace(/[()]/g, '\\$&')} \\{\` block`),
+    );
+  }
+  // The same rules in the other order: the reader's preference loses the cascade.
+  const [before, glassOn] = css.split(`\n${SUPPORTS}\n`);
+  const supportsBlock = `${SUPPORTS}\n${glassOn.split('\n}\n')[0]}\n}\n`;
+  const reordered = `${before}\n${glassOn.slice(glassOn.indexOf('\n}\n') + 3).replace('\n.material-bar {', `\n${supportsBlock}\n.material-bar {`)}`;
+  assert.throws(() => checkMaterialCss(tree, reordered), /must come after @supports, or the glass wins the cascade/);
+  assert.throws(
+    () => checkMaterialCss(tree, css.replace('.material-bar {\n  background-color: var(--material-bar-bg);', '.material-bar {\n  background-color: rgba(255, 255, 255, 0.92);')),
+    /\.material-bar: paints with the switching properties only/,
+  );
+  assert.throws(
+    () => checkMaterialCss(tree, `${css}\n.glass { --material-bar-bg: var(--material-bar-tint); }\n`),
+    /the tint is switched on under @supports and nowhere else/,
+  );
+  assert.throws(
+    () => checkMaterialCss(tree, css.replace(`${ciel}`, `${ciel}\n  --material-bar-fallback: #000000;`)),
+    /ciel: --material-bar-fallback declared once in the theme block/,
+  );
+  const fallback = /(\[data-theme="ciel"\] \{[^}]*?  --material-bar-fallback: )#[0-9A-F]{6};/;
+  assert.match(css, fallback, 'the ciel bar fallback was not found, so the next mutation would prove nothing');
+  assert.throws(
+    () => checkMaterialCss(tree, css.replace(fallback, '$1#EEF5FC;')),
+    /ciel: --material-bar-fallback is the tint at its alpha over the canvas/,
+  );
+
+  const frozen = structuredClone(preset);
+  frozen.theme.extend.colors['material-bar'] = 'rgba(255, 255, 255, 0.92)';
+  assert.throws(() => checkMaterialPreset(frozen), /preset: material-bar follows the switch, never one theme's tint/);
+
+  // The register.
+  const dropRow = (id) => mutate(register, (r) => (r.pairs = r.pairs.filter((row) => row.id !== id)));
+  const editRow = (id, edit) => mutate(register, (r) => edit(r.pairs.find((row) => row.id === id)));
+  assert.throws(() => checkMaterialRows(tree, dropRow('material.ciel.bar/ink-3')), /material\.ciel\.bar\/ink-3: every material level is held to this row/);
+  assert.throws(() => checkMaterialRows(tree, dropRow('material.black.dialog/focus-ring')), /material\.black\.dialog\/focus-ring: every material level is held to this row/);
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel-nuit.popover/ink-2', (row) => (row.min = 3))),
+    /material\.ciel-nuit\.popover\/ink-2: a minimum of 4\.5/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel.panel/ink', (row) => delete row.backdropSet)),
+    /material\.ciel\.panel\/ink: a translucent material is measured over its own theme's set/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel.panel/ink', (row) => (row.backdropSet = ['semantic.theme.ciel.surface']))),
+    /material\.ciel\.panel\/ink: a translucent material is measured over its own theme's set/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, editRow('material.ciel.dialog/ink', (row) => (row.bg = 'semantic.theme.ciel.elevated'))),
+    /material\.ciel\.dialog\/ink: measured on the material, by the name a consumer uses/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, mutate(register, (r) => (r.backdropSets.ciel.members = r.backdropSets.ciel.members.filter((m) => !m.endsWith('.page'))))),
+    /backdropSets\.ciel: holds the page every material of the theme is declared over/,
+  );
+  assert.throws(
+    () => checkMaterialRows(tree, mutate(register, (r) => delete r.backdropSets['ciel-nuit'])),
+    /backdropSets\.ciel-nuit: a glass theme declares what can lie behind its materials/,
+  );
+
+  checkMaterialSource(tree);
+  checkMaterialCss(tree, css);
+  checkMaterialRows(tree, register);
+});
+
+test('the build refuses an incomplete material tier', () => {
+  assert.equal(build(tree).status, 0, 'the unmutated source builds, or the refusals below prove nothing');
+  const refused = (source, message) => {
+    const result = build(source);
+    assert.notEqual(result.status, 0, `refused: ${message}`);
+    assert.match(result.stderr, message);
+  };
+  refused(mutate(tree, (t) => delete t.semantic.material['ciel-nuit']), /expected materials for the complete theme set: light, dark, black, ciel, ciel-nuit .*tokens\.json declares light, dark, black, ciel$/m);
+  refused(mutate(tree, (t) => delete t.semantic.material.dark.popover), /dark: incomplete material level set; the levels are bar, panel, popover, dialog/);
+  refused(mutate(tree, (t) => delete t.material['theme-black']), /expected material primitives for the complete theme set: /);
+  refused(mutate(tree, (t) => delete t.material['theme-ciel'].bar), /material\.theme-ciel: incomplete material level set/);
+  refused(mutate(tree, (t) => (t.material['theme-ciel'].bar.$value.alpha = 0)), /material: material\.theme-ciel\.bar: alpha: 0 is not a number in \(0, 1\]/);
+});
 
 test('every clause fails on its own mutation', () => {
   assert.throws(

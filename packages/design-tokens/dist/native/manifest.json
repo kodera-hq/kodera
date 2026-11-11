@@ -2,7 +2,7 @@
   "format": "kodera-native-tokens/1",
   "source": {
     "path": "tokens.json",
-    "sha256": "6408ebda321561d36cdb09a0db27e6d6ee573f6fefd494b5927171ce22b62dba"
+    "sha256": "db849d3791e541c266d7c72a80e6f2f908a70b33a0fd4f44c16b348c7049b5ee"
   },
   "mapping": {
     "colors": "sRGB normalized channels; alpha preserved without compositing",
@@ -8067,6 +8067,14 @@
       "reason": "outside the native format 1 surface"
     },
     {
+      "path": "color.theme-ciel.glass",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel.glass-edge",
+      "reason": "outside the native format 1 surface"
+    },
+    {
       "path": "color.theme-ciel-nuit.page",
       "reason": "outside the native format 1 surface"
     },
@@ -8375,6 +8383,14 @@
       "reason": "outside the native format 1 surface"
     },
     {
+      "path": "color.theme-ciel-nuit.glass",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "color.theme-ciel-nuit.glass-edge",
+      "reason": "outside the native format 1 surface"
+    },
+    {
       "path": "semantic.surface.page",
       "reason": "outside the native format 1 surface"
     },
@@ -8563,6 +8579,86 @@
       "reason": "elevation: no native approximation"
     },
     {
+      "path": "semantic.material.light.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.light.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.light.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.light.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.dark.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.dark.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.dark.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.dark.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.black.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.black.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.black.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.black.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel-nuit.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel-nuit.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel-nuit.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "semantic.material.ciel-nuit.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
       "path": "semantic.layout.rail-width",
       "reason": "outside the native format 1 surface"
     },
@@ -8705,6 +8801,86 @@
     {
       "path": "shadow.theme-ciel-nuit.dialog",
       "reason": "elevation: no native approximation"
+    },
+    {
+      "path": "material.theme-light.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-light.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-light.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-light.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-dark.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-dark.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-dark.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-dark.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-black.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-black.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-black.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-black.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel.dialog",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel-nuit.bar",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel-nuit.panel",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel-nuit.popover",
+      "reason": "outside the native format 1 surface"
+    },
+    {
+      "path": "material.theme-ciel-nuit.dialog",
+      "reason": "outside the native format 1 surface"
     },
     {
       "path": "motion.duration.fast",
