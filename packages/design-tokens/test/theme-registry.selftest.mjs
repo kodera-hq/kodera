@@ -146,6 +146,30 @@ function checkCensus(artefacts, registry = THEME_REGISTRY) {
   const themed = manifest.entries.filter((entry) => entry.path.startsWith('semantic.theme.'));
   assert.deepEqual([...new Set(themed.map((entry) => entry.path.split('.')[2]))], ids, 'manifest: theme entries for the registered themes');
   assert.deepEqual([...new Set(themed.map((entry) => entry.api.split('.')[1]))], natives, 'manifest: native theme names follow the registry');
+  assert.deepEqual(
+    manifest.themes,
+    registry.map((theme) => ({ id: theme.id, api: `KoderaTokens.Theme.${nativeName(theme.id)}`, family: theme.family, mode: theme.mode, scheme: theme.scheme, default: theme.default })),
+    'manifest: themes is the registry, entry for entry',
+  );
+
+  // The native registries, and the per-theme material sets beside the palettes.
+  const swiftTheme = artefacts.swift.split('    public enum Theme: String, CaseIterable, Sendable {\n')[1]?.split('\n        public static let defaultTheme')[0];
+  assert.ok(swiftTheme, 'Swift: the Theme enum is declared');
+  assert.deepEqual(
+    [...swiftTheme.matchAll(/^ {8}case (\w+) = "([^"]+)"$/gm)].map((m) => [m[1], m[2]]),
+    ids.map((id) => [nativeName(id), id]),
+    'Swift: one Theme case per registered theme, its raw value the id',
+  );
+  assert.ok(artefacts.swift.includes(`public static let defaultTheme: Theme = .${nativeName(registry.find((theme) => theme.default).id)}`), 'Swift: the default theme is the registry default');
+  const kotlinTheme = artefacts.kotlin.split('    public enum class Theme(')[1]?.split('\n        public val palette')[0];
+  assert.ok(kotlinTheme, 'Compose: the Theme enum is declared');
+  assert.deepEqual(
+    [...kotlinTheme.matchAll(/^ {8}\w+\("([^"]+)", ThemeFamily\.(\w+), ThemeMode\.(\w+), (true|false), (true|false)\)[,;]$/gm)].map((m) => [m[1], m[2].toLowerCase(), m[3].toLowerCase(), m[5]]),
+    registry.map((theme) => [theme.id, theme.family, theme.mode, String(theme.default)]),
+    'Compose: one Theme entry per registered theme, in its family and mode',
+  );
+  assert.deepEqual([...artefacts.swift.matchAll(/^ {8}public static let (\w+) = Materials\($/gm)].map((m) => m[1]), natives, 'Swift: one Materials per registered theme');
+  assert.deepEqual([...artefacts.kotlin.matchAll(/^ {8}public val (\w+) = Materials\($/gm)].map((m) => m[1]), natives, 'Compose: one Materials per registered theme');
 }
 
 const shipped = () => ({
@@ -194,6 +218,30 @@ test('a theme one generator emits and the registry does not hold is refused, art
         }),
       ),
     /manifest: theme entries for the registered themes/,
+  );
+
+  assert.throws(
+    () => checkCensus(mutated((a) => ({ swift: a.swift.replace('        case cielNuit = "ciel-nuit"', '        case cielNuit = "ciel-nuit"\n        case sepia = "sepia"') }))),
+    /Swift: one Theme case per registered theme, its raw value the id/,
+  );
+  assert.throws(
+    () => checkCensus(mutated((a) => ({ kotlin: a.kotlin.replace('CielNuit("ciel-nuit", ThemeFamily.Ciel, ThemeMode.Dark, true, false);', 'CielNuit("ciel-nuit", ThemeFamily.Givre, ThemeMode.Dark, true, false);') }))),
+    /Compose: one Theme entry per registered theme, in its family and mode/,
+  );
+  assert.throws(
+    () => checkCensus(mutated((a) => ({ swift: a.swift.replace('        public static let cielNuit = Materials(', '        public static let sepia = Materials(') }))),
+    /Swift: one Materials per registered theme/,
+  );
+  assert.throws(
+    () =>
+      checkCensus(
+        mutated((a) => {
+          const manifest = JSON.parse(a.manifest);
+          manifest.themes.pop();
+          return { manifest: JSON.stringify(manifest) };
+        }),
+      ),
+    /manifest: themes is the registry, entry for entry/,
   );
 
   // ...and the reverse: a registered theme one generator dropped.

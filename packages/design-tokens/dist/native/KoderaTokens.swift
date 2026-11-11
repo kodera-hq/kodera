@@ -486,6 +486,120 @@ public enum KoderaTokens {
         tag6Bg: Color(.sRGB, red: 0.11764705882352941, green: 0.1568627450980392, blue: 0.0784313725490196, opacity: 1.0),
         tag6Fg: Color(.sRGB, red: 0.7803921568627451, green: 0.8705882352941177, blue: 0.6274509803921569, opacity: 1.0)
     )
+    public enum ThemeFamily: String, CaseIterable, Sendable { case givre = "givre"; case ciel = "ciel" }
+    public enum ThemeMode: String, CaseIterable, Sendable { case light = "light"; case dark = "dark"; case black = "black" }
+    public enum Theme: String, CaseIterable, Sendable {
+        case light = "light"
+        case dark = "dark"
+        case black = "black"
+        case ciel = "ciel"
+        case cielNuit = "ciel-nuit"
+        public static let defaultTheme: Theme = .light
+        public var family: ThemeFamily {
+            switch self {
+            case .light: return .givre
+            case .dark: return .givre
+            case .black: return .givre
+            case .ciel: return .ciel
+            case .cielNuit: return .ciel
+            }
+        }
+        public var mode: ThemeMode {
+            switch self {
+            case .light: return .light
+            case .dark: return .dark
+            case .black: return .black
+            case .ciel: return .light
+            case .cielNuit: return .dark
+            }
+        }
+        public var isDark: Bool {
+            switch self {
+            case .light: return false
+            case .dark: return true
+            case .black: return true
+            case .ciel: return false
+            case .cielNuit: return true
+            }
+        }
+        public var palette: Palette {
+            switch self {
+            case .light: return KoderaTokens.light
+            case .dark: return KoderaTokens.dark
+            case .black: return KoderaTokens.black
+            case .ciel: return KoderaTokens.ciel
+            case .cielNuit: return KoderaTokens.cielNuit
+            }
+        }
+        public var materials: Materials {
+            switch self {
+            case .light: return MaterialSet.light
+            case .dark: return MaterialSet.dark
+            case .black: return MaterialSet.black
+            case .ciel: return MaterialSet.ciel
+            case .cielNuit: return MaterialSet.cielNuit
+            }
+        }
+    }
+    public struct Material: Sendable {
+        public let tint: Color
+        public let alpha: Double
+        public let blur: CGFloat
+        public let saturation: Double
+        public let border: Color
+        public let fallback: Color
+    }
+    public struct Materials: Sendable {
+        public let bar: Material
+        public let panel: Material
+        public let popover: Material
+        public let dialog: Material
+    }
+    public enum MaterialSet {
+        public static let light = Materials(
+            bar: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0))
+        )
+        public static let dark = Materials(
+            bar: Material(tint: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0))
+        )
+        public static let black = Materials(
+            bar: Material(tint: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0))
+        )
+        public static let ciel = Materials(
+            bar: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.92, blur: 20.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 0.996078431372549, blue: 1.0, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.94, blur: 28.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 0.996078431372549, blue: 1.0, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.95, blur: 32.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 1.0, blue: 1.0, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.97, blur: 40.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 1.0, blue: 1.0, opacity: 1.0))
+        )
+        public static let cielNuit = Materials(
+            bar: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.9, blur: 20.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09019607843137255, blue: 0.1803921568627451, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.92, blur: 28.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09019607843137255, blue: 0.1843137254901961, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.94, blur: 32.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.1843137254901961, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.96, blur: 40.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.1843137254901961, opacity: 1.0))
+        )
+    }
+    public struct Spring: Sendable {
+        public let stiffness: Double
+        public let damping: Double
+        public let mass: Double
+        public let dampingRatio: Double
+        public let response: Double
+        public let settlingDuration: Double
+    }
+    public enum Motion {
+        public static let snappy = Spring(stiffness: 420.0, damping: 34.0, mass: 1.0, dampingRatio: 0.8295, response: 0.3066, settlingDuration: 0.4)
+        public static let gentle = Spring(stiffness: 170.0, damping: 26.0, mass: 1.0, dampingRatio: 0.9971, response: 0.4819, settlingDuration: 0.65)
+        public static let bouncy = Spring(stiffness: 300.0, damping: 18.0, mass: 1.0, dampingRatio: 0.5196, response: 0.3628, settlingDuration: 0.7)
+    }
     public struct Family: Sendable {
         public let primary: String
         public let fallbacks: [String]

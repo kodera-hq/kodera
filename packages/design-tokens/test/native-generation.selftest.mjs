@@ -107,6 +107,67 @@ test('native dimensions, weights and family fallbacks have explicit mapping', as
   assert.match(outputs[names[1]], /val semibold = ComposeFontWeight\(600\)/);
 });
 
+test('materials and springs are additive native members, derived from the source', async () => {
+  const { resolveMaterial, MATERIAL_LEVELS } = await import('../scripts/lib/material.mjs');
+  const { springProfile } = await import('../scripts/lib/spring.mjs');
+  const outputs = await generate();
+  const manifest = JSON.parse(outputs[names[2]]);
+  const index = indexTokens(tree);
+  const native = id => id.replace(/-([a-z0-9])/g, (_, c) => c.toUpperCase());
+  const numeric = n => Number.isInteger(n) ? `${n}.0` : String(n);
+  const sw = c => `Color(.sRGB, red: ${numeric(c.r / 255)}, green: ${numeric(c.g / 255)}, blue: ${numeric(c.b / 255)}, opacity: ${numeric(c.a)})`;
+  for (const theme of THEMES) {
+    for (const level of MATERIAL_LEVELS) {
+      const path = `semantic.material.${theme}.${level}`;
+      const entry = manifest.entries.find(e => e.path === path);
+      assert.ok(entry, path);
+      assert.equal(entry.type, 'material');
+      assert.equal(entry.api, `KoderaTokens.MaterialSet.${native(theme)}.${level}`);
+      assert.deepEqual(entry.aliases, [path, `material.theme-${theme}.${level}`]);
+      const material = resolveMaterial(theme, level, index);
+      assert.deepEqual(entry.value, {
+        tint: { r: material.tint.r, g: material.tint.g, b: material.tint.b, a: 1 },
+        alpha: material.alpha,
+        blur: material.blur,
+        saturation: material.saturation,
+        border: parseColor(material.border),
+        fallback: material.fallback,
+      }, `${path}: the manifest carries what the source resolves to`);
+      const swift = outputs[names[0]].split('public enum MaterialSet {')[1].split(`public static let ${native(theme)} = Materials(`)[1].split('\n        )')[0];
+      assert.ok(swift.includes(`${level}: Material(tint: ${sw(entry.value.tint)}, alpha: ${numeric(material.alpha)}, blur: ${numeric(material.blur)}, saturation: ${numeric(material.saturation)}, border: ${sw(entry.value.border)}, fallback: ${sw(entry.value.fallback)})`), `${path}: Swift equality`);
+      const compose = outputs[names[1]].split('public object MaterialSet {')[1].split(`public val ${native(theme)} = Materials(`)[1].split('\n        )')[0];
+      assert.ok(compose.includes(`${level} = Material(tint = `) && compose.includes(`alpha = ${numeric(material.alpha)}f, blur = ${material.blur}.dp, saturation = ${numeric(material.saturation)}f`), `${path}: Compose equality`);
+    }
+  }
+  for (const name of Object.keys(tree.motion.spring).filter(k => !k.startsWith('$'))) {
+    const entry = manifest.entries.find(e => e.path === `motion.spring.${name}`);
+    const profile = springProfile(tree.motion.spring[name].$value);
+    assert.deepEqual(entry.value, { ...tree.motion.spring[name].$value, dampingRatio: profile.dampingRatio, response: profile.response, settlingMs: profile.durationMs });
+    assert.equal(entry.api, `KoderaTokens.Motion.${name}`);
+    assert.ok(outputs[names[0]].includes(`public static let ${name} = Spring(stiffness: ${numeric(entry.value.stiffness)}, damping: ${numeric(entry.value.damping)}, mass: ${numeric(entry.value.mass)}, dampingRatio: ${numeric(profile.dampingRatio)}, response: ${numeric(profile.response)}, settlingDuration: ${numeric(profile.durationMs / 1000)})`), `${name}: Swift equality`);
+    assert.ok(outputs[names[1]].includes(`public val ${name} = Spring(stiffness = ${numeric(entry.value.stiffness)}f, damping = ${numeric(entry.value.damping)}f, mass = ${numeric(entry.value.mass)}f, dampingRatio = ${numeric(profile.dampingRatio)}f, response = ${numeric(profile.response)}f, settlingMillis = ${profile.durationMs})`), `${name}: Compose equality`);
+  }
+  // Nothing the tier declares is left in the excluded list as "outside the surface".
+  assert.ok(!manifest.excluded.some(e => /^(semantic\.material|material|motion\.spring)\./.test(e.path)), 'materials and springs are native entries, not exclusions');
+  assert.equal(manifest.format, 'kodera-native-tokens/1', 'additive: the format a consumer pins does not change');
+  // A source that declares neither still builds, and emits neither.
+  const without = structuredClone(tree);
+  delete without.material; delete without.semantic.material; delete without.motion.spring;
+  const bare = await generate(Buffer.from(JSON.stringify(without)));
+  assert.ok(!bare[names[0]].includes('MaterialSet') && !bare[names[0]].includes('public enum Motion'), 'no tier, no members');
+  assert.ok(bare[names[0]].includes('public enum Theme: String, CaseIterable, Sendable {'), 'the registry is always emitted');
+});
+
+test('native refuses a malformed material tier or spring', async () => {
+  await mutation(t => { delete t.semantic.material['ciel-nuit']; }, /native: materials must be declared for /);
+  await mutation(t => { delete t.semantic.material.dark.dialog; }, /native: material levels differ in dark/);
+  await mutation(t => { t.material['theme-ciel'].bar.$value.alpha = 0; }, /native: material: material\.theme-ciel\.bar: alpha: 0 is not a number in \(0, 1\]/);
+  await mutation(t => { t.material['theme-ciel'].bar.$value.tint = '{color.theme-ciel.glass-edge}'; }, /native: material: material\.theme-ciel\.bar: tint: "color\.theme-ciel\.glass-edge" is translucent/);
+  await mutation(t => { t.semantic.material.ciel.bar.$value = '{material.theme-ciel.panel}'; }, /native: material semantic\.material\.ciel\.bar must reference material\.theme-ciel\.bar/);
+  await mutation(t => { t.motion.spring.snappy.$value.stiffness = 0; }, /native: spring motion\.spring\.snappy/);
+  await mutation(t => { t.motion.spring.snappy.$type = 'cubicBezier'; }, /native: type motion\.spring\.snappy: expected spring, got cubicBezier/);
+});
+
 test('native refuses incomplete themes and missing supported groups', async () => {
   await mutation(t => { delete t.semantic.theme.dark.ink; }, /native: theme roles/);
   await mutation(t => { delete t.semantic.theme.black; }, /native: themes/);

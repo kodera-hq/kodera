@@ -4,11 +4,56 @@
     "path": "tokens.json",
     "sha256": "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51"
   },
+  "themes": [
+    {
+      "id": "light",
+      "api": "KoderaTokens.Theme.light",
+      "family": "givre",
+      "mode": "light",
+      "scheme": "light",
+      "default": true
+    },
+    {
+      "id": "dark",
+      "api": "KoderaTokens.Theme.dark",
+      "family": "givre",
+      "mode": "dark",
+      "scheme": "dark",
+      "default": false
+    },
+    {
+      "id": "black",
+      "api": "KoderaTokens.Theme.black",
+      "family": "givre",
+      "mode": "black",
+      "scheme": "dark",
+      "default": false
+    },
+    {
+      "id": "ciel",
+      "api": "KoderaTokens.Theme.ciel",
+      "family": "ciel",
+      "mode": "light",
+      "scheme": "light",
+      "default": false
+    },
+    {
+      "id": "ciel-nuit",
+      "api": "KoderaTokens.Theme.cielNuit",
+      "family": "ciel",
+      "mode": "dark",
+      "scheme": "dark",
+      "default": false
+    }
+  ],
   "mapping": {
     "colors": "sRGB normalized channels; alpha preserved without compositing",
     "dimensions": "px numeric magnitude maps to Swift points and Compose dp; font sizes map to points/sp",
     "scaling": "consumer applies native font scaling; family metadata does not install or select fonts",
-    "numericIdentifiers": "s prefix, including Space.s4 and FontSize.s2xl"
+    "numericIdentifiers": "s prefix, including Space.s4 and FontSize.s2xl",
+    "themes": "Theme lists the registry; identifiers are camel-cased ids (ciel-nuit is cielNuit), the raw value is the id",
+    "materials": "tint is opaque and alpha is the material alpha; blur maps to points and dp; fallback is the tint at alpha over the canvas, for reduced transparency and increased contrast; the shadow has no native approximation",
+    "springs": "stiffness, damping and mass are the source; dampingRatio and response (seconds) follow from them, settlingMs is when the curve stays within 0.2 % of its target"
   },
   "entries": [
     {
@@ -6763,6 +6808,866 @@
           "monospace"
         ]
       }
+    },
+    {
+      "path": "semantic.material.light.bar",
+      "aliases": [
+        "semantic.material.light.bar",
+        "material.theme-light.bar"
+      ],
+      "api": "KoderaTokens.MaterialSet.light.bar",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 217,
+          "g": 225,
+          "b": 234,
+          "a": 1
+        },
+        "fallback": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.light.panel",
+      "aliases": [
+        "semantic.material.light.panel",
+        "material.theme-light.panel"
+      ],
+      "api": "KoderaTokens.MaterialSet.light.panel",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 217,
+          "g": 225,
+          "b": 234,
+          "a": 1
+        },
+        "fallback": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.light.popover",
+      "aliases": [
+        "semantic.material.light.popover",
+        "material.theme-light.popover"
+      ],
+      "api": "KoderaTokens.MaterialSet.light.popover",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 217,
+          "g": 225,
+          "b": 234,
+          "a": 1
+        },
+        "fallback": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.light.dialog",
+      "aliases": [
+        "semantic.material.light.dialog",
+        "material.theme-light.dialog"
+      ],
+      "api": "KoderaTokens.MaterialSet.light.dialog",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 217,
+          "g": 225,
+          "b": 234,
+          "a": 1
+        },
+        "fallback": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.dark.bar",
+      "aliases": [
+        "semantic.material.dark.bar",
+        "material.theme-dark.bar"
+      ],
+      "api": "KoderaTokens.MaterialSet.dark.bar",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 19,
+          "g": 24,
+          "b": 35,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 38,
+          "g": 46,
+          "b": 60,
+          "a": 1
+        },
+        "fallback": {
+          "r": 19,
+          "g": 24,
+          "b": 35,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.dark.panel",
+      "aliases": [
+        "semantic.material.dark.panel",
+        "material.theme-dark.panel"
+      ],
+      "api": "KoderaTokens.MaterialSet.dark.panel",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 19,
+          "g": 24,
+          "b": 35,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 38,
+          "g": 46,
+          "b": 60,
+          "a": 1
+        },
+        "fallback": {
+          "r": 19,
+          "g": 24,
+          "b": 35,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.dark.popover",
+      "aliases": [
+        "semantic.material.dark.popover",
+        "material.theme-dark.popover"
+      ],
+      "api": "KoderaTokens.MaterialSet.dark.popover",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 27,
+          "g": 33,
+          "b": 48,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 38,
+          "g": 46,
+          "b": 60,
+          "a": 1
+        },
+        "fallback": {
+          "r": 27,
+          "g": 33,
+          "b": 48,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.dark.dialog",
+      "aliases": [
+        "semantic.material.dark.dialog",
+        "material.theme-dark.dialog"
+      ],
+      "api": "KoderaTokens.MaterialSet.dark.dialog",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 27,
+          "g": 33,
+          "b": 48,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 38,
+          "g": 46,
+          "b": 60,
+          "a": 1
+        },
+        "fallback": {
+          "r": 27,
+          "g": 33,
+          "b": 48,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.black.bar",
+      "aliases": [
+        "semantic.material.black.bar",
+        "material.theme-black.bar"
+      ],
+      "api": "KoderaTokens.MaterialSet.black.bar",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 11,
+          "g": 12,
+          "b": 14,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 36,
+          "g": 40,
+          "b": 45,
+          "a": 1
+        },
+        "fallback": {
+          "r": 11,
+          "g": 12,
+          "b": 14,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.black.panel",
+      "aliases": [
+        "semantic.material.black.panel",
+        "material.theme-black.panel"
+      ],
+      "api": "KoderaTokens.MaterialSet.black.panel",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 11,
+          "g": 12,
+          "b": 14,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 36,
+          "g": 40,
+          "b": 45,
+          "a": 1
+        },
+        "fallback": {
+          "r": 11,
+          "g": 12,
+          "b": 14,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.black.popover",
+      "aliases": [
+        "semantic.material.black.popover",
+        "material.theme-black.popover"
+      ],
+      "api": "KoderaTokens.MaterialSet.black.popover",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 20,
+          "g": 22,
+          "b": 25,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 36,
+          "g": 40,
+          "b": 45,
+          "a": 1
+        },
+        "fallback": {
+          "r": 20,
+          "g": 22,
+          "b": 25,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.black.dialog",
+      "aliases": [
+        "semantic.material.black.dialog",
+        "material.theme-black.dialog"
+      ],
+      "api": "KoderaTokens.MaterialSet.black.dialog",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 20,
+          "g": 22,
+          "b": 25,
+          "a": 1
+        },
+        "alpha": 1,
+        "blur": 0,
+        "saturation": 1,
+        "border": {
+          "r": 36,
+          "g": 40,
+          "b": 45,
+          "a": 1
+        },
+        "fallback": {
+          "r": 20,
+          "g": 22,
+          "b": 25,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel.bar",
+      "aliases": [
+        "semantic.material.ciel.bar",
+        "material.theme-ciel.bar"
+      ],
+      "api": "KoderaTokens.MaterialSet.ciel.bar",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 0.92,
+        "blur": 20,
+        "saturation": 1.4,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.72
+        },
+        "fallback": {
+          "r": 254,
+          "g": 254,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel.panel",
+      "aliases": [
+        "semantic.material.ciel.panel",
+        "material.theme-ciel.panel"
+      ],
+      "api": "KoderaTokens.MaterialSet.ciel.panel",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 0.94,
+        "blur": 28,
+        "saturation": 1.4,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.72
+        },
+        "fallback": {
+          "r": 254,
+          "g": 254,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel.popover",
+      "aliases": [
+        "semantic.material.ciel.popover",
+        "material.theme-ciel.popover"
+      ],
+      "api": "KoderaTokens.MaterialSet.ciel.popover",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 0.95,
+        "blur": 32,
+        "saturation": 1.5,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.72
+        },
+        "fallback": {
+          "r": 254,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel.dialog",
+      "aliases": [
+        "semantic.material.ciel.dialog",
+        "material.theme-ciel.dialog"
+      ],
+      "api": "KoderaTokens.MaterialSet.ciel.dialog",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        },
+        "alpha": 0.97,
+        "blur": 40,
+        "saturation": 1.5,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.72
+        },
+        "fallback": {
+          "r": 254,
+          "g": 255,
+          "b": 255,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel-nuit.bar",
+      "aliases": [
+        "semantic.material.ciel-nuit.bar",
+        "material.theme-ciel-nuit.bar"
+      ],
+      "api": "KoderaTokens.MaterialSet.cielNuit.bar",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 18,
+          "g": 24,
+          "b": 48,
+          "a": 1
+        },
+        "alpha": 0.9,
+        "blur": 20,
+        "saturation": 1.4,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.14
+        },
+        "fallback": {
+          "r": 18,
+          "g": 23,
+          "b": 46,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel-nuit.panel",
+      "aliases": [
+        "semantic.material.ciel-nuit.panel",
+        "material.theme-ciel-nuit.panel"
+      ],
+      "api": "KoderaTokens.MaterialSet.cielNuit.panel",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 18,
+          "g": 24,
+          "b": 48,
+          "a": 1
+        },
+        "alpha": 0.92,
+        "blur": 28,
+        "saturation": 1.4,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.14
+        },
+        "fallback": {
+          "r": 18,
+          "g": 23,
+          "b": 47,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel-nuit.popover",
+      "aliases": [
+        "semantic.material.ciel-nuit.popover",
+        "material.theme-ciel-nuit.popover"
+      ],
+      "api": "KoderaTokens.MaterialSet.cielNuit.popover",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 18,
+          "g": 24,
+          "b": 48,
+          "a": 1
+        },
+        "alpha": 0.94,
+        "blur": 32,
+        "saturation": 1.5,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.14
+        },
+        "fallback": {
+          "r": 18,
+          "g": 24,
+          "b": 47,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "semantic.material.ciel-nuit.dialog",
+      "aliases": [
+        "semantic.material.ciel-nuit.dialog",
+        "material.theme-ciel-nuit.dialog"
+      ],
+      "api": "KoderaTokens.MaterialSet.cielNuit.dialog",
+      "type": "material",
+      "value": {
+        "tint": {
+          "r": 18,
+          "g": 24,
+          "b": 48,
+          "a": 1
+        },
+        "alpha": 0.96,
+        "blur": 40,
+        "saturation": 1.5,
+        "border": {
+          "r": 255,
+          "g": 255,
+          "b": 255,
+          "a": 0.14
+        },
+        "fallback": {
+          "r": 18,
+          "g": 24,
+          "b": 47,
+          "a": 1
+        }
+      },
+      "colorSpace": "sRGB",
+      "units": {
+        "blur": {
+          "source": "px",
+          "swift": "pt",
+          "compose": "dp"
+        }
+      }
+    },
+    {
+      "path": "motion.spring.snappy",
+      "aliases": [
+        "motion.spring.snappy"
+      ],
+      "api": "KoderaTokens.Motion.snappy",
+      "type": "spring",
+      "value": {
+        "stiffness": 420,
+        "damping": 34,
+        "mass": 1,
+        "dampingRatio": 0.8295,
+        "response": 0.3066,
+        "settlingMs": 400
+      },
+      "units": {
+        "response": "seconds",
+        "settlingMs": "milliseconds"
+      }
+    },
+    {
+      "path": "motion.spring.gentle",
+      "aliases": [
+        "motion.spring.gentle"
+      ],
+      "api": "KoderaTokens.Motion.gentle",
+      "type": "spring",
+      "value": {
+        "stiffness": 170,
+        "damping": 26,
+        "mass": 1,
+        "dampingRatio": 0.9971,
+        "response": 0.4819,
+        "settlingMs": 650
+      },
+      "units": {
+        "response": "seconds",
+        "settlingMs": "milliseconds"
+      }
+    },
+    {
+      "path": "motion.spring.bouncy",
+      "aliases": [
+        "motion.spring.bouncy"
+      ],
+      "api": "KoderaTokens.Motion.bouncy",
+      "type": "spring",
+      "value": {
+        "stiffness": 300,
+        "damping": 18,
+        "mass": 1,
+        "dampingRatio": 0.5196,
+        "response": 0.3628,
+        "settlingMs": 700
+      },
+      "units": {
+        "response": "seconds",
+        "settlingMs": "milliseconds"
+      }
     }
   ],
   "excluded": [
@@ -8595,86 +9500,6 @@
       "reason": "elevation: no native approximation"
     },
     {
-      "path": "semantic.material.light.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.light.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.light.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.light.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.dark.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.dark.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.dark.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.dark.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.black.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.black.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.black.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.black.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel-nuit.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel-nuit.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel-nuit.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "semantic.material.ciel-nuit.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
       "path": "semantic.layout.rail-width",
       "reason": "outside the native format 1 surface"
     },
@@ -8819,86 +9644,6 @@
       "reason": "elevation: no native approximation"
     },
     {
-      "path": "material.theme-light.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-light.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-light.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-light.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-dark.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-dark.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-dark.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-dark.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-black.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-black.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-black.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-black.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel-nuit.bar",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel-nuit.panel",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel-nuit.popover",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "material.theme-ciel-nuit.dialog",
-      "reason": "outside the native format 1 surface"
-    },
-    {
       "path": "motion.duration.fast",
       "reason": "outside the native format 1 surface"
     },
@@ -8912,18 +9657,6 @@
     },
     {
       "path": "motion.easing.out",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "motion.spring.snappy",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "motion.spring.gentle",
-      "reason": "outside the native format 1 surface"
-    },
-    {
-      "path": "motion.spring.bouncy",
       "reason": "outside the native format 1 surface"
     },
     {

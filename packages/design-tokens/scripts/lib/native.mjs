@@ -3,7 +3,9 @@
 // list of its own.
 import { createHash } from 'node:crypto';
 import { indexTokens, resolve, aliasTarget, parseColor } from './tokens.mjs';
-import { THEMES, DEFAULT_THEME } from './themes.mjs';
+import { THEMES, THEME_REGISTRY, THEME_FAMILIES, DEFAULT_THEME } from './themes.mjs';
+import { MATERIAL_LEVELS, materialRole, materialPrimitive, resolveMaterial } from './material.mjs';
+import { springProfile } from './spring.mjs';
 
 const FORMAT = 'kodera-native-tokens/1';
 const GROUPS = [
@@ -108,6 +110,76 @@ export function buildNative(sourceBytes) {
       }
     }
   }
+  // --- Additive surface: materials and springs --------------------------------
+  // Format 1 is extended, never changed: everything above is emitted as it was,
+  // and what follows is new members beside it. A theme's materials are present
+  // only when the source declares the material tier, and its springs only when
+  // it declares `motion.spring`, so a source without them builds as before.
+  const opaque = c => ({ r: c.r, g: c.g, b: c.b, a: 1 });
+  const materialEntries = [];
+  if (tree.semantic?.material || tree.material) {
+    if (keys(group('semantic.material')).join(',') !== THEMES.join(',')) fail(`materials must be declared for ${THEMES.join(', ')}`);
+    for (const theme of THEMES) {
+      if (keys(group(`semantic.material.${theme}`)).join(',') !== MATERIAL_LEVELS.join(',')) fail(`material levels differ in ${theme}`);
+      for (const level of MATERIAL_LEVELS) {
+        const path = materialRole(theme, level);
+        const api = `KoderaTokens.MaterialSet.${identifier(theme)}.${identifier(level)}`;
+        if (apiNames.has(api)) fail(`identifier collision ${api}: ${apiNames.get(api)} and ${path}`);
+        apiNames.set(api, path);
+        let material;
+        try {
+          material = resolveMaterial(theme, level, index);
+        } catch (error) {
+          fail(error.message);
+        }
+        if (aliasTarget(index.get(path)?.value) !== materialPrimitive(theme, level)) fail(`material ${path} must reference ${materialPrimitive(theme, level)}`);
+        used.add(path);
+        used.add(material.path);
+        const entry = {
+          path,
+          aliases: [path, material.path],
+          api,
+          type: 'material',
+          value: {
+            tint: opaque(material.tint),
+            alpha: material.alpha,
+            blur: material.blur,
+            saturation: material.saturation,
+            border: color(material.border, `${material.path}.border`),
+            fallback: opaque(material.fallback),
+          },
+          colorSpace: 'sRGB',
+          units: { blur: { source: 'px', swift: 'pt', compose: 'dp' } },
+        };
+        entries.push(entry);
+        materialEntries.push({ theme, level, ...entry });
+      }
+    }
+  }
+  const springEntries = [];
+  for (const name of keys(tree.motion?.spring)) {
+    const path = `motion.spring.${name}`;
+    const token = index.get(path);
+    if (token?.type !== 'spring') fail(`type ${path}: expected spring, got ${token?.type}`);
+    const api = `KoderaTokens.Motion.${identifier(name)}`;
+    if (apiNames.has(api)) fail(`identifier collision ${api}: ${apiNames.get(api)} and ${path}`);
+    apiNames.set(api, path);
+    const { stiffness, damping, mass } = token.value ?? {};
+    if (![stiffness, damping, mass].every(v => typeof v === 'number' && Number.isFinite(v) && v > 0)) fail(`spring ${path}`);
+    const profile = springProfile({ stiffness, damping, mass });
+    used.add(path);
+    const entry = {
+      path,
+      aliases: [path],
+      api,
+      type: 'spring',
+      value: { stiffness, damping, mass, dampingRatio: profile.dampingRatio, response: profile.response, settlingMs: profile.durationMs },
+      units: { response: 'seconds', settlingMs: 'milliseconds' },
+    };
+    entries.push(entry);
+    springEntries.push({ name, ...entry });
+  }
+
   const excluded = [...index.keys()].filter(path => !used.has(path)).map(path => ({
     path,
     reason: index.get(path).type === 'gradient' ? 'gradient: no native approximation' : path.startsWith('semantic.elevation.') || index.get(path).type === 'shadow' ? 'elevation: no native approximation' : 'outside the native format 1 surface',
@@ -115,11 +187,16 @@ export function buildNative(sourceBytes) {
   const manifest = {
     format: FORMAT,
     source: { path: 'tokens.json', sha256: createHash('sha256').update(sourceBytes).digest('hex') },
+    // The theme registry (scripts/lib/themes.mjs), as every generator reads it.
+    themes: THEME_REGISTRY.map(theme => ({ id: theme.id, api: `KoderaTokens.Theme.${identifier(theme.id)}`, family: theme.family, mode: theme.mode, scheme: theme.scheme, default: theme.default })),
     mapping: {
       colors: 'sRGB normalized channels; alpha preserved without compositing',
       dimensions: 'px numeric magnitude maps to Swift points and Compose dp; font sizes map to points/sp',
       scaling: 'consumer applies native font scaling; family metadata does not install or select fonts',
       numericIdentifiers: 's prefix, including Space.s4 and FontSize.s2xl',
+      themes: 'Theme lists the registry; identifiers are camel-cased ids (ciel-nuit is cielNuit), the raw value is the id',
+      materials: 'tint is opaque and alpha is the material alpha; blur maps to points and dp; fallback is the tint at alpha over the canvas, for reduced transparency and increased contrast; the shadow has no native approximation',
+      springs: 'stiffness, damping and mass are the source; dampingRatio and response (seconds) follow from them, settlingMs is when the curve stays within 0.2 % of its target',
     },
     entries, excluded,
   };
@@ -133,6 +210,102 @@ export function buildNative(sourceBytes) {
   for (const theme of THEMES) {
     sw.push(`    public static let ${identifier(theme)} = Palette(`, ...themed(theme).map((e, i, all) => `        ${member(e)}: ${swColor(e.value)}${i < all.length - 1 ? ',' : ''}`), '    )');
     kt.push(`    public val ${identifier(theme)} = Palette(`, ...themed(theme).map(e => `        ${member(e)} = ${ktColor(e.value)},`), '    )');
+  }
+  // --- Additive members: the registry, materials, springs ----------------------
+  const upper = id => { const n = identifier(id); return n[0].toUpperCase() + n.slice(1); };
+  const families = Object.keys(THEME_FAMILIES);
+  const modes = [...new Set(THEME_REGISTRY.map(t => t.mode))];
+  sw.push(
+    `    public enum ThemeFamily: String, CaseIterable, Sendable { ${families.map(f => `case ${identifier(f)} = ${swiftString(f)}`).join('; ')} }`,
+    `    public enum ThemeMode: String, CaseIterable, Sendable { ${modes.map(m => `case ${identifier(m)} = ${swiftString(m)}`).join('; ')} }`,
+    '    public enum Theme: String, CaseIterable, Sendable {',
+    ...THEME_REGISTRY.map(t => `        case ${identifier(t.id)} = ${swiftString(t.id)}`),
+    `        public static let defaultTheme: Theme = .${identifier(DEFAULT_THEME)}`,
+    '        public var family: ThemeFamily {',
+    '            switch self {',
+    ...THEME_REGISTRY.map(t => `            case .${identifier(t.id)}: return .${identifier(t.family)}`),
+    '            }',
+    '        }',
+    '        public var mode: ThemeMode {',
+    '            switch self {',
+    ...THEME_REGISTRY.map(t => `            case .${identifier(t.id)}: return .${identifier(t.mode)}`),
+    '            }',
+    '        }',
+    '        public var isDark: Bool {',
+    '            switch self {',
+    ...THEME_REGISTRY.map(t => `            case .${identifier(t.id)}: return ${t.scheme === 'dark'}`),
+    '            }',
+    '        }',
+    '        public var palette: Palette {',
+    '            switch self {',
+    ...THEME_REGISTRY.map(t => `            case .${identifier(t.id)}: return KoderaTokens.${identifier(t.id)}`),
+    '            }',
+    '        }',
+    ...(materialEntries.length ? [
+      '        public var materials: Materials {',
+      '            switch self {',
+      ...THEME_REGISTRY.map(t => `            case .${identifier(t.id)}: return MaterialSet.${identifier(t.id)}`),
+      '            }',
+      '        }',
+    ] : []),
+    '    }',
+  );
+  kt.push(
+    `    public enum class ThemeFamily(public val id: String) { ${families.map(f => `${upper(f)}(${kotlinString(f)})`).join(', ')} }`,
+    `    public enum class ThemeMode(public val id: String) { ${modes.map(m => `${upper(m)}(${kotlinString(m)})`).join(', ')} }`,
+    '    public enum class Theme(public val id: String, public val family: ThemeFamily, public val mode: ThemeMode, public val isDark: Boolean, public val isDefault: Boolean) {',
+    ...THEME_REGISTRY.map((t, i, all) => `        ${upper(t.id)}(${kotlinString(t.id)}, ThemeFamily.${upper(t.family)}, ThemeMode.${upper(t.mode)}, ${t.scheme === 'dark'}, ${t.default})${i < all.length - 1 ? ',' : ';'}`),
+    '        public val palette: Palette',
+    '            get() = when (this) {',
+    ...THEME_REGISTRY.map(t => `                ${upper(t.id)} -> KoderaTokens.${identifier(t.id)}`),
+    '            }',
+    ...(materialEntries.length ? [
+      '        public val materials: Materials',
+      '            get() = when (this) {',
+      ...THEME_REGISTRY.map(t => `                ${upper(t.id)} -> MaterialSet.${identifier(t.id)}`),
+      '            }',
+    ] : []),
+    '    }',
+  );
+  if (materialEntries.length) {
+    const levels = MATERIAL_LEVELS.map(identifier);
+    sw.push(
+      '    public struct Material: Sendable {',
+      '        public let tint: Color', '        public let alpha: Double', '        public let blur: CGFloat', '        public let saturation: Double', '        public let border: Color', '        public let fallback: Color',
+      '    }',
+      '    public struct Materials: Sendable {',
+      ...levels.map(level => `        public let ${level}: Material`),
+      '    }',
+      '    public enum MaterialSet {',
+    );
+    kt.push(
+      '    public data class Material(public val tint: Color, public val alpha: Float, public val blur: androidx.compose.ui.unit.Dp, public val saturation: Float, public val border: Color, public val fallback: Color)',
+      `    public data class Materials(${levels.map(level => `public val ${level}: Material`).join(', ')})`,
+      '    public object MaterialSet {',
+    );
+    for (const theme of THEMES) {
+      const own = materialEntries.filter(e => e.theme === theme);
+      sw.push(`        public static let ${identifier(theme)} = Materials(`, ...own.map((e, i) => `            ${identifier(e.level)}: Material(tint: ${swColor(e.value.tint)}, alpha: ${number(e.value.alpha)}, blur: ${number(e.value.blur)}, saturation: ${number(e.value.saturation)}, border: ${swColor(e.value.border)}, fallback: ${swColor(e.value.fallback)})${i < own.length - 1 ? ',' : ''}`), '        )');
+      kt.push(`        public val ${identifier(theme)} = Materials(`, ...own.map(e => `            ${identifier(e.level)} = Material(tint = ${ktColor(e.value.tint)}, alpha = ${number(e.value.alpha)}f, blur = ${e.value.blur}.dp, saturation = ${number(e.value.saturation)}f, border = ${ktColor(e.value.border)}, fallback = ${ktColor(e.value.fallback)}),`), '        )');
+    }
+    sw.push('    }');
+    kt.push('    }');
+  }
+  if (springEntries.length) {
+    sw.push(
+      '    public struct Spring: Sendable {',
+      '        public let stiffness: Double', '        public let damping: Double', '        public let mass: Double', '        public let dampingRatio: Double', '        public let response: Double', '        public let settlingDuration: Double',
+      '    }',
+      '    public enum Motion {',
+      ...springEntries.map(e => `        public static let ${identifier(e.name)} = Spring(stiffness: ${number(e.value.stiffness)}, damping: ${number(e.value.damping)}, mass: ${number(e.value.mass)}, dampingRatio: ${number(e.value.dampingRatio)}, response: ${number(e.value.response)}, settlingDuration: ${number(e.value.settlingMs / 1000)})`),
+      '    }',
+    );
+    kt.push(
+      '    public data class Spring(public val stiffness: Float, public val damping: Float, public val mass: Float, public val dampingRatio: Float, public val response: Float, public val settlingMillis: Int)',
+      '    public object Motion {',
+      ...springEntries.map(e => `        public val ${identifier(e.name)} = Spring(stiffness = ${number(e.value.stiffness)}f, damping = ${number(e.value.damping)}f, mass = ${number(e.value.mass)}f, dampingRatio = ${number(e.value.dampingRatio)}f, response = ${number(e.value.response)}f, settlingMillis = ${e.value.settlingMs})`),
+      '    }',
+    );
   }
   sw.push('    public struct Family: Sendable {', '        public let primary: String', '        public let fallbacks: [String]', '    }');
   kt.push('    public data class Family(public val primary: String, public val fallbacks: List<String>)');

@@ -491,6 +491,71 @@ public object KoderaTokens {
         tag6Bg = Color(red = 0.11764705882352941f, green = 0.1568627450980392f, blue = 0.0784313725490196f, alpha = 1.0f),
         tag6Fg = Color(red = 0.7803921568627451f, green = 0.8705882352941177f, blue = 0.6274509803921569f, alpha = 1.0f),
     )
+    public enum class ThemeFamily(public val id: String) { Givre("givre"), Ciel("ciel") }
+    public enum class ThemeMode(public val id: String) { Light("light"), Dark("dark"), Black("black") }
+    public enum class Theme(public val id: String, public val family: ThemeFamily, public val mode: ThemeMode, public val isDark: Boolean, public val isDefault: Boolean) {
+        Light("light", ThemeFamily.Givre, ThemeMode.Light, false, true),
+        Dark("dark", ThemeFamily.Givre, ThemeMode.Dark, true, false),
+        Black("black", ThemeFamily.Givre, ThemeMode.Black, true, false),
+        Ciel("ciel", ThemeFamily.Ciel, ThemeMode.Light, false, false),
+        CielNuit("ciel-nuit", ThemeFamily.Ciel, ThemeMode.Dark, true, false);
+        public val palette: Palette
+            get() = when (this) {
+                Light -> KoderaTokens.light
+                Dark -> KoderaTokens.dark
+                Black -> KoderaTokens.black
+                Ciel -> KoderaTokens.ciel
+                CielNuit -> KoderaTokens.cielNuit
+            }
+        public val materials: Materials
+            get() = when (this) {
+                Light -> MaterialSet.light
+                Dark -> MaterialSet.dark
+                Black -> MaterialSet.black
+                Ciel -> MaterialSet.ciel
+                CielNuit -> MaterialSet.cielNuit
+            }
+    }
+    public data class Material(public val tint: Color, public val alpha: Float, public val blur: androidx.compose.ui.unit.Dp, public val saturation: Float, public val border: Color, public val fallback: Color)
+    public data class Materials(public val bar: Material, public val panel: Material, public val popover: Material, public val dialog: Material)
+    public object MaterialSet {
+        public val light = Materials(
+            bar = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.8509803921568627f, green = 0.8823529411764706f, blue = 0.9176470588235294f, alpha = 1.0f), fallback = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
+            panel = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.8509803921568627f, green = 0.8823529411764706f, blue = 0.9176470588235294f, alpha = 1.0f), fallback = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
+            popover = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.8509803921568627f, green = 0.8823529411764706f, blue = 0.9176470588235294f, alpha = 1.0f), fallback = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
+            dialog = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.8509803921568627f, green = 0.8823529411764706f, blue = 0.9176470588235294f, alpha = 1.0f), fallback = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
+        )
+        public val dark = Materials(
+            bar = Material(tint = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f)),
+            panel = Material(tint = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.07450980392156863f, green = 0.09411764705882353f, blue = 0.13725490196078433f, alpha = 1.0f)),
+            popover = Material(tint = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f)),
+            dialog = Material(tint = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.14901960784313725f, green = 0.1803921568627451f, blue = 0.23529411764705882f, alpha = 1.0f), fallback = Color(red = 0.10588235294117647f, green = 0.12941176470588237f, blue = 0.18823529411764706f, alpha = 1.0f)),
+        )
+        public val black = Materials(
+            bar = Material(tint = Color(red = 0.043137254901960784f, green = 0.047058823529411764f, blue = 0.054901960784313725f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1411764705882353f, green = 0.1568627450980392f, blue = 0.17647058823529413f, alpha = 1.0f), fallback = Color(red = 0.043137254901960784f, green = 0.047058823529411764f, blue = 0.054901960784313725f, alpha = 1.0f)),
+            panel = Material(tint = Color(red = 0.043137254901960784f, green = 0.047058823529411764f, blue = 0.054901960784313725f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1411764705882353f, green = 0.1568627450980392f, blue = 0.17647058823529413f, alpha = 1.0f), fallback = Color(red = 0.043137254901960784f, green = 0.047058823529411764f, blue = 0.054901960784313725f, alpha = 1.0f)),
+            popover = Material(tint = Color(red = 0.0784313725490196f, green = 0.08627450980392157f, blue = 0.09803921568627451f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1411764705882353f, green = 0.1568627450980392f, blue = 0.17647058823529413f, alpha = 1.0f), fallback = Color(red = 0.0784313725490196f, green = 0.08627450980392157f, blue = 0.09803921568627451f, alpha = 1.0f)),
+            dialog = Material(tint = Color(red = 0.0784313725490196f, green = 0.08627450980392157f, blue = 0.09803921568627451f, alpha = 1.0f), alpha = 1.0f, blur = 0.dp, saturation = 1.0f, border = Color(red = 0.1411764705882353f, green = 0.1568627450980392f, blue = 0.17647058823529413f, alpha = 1.0f), fallback = Color(red = 0.0784313725490196f, green = 0.08627450980392157f, blue = 0.09803921568627451f, alpha = 1.0f)),
+        )
+        public val ciel = Materials(
+            bar = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 0.92f, blur = 20.dp, saturation = 1.4f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.72f), fallback = Color(red = 0.996078431372549f, green = 0.996078431372549f, blue = 1.0f, alpha = 1.0f)),
+            panel = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 0.94f, blur = 28.dp, saturation = 1.4f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.72f), fallback = Color(red = 0.996078431372549f, green = 0.996078431372549f, blue = 1.0f, alpha = 1.0f)),
+            popover = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 0.95f, blur = 32.dp, saturation = 1.5f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.72f), fallback = Color(red = 0.996078431372549f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
+            dialog = Material(tint = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 1.0f), alpha = 0.97f, blur = 40.dp, saturation = 1.5f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.72f), fallback = Color(red = 0.996078431372549f, green = 1.0f, blue = 1.0f, alpha = 1.0f)),
+        )
+        public val cielNuit = Materials(
+            bar = Material(tint = Color(red = 0.07058823529411765f, green = 0.09411764705882353f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 0.9f, blur = 20.dp, saturation = 1.4f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.14f), fallback = Color(red = 0.07058823529411765f, green = 0.09019607843137255f, blue = 0.1803921568627451f, alpha = 1.0f)),
+            panel = Material(tint = Color(red = 0.07058823529411765f, green = 0.09411764705882353f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 0.92f, blur = 28.dp, saturation = 1.4f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.14f), fallback = Color(red = 0.07058823529411765f, green = 0.09019607843137255f, blue = 0.1843137254901961f, alpha = 1.0f)),
+            popover = Material(tint = Color(red = 0.07058823529411765f, green = 0.09411764705882353f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 0.94f, blur = 32.dp, saturation = 1.5f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.14f), fallback = Color(red = 0.07058823529411765f, green = 0.09411764705882353f, blue = 0.1843137254901961f, alpha = 1.0f)),
+            dialog = Material(tint = Color(red = 0.07058823529411765f, green = 0.09411764705882353f, blue = 0.18823529411764706f, alpha = 1.0f), alpha = 0.96f, blur = 40.dp, saturation = 1.5f, border = Color(red = 1.0f, green = 1.0f, blue = 1.0f, alpha = 0.14f), fallback = Color(red = 0.07058823529411765f, green = 0.09411764705882353f, blue = 0.1843137254901961f, alpha = 1.0f)),
+        )
+    }
+    public data class Spring(public val stiffness: Float, public val damping: Float, public val mass: Float, public val dampingRatio: Float, public val response: Float, public val settlingMillis: Int)
+    public object Motion {
+        public val snappy = Spring(stiffness = 420.0f, damping = 34.0f, mass = 1.0f, dampingRatio = 0.8295f, response = 0.3066f, settlingMillis = 400)
+        public val gentle = Spring(stiffness = 170.0f, damping = 26.0f, mass = 1.0f, dampingRatio = 0.9971f, response = 0.4819f, settlingMillis = 650)
+        public val bouncy = Spring(stiffness = 300.0f, damping = 18.0f, mass = 1.0f, dampingRatio = 0.5196f, response = 0.3628f, settlingMillis = 700)
+    }
     public data class Family(public val primary: String, public val fallbacks: List<String>)
     public object Space {
         public val s1 = 4.dp
