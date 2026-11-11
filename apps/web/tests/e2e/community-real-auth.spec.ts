@@ -6,10 +6,12 @@ import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 let server: ViteDevServer
-const origin = 'http://127.0.0.1:4193'
+let origin: string
 const issuer = 'https://identity.example.test/realms/community'
 const worker = `self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));self.addEventListener('fetch',event=>{if(new URL(event.request.url).pathname==='/legacy-probe')event.respondWith(new Response('simulated'));});`
 test.beforeAll(async () => {
+  const port = 4193 + test.info().workerIndex
+  origin = `http://127.0.0.1:${port}`
   process.env.VITE_AUTH_MODE = 'oidc'
   process.env.VITE_ENABLE_MSW = '0'
   process.env.VITE_CORE_API_URL = origin + '/api/v1'
@@ -20,7 +22,7 @@ test.beforeAll(async () => {
     root,
     server: {
       host: '127.0.0.1',
-      port: 4193,
+      port,
       strictPort: true,
       fs: {
         allow: [
@@ -78,7 +80,7 @@ for (const locale of ['fr', 'en'] as const) {
       })
     )
     for (const registration of [false, true]) {
-      await page.goto('/community/workspace')
+      await page.goto(origin + '/community/workspace')
       await expect(page.getByRole('heading', { name: 'Kodera Community' })).toBeVisible()
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
       if (!registration)
@@ -114,7 +116,7 @@ for (const locale of ['fr', 'en'] as const) {
       expect(url.searchParams.get('state')).toBeTruthy()
       expect(url.searchParams.get('redirect_uri')).toBe(origin + '/auth/callback')
       expect(url.searchParams.get('client_id')).toBe('console')
-      await page.goto('/__worker-install')
+      await page.goto(origin + '/__worker-install')
       expect(await page.evaluate(() => sessionStorage.getItem('kodera.web.auth.returnTo'))).toBe(
         '/community/workspace'
       )
@@ -126,7 +128,7 @@ for (const locale of ['fr', 'en'] as const) {
 test('a returning browser retires a real legacy worker, clears simulated state and reaches the auth gate once', async ({
   page,
 }) => {
-  await page.goto('/__worker-install')
+  await page.goto(origin + '/__worker-install')
   await page.evaluate(async () => {
     await navigator.serviceWorker.register('/mockServiceWorker.js')
     await navigator.serviceWorker.ready
@@ -146,7 +148,7 @@ test('a returning browser retires a real legacy worker, clears simulated state a
   page.on('request', (request) => {
     if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations += 1
   })
-  await page.goto('/community/workspace')
+  await page.goto(origin + '/community/workspace')
   await expect(page.getByRole('heading', { name: 'Kodera Community' })).toBeVisible()
   expect(navigations).toBeLessThanOrEqual(2)
   expect(

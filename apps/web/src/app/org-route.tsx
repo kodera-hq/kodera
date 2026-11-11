@@ -102,7 +102,11 @@ export const orgRoute = createRoute({
       retainedBranch &&
       !resumingExpiredNavigation &&
       session.status === 'ready' &&
-      sessionCoversOrganisation(session.user?.realm, params.org) &&
+      sessionCoversOrganisation(
+        session.user?.realm,
+        params.org,
+        import.meta.env.VITE_AUTH_MODE === 'oidc'
+      ) &&
       authAdapter.getAccessToken() === undefined
     )
       return { holdExpiredRoute: true }
@@ -116,7 +120,11 @@ export const orgRoute = createRoute({
       retained &&
       !resumingExpiredNavigation &&
       session.status === 'ready' &&
-      sessionCoversOrganisation(session.user?.realm, params.org) &&
+      sessionCoversOrganisation(
+        session.user?.realm,
+        params.org,
+        import.meta.env.VITE_AUTH_MODE === 'oidc'
+      ) &&
       authAdapter.getAccessToken() === undefined
     )
       beforeSignIn()
@@ -126,7 +134,11 @@ export const orgRoute = createRoute({
     const needsSignIn =
       !restored ||
       authAdapter.getAccessToken() === undefined ||
-      !sessionCoversOrganisation(authAdapter.getUser()?.realm, params.org)
+      !sessionCoversOrganisation(
+        authAdapter.getUser()?.realm,
+        params.org,
+        import.meta.env.VITE_AUTH_MODE === 'oidc'
+      )
     if (needsSignIn) {
       if (params.org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
         rememberReturnTo(location.href)
@@ -269,7 +281,11 @@ function OrgLayoutContent() {
       const current = authAdapter.getSnapshot()
       if (
         current.status !== 'ready' ||
-        !sessionCoversOrganisation(current.user?.realm, org) ||
+        !sessionCoversOrganisation(
+          current.user?.realm,
+          org,
+          import.meta.env.VITE_AUTH_MODE === 'oidc'
+        ) ||
         authAdapter.getAccessToken() !== undefined
       )
         return

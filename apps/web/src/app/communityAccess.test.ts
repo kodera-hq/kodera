@@ -71,6 +71,8 @@ describe('canonical community access', () => {
   })
   it('allows only the shared community exception to tenant realm matching', () => {
     expect(sessionCoversOrganisation('acme-sa', 'community')).toBe(true)
+    expect(sessionCoversOrganisation('acme-sa', 'community', false)).toBe(false)
+    expect(sessionCoversOrganisation('community', 'community', false)).toBe(true)
     expect(sessionCoversOrganisation('kodera-staff', 'community')).toBe(true)
     expect(sessionCoversOrganisation(undefined, 'community')).toBe(false)
     expect(sessionCoversOrganisation('acme-sa', 'bravo')).toBe(false)

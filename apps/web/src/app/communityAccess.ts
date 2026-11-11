@@ -3,8 +3,12 @@ import type { AuthIdentity } from '../auth/AuthAdapter'
 import { resolveCurrentIdentity } from './currentIdentity'
 
 /** Community membership is verified by Core; tenant organisations remain issuer scoped. */
-export function sessionCoversOrganisation(realm: string | undefined, slug: string): boolean {
-  return realm !== undefined && (realm === slug || slug === 'community')
+export function sessionCoversOrganisation(
+  realm: string | undefined,
+  slug: string,
+  sharedCommunity = true
+): boolean {
+  return realm !== undefined && (realm === slug || (sharedCommunity && slug === 'community'))
 }
 
 /** Verified-email public membership does not imply MFA enrollment or staff privileges. */
