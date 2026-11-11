@@ -1,6 +1,7 @@
 import { createRoute } from '@tanstack/react-router'
 import { z } from '@/validation-policy'
 import { rootRoute } from '../../app/root-route'
+import { CommunityWelcome } from './CommunityWelcome'
 import { LoginScreen } from './LoginScreen'
 
 // `/login` and `/login?org={slug}` (docs/specs/00-shell-and-login.md §3):
@@ -22,5 +23,6 @@ export const loginRoute = createRoute({
 
 function LoginRoute() {
   const { org } = loginRoute.useSearch()
+  if (org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') return <CommunityWelcome />
   return <LoginScreen {...(org === undefined ? {} : { initialSlug: org })} />
 }

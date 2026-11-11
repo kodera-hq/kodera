@@ -1,15 +1,4 @@
-// `/{org}/help` — the interim Aide page (docs/specs/06-support.md §4.0).
-//
-// Laid out as the delivered design's Réglages › Instance › Assistance pane:
-// one line of introduction, then a card to write to the team beside a card of
-// what else can help. What the page carries is only what is true without a
-// support write path being served: the one support address
-// (`src/app/supportContact.ts`) as text, copyable, and as a pre-written
-// e-mail; what to put in the message; and links to screens that exist. No
-// ticket form, no response time and no business hours: the ticket endpoint is
-// declared in the contract but not served, and the team answers the address
-// with no time commitment (owner ruling 2026-09-24).
-
+// Help combines community support with the email fallback.
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +10,7 @@ import type { CopyStatus } from '../../ui/CopyableField/CopyableField'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { LinkButton } from '../../ui/LinkButton/LinkButton'
 import { canViewInvoices } from '../invoices/permissions'
+import { CommunitySupport } from './CommunitySupport'
 import { helpTopic } from './helpTopic'
 import type { HelpSearch } from './helpTopic'
 
@@ -47,7 +37,7 @@ function useCopyAddress() {
 
 export function HelpScreen({ search }: HelpScreenProps) {
   const { t } = useTranslation()
-  const { membership } = orgRoute.useLoaderData()
+  const { membership, me } = orgRoute.useLoaderData()
   const { name: organisation, slug } = membership.organisation
   const topic = helpTopic(search, t)
   const copyAddress = useCopyAddress()
@@ -108,6 +98,14 @@ export function HelpScreen({ search }: HelpScreenProps) {
         <p className="text-sm text-c-ink-2">{t('console.support.help.subtitle')}</p>
       </div>
 
+      {import.meta.env.VITE_AUTH_MODE === 'oidc' ? (
+        <CommunitySupport
+          organisationId={
+            me?.organisations.find((entry) => entry.organisation.slug === 'community')?.organisation
+              .id
+          }
+        />
+      ) : null}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(300px,100%),1fr))] items-start gap-3">
         <Card>
           <section aria-labelledby="help-write" className="flex flex-col gap-3 p-4">

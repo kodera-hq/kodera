@@ -156,7 +156,7 @@ test('created workspaces switch without losing the previous conversation', async
     .last()
     .click()
   await page
-    .getByRole('menuitemradio', { name: 'Kodera Community community.kodera.io', exact: true })
+    .getByRole('menuitemradio', { name: 'Kodera Community Communauté & Support', exact: true })
     .click()
   await page.waitForURL(/\/community\/workspace/)
   await page.getByRole('link', { name: 'retained-channel', exact: true }).click()
@@ -222,7 +222,7 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
     .last()
     .click()
   await expect(
-    page.getByRole('menuitemradio', { name: 'Kodera Community community.kodera.io', exact: true })
+    page.getByRole('menuitemradio', { name: 'Kodera Community Communauté & Support', exact: true })
   ).toHaveAttribute('aria-checked', 'true')
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Salons', exact: true }).click()

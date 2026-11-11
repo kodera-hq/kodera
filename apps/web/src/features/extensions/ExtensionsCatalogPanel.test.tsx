@@ -216,3 +216,18 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     expect(screen.queryByTestId('extension-webhook-valid')).toBeNull()
   })
 })
+
+describe('catalog connector identity', () => {
+  it('shows the selected brand on the card and detail header without duplicating its accessible name', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ExtensionsCatalogPanel />)
+    const extension = OFFICIAL_EXTENSIONS_CATALOG.find(
+      (item) => item.slug === 'gdrive-document-share'
+    )!
+    const card = screen.getByRole('button', { name: (name) => name.startsWith(extension.name) })
+    expect(card.querySelector('[data-brand="googledrive"]')).not.toBeNull()
+    await user.click(card)
+    expect(container.querySelectorAll('[data-brand="googledrive"]')).toHaveLength(2)
+    for (const image of card.querySelectorAll('img')) expect(image).toHaveAttribute('alt', '')
+  })
+})

@@ -981,7 +981,7 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.38.0: the reserved tenant slugs gain the platform labels; no N4 wire shape changed.
 # Rebound at 0.39.0: the reserved organisation slugs gain errors and ops-admin; no N4 wire shape changed.
 # Rebound at 0.40.0: instant claim and the reserved Community host; N4 remains unchanged.
-N4_VERSION = "0.40.0"
+N4_VERSION = "0.41.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1025,7 +1025,7 @@ N4_VERSION = "0.40.0"
 # Rebound for open-core monorepo unification; no N4 bytes changed.
 # Rebound at 0.39.0: the reserved organisation slugs gain errors and ops-admin; no N4 bytes changed.
 # Rebound at 0.39.0: the staff actor of three examples is the demo crew's; no N4 bytes changed.
-N4_OLD_CONTRACT = "061fb6a86650d41e9a14e176111ff220724a10663884ca092a0ac2df40cce5f4"
+N4_OLD_CONTRACT = "772eddb58bb717ead789f6738781b72dffd71813fe77af07ad510dcf5b5fde34"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

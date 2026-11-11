@@ -72,5 +72,67 @@
       "Coordinator",
       "Responder"
     ]
+  },
+  "community": {
+    "channels": [
+      "announcements",
+      "general",
+      "developers-community",
+      "support",
+      "extensions",
+      "self-hosting",
+      "show-and-tell",
+      "office-hours",
+      "dev",
+      "strategy",
+      "ops-oncall",
+      "partner-dinum",
+      "partner-octo"
+    ],
+    "connectors": [],
+    "roles": [
+      "Owner",
+      "Administrator",
+      "Member"
+    ],
+    "categories": [
+      {
+        "name": "Community",
+        "visibility": "members",
+        "channels": [
+          "announcements",
+          "general",
+          "developers-community",
+          "support",
+          "extensions",
+          "self-hosting",
+          "show-and-tell",
+          "office-hours"
+        ]
+      },
+      {
+        "name": "Core Kodera",
+        "visibility": "restricted",
+        "channels": [
+          "dev",
+          "strategy",
+          "ops-oncall"
+        ]
+      },
+      {
+        "name": "Design Partners",
+        "visibility": "restricted",
+        "channels": [
+          "partner-dinum",
+          "partner-octo"
+        ]
+      }
+    ],
+    "readOnlyChannels": [
+      "announcements"
+    ],
+    "voiceChannels": [
+      "office-hours"
+    ]
   }
 }

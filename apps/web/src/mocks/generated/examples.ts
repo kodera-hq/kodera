@@ -2764,6 +2764,25 @@ export const EXAMPLES = {
     idempotent: true,
     requiresIfMatch: false,
   },
+  "createCommunitySupportTicket": {
+    operationId: "createCommunitySupportTicket",
+    method: "post",
+    path: "/community/support/tickets",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "state": "open",
+      "priority": "P1",
+      "queue": "identity-access",
+      "confirmation": "ticket-created"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
   "listSupportTickets": {
     operationId: "listSupportTickets",
     method: "get",

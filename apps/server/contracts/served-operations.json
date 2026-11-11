@@ -47,6 +47,11 @@
       "path": "/organisations/{organisation_id}/workspace/channels"
     },
     {
+      "operation_id": "createCommunitySupportTicket",
+      "method": "POST",
+      "path": "/community/support/tickets"
+    },
+    {
       "operation_id": "createOrganisation",
       "method": "POST",
       "path": "/organisations"

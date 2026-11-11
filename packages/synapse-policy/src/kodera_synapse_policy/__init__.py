@@ -21,17 +21,19 @@ client a member signs in with, so this module refuses what would route around th
   direct message its creator holds every power level, so levels alone do not keep a member from
   declaring their own room an audio channel.
 
-Posting in a read-only channel is not this module's: the agent sets the room's power levels.
+The agent's additive read_only/audience/members/exempt policy also protects announcement
+posting and private-room membership when a room's power levels are accidentally permissive.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from collections.abc import Mapping
 
 from synapse.module_api import NOT_SPAM, ModuleApi
 from synapse.module_api.errors import Codes, ConfigError
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 DM_PRESETS = frozenset({"private_chat", "trusted_private_chat"})
 # State a member may never send, whatever its content.
@@ -66,6 +68,7 @@ class KoderaPolicy:
         api.register_spam_checker_callbacks(
             user_may_create_room=self.user_may_create_room,
             user_may_invite=self.user_may_invite,
+            user_may_join_room=self.user_may_join_room,
             user_may_send_3pid_invite=self.user_may_send_3pid_invite,
             user_may_create_room_alias=self.user_may_create_room_alias,
             user_may_publish_room=self.user_may_publish_room,
@@ -131,7 +134,14 @@ class KoderaPolicy:
         state = await self._api.get_room_state(room_id)
         policy_event = state.get(("io.kodera.room.policy", ""))
         policy_content = getattr(policy_event, "content", None)
-        if isinstance(policy_content, dict) and policy_content.get("allow_member_invites") is True:
+        if _has_governance(policy_content):
+            if not self._governance_valid(policy_event):
+                return Codes.FORBIDDEN
+            if policy_content.get("audience") == "listed" and (
+                inviter not in policy_content["members"] or invitee not in policy_content["members"]
+            ):
+                return Codes.FORBIDDEN
+        if isinstance(policy_content, Mapping) and policy_content.get("allow_member_invites") is True:
             if _membership_of(state.get(("m.room.member", inviter))) != "join":
                 return Codes.FORBIDDEN
             if self._api.is_mine(invitee) or policy_content.get("allow_federated_invites") is True:
@@ -142,6 +152,20 @@ class KoderaPolicy:
         create = state.get(("m.room.create", ""))
         others = {key for (kind, key) in state if kind == "m.room.member"} - {inviter}
         if create is None or create.sender != inviter or others or not self._api.is_mine(invitee):
+            return Codes.FORBIDDEN
+        return NOT_SPAM
+
+    async def user_may_join_room(self, user: str, room: str, is_invited: bool) -> Any:
+        if user == self._agent:
+            return NOT_SPAM
+        state = await self._api.get_room_state(room)
+        policy_event = state.get(("io.kodera.room.policy", ""))
+        content = getattr(policy_event, "content", None)
+        if not _has_governance(content):
+            return NOT_SPAM
+        if not self._governance_valid(policy_event):
+            return Codes.FORBIDDEN
+        if content["audience"] == "listed" and user not in content["members"]:
             return Codes.FORBIDDEN
         return NOT_SPAM
 
@@ -160,12 +184,16 @@ class KoderaPolicy:
         # Synapse asks this of every event it creates, with no admin exemption: a room's initial
         # state, encryption a server setting forces on at creation, the state an upgrade copies,
         # and every timeline event, ciphertext included.
-        return event.type not in ENCRYPTION, None
+        return event.type not in ENCRYPTION and self._governance_allows(event, state_events), None
 
     async def check_event_for_spam(self, event: Any) -> Any:
         # Synapse runs this, not check_event_allowed, on events from other servers.
         if event.type in ENCRYPTION:
             return Codes.FORBIDDEN
+        if getattr(event, "room_id", None):
+            state = await self._api.get_room_state(event.room_id)
+            if not self._governance_allows(event, state):
+                return Codes.FORBIDDEN
         if not event.is_state():
             return NOT_SPAM
         if event.sender == self._agent:
@@ -183,6 +211,62 @@ class KoderaPolicy:
         ):
             return Codes.FORBIDDEN
         return NOT_SPAM
+
+    def _governance_valid(self, policy_event: Any) -> bool:
+        content = getattr(policy_event, "content", {})
+        if getattr(policy_event, "sender", None) != self._agent:
+            return False
+        if content.get("audience") not in ("all", "listed") or type(content.get("read_only")) is not bool:
+            return False
+        for key in ("members", "exempt"):
+            values = content.get(key)
+            if not isinstance(values, (list, tuple)) or not all(_is_valid_user_id(value) for value in values):
+                return False
+        return content["audience"] != "listed" or set(content["exempt"]) <= set(content["members"])
+
+    def _governance_allows(self, event: Any, state: Any) -> bool:
+        if event.sender == self._agent:
+            return True
+        policy_event = state.get(("io.kodera.room.policy", ""))
+        content = getattr(policy_event, "content", None)
+        if not _has_governance(content):
+            return True
+        if not self._governance_valid(policy_event):
+            return False
+        if event.type == "m.room.member":
+            membership = event.content.get("membership")
+            target = getattr(event, "state_key", None)
+            if membership in {"join", "invite", "knock"} and content["audience"] == "listed":
+                if target not in content["members"]:
+                    return False
+                if membership == "invite" and event.sender not in content["members"]:
+                    return False
+            # A user's own join/leave is not an announcement state edit. Matrix's
+            # native membership authorization still applies after this additional gate.
+            if target == event.sender and membership in {"join", "leave"}:
+                return True
+        if content["audience"] == "listed" and event.sender not in content["members"]:
+            return False
+        if content["read_only"] and (
+            event.is_state() or event.type in {"m.room.message", "m.sticker"}
+        ):
+            if event.sender in content["exempt"]:
+                return True
+            levels = getattr(state.get(("m.room.power_levels", "")), "content", {})
+            # Ignore users_default: making it permissive must not promote every member.
+            users = levels.get("users", {}) if isinstance(levels, Mapping) else {}
+            power = users.get(event.sender, 0) if isinstance(users, Mapping) else 0
+            return (
+                type(power) is int and power >= 50
+                and _membership_of(state.get(("m.room.member", event.sender))) == "join"
+            )
+        return True
+
+
+def _has_governance(content: Any) -> bool:
+    return isinstance(content, Mapping) and any(
+        key in content for key in ("read_only", "audience", "members", "exempt")
+    )
 
 
 def _asks_for_encryption(config: dict[str, Any]) -> bool:
@@ -206,7 +290,7 @@ def _membership_of(member_event: Any) -> str | None:
     if isinstance(membership, str):
         return membership
     content = getattr(member_event, "content", None)
-    if isinstance(content, dict):
+    if isinstance(content, Mapping):
         value = content.get("membership")
         if isinstance(value, str):
             return value

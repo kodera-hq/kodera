@@ -17,7 +17,7 @@ it.each(['fr', 'en'] as const)(
   'discloses registered local workspaces in %s without a demo URL flag',
   async (locale) => {
     vi.stubEnv('VITE_ENABLE_MSW', '')
-    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_AUTH_MODE', 'mock')
     registerInteractiveDemo(communityDemo)
     await i18n.changeLanguage(locale)
     render(<DemoDisclosure org="community" />)
@@ -35,7 +35,7 @@ it.each(['mock', 'msw'] as const)(
   'discloses %s workspace mode without polluting non-demo console fixtures',
   (mode) => {
     vi.stubEnv('VITE_ENABLE_MSW', mode === 'msw' ? '1' : '')
-    vi.stubEnv('VITE_AUTH_MODE', mode === 'mock' ? 'mock' : 'oidc')
+    vi.stubEnv('VITE_AUTH_MODE', 'mock')
     const { rerender } = render(<DemoDisclosure org="other" surface="workspace" />)
     expect(screen.getByRole('status')).toBeInTheDocument()
     rerender(<DemoDisclosure org="other" surface="console" />)
@@ -65,3 +65,11 @@ it.each(['fr', 'en'] as const)(
     }
   }
 )
+
+it('never discloses or activates simulated workspaces in OIDC mode, even with stale registrations', () => {
+  vi.stubEnv('VITE_ENABLE_MSW', '1')
+  vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+  registerInteractiveDemo(communityDemo)
+  render(<DemoDisclosure org="community" />)
+  expect(screen.queryByRole('status')).toBeNull()
+})
