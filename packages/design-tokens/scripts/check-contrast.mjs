@@ -12,7 +12,11 @@
 //     any translucent `layers` stacked in between — and the row is then
 //     measured over every extreme and over the bounds of every blend of them,
 //     and held to the MINIMUM. scripts/lib/backdrop.mjs holds the maths and
-//     docs/adr/0003 the argument, including what it does not cover.
+//     docs/adr/0003 the argument, including what it does not cover. A gradient
+//     is the same case without a surface on top: a row whose `bg` is a gradient
+//     is measured over its stops and the bounds of every blend between them,
+//     and every stop of a controlled gradient has to be one of the backdrop
+//     extremes its theme declares, or the glass over that end is unmeasured.
 //   A translucent colour is measured as if it were opaque.  Every foreground
 //     is composited onto its background before it is measured, at whatever
 //     alpha the colour itself carries. There is no per-row field to omit and
@@ -64,6 +68,8 @@ import { ROOT, loadTokens, indexTokens, resolve, parseColor, composite, contrast
 import { SPEC_COLORS } from './lib/spec.mjs';
 import { worstCaseContrast } from './lib/backdrop.mjs';
 import { materialAddress, resolveMaterial } from './lib/material.mjs';
+import { resolveGradient, gradientOwner } from './lib/gradient.mjs';
+import { THEMES, familyRules } from './lib/themes.mjs';
 
 const tree = loadTokens();
 const index = indexTokens(tree);
@@ -222,6 +228,10 @@ function backdropsOf(pair, ground) {
  */
 function paintOf(ref) {
   const token = typeof ref === 'string' ? index.get(ref) : undefined;
+  if (token?.type === 'gradient') {
+    // Opaque, and not one colour: measured as a ground only, over its own stops.
+    return { ref, theme: gradientOwner(ref), gradient: resolveGradient(token, index), color: null, saturation: 1, extras: [] };
+  }
   if (token?.type === 'material') {
     const address = materialAddress(ref);
     if (!address) throw new Error(`"${ref}" is a material outside the material tier`);
@@ -245,11 +255,52 @@ function layersOf(pair) {
   }
   return pair.layers.map((ref) => {
     const paint = paintOf(ref);
-    if (isOpaque(paint.color)) {
+    if (paint.gradient || isOpaque(paint.color)) {
       throw new Error(`layer "${ref}" is opaque: it hides the backdrop, so bind it as the backdrop instead of stacking it`);
     }
     return paint;
   });
+}
+
+/** A layer that paints nothing: what lies on a gradient that is measured bare. */
+const NOTHING_ON_TOP = { color: { r: 0, g: 0, b: 0, a: 0 }, saturation: 1 };
+
+// Every stop of a gradient a glass theme paints is a backdrop extreme of that
+// theme. The stops are where the gradient is lightest and darkest; a set that
+// leaves one out measures the materials over a sky that is narrower than the
+// one on screen.
+for (const theme of THEMES) {
+  if (familyRules(theme).gradient !== 'controlled') continue;
+  const sets = [...backdropSets].filter(([, entry]) => entry.theme === theme);
+  for (const token of index.values()) {
+    if (token.type !== 'gradient' || !token.path.startsWith(`semantic.theme.${theme}.`)) continue;
+    let stops;
+    try {
+      ({ stops } = resolveGradient(token, index));
+    } catch (error) {
+      setProblems.push(`${token.path}: ${error.message}`);
+      continue;
+    }
+    const painted = stops.map((stop) => ({ name: stop.ref ?? stop.color, hex: toHex(parseColor(stop.color)) }));
+    if (!sets.length) {
+      if (new Set(painted.map((stop) => stop.hex)).size > 1) {
+        setProblems.push(`${token.path}: "${theme}" paints a gradient and declares no backdrop set, so nothing is measured over it`);
+      }
+      continue;
+    }
+    for (const [name, entry] of sets) {
+      if (entry.error) continue;
+      const extremes = new Set(entry.backdrops.map((backdrop) => toHex(backdrop.color)));
+      for (const stop of painted) {
+        if (!extremes.has(stop.hex)) {
+          setProblems.push(
+            `${token.path}: its stop ${stop.name} (${stop.hex}) is not an extreme of backdropSets.${name} — ` +
+              'a material over that end of the gradient is unmeasured',
+          );
+        }
+      }
+    }
+  }
 }
 
 const rows = [];
@@ -260,7 +311,27 @@ for (const pair of pairs) {
 
   try {
     const ground = paintOf(pair.bg);
-    if (isOpaque(ground.color)) {
+    if (ground.gradient) {
+      // A gradient paints every blend of its stops somewhere along its length,
+      // so the row is held to the worst of them: the same bound as a surface
+      // over a backdrop, with nothing laid on top.
+      if (pair.backdropSet !== undefined || pair.layers !== undefined) {
+        throw new Error(`background "${pair.bg}" is a gradient, measured over its own stops — remove the ${pair.backdropSet !== undefined ? 'backdropSet' : 'layers'}`);
+      }
+      const backdrops = backdropMembers(
+        ground.gradient.stops.map((stop) => stop.ref ?? stop.color),
+        `the gradient "${pair.bg}"`,
+      );
+      const foreground = colorOf(pair.fg);
+      if (!isOpaque(foreground)) {
+        throw new Error(`foreground "${pair.fg}" is translucent on the gradient "${pair.bg}": the stops do not bound a colour that moves with the ground under it — measure an opaque foreground`);
+      }
+      const worst = worstCaseContrast({ foreground, layers: [NOTHING_ON_TOP], backdrops });
+      row.fgHex = toHex(foreground);
+      row.bgHex = toHex(worst.background);
+      row.ratio = worst.ratio;
+      row.measuredOver = `minimum of ${worst.measured} backgrounds over the stops of ${ground.gradient.path}; worst: ${worst.worst}`;
+    } else if (isOpaque(ground.color)) {
       // Nothing shows through an opaque ground, so a binding here would claim
       // a worst case that was never measured.
       if (pair.backdropSet !== undefined || pair.layers !== undefined) {
@@ -413,7 +484,7 @@ if (orphans.length) {
 // writes are asynchronous it cuts a table longer than the pipe buffer, and the
 // rows a reader — or a self-test — most needs are the ones at the end.
 if (setProblems.length) {
-  console.error('\nBackdrop sets in contrast-pairs.json that are not sets:');
+  console.error('\nBackdrop sets in contrast-pairs.json that do not hold what they claim:');
   for (const problem of setProblems) console.error(`  FAIL  ${problem}`);
 }
 

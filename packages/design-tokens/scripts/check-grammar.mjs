@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { ROOT, RESERVED, loadTokens, walkTokens, aliasTarget, indexTokens, resolve } from './lib/tokens.mjs';
 import { isMaterialToken, materialProblems } from './lib/material.mjs';
 import { isSpringToken, springProblems } from './lib/spring.mjs';
+import { gradientProblems } from './lib/gradient.mjs';
 
 // Closed list, per DESIGN_HANDOFF A3. `component` is the third tier (ADR-0004).
 // It was empty until the shell geometry aliases landed; it is declared here so
@@ -172,6 +173,9 @@ for (const token of tokens) {
   // build does not read is a field a designer believes is doing something.
   if (isMaterialToken(token)) for (const detail of materialProblems(token, index)) fail(path, 'material', detail);
   if (isSpringToken(token)) for (const detail of springProblems(token)) fail(path, 'spring', detail);
+  // A gradient is held to its family: one colour everywhere, except under the
+  // controlled grammar of a glass family (scripts/lib/gradient.mjs).
+  if (type === 'gradient' && value !== undefined) for (const detail of gradientProblems(token, index)) fail(path, 'gradient', detail);
 
   // A2: literals live in the primitive tier only.
   const tier = TIER_OF[segments[0]];

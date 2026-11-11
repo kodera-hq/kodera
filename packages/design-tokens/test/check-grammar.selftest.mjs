@@ -239,3 +239,109 @@ refuses(
   (t) => (t.motion.easing.spring = { $type: 'spring', $value: { stiffness: 420, damping: 34, mass: 1 } }),
   problem('motion.easing.spring', 'spring', 'a spring lives at motion\\.spring\\.<name>'),
 );
+
+// --- Gradients -----------------------------------------------------------------
+//
+// One colour everywhere (D-UI3), except a ciel theme's own gradient, which is
+// held to the controlled grammar: bounded, every stop a named colour of its own
+// theme, anchored at 0 and 1. The subject is a three-stop sky built in the
+// scratch copy; each refusal changes one thing about it.
+const SKY = 'color.theme-ciel.page-grad';
+const withSky = (change = () => {}) => (t) => {
+  const ciel = t.color['theme-ciel'];
+  ciel['sky-zenith'] = { $value: '#D7E8FA' };
+  ciel['sky-horizon'] = { $value: '#F8FBFE' };
+  ciel['page-grad'].$value = [
+    { color: '{color.theme-ciel.sky-zenith}', position: 0 },
+    { color: '{color.theme-ciel.page}', position: 0.5 },
+    { color: '{color.theme-ciel.sky-horizon}', position: 1 },
+  ];
+  change(ciel['page-grad'], t);
+};
+
+test('a controlled gradient is accepted in a ciel theme', () => {
+  const { status, output } = gate(withSky());
+  assert.equal(status, 0, output);
+});
+
+for (const [name, change, detail] of [
+  [
+    'a raw colour stop',
+    (g) => (g.$value[0].color = '#D7E8FA'),
+    'stop 0: #D7E8FA is a raw colour; every stop of a controlled gradient is a reference to a colour of its own theme',
+  ],
+  [
+    'more stops than the bound',
+    (g) => (g.$value = [0, 0.25, 0.5, 0.75, 1].map((position, i) => ({ color: i % 2 ? '{color.theme-ciel.page}' : '{color.theme-ciel.sky-zenith}', position }))),
+    '5 stops; a controlled gradient has at most 4',
+  ],
+  [
+    'a stop that is another theme\'s colour',
+    (g) => (g.$value[0].color = '{color.theme-light.muted-2}'),
+    'stop 0: "color\\.theme-light\\.muted-2" is not a colour of the "ciel" theme \\(color\\.theme-ciel\\.\\*\\)',
+  ],
+  [
+    'a stop taken from a shared ramp',
+    (g) => (g.$value[2].color = '{color.frost.200}'),
+    'stop 2: "color\\.frost\\.200" is not a colour of the "ciel" theme',
+  ],
+  [
+    'a translucent stop',
+    (g) => (g.$value[1].color = '{color.theme-ciel.scrim}'),
+    'stop 1: "color\\.theme-ciel\\.scrim" is translucent; a stop is a ground, and a ground is opaque',
+  ],
+  ['a stop that is not a colour', (g) => (g.$value[0].color = '{space.4}'), 'stop 0: "space\\.4" is a dimension token, not a colour'],
+  ['a stop that names no token', (g) => (g.$value[0].color = '{color.theme-ciel.sky-nadir}'), 'stop 0: dangling reference: "color\\.theme-ciel\\.sky-nadir" resolves to no token'],
+  ['a first stop that is not at 0', (g) => (g.$value[0].position = 0.1), 'positions run from 0\\.1 to 1; a controlled gradient is anchored at 0 and at 1'],
+  ['a last stop that is not at 1', (g) => (g.$value[2].position = 0.9), 'positions run from 0 to 0\\.9; a controlled gradient is anchored at 0 and at 1'],
+  ['positions that do not rise', (g) => (g.$value[1].position = 0), 'stop 1: position 0 does not rise above stop 0 \\(0\\)'],
+  ['a position outside the gradient', (g) => (g.$value[1].position = 1.5), 'stop 1: position 1\\.5 is not a number in \\[0, 1\\]'],
+  ['a stop with a field of its own', (g) => (g.$value[1].hint = 0.3), 'stop 1: a stop is a color and a position, nothing else'],
+  ['no angle', (g) => delete g.$extensions, 'missing or invalid gradient angle metadata'],
+  ['a single stop', (g) => (g.$value = g.$value.slice(0, 1)), 'a gradient is a list of at least two stops'],
+]) {
+  refuses(`a ciel gradient with ${name} is refused`, withSky(change), problem(SKY, 'gradient', detail));
+}
+
+refuses(
+  'a gradient added to a Givre theme is refused, at the primitive and at the role that names it',
+  (t) => (t.color['theme-dark']['page-grad'].$value[1].color = '#161D25'),
+  [
+    problem('color.theme-dark.page-grad', 'gradient', 'a gradient of 2 colours in "dark": the givre family paints no gradient, every stop is one colour \\(no gradient, D-UI3\\)'),
+    problem('semantic.theme.dark.page-grad', 'gradient', 'a gradient of 2 colours in "dark": the givre family paints no gradient'),
+  ],
+);
+
+refuses(
+  'a Givre role that names a ciel gradient is refused: the sky does not reach Givre through an alias',
+  withSky((g, t) => (t.semantic.theme.light['page-grad'].$value = '{color.theme-ciel.page-grad}')),
+  problem('semantic.theme.light.page-grad', 'gradient', 'a gradient of 3 colours in "light": the givre family paints no gradient'),
+);
+
+refuses(
+  'a gradient that belongs to no theme is refused',
+  (t) =>
+    (t.color['brand-grad'] = {
+      $type: 'gradient',
+      $value: [
+        { color: '#2B4BDB', position: 0 },
+        { color: '#5B33C9', position: 1 },
+      ],
+      $extensions: { 'io.kodera.css-gradient': { angle: '125deg' } },
+    }),
+  problem('color.brand-grad', 'gradient', 'a gradient of 2 colours belongs to no theme; only a theme of a controlled-gradient family may declare one'),
+);
+
+refuses(
+  'a ciel role that names another theme\'s gradient is refused',
+  withSky((g, t) => {
+    const nuit = t.color['theme-ciel-nuit'];
+    nuit['sky-zenith'] = { $value: '#0A1020' };
+    nuit['page-grad'].$value = [
+      { color: '{color.theme-ciel-nuit.sky-zenith}', position: 0 },
+      { color: '{color.theme-ciel-nuit.page}', position: 1 },
+    ];
+    t.semantic.theme.ciel['page-grad'].$value = '{color.theme-ciel-nuit.page-grad}';
+  }),
+  problem('semantic.theme.ciel.page-grad', 'gradient', 'references "color\\.theme-ciel-nuit\\.page-grad"; a gradient role of "ciel" names a gradient of its own theme'),
+);

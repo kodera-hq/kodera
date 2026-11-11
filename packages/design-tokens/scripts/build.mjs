@@ -17,8 +17,9 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { buildNative } from './lib/native.mjs';
-import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, aliasTarget, toHex } from './lib/tokens.mjs';
+import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, toHex } from './lib/tokens.mjs';
 import { MATERIAL_LEVELS, resolveMaterial } from './lib/material.mjs';
+import { resolveGradient } from './lib/gradient.mjs';
 import { THEMES, THEME_REGISTRY, THEME_FAMILIES, DEFAULT_THEME, themeSelector, assertThemeGroups } from './lib/themes.mjs';
 import {
   SPEC,
@@ -192,23 +193,11 @@ function cssValue(token) {
       return `${offsetX} ${offsetY} ${blur} ${spread} ${color}`;
     }
     case 'gradient': {
-      // Stop lists use the package's existing hex-color token dialect.
-      // Direction is CSS-specific metadata on the primitive, not a stop.
-      let source = token;
-      while (aliasTarget(source.value)) source = index.get(aliasTarget(source.value));
-      const angle = source.node.$extensions?.['io.kodera.css-gradient']?.angle;
-      if (typeof angle !== 'string' || !/^-?\d+(?:\.\d+)?deg$/.test(angle)) {
-        throw new Error(`${token.path}: missing or invalid gradient angle metadata`);
-      }
-      if (!Array.isArray(value) || value.length < 2) throw new Error(`${token.path}: invalid gradient stop list`);
-      const stops = value.map((stop) => {
-        if (!stop || !Number.isFinite(stop.position) || stop.position < 0 || stop.position > 1) {
-          throw new Error(`${token.path}: invalid gradient stop position`);
-        }
-        parseColor(stop.color);
-        return `${stop.color} ${stop.position * 100}%`;
-      });
-      return `linear-gradient(${angle},${stops.join(',')})`;
+      // Direction is CSS-specific metadata on the primitive, not a stop. A stop
+      // is a literal colour or a reference to one (scripts/lib/gradient.mjs);
+      // either way the value painted is emitted, in the package's hex dialect.
+      const { angle, stops } = resolveGradient(token, index);
+      return `linear-gradient(${angle},${stops.map((stop) => `${stop.color} ${stop.position * 100}%`).join(',')})`;
     }
     default:
       return String(value);

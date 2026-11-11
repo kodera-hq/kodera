@@ -748,3 +748,105 @@ assertFailsFor(
     /^1 contrast problem\(s\)/m,
   ],
 );
+
+// --- Gradients ---------------------------------------------------------------
+//
+// A gradient is opaque and is not one colour. As a ground it is measured over
+// its stops and the bounds of every blend between them; and every stop a glass
+// theme paints has to be a backdrop extreme of that theme, or the materials are
+// measured over a sky narrower than the one on screen. The sky is built in the
+// scratch copy, so these hold whatever the shipped palette becomes.
+const SKY_GRADIENT = 'semantic.theme.ciel.page-grad';
+/** Give ciel a real three-stop sky; `declare` adds its two ends to the theme's backdrop set. */
+const withSky = ({ zenith = '#D7E8FA', declare = true } = {}) => (dir) => {
+  const tokens = readJson(dir, 'tokens.json');
+  const ciel = tokens.color['theme-ciel'];
+  ciel['sky-zenith'] = { $value: zenith };
+  ciel['sky-horizon'] = { $value: '#F8FBFE' };
+  ciel['page-grad'].$value = [
+    { color: '{color.theme-ciel.sky-zenith}', position: 0 },
+    { color: '{color.theme-ciel.page}', position: 0.5 },
+    { color: '{color.theme-ciel.sky-horizon}', position: 1 },
+  ];
+  writeJson(dir, 'tokens.json', tokens);
+  editRegister(dir, (data) => {
+    const wanted = ['color.theme-ciel.sky-zenith', 'color.theme-ciel.sky-horizon'];
+    data.backdropSets.ciel.members = [...data.backdropSets.ciel.members.filter((member) => !wanted.includes(member)), ...(declare ? wanted : [])];
+  });
+};
+const skyRow = (extra = {}) => glassRow({ fg: 'semantic.theme.ciel.ink-3', bg: SKY_GRADIENT, ...extra });
+
+test('a gradient ground is measured over its stops, and held to the minimum', () => {
+  const { status, output } = gateWith((dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(skyRow()));
+  });
+  assert.equal(status, 0, output);
+  // Tertiary ink on the zenith, the darkest stop: #5C6874 on #D7E8FA. Three
+  // stops, the darkest blend and the lightest blend are measured.
+  assert.match(output, glassVerdict(4.56, 'PASS'));
+  assert.match(output, /↳ minimum of 5 backgrounds over the stops of color\.theme-ciel\.page-grad; worst: color\.theme-ciel\.sky-zenith$/m);
+});
+
+assertFailsFor(
+  'a darker stop pushes text on the gradient under its minimum',
+  (dir) => {
+    withSky({ zenith: '#B9D3EE' })(dir);
+    // The register reduced to this row, and one that keeps the theme's set
+    // bound: the shipped materials over the same sky are not what is under test.
+    onlyRow(skyRow(), ['ciel'])(dir);
+    editPairs(dir, (pairs) => pairs.push(glassRow({ id: 'scratch/keeps-the-set-bound', fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel' })));
+  },
+  [
+    glassVerdict(3.69, 'FAIL'),
+    /worst: color\.theme-ciel\.sky-zenith$/m,
+    /↳ below the minimum and not in contrast-known-failures\.json/,
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a gradient stop that is not a backdrop extreme of its theme fails the gate',
+  withSky({ declare: false }),
+  [
+    /semantic\.theme\.ciel\.page-grad: its stop color\.theme-ciel\.sky-zenith \(#D7E8FA\) is not an extreme of backdropSets\.ciel — a material over that end of the gradient is unmeasured/,
+    /semantic\.theme\.ciel\.page-grad: its stop color\.theme-ciel\.sky-horizon \(#F8FBFE\) is not an extreme of backdropSets\.ciel/,
+    /^2 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a glass theme that paints a gradient and declares no backdrop set fails the gate',
+  (dir) => {
+    withSky()(dir);
+    onlyRow(glassRow({ bg: 'semantic.theme.ciel.surface', fg: 'semantic.theme.ciel.ink' }))(dir);
+  },
+  [/semantic\.theme\.ciel\.page-grad: "ciel" paints a gradient and declares no backdrop set, so nothing is measured over it/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a backdrop set bound under a gradient ground is refused: a gradient is measured over its own stops',
+  (dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(skyRow({ backdropSet: 'ciel' })));
+  },
+  [/background "semantic\.theme\.ciel\.page-grad" is a gradient, measured over its own stops — remove the backdropSet/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a translucent foreground on a gradient ground is refused',
+  (dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(skyRow({ fg: 'spec:focus-ring.ciel.outer' })));
+  },
+  [/foreground "spec:focus-ring\.ciel\.outer" is translucent on the gradient "semantic\.theme\.ciel\.page-grad"/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a gradient stacked as a layer is refused',
+  (dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(glassRow({ layers: [SKY_GRADIENT], backdropSet: ['semantic.theme.ciel.page'] })));
+  },
+  [/layer "semantic\.theme\.ciel\.page-grad" is opaque: it hides the backdrop/, /^1 contrast problem\(s\)/m],
+);
