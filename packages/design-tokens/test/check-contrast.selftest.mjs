@@ -440,3 +440,61 @@ assertFailsFor(
   // so a pair that clears is a deletion and never also a loosened bound.
   /the pair now requires/,
 );
+
+// --- A translucent background -----------------------------------------------
+//
+// The gate measures a foreground against what is painted behind it. A
+// translucent background is not what is painted there: the colour a user sees
+// depends on whatever lies underneath, and a row that named only the tint would
+// be measured against a ground that never exists. So the row is refused — and
+// it stays refused unless it says what can lie underneath, with an explicit
+// `backdropSet` of opaque extremes the gate then measures the worst case over.
+//
+// The refusals come first and are held on their own: no set at all, and each
+// way a set can fail to be one — empty, a member that is itself translucent, a
+// member that names no token, a name no set carries. Every one of them is the
+// same row, a real ink on a 72 % white glass, so the only thing that differs
+// between two cases is the binding under test.
+const GLASS = 'rgba(255, 255, 255, 0.72)';
+const GLASS_SUBJECT = 'scratch/ink/glass';
+const glassRow = (extra = {}) => ({
+  id: GLASS_SUBJECT,
+  fg: 'semantic.theme.light.ink',
+  bg: GLASS,
+  label: 'scratch: ink on a translucent ground',
+  min: 4.5,
+  ...extra,
+});
+const addGlassRow = (extra) => (dir) => editPairs(dir, (pairs) => pairs.push(glassRow(extra)));
+/** The scratch row is the one red row, it is unmeasured, and it says the ground is translucent. */
+const REFUSED_AS_TRANSLUCENT = [
+  new RegExp(`^${rx(GLASS_SUBJECT)}\\s+—\\s+—\\s+—\\s+4\\.5\\s+FAIL\\s`, 'm'),
+  new RegExp(`background "${rx(GLASS)}" is translucent`),
+  /^1 contrast problem\(s\)/m,
+];
+
+assertFailsFor('a translucent background with no backdrop set is refused', addGlassRow(), REFUSED_AS_TRANSLUCENT);
+
+assertFailsFor(
+  'a translucent background over an empty backdrop set is refused',
+  addGlassRow({ backdropSet: [] }),
+  REFUSED_AS_TRANSLUCENT,
+);
+
+assertFailsFor(
+  'a translucent background over a backdrop that is itself translucent is refused',
+  addGlassRow({ backdropSet: ['semantic.theme.light.page', 'rgba(17, 24, 39, 0.5)'] }),
+  REFUSED_AS_TRANSLUCENT,
+);
+
+assertFailsFor(
+  'a translucent background over a backdrop that names no token is refused',
+  addGlassRow({ backdropSet: ['semantic.theme.light.page', 'color.sky.nowhere'] }),
+  REFUSED_AS_TRANSLUCENT,
+);
+
+assertFailsFor(
+  'a translucent background bound to a backdrop set nobody declared is refused',
+  addGlassRow({ backdropSet: 'nowhere' }),
+  REFUSED_AS_TRANSLUCENT,
+);
