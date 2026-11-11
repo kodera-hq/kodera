@@ -22,7 +22,7 @@ export function DemoDisclosure({
     <section
       role="status"
       aria-label={copy.title}
-      className="shrink-0 border-b border-c-border-soft bg-c-surface px-3 py-1.5 text-xs leading-snug text-c-ink"
+      className="shrink-0 border-b border-c-border-soft bg-c-surface px-3 py-1 text-xs leading-snug text-c-ink"
     >
       <strong>{copy.title}.</strong> {copy.body} {copy.support}{' '}
       <LinkButton inline href={`mailto:${SUPPORT_EMAIL}`}>
