@@ -157,7 +157,7 @@ describe('the typing line', () => {
     const user = userEvent.setup()
     const { store } = makeStore()
     renderView(store)
-    const composer = screen.getByRole('combobox', { name: 'Message dans #général' })
+    const composer = screen.getByRole('textbox', { name: 'Message dans #général' })
     await user.type(composer, 'Sa')
     expect(store.setTyping.mock.calls).toEqual([
       [ROOM, true],
@@ -177,7 +177,7 @@ describe('the typing line', () => {
     const user = userEvent.setup()
     const { store } = makeStore()
     const view = renderView(store)
-    const composer = screen.getByRole('combobox', { name: 'Message dans #général' })
+    const composer = screen.getByRole('textbox', { name: 'Message dans #général' })
     // A new message half-written gives way to the edit: the room stops seeing the member type.
     await user.type(composer, 'Bro')
     expect(store.setTyping).toHaveBeenLastCalledWith(ROOM, true)

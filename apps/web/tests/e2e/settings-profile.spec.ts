@@ -139,7 +139,7 @@ test('profile updates are visible in messages, profile cards and after reload', 
   )
   await page.keyboard.press('Escape')
   await page
-    .getByRole('combobox', { name: 'Message dans #announcements', exact: true })
+    .getByRole('textbox', { name: 'Message dans #announcements', exact: true })
     .fill('Profile integration check')
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
   await page
@@ -160,7 +160,7 @@ test('profile updates are visible in messages, profile cards and after reload', 
     .getByRole('dialog', { name: 'Elena Vance', exact: true })
     .getByRole('button', { name: 'Mentionner', exact: true })
     .click()
-  const composer = page.getByRole('combobox', { name: 'Message dans #announcements', exact: true })
+  const composer = page.getByRole('textbox', { name: 'Message dans #announcements', exact: true })
   await expect(composer).toBeFocused()
   await expect(composer).not.toHaveValue('')
   await page.reload()

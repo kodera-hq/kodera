@@ -2207,7 +2207,7 @@ describe('actual-store message subscriptions without a parent render', () => {
       await fixture.start()
       mounted = render(<Parent />)
       expect(screen.getByText(SNAPSHOT_BODY).textContent).toBe(SNAPSHOT_BODY)
-      const composer = screen.getByRole('combobox', { name: 'Message dans #général' })
+      const composer = screen.getByRole('textbox', { name: 'Message dans #général' })
       const summaries = store.getSnapshot()
       let witnessedPending = false
       unsubscribe = store.subscribe(() => {
@@ -2228,7 +2228,7 @@ describe('actual-store message subscriptions without a parent render', () => {
       const pending = store.getTimeline(SNAPSHOT_ROOM).at(-1)!
       expect(screen.getByText('Pending <b>&</b> {literal}').textContent).toBe(pending.body)
       expect(screen.getByText('Envoi en cours…')).toBeInTheDocument()
-      expect(screen.getByRole('combobox', { name: 'Message dans #général' })).toBe(composer)
+      expect(screen.getByRole('textbox', { name: 'Message dans #général' })).toBe(composer)
       expect(composer).toHaveValue('')
       expect(parentRenders).toBe(1)
       expectSameSummaries(summaries, store.getSnapshot())
@@ -2267,7 +2267,7 @@ describe('actual-store message subscriptions without a parent render', () => {
       expect(screen.queryByText('Échec de l’envoi')).toBeNull()
       expect(parentRenders).toBe(1)
       expectSameSummaries(summaries, store.getSnapshot())
-      expect(screen.getByRole('combobox', { name: 'Message dans #général' })).toBe(composer)
+      expect(screen.getByRole('textbox', { name: 'Message dans #général' })).toBe(composer)
     } finally {
       unsubscribe()
       await act(async () => {
@@ -2409,7 +2409,7 @@ describe('bilingual live-store message catalogues', () => {
       await fixture.start()
       mounted = render(<Parent />)
       expect(screen.getByText(SNAPSHOT_BODY).textContent).toBe(SNAPSHOT_BODY)
-      const composer = screen.getByRole('combobox')
+      const composer = screen.getByRole('textbox')
       const before = store.getSnapshot()
       let witnessed = false
       unsubscribe = store.subscribe(() => {
@@ -2437,9 +2437,9 @@ describe('bilingual live-store message catalogues', () => {
       expect(delivery).not.toBeNull()
       expectSameSummaries(before, store.getSnapshot())
       expect(parentRenders).toBe(1)
-      expect(screen.getByRole('combobox')).toBe(composer)
+      expect(screen.getByRole('textbox')).toBe(composer)
       expect(delivery!.textContent).toBe('Sending…')
-      expect(screen.getByRole('combobox', { name: 'Message in #general' })).toBe(composer)
+      expect(screen.getByRole('textbox', { name: 'Message in #general' })).toBe(composer)
       expect(composer).toHaveAttribute('placeholder', 'Write in #general')
     } finally {
       unsubscribe()
@@ -2557,7 +2557,7 @@ describe('literal bilingual live-store acceptance', () => {
         const pending = store.getTimeline(SNAPSHOT_ROOM).at(-1)!
         expect(screen.getByText(pending.body).textContent).toBe('Unchanged é <b>&</b> {literal}')
         expect(screen.getByText(copy.sending)).toBeInTheDocument()
-        expect(screen.getByRole('combobox', { name: copy.composer })).toHaveAttribute(
+        expect(screen.getByRole('textbox', { name: copy.composer })).toHaveAttribute(
           'placeholder',
           copy.placeholder
         )
@@ -2740,7 +2740,7 @@ describe('literal bilingual live-store acceptance', () => {
         expect(strong.textContent).toBe(author)
         expect(strong.querySelector('img')).toBeNull()
         expect(strong.parentElement!.textContent).toBe(`${copy.replyPrefix} ${author}`)
-        const composer = screen.getByRole('combobox', {
+        const composer = screen.getByRole('textbox', {
           name: language === 'fr' ? `Message dans #${channel}` : `Message in #${channel}`,
         })
         fireEvent.change(composer, { target: { value: 'Draft <b>&</b> {literal}' } })
@@ -2847,7 +2847,7 @@ describe('literal bilingual live-store acceptance', () => {
           })
         ).toBeNull()
         expect(
-          screen.queryByRole('combobox', {
+          screen.queryByRole('textbox', {
             name: language === 'fr' ? `Message dans #${channel}` : `Message in #${channel}`,
           })
         ).toBeNull()
@@ -2969,14 +2969,14 @@ describe('literal bilingual live-store acceptance', () => {
       const root = within(log).getByText(SNAPSHOT_BODY).closest('article')!
       await selectMessageAction(user, root, 'Répondre')
       await selectMessageAction(user, root, 'Ouvrir le fil')
-      const composer = screen.getByRole('combobox', { name: 'Message dans #général' })
+      const composer = screen.getByRole('textbox', { name: 'Message dans #général' })
       const threadInput = screen.getByRole('combobox', { name: 'Répondre au fil' })
       fireEvent.change(composer, { target: { value: 'Reply draft <b>&</b> {raw}' } })
       fireEvent.change(threadInput, { target: { value: 'Thread draft <b>&</b> {raw}' } })
       await act(async () => {
         await i18n.changeLanguage('en')
       })
-      expect(screen.getByRole('combobox', { name: 'Message in #general' })).toBe(composer)
+      expect(screen.getByRole('textbox', { name: 'Message in #general' })).toBe(composer)
       expect(composer).toHaveValue('Reply draft <b>&</b> {raw}')
       expect(screen.getByRole('combobox', { name: 'Reply to thread' })).toBe(threadInput)
       expect(threadInput).toHaveValue('Thread draft <b>&</b> {raw}')
@@ -3679,7 +3679,7 @@ describe("a channel's header says who is in it (G10)", () => {
         .querySelector('[data-online]')
     ).toHaveClass('ring-c-sunken')
     expect(within(panel).getByRole('img', { name: 'Bob Dupont' })).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Message dans #général' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Message dans #général' })).toBeInTheDocument()
     await userEvent.click(within(panel).getByRole('button', { name: 'Fermer' }))
     expect(screen.queryByRole('complementary', { name: 'Membres' })).toBeNull()
     expect(trigger).toHaveFocus()

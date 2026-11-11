@@ -110,7 +110,7 @@ function renderView(store: EspaceStoreLike) {
       store={store}
     />
   )
-  return screen.getByRole('combobox', { name: 'Message dans #général' }) as HTMLInputElement
+  return screen.getByRole('textbox', { name: 'Message dans #général' }) as HTMLInputElement
 }
 
 const optionTexts = (list: HTMLElement) =>
@@ -245,7 +245,7 @@ describe('the emoji list', () => {
       // A later word of a code, after the codes that start with « th ».
       '🥰:smiling_face_with_three_hearts:',
     ])
-    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    expect(composer).toHaveAttribute('aria-controls')
     expect(composer).toHaveAttribute('aria-controls', list.id)
   })
 
@@ -314,7 +314,7 @@ describe('the emoji list', () => {
     const composer = renderView(makeStore())
     await user.type(composer, 'https://kodera.io à 12:30')
     expect(screen.queryByRole('listbox')).toBeNull()
-    expect(composer).toHaveAttribute('aria-expanded', 'false')
+    expect(composer).not.toHaveAttribute('aria-controls')
   })
 })
 

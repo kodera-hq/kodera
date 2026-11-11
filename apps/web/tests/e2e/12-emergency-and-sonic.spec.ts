@@ -174,10 +174,7 @@ test('workspace/emergency: opens #urgence from the quick-switcher search dialog 
       softenedHighs: false,
       outputDeviceId: null,
     }
-    window.localStorage.setItem(
-      'kodera:sound-preferences:v1',
-      JSON.stringify(payload)
-    )
+    window.localStorage.setItem('kodera:sound-preferences:v1', JSON.stringify(payload))
     const readBack = JSON.parse(
       window.localStorage.getItem('kodera:sound-preferences:v1') ?? '{}'
     ) as {
@@ -188,7 +185,7 @@ test('workspace/emergency: opens #urgence from the quick-switcher search dialog 
   expect(storedPack).toBe('atelier')
 
   await page.keyboard.press((await pageIsMac(page)) ? 'Meta+k' : 'Control+k')
-  const dialog = page.getByRole('dialog', { name: 'Aller à un salon' })
+  const dialog = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
   await expect(dialog).toBeVisible()
   await page.keyboard.type('urg')
   await expect(dialog.getByRole('option')).toHaveText([/urgence/])

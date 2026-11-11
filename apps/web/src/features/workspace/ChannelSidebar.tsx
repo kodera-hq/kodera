@@ -14,7 +14,7 @@ import { cx } from '../../ui/cx'
 import { EspaceGlyph } from '../../ui/icons/EspaceGlyph'
 import { CURRENT_BAR_ACCENT } from '../../ui/currentBar'
 import { TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
-import { ChannelSearch } from './ChannelSearch'
+import { UniversalSearch } from '../command-palette/UniversalSearch'
 import type { ChannelSearchEntry } from './ChannelSearch'
 import { OrganisationHeader } from './OrganisationHeader'
 import { categoryLabel, channelLabel, channelUsable } from './workspace'
@@ -241,7 +241,7 @@ export function ChannelSidebar({
           <h2 id={headingId} className="sr-only">
             {t('console.workspace.sidebar.title')}
           </h2>
-          <ChannelSearch entries={searchEntries} onChoose={openFromSearch} shortcut />
+          <UniversalSearch entries={searchEntries} onChoose={openFromSearch} shortcut />
         </div>
       ) : (
         <div className="flex flex-col gap-1 px-2">

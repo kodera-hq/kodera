@@ -1,3 +1,4 @@
+import type { Section } from './WorkspaceSettings'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { OrganisationRole } from '../../app/Sidebar'
 import { WORKSPACE_COMMAND_EVENT } from './WorkspaceMenu'
@@ -14,6 +15,7 @@ export interface WorkspaceSettingsProps {
 
 /** Keep the conversation mounted, including its draft, scroll position and active call. */
 export function WorkspaceSettingsHost(props: WorkspaceSettingsProps) {
+  const [initialSection, setInitialSection] = useState<Section>('profile')
   const epoch = useWorkspaceSettingsEpoch()
   const [openedEpoch, setOpenedEpoch] = useState<number | null>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
@@ -24,7 +26,19 @@ export function WorkspaceSettingsHost(props: WorkspaceSettingsProps) {
       setOpenedEpoch(epoch)
     }
     const command = (event: Event) => {
-      if (event instanceof CustomEvent && event.detail === 'settings') show()
+      if (!(event instanceof CustomEvent)) return
+      if (event.detail === 'settings') {
+        setInitialSection('profile')
+        show()
+      } else if (
+        event.detail?.command === 'settings' &&
+        ['profile', 'appearance', 'audio', 'members', 'extensions', 'hosting'].includes(
+          event.detail.section
+        )
+      ) {
+        setInitialSection(event.detail.section)
+        show()
+      }
     }
     const shortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ',') {
@@ -43,6 +57,7 @@ export function WorkspaceSettingsHost(props: WorkspaceSettingsProps) {
     <Suspense fallback={null}>
       <WorkspaceSettings
         {...props}
+        initialSection={initialSection}
         key={props.org}
         onClose={() => setOpenedEpoch(null)}
         returnFocus={returnFocus}

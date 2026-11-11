@@ -119,7 +119,7 @@ function renderView(store: EspaceStoreLike) {
       store={store}
     />
   )
-  return screen.getByRole('combobox', { name: 'Message dans #général' })
+  return screen.getByRole('textbox', { name: 'Message dans #général' })
 }
 
 describe('mentions in the composer', () => {
@@ -127,7 +127,7 @@ describe('mentions in the composer', () => {
     const user = userEvent.setup()
     const store = makeStore()
     const composer = renderView(store)
-    expect(composer).toHaveAttribute('aria-expanded', 'false')
+    expect(composer).not.toHaveAttribute('aria-controls')
     expect(store.loadMembers).not.toHaveBeenCalled()
 
     await user.type(composer, 'Salut @ma')
@@ -138,7 +138,7 @@ describe('mentions in the composer', () => {
         .getAllByRole('option')
         .map((option) => option.textContent)
     ).toEqual(['Marina Loiseau'])
-    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    expect(composer).toHaveAttribute('aria-controls')
     expect(composer).toHaveAttribute('aria-controls', list.id)
     expect(store.loadMembers).toHaveBeenCalledTimes(1)
     expect(store.loadMembers).toHaveBeenCalledWith(ROOM)
@@ -234,7 +234,7 @@ describe('mentions in the composer', () => {
     await user.click(mention)
     expect(composer).toHaveValue('Salut @ fin')
     expect(composer).toHaveFocus()
-    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    expect(composer).toHaveAttribute('aria-controls')
     await user.keyboard('bo{Enter}')
     expect(composer).toHaveValue('Salut @Bob Dupont fin')
     const send = screen.getByRole('button', { name: 'Envoyer' })
@@ -263,7 +263,7 @@ describe('mentions in the composer', () => {
     await user.keyboard('{Enter}')
     expect(composer).toHaveValue('Merci @')
     expect(composer).toHaveFocus()
-    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    expect(composer).toHaveAttribute('aria-controls')
     // One bordered box for the field and its tools, ringed while the focus is in it.
     expect(
       screen.getByRole('button', { name: 'Mentionner' }).parentElement?.parentElement
@@ -280,7 +280,7 @@ describe('mentions in the composer', () => {
     // A click and nothing else: no key, and no selection report from the browser yet.
     fireEvent.click(screen.getByRole('button', { name: 'Mentionner' }))
     expect(composer).toHaveValue('Salut @ fin')
-    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    expect(composer).toHaveAttribute('aria-controls')
   })
 
   it('opens the list from « Mentionner » afresh, even where Escape had closed it', async () => {
@@ -288,12 +288,12 @@ describe('mentions in the composer', () => {
     const store = makeStore()
     const composer = renderView(store)
     await user.type(composer, '@{ArrowDown}{ArrowDown}{Escape}')
-    expect(composer).toHaveAttribute('aria-expanded', 'false')
+    expect(composer).not.toHaveAttribute('aria-controls')
     // The caret back before that « @ »: the new one lands where the closed list's began.
     await user.keyboard('{Home}')
     await user.click(screen.getByRole('button', { name: 'Mentionner' }))
     expect(composer).toHaveValue('@@')
-    expect(composer).toHaveAttribute('aria-expanded', 'true')
+    expect(composer).toHaveAttribute('aria-controls')
     const options = within(
       screen.getByRole('listbox', { name: 'Membres à mentionner' })
     ).getAllByRole('option')
@@ -309,7 +309,7 @@ describe('mentions in the composer', () => {
     const composer = renderView(makeStore({ members: [] }))
     await user.type(composer, '@')
     expect(screen.queryByRole('listbox')).toBeNull()
-    expect(composer).toHaveAttribute('aria-expanded', 'false')
+    expect(composer).not.toHaveAttribute('aria-controls')
     // « Mentionner » writes its « @ », and opens nothing either.
     await user.click(screen.getByRole('button', { name: 'Mentionner' }))
     expect(composer).toHaveValue('@ @')

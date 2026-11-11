@@ -74,7 +74,7 @@ test('channels, messages, reactions, threads, invitations and notes work togethe
   await page.getByLabel('Nom du salon', { exact: true }).fill('qa-discussion')
   await page.getByRole('button', { name: 'Créer le salon', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'qa-discussion', exact: true })).toBeVisible()
-  const composer = page.getByRole('combobox', { name: 'Message dans #qa-discussion', exact: true })
+  const composer = page.getByRole('textbox', { name: 'Message dans #qa-discussion', exact: true })
   await composer.fill('Shared browser acceptance message')
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
   await expect(page.getByRole('log')).toContainText('Shared browser acceptance message')
@@ -136,7 +136,7 @@ test('created workspaces switch without losing the previous conversation', async
   await page.getByLabel('Nom du salon', { exact: true }).fill('retained-channel')
   await page.getByRole('button', { name: 'Créer le salon', exact: true }).click()
   await page
-    .getByRole('combobox', { name: 'Message dans #retained-channel', exact: true })
+    .getByRole('textbox', { name: 'Message dans #retained-channel', exact: true })
     .fill('Retain across workspace switch')
   await page.getByRole('button', { name: 'Envoyer', exact: true }).click()
   await page.getByRole('button', { name: 'Docs', exact: true }).click()

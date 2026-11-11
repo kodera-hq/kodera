@@ -155,6 +155,15 @@ export function DeveloperDocsHub({
           {active.id === 'extensions' ? (
             <section aria-label={copy.catalogue} className="mb-6 border-t border-c-border pt-4">
               <h3 className="mb-3 text-lg font-semibold">{copy.catalogue}</h3>
+              <p className="mb-3 text-sm text-c-ink-2">
+                <LinkButton
+                  inline
+                  target="_blank"
+                  href={sourceUrl('extensions/git-tracker/README.md')}
+                >
+                  {copy.gitTracker}
+                </LinkButton>
+              </p>
               <ul className="flex flex-col gap-3">
                 {developerDocsContent.connectors.map((connector) => (
                   <li key={connector.slug} className="min-w-0">

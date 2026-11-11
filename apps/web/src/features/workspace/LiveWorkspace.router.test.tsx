@@ -145,8 +145,8 @@ describe('the live workspace under the router', () => {
     // While the address is undecided, nothing can be sent.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Envoyer' })).toBeDisabled())
     // Read-only, so the focus stays in it, and said to be unavailable.
-    expect(screen.getByRole('combobox')).toHaveAttribute('readonly')
-    expect(screen.getByRole('combobox')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('textbox')).toHaveAttribute('readonly')
+    expect(screen.getByRole('textbox')).toHaveAttribute('aria-disabled', 'true')
 
     // Back before it commits: the address is #général again.
     act(() => router.history.back())

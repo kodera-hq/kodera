@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type RefObject } from 'react'
+import { useRef, useState, type FormEvent, type Ref, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { CopyableField } from '../../ui/CopyableField/CopyableField'
@@ -17,12 +17,14 @@ export function ChannelInviteDialog({
   room,
   store,
   unavailable,
+  triggerRef,
 }: {
   org: string
   channel: WorkspaceChannel
   room: RoomSummary
   store: EspaceStoreLike
   unavailable: boolean
+  triggerRef?: Ref<HTMLButtonElement>
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -43,6 +45,7 @@ export function ChannelInviteDialog({
       initialFocus={input}
       trigger={
         <Button
+          ref={triggerRef}
           variant="secondary"
           size="sm"
           disabled={unavailable}

@@ -55,7 +55,7 @@ it('allows local conversations inside the authenticated shell without issuing Ma
   const user = userEvent.setup()
   showLocalWorkspace()
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  const composer = screen.getByRole('combobox')
+  const composer = screen.getByRole('textbox')
   await user.type(composer, 'Local shell message{Enter}')
   expect(within(screen.getByRole('log')).getByText('Local shell message')).toBeInTheDocument()
 })
@@ -64,7 +64,7 @@ it('keeps the Matrix admission guard for unregistered organisations', () => {
   registerInteractiveDemo({ slug: 'other', createStore: createLocalWorkspaceStore })
   showLocalWorkspace()
   expect(screen.getByRole('alert')).toHaveTextContent('La messagerie ne peut pas s’ouvrir')
-  expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 })
 
 it('joins a clearly labelled local voice preview and operates mute, deafen and leave', async () => {

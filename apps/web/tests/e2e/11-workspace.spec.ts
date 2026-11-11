@@ -319,11 +319,13 @@ test('workspace/search: opens a channel from Ctrl K by its name', async ({ page 
   await expect(page.getByRole('heading', { level: 1, name: 'bienvenue' })).toBeVisible()
 
   await page.keyboard.press((await pageIsMac(page)) ? 'Meta+k' : 'Control+k')
-  const dialog = page.getByRole('dialog', { name: 'Aller à un salon' })
+  const dialog = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByRole('combobox', { name: 'Nom du salon' })).toBeFocused()
+  await expect(
+    dialog.getByRole('combobox', { name: 'Rechercher espaces, salons, documents et commandes' })
+  ).toBeFocused()
   await page.keyboard.type('gén')
-  await expect(dialog.getByRole('option')).toHaveText([/général/])
+  await expect(dialog.getByRole('option', { name: /général/ })).toBeVisible()
   await expectAxeClean(page)
   await page.keyboard.press('Enter')
 
@@ -348,9 +350,11 @@ test('workspace/search: says when no channel has the name, and gives focus back 
     (await pageIsMac(page)) ? 'Meta+K' : 'Control+K'
   )
   await search.click()
-  const dialog = page.getByRole('dialog', { name: 'Aller à un salon' })
-  await page.keyboard.type('chantier')
-  await expect(dialog.getByRole('status')).toHaveText('Aucun salon ne porte ce nom.')
+  const dialog = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
+  await page.keyboard.type('zzzzzzzzz')
+  await expect(dialog.getByRole('status')).toHaveText(
+    'Aucune destination ni commande ne correspond.'
+  )
   await expect(dialog.getByRole('option')).toHaveCount(0)
   await expectAxeClean(page)
 
