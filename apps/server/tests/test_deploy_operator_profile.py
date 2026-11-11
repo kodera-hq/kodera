@@ -25,8 +25,11 @@ APPS = [
     "apps.billing",
     "apps.support",
     "apps.engine_intents",
+    "apps.workspaces",
 ]
 COMMANDS = [
+    "bind_community_identity",
+    "bootstrap_community_workspace",
     "bootstrap_staff_roles",
     "grant_staff_role",
     "revoke_staff_role",

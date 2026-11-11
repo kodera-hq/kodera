@@ -68,6 +68,7 @@ class Tenant(StoredModel):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
     )
+    is_default_community = models.BooleanField(default=False)
     slug = models.TextField(unique=True)
     name = models.TextField()
     status = models.TextField(default="ordered")
@@ -85,7 +86,14 @@ class Tenant(StoredModel):
             models.CheckConstraint(name="tenancy_tenant_slug_valid", condition=Q(slug__regex=SLUG)),
             models.CheckConstraint(
                 name="tenancy_tenant_slug_not_reserved",
-                condition=~Q(slug__in=RESERVED_TENANT_SLUGS) & ~Q(slug__startswith="xn--"),
+                condition=(
+                    Q(is_default_community=True, slug="community")
+                    | (~Q(slug__in=RESERVED_TENANT_SLUGS) & ~Q(slug__startswith="xn--"))
+                ),
+            ),
+            models.CheckConstraint(
+                name="tenancy_tenant_community_binding",
+                condition=Q(is_default_community=False) | Q(slug="community"),
             ),
             models.CheckConstraint(
                 name="tenancy_tenant_status_valid", condition=Q(status__in=TENANT_STATUSES)

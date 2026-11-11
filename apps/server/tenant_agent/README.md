@@ -80,3 +80,19 @@ python -m tenant_agent run
 ```bash
 KODERA_CORE_DIR=/path/to/kodera-core bin/scenario.sh agent
 ```
+
+## Dedicated community Matrix mode
+
+Set `KODERA_APPS=matrix` for a dedicated Matrix/LiveKit community stack. This mode
+requires `KODERA_SYNAPSE_URL`, `KODERA_SYNAPSE_TOKEN` and
+`KODERA_MATRIX_SERVER_NAME`, and performs no Docker socket inspection or container
+execution. Do not use this dedicated mode on a host whose Docs/Meet accounts also
+need lifecycle reconciliation; list those applications explicitly there.
+
+Run `python -m tenant_agent run` in the isolated agent process. Supply its Core
+credential, Synapse administrator token and LiveKit credentials only to that
+process. The Core API receives none of those credentials. Persist
+`KODERA_AGENT_STATE_DIR` across restarts and use `python -m tenant_agent reapply`
+after restoring its homeserver. Community bootstrap queues real channel and member
+sets; room policy carries `read_only`, `audience`, `members` and `exempt` in
+addition to its audio controls, all mapped to actual Matrix IDs by the agent.

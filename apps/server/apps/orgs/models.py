@@ -55,6 +55,7 @@ class Organisation(RetainedModel):
         SUSPENDED = "suspended"
         CLOSED = "closed"
 
+    is_default_community = models.BooleanField(default=False)
     slug = models.TextField()
     realm = models.TextField()
     issuer = models.TextField()
@@ -90,7 +91,12 @@ class Organisation(RetainedModel):
             ),
             models.CheckConstraint(
                 name="organisation_slug_not_reserved",
-                condition=~models.Q(slug__in=RESERVED_ORGANISATION_SLUGS),
+                condition=~models.Q(slug__in=RESERVED_ORGANISATION_SLUGS)
+                | models.Q(slug="community", is_default_community=True),
+            ),
+            models.CheckConstraint(
+                name="organisation_community_slug",
+                condition=models.Q(is_default_community=False) | models.Q(slug="community"),
             ),
             models.CheckConstraint(
                 name="organisation_slug_not_synthetic",

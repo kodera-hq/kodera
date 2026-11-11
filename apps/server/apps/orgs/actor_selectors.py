@@ -37,13 +37,32 @@ class TenantCaller:
     role: str
 
 
-def read_tenant_caller(*, verified: VerifiedAccessToken, organisation_id: UUID) -> TenantCaller:
+def read_tenant_caller(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, allow_community: bool = False
+) -> TenantCaller:
     """The caller's current membership in `organisation_id`, of an active or suspended
     organisation. The caller owns the transaction; nothing here is a permission to cache."""
     if not connection.in_atomic_block:
         raise RuntimeError("the tenant caller is read in the caller's transaction")
     if not is_storable_subject(verified.subject):
         raise TenantCallerUnknownError()
+    from .community import community_member, is_community
+
+    if allow_community and is_community(organisation_id):
+        shared = community_member(verified=verified)
+        if shared is None:
+            raise TenantCallerNotFoundError()
+        principal, membership = shared
+        shared_organisation = membership.organisation
+        return TenantCaller(
+            organisation_id=shared_organisation.id,
+            organisation_state=shared_organisation.state,
+            issuer=shared_organisation.issuer,
+            authority_revision=shared_organisation.authority_revision,
+            identity_id=principal.id,
+            membership_id=membership.id,
+            role=membership.role,
+        )
     resolved = current_identity(issuer=verified.issuer, subject=verified.subject)
     if resolved is None:
         raise TenantCallerUnknownError()

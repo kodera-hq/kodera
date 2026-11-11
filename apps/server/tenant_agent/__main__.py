@@ -35,7 +35,9 @@ def refuse_unlisted_apps(runner: DockerExec, config: Config) -> None:
     revocation while each member set reports success. Its container is enough to refuse."""
     services = {"docs": config.docs_service, "meet": config.meet_service}
     try:
-        unlisted = sorted(a for a in APPS - config.apps if runner.exists(services[a]))
+        unlisted = sorted(
+            a for a in (APPS - {"matrix"}) - config.apps if runner.exists(services[a])
+        )
     except ExecError as exc:
         raise ConfigError(f"cannot check which apps the tenant runs: {exc}") from exc
     if unlisted:
@@ -44,7 +46,8 @@ def refuse_unlisted_apps(runner: DockerExec, config: Config) -> None:
 
 def build(config: Config) -> tuple[Agent, RosterGuard, CoreApi]:
     runner = DockerExec(config.docker_socket, config.compose_project)
-    refuse_unlisted_apps(runner, config)
+    if config.apps != frozenset({"matrix"}):
+        refuse_unlisted_apps(runner, config)
     state = State(config.state_dir)
     meet = Meet(runner, config.meet_service) if "meet" in config.apps else None
     docs = Docs(runner, config.docs_service) if "docs" in config.apps else None
