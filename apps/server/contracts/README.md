@@ -513,6 +513,25 @@ secrets and CA key, and green CI in its own repository (ADR-0001).
   (migrations `orgs.0018` and `orgs.0019`). A request that names one of them was accepted and is
   now refused. Both lists are now pinned to one list of the labels of `kodera.io` in Core's tests,
   so they cannot drift apart again.
+- `core-api.openapi.yaml` 0.41.0 → 0.42.0, breaking minor, three decisions of the product owner.
+  **Directory privacy:** `Membership.email` may be `null`, and the schema names five private
+  member facts (`email`, `identity_id`, `account_kind`, `mfa_enrolled`, `last_seen_at`) that
+  `listMemberships` and `getMembership` disclose on a row only to the person it describes and to
+  a caller who holds `org_owner` or `org_admin`. Every other caller receives them omitted or
+  `null`, never masked, so a client that read a colleague's `email` as always present must read
+  it as optional and nullable. `countMemberships` says its unanswered `account_kind` filter will
+  be refused `forbidden` to those other callers. **Proximity:**
+  `InstantClaimTenantRequest.templateId` is the new `WorkspaceTemplateId`, which gains `proximity`
+  and keeps `crisis-cell` as its deprecated, permanent alias; `#proximité` is a display label and
+  never an identifier. `ProximityCheckInHandle` and `ProximityCheckInPseudonym` are reserved for
+  the check-in model and no operation carries them. **Themes:** `ThemeId` is exactly `light`,
+  `dark`, `black`, `ciel` and `ciel-nuit`; `ThemeIdAlias` keeps `givre`, `ardoise` and
+  `real-black` as deprecated aliases of the first three, and
+  `InstantClaimTenantRequest.themeId` accepts both lists. No path, parameter or status changes.
+  This entry is the contract alone: Core's masking, and its acceptance of `proximity` and of the
+  five `ThemeId` values, ship in the server change stacked on it. The self-test of the change gate
+  now refuses the removal of either alias and a nullable `email` without its bump or its label,
+  and stops when the committed contract no longer carries them.
 - Adds `check-contract-parity.sh` and its self-test: every copy of a contract under
   `apps/server/contracts/` and `apps/web/contracts/` is compared with `packages/api-contract/`,
   each drifted or missing file is named, and one changed byte in any copy is refused. The
