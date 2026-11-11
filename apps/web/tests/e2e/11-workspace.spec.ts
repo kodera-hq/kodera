@@ -148,6 +148,7 @@ test.describe('on a phone', () => {
 
     await expect(page).toHaveURL(new RegExp(`/${ORG}/home$`))
     await expect(tabs).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
     await expectAxeClean(page)
   })
 })

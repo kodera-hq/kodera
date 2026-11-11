@@ -1,5 +1,5 @@
 import { withdrawn } from '../workspace/ChannelSearch'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MentionInput, type MentionInputProps } from '../espace/MentionInput'
 import { communitySupportPath } from '../command-palette/support'
@@ -9,18 +9,36 @@ import { formatSelection, stagedFiles, type Format } from './formatting'
 const TOOL =
   'min-h-10 rounded-sm border border-c-border px-2 text-sm text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden disabled:text-c-on-disabled'
 function FilePreview({ file }: { file: File }) {
-  const image = useRef<HTMLImageElement>(null)
+  const canvas = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
-    // No SVG/HTML embeds: only raster images get an in-memory preview URL.
-    if (!/^image\/(png|jpeg|gif|webp)$/u.test(file.type)) return
-    const objectUrl = URL.createObjectURL(file)
-    if (image.current) image.current.src = objectUrl
-    return () => URL.revokeObjectURL(objectUrl)
+    // Decode into pixels, never an HTML or URL sink. Unsupported/invalid images retain the filename.
+    if (!/^image\/(png|jpeg|gif|webp)$/u.test(file.type) || typeof createImageBitmap !== 'function')
+      return
+    let retired = false
+    void createImageBitmap(file, { resizeWidth: 256, resizeHeight: 256, resizeQuality: 'low' })
+      .then((bitmap) => {
+        try {
+          const target = canvas.current
+          if (retired || !target) return
+          const scale = Math.min(1, 256 / bitmap.width, 256 / bitmap.height)
+          target.width = Math.max(1, Math.round(bitmap.width * scale))
+          target.height = Math.max(1, Math.round(bitmap.height * scale))
+          target.getContext('2d')?.drawImage(bitmap, 0, 0, target.width, target.height)
+        } finally {
+          bitmap.close()
+        }
+      })
+      .catch(() => {
+        /* The filename and removal action remain available when decoding fails. */
+      })
+    return () => {
+      retired = true
+    }
   }, [file])
   return (
     <>
       {/^image\/(png|jpeg|gif|webp)$/u.test(file.type) ? (
-        <img ref={image} alt="" className="h-12 w-12 rounded-sm object-contain" />
+        <canvas ref={canvas} aria-hidden="true" className="h-12 w-12 rounded-sm object-contain" />
       ) : null}
       <span className="min-w-0 break-all">
         {file.name} ({Math.ceil(file.size / 1024)} KB)
@@ -72,20 +90,32 @@ export function RichComposerInput({
       ? []
       : commands.filter((command) => command.name.startsWith(query))
   const highlighted = Math.min(active, Math.max(0, choices.length - 1))
-  function focus(start: number, end = start) {
-    requestAnimationFrame(() => {
-      const field = document.getElementById(props.id)
-      if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
-        field.focus()
-        field.setSelectionRange(start, end)
-      }
-    })
+  const pendingSelection = useRef<{
+    value: string
+    scope: string
+    start: number
+    end: number
+  } | null>(null)
+  useLayoutEffect(() => {
+    const pending = pendingSelection.current
+    if (!pending) return
+    pendingSelection.current = null
+    if (pending.scope !== scope || pending.value !== props.value) return
+    const field = document.getElementById(props.id)
+    if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
+      field.focus()
+      field.setSelectionRange(pending.start, pending.end)
+    }
+  }, [props.id, props.value, scope])
+  function selectAfterCommit(value: string, start: number, end = start) {
+    pendingSelection.current = { value, scope, start, end }
   }
+
   function choose(command: (typeof commands)[number]) {
     if (props.readOnly) return
     setDismissed(null)
+    selectAfterCommit(command.text, command.caret ?? command.text.length)
     props.onValueChange(command.text)
-    focus(command.caret ?? command.text.length)
     if (command.name === '/invite') requestAnimationFrame(() => onInvite?.())
     if (command.name === '/support')
       void communitySupportPath()
@@ -106,8 +136,8 @@ export function RichComposerInput({
       field.selectionEnd ?? props.value.length,
       kind
     )
+    selectAfterCommit(next.text, next.start, next.end)
     props.onValueChange(next.text)
-    focus(next.start, next.end)
   }
   function stage(incoming: File[]) {
     if (props.readOnly) return

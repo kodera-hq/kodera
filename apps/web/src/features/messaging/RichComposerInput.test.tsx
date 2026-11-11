@@ -142,6 +142,111 @@ describe('live rich composer', () => {
     expect(caretInsideCode('```js\n:smile:', 14)).toBe(true)
     expect(caretInsideCode('`code` plain', 12)).toBe(false)
   })
+  it('decodes local raster previews into pixels and closes the bitmap', async () => {
+    const draw = vi.fn()
+    const close = vi.fn()
+    const context = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: draw } as unknown as CanvasRenderingContext2D)
+    const decode = vi.fn().mockResolvedValue({ width: 2, height: 2, close })
+    vi.stubGlobal('createImageBitmap', decode)
+    try {
+      render(<Composer />)
+      fireEvent.drop(screen.getByRole('textbox'), {
+        dataTransfer: { files: [new File(['pixels'], 'picture.png', { type: 'image/png' })] },
+      })
+      await waitFor(() => expect(draw).toHaveBeenCalledOnce())
+      expect(close).toHaveBeenCalledOnce()
+      expect(decode).toHaveBeenCalledWith(expect.any(File), {
+        resizeWidth: 256,
+        resizeHeight: 256,
+        resizeQuality: 'low',
+      })
+      expect(document.querySelector('img')).toBeNull()
+    } finally {
+      context.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+  it('closes late bitmaps without drawing after removal, and tolerates decode failure', async () => {
+    const user = userEvent.setup()
+    const draw = vi.fn()
+    const close = vi.fn()
+    const context = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: draw } as unknown as CanvasRenderingContext2D)
+    let resolve!: (bitmap: { width: number; height: number; close: () => void }) => void
+    const decode = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          })
+      )
+      .mockRejectedValueOnce(new Error('Invalid raster'))
+    vi.stubGlobal('createImageBitmap', decode)
+    try {
+      render(<Composer />)
+      const field = screen.getByRole('textbox')
+      fireEvent.drop(field, {
+        dataTransfer: { files: [new File(['pixels'], 'late.png', { type: 'image/png' })] },
+      })
+      await user.click(screen.getByRole('button', { name: 'Retirer late.png' }))
+      resolve({ width: 2, height: 2, close })
+      await waitFor(() => expect(close).toHaveBeenCalledOnce())
+      expect(draw).not.toHaveBeenCalled()
+      fireEvent.drop(field, {
+        dataTransfer: { files: [new File(['invalid'], 'broken.png', { type: 'image/png' })] },
+      })
+      await waitFor(() => expect(decode).toHaveBeenCalledTimes(2))
+      expect(screen.getByRole('button', { name: 'Retirer broken.png' })).toBeEnabled()
+    } finally {
+      context.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+  it.each(['scope', 'unmount'] as const)(
+    'discards decoded pixels after %s retirement',
+    async (retirement) => {
+      const draw = vi.fn()
+      const close = vi.fn()
+      const context = vi
+        .spyOn(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue({ drawImage: draw } as unknown as CanvasRenderingContext2D)
+      let resolve!: (bitmap: { width: number; height: number; close: () => void }) => void
+      vi.stubGlobal(
+        'createImageBitmap',
+        () =>
+          new Promise((done) => {
+            resolve = done
+          })
+      )
+      const props = {
+        id: 'preview-composer',
+        value: '',
+        onValueChange: vi.fn(),
+        members: [],
+        listLabel: 'Members',
+        emojiListLabel: 'Emoji',
+        onStagingChange: vi.fn(),
+      }
+      try {
+        const view = render(<RichComposerInput {...props} scope="room-a" />)
+        fireEvent.drop(screen.getByRole('textbox'), {
+          dataTransfer: { files: [new File(['pixels'], 'late.png', { type: 'image/png' })] },
+        })
+        if (retirement === 'scope') view.rerender(<RichComposerInput {...props} scope="room-b" />)
+        else view.unmount()
+        resolve({ width: 2, height: 2, close })
+        await waitFor(() => expect(close).toHaveBeenCalledOnce())
+        expect(draw).not.toHaveBeenCalled()
+      } finally {
+        context.mockRestore()
+        vi.unstubAllGlobals()
+      }
+    }
+  )
   it('wraps a fenced selection and bounds local staging', () => {
     expect(formatSelection('abc', 0, 3, 'fence')).toEqual({
       text: '```\nabc\n```',

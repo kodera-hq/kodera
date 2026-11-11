@@ -32,9 +32,11 @@ for (const theme of ['light', 'dark', 'black']) {
     await field.press(`${modifier}+b`)
     await expect(field).toHaveValue('**hello**')
     await field.fill('/code')
+    await expect(page.getByRole('option', { name: /^\/code/ })).toBeVisible()
     await field.press('Enter')
     await expect(field).toHaveValue('```\n\n```')
     await field.fill('/poll')
+    await expect(page.getByRole('option', { name: /^\/poll/ })).toBeVisible()
     await field.press('Enter')
     await expect(field).toHaveValue(/Question.*\n- Choix 1\n- Choix 2/)
     await page.locator('input[type="file"]').setInputFiles({
@@ -46,6 +48,24 @@ for (const theme of ['light', 'dark', 'black']) {
     await expect(page.getByRole('button', { name: 'Envoyer', exact: true })).toBeDisabled()
     await page.getByRole('button', { name: 'Retirer notes.txt' }).click()
     await expect(page.getByRole('button', { name: 'Envoyer', exact: true })).toBeEnabled()
+    const png = await page.evaluate(() => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 2
+      canvas.height = 2
+      canvas.getContext('2d')!.fillRect(0, 0, 2, 2)
+      return canvas.toDataURL('image/png').split(',')[1]!
+    })
+    await page.locator('input[type="file"]').setInputFiles({
+      name: 'pixels.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(png, 'base64'),
+    })
+    await expect
+      .poll(() =>
+        page.locator('form canvas').evaluate((element) => (element as HTMLCanvasElement).width)
+      )
+      .toBe(256)
+    await page.getByRole('button', { name: 'Retirer pixels.png' }).click()
     expect(
       (await new AxeBuilder({ page }).include('form:has([role="toolbar"])').analyze()).violations
     ).toEqual([])
