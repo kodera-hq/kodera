@@ -15290,6 +15290,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15387,6 +15388,7 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15534,6 +15536,7 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15621,6 +15624,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15679,6 +15683,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15739,6 +15744,7 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15796,6 +15802,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15888,6 +15895,7 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15900,6 +15908,7 @@ export interface operations {
             403: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15990,6 +15999,7 @@ export interface operations {
             204: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -16176,6 +16186,7 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16381,6 +16392,7 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {

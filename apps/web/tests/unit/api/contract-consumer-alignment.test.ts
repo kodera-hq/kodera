@@ -26,11 +26,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'c443b53cf19824aab9b4707acfa5e03467d776ed',
-  commit: 'c443b53cf19824aab9b4707acfa5e03467d776ed',
+  ref: 'efa48aaae6e7d2ba401a87f1b65bfe29cec40567',
+  commit: 'efa48aaae6e7d2ba401a87f1b65bfe29cec40567',
   path: 'packages/api-contract/core-api.openapi.yaml',
   version: '0.43.0',
-  sha256: 'bc236f3ba6eb094ba8fc4914d3455b0b1fd776a1978aeece132e9f3f9fbd967b',
+  sha256: '5179c839ac8e84f6c8f2b6237291c7adc8e6f9d5e13ee80bf56551e13ccfc679',
 }
 
 function requireThat(condition: unknown, reason: string): asserts condition {
@@ -290,7 +290,7 @@ describe('the immutable contract consumer', () => {
         '29e7eea66dc49f429c233203d8e6e72bb8e4fedf4daa4b6ec73413c7c7d9d5ea',
       'src/mocks/generated/handlers.ts':
         'aae38bfcdaea9672daad80ffa44dcc26dec263b7e6b5b5979c736f6a7694c3b3',
-      'src/api/schema.d.ts': '3c434b5dc85c9670bfe782763529a94bd66dfc0490a7dd6d533e900fe31752ed',
+      'src/api/schema.d.ts': '720956c0f80c1efbd74ee75c9ebb67c28e83dc8d4b8692dab5a429ac8dc9af83',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

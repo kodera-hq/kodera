@@ -111,6 +111,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `MemberImport` | full own | full own | — | — | read, delete all | — | — | — |
 | `FederationProvider` | full own | full own | — | read own | full all | read all | — | — |
 | `FederationTest` | create, read own | create, read own | — | read own | full all | read all | — | — |
+| `Workspace`, `Category`, `Channel` | read own, create own, update own, delete own, act own (initialise, archive) | read own, create own, update own, delete own, act own (initialise, archive) | read own | read own | — | — | — | — |
 | `WorkspaceModeration` | read, act own | read, act own | read, act own (moderator grant) | read, act own (moderator grant) | — | — | — | — |
 | `WorkspaceReport` | full own | full own | create, read, update own (queue requires moderator grant) | create, read, update own (queue requires moderator grant) | — | — | — | — |
 | `WorkspaceInviteLink` | full own | full own | read, act own (preview and redeem only) | read, act own (preview and redeem only) | — | — | — | — |
@@ -119,7 +120,6 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `WorkspaceDocument` | full own | full own | full own | full own | — | — | — | — |
 | `WorkspaceSearch` | read own | read own | read own | read own | — | — | — | — |
 | `PushSubscription` | read, update, delete self | read, update, delete self | read, update, delete self | read, update, delete self | — | — | — | — |
-| `Workspace`, `Category`, `Channel` | read own, create own, update own, delete own, act own (initialise, archive) | read own, create own, update own, delete own, act own (initialise, archive) | read own | read own | — | — | — | — |
 
 Rules that override the table:
 
