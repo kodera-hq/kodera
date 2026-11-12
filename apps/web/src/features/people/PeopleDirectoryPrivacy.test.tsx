@@ -277,7 +277,7 @@ describe('the directory, read by an administrator', () => {
     await userEvent.click(
       within(invited).getByRole('button', { name: 'Actions pour anne.moreau@acme.fr' })
     )
-    expect(screen.getByRole('menuitem', { name: "Renvoyer l'invitation" })).toBeVisible()
+    expect(await screen.findByRole('menuitem', { name: "Renvoyer l'invitation" })).toBeVisible()
   })
 
   it('draws an account with no address as a dash that is not read out, never as a word', async () => {
@@ -296,8 +296,10 @@ describe('the directory, read by an administrator', () => {
     const table = await listedTable()
     const search = screen.getByRole('searchbox', { name: 'Rechercher un nom ou un e-mail' })
     await userEvent.type(search, 'marc.petit@')
-    await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(1))
-    expect(within(table).getByRole('row', { name: /Marc Petit/ })).toBeVisible()
+    await waitFor(() => {
+      expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+      expect(within(table).getByRole('row', { name: /Marc Petit/ })).toBeVisible()
+    })
   })
 
   it('opens a person with their address and their last sign-in, or its absence', async () => {
@@ -359,20 +361,27 @@ describe('the colleagues’ list, read by a member', () => {
     const search = screen.getByRole('searchbox', { name: 'Rechercher' })
     // An address the member happens to know finds nobody: it is not searched, nor told.
     await userEvent.type(search, 'marc.petit@acme.fr')
-    expect(await screen.findByText(/Aucune personne ne correspond à/)).toBeVisible()
+    expect(
+      await screen.findByText('Aucune personne ne correspond à « marc.petit@acme.fr ».')
+    ).toBeVisible()
     await userEvent.clear(search)
     await userEvent.type(search, 'nadia')
-    expect(await within(table).findByRole('row', { name: /Nadia Haddad/ })).toBeVisible()
-    expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+    // Waited for as one state: the field is debounced, so the whole list may show in between.
+    await waitFor(() => {
+      expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+      expect(within(table).getByRole('row', { name: /Nadia Haddad/ })).toBeVisible()
+    })
     // The search reads the words a person is listed under, not their state or their role's badge;
     // a colleague with no name is listed under their role, and found under it.
     await userEvent.clear(search)
     await userEvent.type(search, 'en attente')
-    expect(await screen.findByText(/Aucune personne ne correspond à/)).toBeVisible()
+    expect(await screen.findByText('Aucune personne ne correspond à « en attente ».')).toBeVisible()
     await userEvent.clear(search)
     await userEvent.type(search, 'membre')
-    await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(1))
-    expect(within(table).getByRole('rowheader')).toHaveTextContent(/^Membre$/)
+    await waitFor(() => {
+      expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+      expect(within(table).getByRole('rowheader')).toHaveTextContent(/^Membre$/)
+    })
     assertColleaguesList(table)
   })
 
