@@ -25,6 +25,7 @@ from config.environment import (
     console_client_id,
     intake_admitted,
     legal_text_origin,
+    mutation_rate_per_minute,
     tenant_app_urls,
 )
 from core.sealing import key_from_environment
@@ -55,8 +56,9 @@ KODERA_MEMBERSHIP_CURSOR_KEY = os.environ.get("KODERA_MEMBERSHIP_CURSOR_KEY")
 
 # Route-local validation: an absent/malformed discovery key must not stop existing operations.
 KODERA_DISCOVERY_HMAC_KEY = os.environ.get("KODERA_DISCOVERY_HMAC_KEY")
-# The browser origins (the Console's) discovery admits, comma-separated. Unset admits no browser
-# origin; a malformed value fails discovery alone, route-locally, never the other operations.
+# The browser origins (the Console's), comma-separated: the ones discovery admits and the only
+# ones CORS names (core/api/edge.py). Unset admits no browser origin; a malformed value names
+# none to CORS and fails discovery alone, route-locally, never the other operations.
 KODERA_CONSOLE_ORIGINS = os.environ.get("KODERA_CONSOLE_ORIGINS")
 # Where a support ticket is mailed (docs/specs/SUPPORT_TICKETS.md §5). Unset or malformed,
 # createSupportTicket answers 503 and stores nothing; the other operations are unaffected.
@@ -87,6 +89,8 @@ KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 
 # Where an accepted legal text is read, permanently (apps/legal): unset, no URL is given.
 KODERA_LEGAL_TEXT_ORIGIN = legal_text_origin(os.environ)
+# One principal's writes per rolling minute (docs/specs/ABUSE_AND_ORIGIN_CONTROLS.md §2); unset, 60.
+KODERA_MUTATION_RATE_PER_MINUTE = mutation_rate_per_minute(os.environ)
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)

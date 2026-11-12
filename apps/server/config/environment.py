@@ -455,3 +455,23 @@ def trusted_edge(
             raise refused
         networks.append(network)
     return tuple(networks)
+
+
+MUTATION_RATE_DEFAULT = 60
+MUTATION_RATE_MAX = 6000
+
+
+def mutation_rate_per_minute(environment: Mapping[str, str]) -> int:
+    """How many writes one principal may send per rolling minute, from
+    KODERA_MUTATION_RATE_PER_MINUTE (docs/specs/ABUSE_AND_ORIGIN_CONTROLS.md §2): a decimal
+    integer from 1 to 6000. Unset or empty, the documented 60 (docs/api/CONVENTIONS.md §11).
+    Nothing turns the bucket off: 0, a negative number and anything that is not a number stop the
+    process. No value is reflected into the refusal."""
+    value = environment.get("KODERA_MUTATION_RATE_PER_MINUTE", "").strip()
+    if not value:
+        return MUTATION_RATE_DEFAULT
+    if re.fullmatch(r"[1-9][0-9]{0,3}", value) is None or int(value) > MUTATION_RATE_MAX:
+        raise ImproperlyConfigured(
+            "KODERA_MUTATION_RATE_PER_MINUTE is an integer from 1 to 6000; it cannot be disabled"
+        )
+    return int(value)
