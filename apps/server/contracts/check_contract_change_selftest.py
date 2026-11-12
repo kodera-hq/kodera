@@ -679,6 +679,124 @@ def _request_field_removed(f: Fixture) -> Run:
     )
 
 
+# The canonical identifiers of 0.42.0 and the aliases it keeps for the values they replace. The
+# cases below edit the committed contract, so a contract that drops a permanent alias, or lets the
+# theme vocabulary drift from these lists, stops the run with exit 2 whatever its label says.
+PROXIMITY_TEMPLATE, PROXIMITY_ALIAS = "proximity", "crisis-cell"
+THEME_IDS = ["light", "dark", "black", "ciel", "ciel-nuit"]
+THEME_ALIASES = ["givre", "ardoise", "real-black"]
+ENUM_REMOVED = "ERR  request-property-enum-value-removed"
+
+
+def enum_members(document: dict[str, Any], name: str) -> list[Any]:
+    found = document.get("components", {}).get("schemas", {}).get(name)
+    members = found.get("enum") if isinstance(found, dict) else None
+    if not isinstance(members, list):
+        raise FixtureError(f"schema {name} with an enum is gone from the contract")
+    return members
+
+
+def instant_claim_member(document: dict[str, Any], name: str) -> dict[str, Any]:
+    member = schema(document, "InstantClaimTenantRequest")["properties"].get(name)
+    if not isinstance(member, dict):
+        raise FixtureError(f"InstantClaimTenantRequest.{name} is gone from the contract")
+    return member
+
+
+def remove_proximity_alias(document: dict[str, Any]) -> None:
+    reference = instant_claim_member(document, "templateId").get("$ref")
+    if reference != "#/components/schemas/WorkspaceTemplateId":
+        raise FixtureError(
+            "InstantClaimTenantRequest.templateId is no longer a WorkspaceTemplateId"
+        )
+    templates = enum_members(document, "WorkspaceTemplateId")
+    if PROXIMITY_TEMPLATE not in templates or PROXIMITY_ALIAS not in templates:
+        raise FixtureError(
+            f"WorkspaceTemplateId must list `{PROXIMITY_TEMPLATE}` and its permanent alias "
+            f"`{PROXIMITY_ALIAS}`"
+        )
+    templates.remove(PROXIMITY_ALIAS)
+
+
+def remove_theme_alias(document: dict[str, Any]) -> None:
+    accepted = instant_claim_member(document, "themeId").get("enum")
+    canonical = enum_members(document, "ThemeId")
+    aliases = enum_members(document, "ThemeIdAlias")
+    if canonical != THEME_IDS or aliases != THEME_ALIASES:
+        raise FixtureError(
+            f"ThemeId must be exactly {THEME_IDS} and ThemeIdAlias exactly {THEME_ALIASES}"
+        )
+    if accepted != canonical + aliases:
+        raise FixtureError(
+            "InstantClaimTenantRequest.themeId must accept every ThemeId, then every ThemeIdAlias"
+        )
+    accepted.remove(THEME_ALIASES[0])
+    aliases.remove(THEME_ALIASES[0])
+
+
+def membership_email_as_before_privacy(document: dict[str, Any]) -> None:
+    """Membership.email as 0.41.0 declared it: a string that is never null."""
+    email = schema(document, "Membership")["properties"].get("email")
+    if not isinstance(email, dict) or email.get("type") != ["string", "null"]:
+        raise FixtureError("Membership.email is no longer a nullable response field")
+    if "email" in schema(document, "Membership").get("required", []):
+        raise FixtureError("Membership.email is no longer an optional response field")
+    email["type"] = "string"
+
+
+@case("proximity-alias-removed")
+def _proximity_alias_removed(f: Fixture) -> Run:
+    head = f.change("proximity-alias-removed", CORE, remove_proximity_alias, bump("minor"))
+    return Run(head, PR, 1, ("classified breaking", ENUM_REMOVED, LABEL_REFUSAL))
+
+
+@case("theme-alias-removed")
+def _theme_alias_removed(f: Fixture) -> Run:
+    head = f.change("theme-alias-removed", CORE, remove_theme_alias, bump("minor"))
+    return Run(head, PR, 1, ("classified breaking", ENUM_REMOVED, LABEL_REFUSAL))
+
+
+def membership_privacy_change(f: Fixture, name: str, *edits: Edit) -> tuple[str, str]:
+    """A target whose Membership.email is never null, and a head that makes it nullable."""
+    target = f.change(f"{name}-target", CORE, membership_email_as_before_privacy)
+    return target, f.change(name, CORE, *edits, at=target)
+
+
+@case("membership-email-nullable-without-bump")
+def _membership_email_nullable_without_bump(f: Fixture) -> Run:
+    target, head = membership_privacy_change(f, "email-nullable-no-bump")
+    return Run(
+        head,
+        ("--target", target),
+        1,
+        ("classified breaking", "ERR  response-property-became-nullable", NO_BUMP_REFUSAL),
+        labels=(LABEL,),
+    )
+
+
+@case("membership-email-nullable-without-label")
+def _membership_email_nullable_without_label(f: Fixture) -> Run:
+    target, head = membership_privacy_change(f, "email-nullable-no-label", bump("breaking"))
+    return Run(
+        head,
+        ("--target", target),
+        1,
+        ("classified breaking", "ERR  response-property-became-nullable", LABEL_REFUSAL),
+    )
+
+
+@case("membership-email-nullable-with-bump-and-label")
+def _membership_email_nullable_with_bump_and_label(f: Fixture) -> Run:
+    target, head = membership_privacy_change(f, "email-nullable-accepted", bump("breaking"))
+    return Run(
+        head,
+        ("--target", target),
+        0,
+        ("classified breaking", "ERR  response-property-became-nullable", "PASS:"),
+        labels=(LABEL,),
+    )
+
+
 @case("servers-changed")
 def _servers_changed(f: Fixture) -> Run:
     head = f.change("servers", CORE, move_servers_to_v2, bump("minor"))

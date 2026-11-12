@@ -58,12 +58,15 @@
       "Member"
     ]
   },
-  "crisis-cell": {
+  "proximity": {
+    "aliases": [
+      "crisis-cell"
+    ],
     "channels": [
       "general",
       "incident-log",
       "field-bridge",
-      "urgence"
+      "proximity"
     ],
     "connectors": [
       "uptime-incident-bridge"
@@ -86,8 +89,7 @@
       "dev",
       "strategy",
       "ops-oncall",
-      "partner-dinum",
-      "partner-octo"
+      "kodera-git-tracker"
     ],
     "connectors": [],
     "roles": [
@@ -116,16 +118,14 @@
         "channels": [
           "dev",
           "strategy",
-          "ops-oncall"
+          "ops-oncall",
+          "kodera-git-tracker"
         ]
       },
       {
         "name": "Design Partners",
         "visibility": "restricted",
-        "channels": [
-          "partner-dinum",
-          "partner-octo"
-        ]
+        "channels": []
       }
     ],
     "readOnlyChannels": [

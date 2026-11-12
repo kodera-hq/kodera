@@ -626,7 +626,7 @@ export interface paths {
         };
         /**
          * List the people in an organisation
-         * @description Read current stored membership relationships, not provider account status. Returns non-deleted `invited`, `active` and `suspended` memberships whose person is not deleted; `removed` and soft-deleted relationships are excluded. The `state` filter applies only within this population, so `state=removed` returns an empty page. Disabled people remain represented by their current stored relationship without implying usable access. Unavailable optional `account_kind`, `mfa_enrolled` and `last_seen_at` facts are omitted; omission does not mean hosted sign-in, no enrolled factor or never signed in. This API read does not promise provider synchronization or a complete People screen.
+         * @description Read current stored membership relationships, not provider account status. Returns non-deleted `invited`, `active` and `suspended` memberships whose person is not deleted; `removed` and soft-deleted relationships are excluded. The `state` filter applies only within this population, so `state=removed` returns an empty page. Disabled people remain represented by their current stored relationship without implying usable access. Unavailable optional `account_kind`, `mfa_enrolled` and `last_seen_at` facts are omitted; omission does not mean hosted sign-in, no enrolled factor or never signed in. This API read does not promise provider synchronization or a complete People screen. Directory privacy applies row by row, exactly as the `Membership` schema states it. The five private member facts `email`, `identity_id`, `account_kind`, `mfa_enrolled` and `last_seen_at` are disclosed only on the caller's own row, or on every row when the caller holds `org_owner` or `org_admin` in this organisation; on every other row they are withheld (omitted or `null`). A page read by an `org_member` therefore carries that member's own row in full and every colleague's row without these five facts. No filter of this operation reads a withheld fact.
          */
         get: operations["listMemberships"];
         put?: never;
@@ -656,6 +656,12 @@ export interface paths {
          *
          *     The two flags are advice for rendering, not authorisation. The API enforces the same rules
          *     again and answers `last-owner-protected` whatever the console rendered.
+         *
+         *     Directory privacy applies exactly as on `listMemberships` and as the `Membership` schema
+         *     states it: `email`, `identity_id`, `account_kind`, `mfa_enrolled` and `last_seen_at` are
+         *     disclosed when the caller reads their own membership or holds `org_owner` or `org_admin` in
+         *     this organisation, and are withheld (omitted or `null`) from every other caller. The answer
+         *     is still `200`: a colleague's row is readable, its private member facts are not.
          */
         get: operations["getMembership"];
         put?: never;
@@ -2138,6 +2144,12 @@ export interface paths {
          *     `malformed-request` rather than a count that ignored it. The per-principal rate limit is
          *     not enforced yet, and no `429` is declared yet. Staff tokens are refused while the staff
          *     lane of the customer reads is not built.
+         *
+         *     The answer is a number and carries no person's fact, so directory privacy (the
+         *     `Membership` schema) withholds nothing from it. `account_kind` is a private member fact,
+         *     and a count filtered by it could disclose one person's: when Core starts answering that
+         *     filter, it answers it only for a caller who holds `org_owner` or `org_admin` in this
+         *     organisation, and refuses it `forbidden` for every other caller.
          */
         get: operations["countMemberships"];
         put?: never;
@@ -2872,10 +2884,12 @@ export interface components {
             slug: string;
             /** @enum {string} */
             hostingMode: "cloud" | "self-host";
-            /** @enum {string} */
-            templateId: "audiovisual-production" | "tech-studio" | "b2b-advisory" | "public-sector" | "crisis-cell";
-            /** @enum {string} */
-            themeId?: "givre" | "ardoise" | "real-black";
+            templateId: components["schemas"]["WorkspaceTemplateId"];
+            /**
+             * @description The workspace's starting theme; omitted, the template's default applies. Send a `ThemeId`. The three `ThemeIdAlias` values are the identifiers this member took before 0.42.0 and stay accepted, so that no existing request or stored value breaks. `enum` repeats the two lists, in their order, for tools that do not follow `anyOf`.
+             * @enum {string}
+             */
+            themeId?: "light" | "dark" | "black" | "ciel" | "ciel-nuit" | "givre" | "ardoise" | "real-black";
             /** @enum {string} */
             soundPackId?: "cristal-48k" | "studio-mat" | "silence" | "givre" | "atelier" | "souffle" | "cosmos" | "luciole" | "silencieux";
             /** @description Duplicates are collapsed preserving order; omitted uses template defaults. */
@@ -2916,6 +2930,85 @@ export interface components {
                 /** @enum {string} */
                 kind: "text" | "audio";
             }[];
+        };
+        /**
+         * WorkspaceTemplateId
+         * @description The machine identifier of an official workspace template. It is always ASCII and is never
+         *     the label a person reads.
+         *
+         *     `proximity` is the canonical identifier of the proximity template. The feature is
+         *     displayed as `#proximity` in English and `#proximité` in French; both are display labels
+         *     from the message catalogues, and neither is ever sent or stored as an identifier.
+         *
+         *     `crisis-cell` is a deprecated alias of `proximity`. It is the identifier this template
+         *     took before 0.42.0 and it is permanent: Core accepts it for as long as this contract
+         *     exists, resolves it to the same template as `proximity`, and never answers it differently.
+         *     A new client sends `proximity`; a value stored as `crisis-cell` is read as `proximity`.
+         * @example proximity
+         * @enum {string}
+         */
+        WorkspaceTemplateId: "audiovisual-production" | "tech-studio" | "b2b-advisory" | "public-sector" | "proximity" | "crisis-cell";
+        /**
+         * ThemeId
+         * @description The unified theme vocabulary, the same identifier on every client and in Core: `light`,
+         *     `dark`, `black` (true black), `ciel` (sky) and `ciel-nuit` (night sky). The identifier is
+         *     ASCII and is never a display label. A client writes these five values and no other.
+         * @example light
+         * @enum {string}
+         */
+        ThemeId: "light" | "dark" | "black" | "ciel" | "ciel-nuit";
+        /**
+         * ThemeIdAlias
+         * @deprecated
+         * @description The three theme identifiers in use before 0.42.0, kept as deprecated aliases so that an
+         *     existing request and a stored value stay readable. Each names exactly one `ThemeId`:
+         *
+         *     | Alias | `ThemeId` |
+         *     |---|---|
+         *     | `givre` | `light` |
+         *     | `ardoise` | `dark` |
+         *     | `real-black` | `black` |
+         *
+         *     Core accepts an alias wherever it accepts a `ThemeId` and treats it as the `ThemeId` it
+         *     names. A client never writes an alias, and reads one, from storage or from an older
+         *     peer, as the `ThemeId` it names. `ciel` and `ciel-nuit` have no alias.
+         * @example givre
+         * @enum {string}
+         */
+        ThemeIdAlias: "givre" | "ardoise" | "real-black";
+        /**
+         * ProximityCheckInHandle
+         * @description Reserved for the proximity check-in model: no operation of this contract carries it yet,
+         *     and declaring it adds no endpoint and changes no existing answer.
+         *
+         *     A short pseudonymous handle shown to the other people of a proximity check-in in place of
+         *     a name, so that a check-in never requires a real first or last name. It is either
+         *     dedicated (chosen by the person for check-ins) or generated by Core. It is not the
+         *     person's `display_name` and is never derived from a name, an email address or any other
+         *     fact that identifies the person.
+         *
+         *     3 to 24 characters: lower-case ASCII letters and digits in groups separated by single
+         *     hyphens, with no leading, trailing or doubled hyphen.
+         * @example heron-4821
+         */
+        ProximityCheckInHandle: string;
+        /**
+         * ProximityCheckInPseudonym
+         * @description Reserved for the proximity check-in model: no operation of this contract carries it yet.
+         *     How a person appears in a proximity check-in: a pseudonymous handle and where it came
+         *     from, and no name, email address or account identifier.
+         * @example {
+         *       "handle": "heron-4821",
+         *       "origin": "generated"
+         *     }
+         */
+        ProximityCheckInPseudonym: {
+            handle: components["schemas"]["ProximityCheckInHandle"];
+            /**
+             * @description `dedicated` when the person chose the handle for check-ins; `generated` when Core generated it because the person chose none.
+             * @enum {string}
+             */
+            origin: "dedicated" | "generated";
         };
         /**
          * Money
@@ -4399,6 +4492,32 @@ export interface components {
         /**
          * Membership
          * @description One person in one organisation, with the role that Keycloak groups mirror.
+         *
+         *     Directory privacy. Five members are the person's private member facts: `email`,
+         *     `identity_id`, `account_kind`, `mfa_enrolled` and `last_seen_at`. On `listMemberships` and
+         *     on `getMembership` alike, Core discloses them on a row only to a caller who, in this
+         *     organisation,
+         *
+         *     - is the person the row describes (the caller reads their own membership), or
+         *     - holds `org_owner` or `org_admin`.
+         *
+         *     From every other caller these reads admit, an `org_member` reading a colleague's row
+         *     included, Core withholds all five: `email`, `identity_id` and `last_seen_at` are omitted or
+         *     `null`, and `account_kind` and `mfa_enrolled`, which have no `null`, are omitted. A
+         *     withheld fact is never replaced by a placeholder, a masked value or a partial one, and a
+         *     client treats omitted and `null` alike. The rule is applied row by row, so one page can
+         *     carry the caller's own row in full beside colleagues' rows without these facts.
+         *
+         *     `id`, `organisation_id`, `person_id`, `display_name`, `role`, `state`, `source`,
+         *     `created_at` and `updated_at` are not private: `display_name` is the name the person chose
+         *     for colleagues to see. A withheld fact says nothing about the person: a client never reads
+         *     a missing `email` as no address, a missing `mfa_enrolled` as no enrolled factor or a
+         *     missing `last_seen_at` as never signed in, and never derives a row's label from one.
+         *
+         *     Directory privacy governs the two reads only. `acceptInvitation` and `consumeOwnerClaim`
+         *     answer the caller's own membership, and `changeMembershipRole` answers an administrator:
+         *     none of them withholds a fact. The answer of `removeMembership` carries no contact fields
+         *     for anyone.
          * @example {
          *       "id": "7c2b1a09-3e4d-4f5a-8b6c-9d0e1f2a3b4c",
          *       "organisation_id": "6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f",
@@ -4426,10 +4545,16 @@ export interface components {
              * @description Null while the invitation is not accepted.
              */
             person_id?: string | null;
-            /** Format: uuid */
+            /**
+             * Format: uuid
+             * @description Which identity signs the person in. A private member fact (directory privacy, above); omitted or `null` when withheld.
+             */
             identity_id?: string | null;
-            /** Format: email */
-            email?: string;
+            /**
+             * Format: email
+             * @description The person's contact address. A private member fact (directory privacy, above): on `listMemberships` and `getMembership` it is disclosed on the caller's own row and to a caller who holds `org_owner` or `org_admin`, and is omitted or `null` for every other caller, never masked or partial.
+             */
+            email?: string | null;
             display_name?: string | null;
             role: components["schemas"]["OrganisationRole"];
             state: components["schemas"]["MembershipState"];
@@ -4439,8 +4564,12 @@ export interface components {
              */
             source?: "invitation" | "enrolment_token" | "federation" | "order" | "staff" | "owner_claim";
             account_kind?: components["schemas"]["MembershipAccountKind"];
+            /** @description A private member fact (directory privacy, above); omitted when withheld or unknown. */
             mfa_enrolled?: boolean;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description A private member fact (directory privacy, above); omitted or `null` when withheld or unknown.
+             */
             last_seen_at?: string | null;
             /** Format: date-time */
             created_at: string;

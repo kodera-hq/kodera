@@ -77,7 +77,7 @@ test('tracks issues, pull_requests, workflow_runs, releases, and security_adviso
         repository: 'kodera-hq/kodera',
         action: 'merged',
         number: 218,
-        title: 'Pack connecteurs officiels B2B & réseaux sociaux',
+        title: 'Pack connecteurs de référence B2B & réseaux sociaux',
         actor: 'lours',
         htmlUrl: 'https://github.com/kodera-hq/kodera/pull/218',
         apiUrl: 'https://api.github.com/repos/kodera-hq/kodera/pulls/218',

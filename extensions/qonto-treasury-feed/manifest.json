@@ -26,5 +26,5 @@
       "description": "Consulter le flux de trésorerie Qonto, les seuils de dépense ou les justificatifs manquants"
     }
   ],
-  "webhookUrl": "https://extensions.example.kodera.io/hooks/qonto-treasury-feed"
+  "webhookUrl": "https://extensions.example.org/hooks/qonto-treasury-feed"
 }

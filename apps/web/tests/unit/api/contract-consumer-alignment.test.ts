@@ -26,11 +26,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'bbe4b2610b02f98a9435ef632fcbe9ed64d8b578',
-  commit: 'bbe4b2610b02f98a9435ef632fcbe9ed64d8b578',
+  ref: '7c02a234b254aed1b2c2a563fe9c13d5cff8f86a',
+  commit: '7c02a234b254aed1b2c2a563fe9c13d5cff8f86a',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.41.0',
-  sha256: 'd3c4f3c90f93f60c81f72a835504d89760df01b35307b93113e73483c6d5d7b9',
+  version: '0.42.0',
+  sha256: '96f7d858218a5389f437ef00e016f0e0daa79a7ab77f6e0fc3987c09feb8fca6',
 }
 
 function requireThat(condition: unknown, reason: string): asserts condition {
@@ -280,7 +280,7 @@ describe('the immutable contract consumer', () => {
     expect(ops).toHaveLength(116)
     expect(new Set(ops.map((op) => op.operationId)).size).toBe(116)
     expect(ops.filter((op) => op.isList)).toHaveLength(27)
-    expect(Object.keys(spec.components.schemas)).toHaveLength(169)
+    expect(Object.keys(spec.components.schemas)).toHaveLength(174)
     expect(problems(spec)).toHaveLength(44)
     expect(PROBLEM_TYPES).toHaveLength(44)
     const hashes = {
@@ -290,7 +290,7 @@ describe('the immutable contract consumer', () => {
         '9f927109e675b0effaf384affe06d6a52c35339dafbdb02a553ac0ba1491d9ee',
       'src/mocks/generated/handlers.ts':
         '4e25ac0c5a6c35d832df8fc863d42093538b38e40173a8c87888bb4f26980062',
-      'src/api/schema.d.ts': '8c65b3f2bdc96f2af46d273c3eba6a1f9918cc7068aa5d7b9d8ad38e158a0c42',
+      'src/api/schema.d.ts': 'c762eb5d45ee2c013f523245012347d9c910faa0eeb53c647eba85532083a6b6',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

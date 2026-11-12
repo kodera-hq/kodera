@@ -117,7 +117,7 @@ export const extensionManifest = validateDocsManifest(rawManifest);
 export const manifest = extensionManifest;
 
 /**
- * Validates a DINUM Docs document identifier.
+ * Validates a Docs document identifier.
  *
  * @param {unknown} rawDocId
  * @returns {string}
@@ -187,7 +187,7 @@ export function sanitizeDocText(rawValue, fallback, maxLength = 160) {
 }
 
 /**
- * Computes a deterministic idempotency key for a DINUM Docs lifecycle event:
+ * Computes a deterministic idempotency key for a Docs lifecycle event:
  * `docs:<docId>:<event>:<revision>`.
  *
  * @param {string} docId
@@ -251,7 +251,7 @@ export function handleDocPadCommand(input) {
 
   if (subcommand === 'status') {
     return {
-      text: `[DINUM Docs] État du pad **${title}** (\`${docId}\`) lié au salon <#${channelId}> — synchronisé (${documentUrl}).`,
+      text: `[Docs] État du pad **${title}** (\`${docId}\`) lié au salon <#${channelId}> — synchronisé (${documentUrl}).`,
       ephemeral: true,
       subcommand,
       docId,
@@ -262,7 +262,7 @@ export function handleDocPadCommand(input) {
 
   if (subcommand === 'link') {
     return {
-      text: `[DINUM Docs] Document **${title}** (\`${docId}\`) associé au salon <#${channelId}> par <@${actorId}> : ${documentUrl}`,
+      text: `[Docs] Document **${title}** (\`${docId}\`) associé au salon <#${channelId}> par <@${actorId}> : ${documentUrl}`,
       ephemeral: false,
       subcommand,
       docId,
@@ -272,7 +272,7 @@ export function handleDocPadCommand(input) {
   }
 
   return {
-    text: `[DINUM Docs] Pad collaboratif **${title}** (\`${docId}\`) ouvert par <@${actorId}> : ${documentUrl}`,
+    text: `[Docs] Pad collaboratif **${title}** (\`${docId}\`) ouvert par <@${actorId}> : ${documentUrl}`,
     ephemeral: false,
     subcommand: 'open',
     docId,
@@ -283,14 +283,14 @@ export function handleDocPadCommand(input) {
 
 export const docPadCommand = defineSlashCommand({
   name: '/doc-pad',
-  description: 'Partager ou ouvrir un document collaboratif DINUM Docs lié au salon',
+  description: 'Partager ou ouvrir un document collaboratif Docs lié au salon',
   scopes: ['messages:write', 'commands:register'],
   handler: ({ args, channelId, actorId }) =>
     handleDocPadCommand({ args, channelId, actorId }),
 });
 
 /**
- * Formats a French Espace announcement card for a DINUM Docs lifecycle event.
+ * Formats a French Espace announcement card for a Docs lifecycle event.
  *
  * @param {'document.created' | 'document.published' | 'document.comment_resolved'} eventName
  * @param {Record<string, unknown>} payload
@@ -318,7 +318,7 @@ function buildDocsLifecycleAnnouncement(eventName, payload, defaultChannelId) {
   }
 
   const summaryLine = commentSummary ? `\nRésumé : ${commentSummary}` : '';
-  const text = `${headerLabel} **${title}** (\`${docId}\`, rév. ${revision}) — ${actionPhrase}${summaryLine}\nLien DINUM Docs : ${documentUrl}`;
+  const text = `${headerLabel} **${title}** (\`${docId}\`, rév. ${revision}) — ${actionPhrase}${summaryLine}\nLien Docs : ${documentUrl}`;
 
   const block = {
     type: 'docs_collab_card',
@@ -345,7 +345,7 @@ function buildDocsLifecycleAnnouncement(eventName, payload, defaultChannelId) {
 }
 
 /**
- * Creates a replay-protected webhook handler for the DINUM Docs Collaborative Pad Announcer.
+ * Creates a replay-protected webhook handler for the Docs Collaborative Pad Announcer.
  *
  * @param {{
  *   secret: string,
