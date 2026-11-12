@@ -14,8 +14,9 @@
 // provisioned roster, absent members included: a sender cannot borrow the handle of a member who
 // has not checked in yet, and no label changes when that member appears.
 //
-// The derivation is keyed with the organisation's beacon salt, so the same device shows another
-// handle in another organisation: handles are not linkable across organisations.
+// Both derivations are keyed with the organisation's beacon salt: the same device shows another
+// handle, and another fingerprint, in another organisation. Nothing shown for a sender is
+// linkable across organisations, and there is no unkeyed fingerprint to show.
 //
 // This module agrees byte for byte with `packages/kodera-rs/src/proximity_handle.rs` and its
 // Swift and Kotlin ports through `packages/kodera-rs/vectors/proximity-handle-v1.txt`
@@ -45,7 +46,8 @@ export const MIN_PROXIMITY_FINGERPRINT_HEX_CHARS = 8
 const ASCII = new TextEncoder()
 /** MACed with the sender's public half under the organisation's beacon salt. Display only. */
 const GENERATED_HANDLE_LABEL = ASCII.encode('kodera-proximity-handle-v1:')
-/** Hashed with the sender's public half for the fingerprint that tells equal handles apart. */
+/** MACed with the sender's public half, under the same salt, for the fingerprint that tells equal
+ * handles apart inside one organisation. */
 const FINGERPRINT_LABEL = ASCII.encode('kodera-proximity-fingerprint-v1:')
 /** Lowercase, digits first, without `i`, `l`, `o` and `u`: five bits per character. */
 const SUFFIX_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz'
@@ -170,6 +172,19 @@ function labelled(label: Uint8Array, sender: Uint8Array): Uint8Array<ArrayBuffer
   return out
 }
 
+/** `HMAC-SHA256(binding, label || sender)`: every derivation here is bound to an organisation. */
+async function boundDigest(
+  binding: Uint8Array<ArrayBuffer>,
+  label: Uint8Array,
+  sender: Uint8Array
+): Promise<Uint8Array> {
+  const api = subtle()
+  const key = await api.importKey('raw', binding, { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+  ])
+  return new Uint8Array(await api.sign('HMAC', key, labelled(label, sender)))
+}
+
 /**
  * `<adjective>-<noun>-<9 characters>` from `HMAC-SHA256(binding, label || sender)`: the adjective
  * is entry `d[0] & 31`, the noun entry `d[1] & 31`, and the suffix spells the top 45 bits of
@@ -179,13 +194,7 @@ async function deriveGeneratedHandle(
   binding: Uint8Array<ArrayBuffer>,
   sender: Uint8Array
 ): Promise<string> {
-  const api = subtle()
-  const key = await api.importKey('raw', binding, { name: 'HMAC', hash: 'SHA-256' }, false, [
-    'sign',
-  ])
-  const digest = new Uint8Array(
-    await api.sign('HMAC', key, labelled(GENERATED_HANDLE_LABEL, sender))
-  )
+  const digest = await boundDigest(binding, GENERATED_HANDLE_LABEL, sender)
   let bits = 0n
   for (let index = 2; index < 8; index += 1) bits = (bits << 8n) | BigInt(digest[index] ?? 0)
   bits >>= 3n
@@ -253,12 +262,22 @@ export async function proximityHandleFromParts(
 }
 
 /**
- * The 64 lowercase hex characters a sender is told apart by when handles are equal:
- * `SHA-256("kodera-proximity-fingerprint-v1:" || sender)`. A prefix of it is shown.
+ * The 64 lowercase hex characters a sender is told apart by, inside one organisation, when
+ * handles are equal: `HMAC-SHA256(organisation beacon salt, "kodera-proximity-fingerprint-v1:" ||
+ * sender)`. A prefix of it is shown. It is keyed like the handle: the same device shows another
+ * fingerprint in another organisation, so a fingerprint seen in one says nothing in another.
  */
-export async function proximityKeyFingerprint(senderPublicKey: Uint8Array): Promise<string> {
-  const input = labelled(FINGERPRINT_LABEL, exactly32(senderPublicKey, 'senderPublicKey'))
-  return bytesToHex(new Uint8Array(await subtle().digest('SHA-256', input)))
+export async function proximityKeyFingerprint(
+  orgBeaconSalt: Uint8Array,
+  senderPublicKey: Uint8Array
+): Promise<string> {
+  return bytesToHex(
+    await boundDigest(
+      exactly32(orgBeaconSalt, 'orgBeaconSalt'),
+      FINGERPRINT_LABEL,
+      exactly32(senderPublicKey, 'senderPublicKey')
+    )
+  )
 }
 
 /** One provisioned sender of a roster: its public half and the handle it resolves to. */
@@ -290,9 +309,11 @@ export interface ProximityRosterLabel {
  * differ. A sender listed twice is one sender and does not collide with itself.
  *
  * `provisioned` must be the whole provisioned roster, never only the senders seen so far. To
- * label the senders that have checked in, use `labelObservedProximitySenders`.
+ * label the senders that have checked in, use `labelObservedProximitySenders`. `orgBeaconSalt` is
+ * the organisation the roster belongs to: its fingerprints are that organisation's.
  */
 export async function disambiguateProximityHandles(
+  orgBeaconSalt: Uint8Array,
   provisioned: readonly ProvisionedProximitySender[]
 ): Promise<ProximityRosterLabel[]> {
   // Handle text to the distinct senders showing it.
@@ -310,7 +331,7 @@ export async function disambiguateProximityHandles(
     if (group.size < 2) continue
     const full: string[] = []
     for (const [senderHex, sender] of group) {
-      const fingerprint = await proximityKeyFingerprint(sender)
+      const fingerprint = await proximityKeyFingerprint(orgBeaconSalt, sender)
       fingerprints.set(senderHex, fingerprint)
       full.push(fingerprint)
     }
@@ -341,11 +362,12 @@ export async function disambiguateProximityHandles(
  * roster does not hold.
  */
 export async function labelObservedProximitySenders(
+  orgBeaconSalt: Uint8Array,
   provisioned: readonly ProvisionedProximitySender[],
   observed: readonly Uint8Array[]
 ): Promise<ProximityRosterLabel[]> {
   const labels = new Map<string, ProximityRosterLabel>()
-  for (const label of await disambiguateProximityHandles(provisioned))
+  for (const label of await disambiguateProximityHandles(orgBeaconSalt, provisioned))
     labels.set(label.senderPublicKeyHex, label)
   return observed.map((sender) => {
     const label = labels.get(bytesToHex(sender))
@@ -382,7 +404,7 @@ export async function proximityRosterDisplays(
 ): Promise<ReadonlyMap<string, ProximityRosterLabel>> {
   const provisioned = await resolveProvisionedProximityRoster(orgBeaconSalt, members)
   const displays = new Map<string, ProximityRosterLabel>()
-  for (const label of await disambiguateProximityHandles(provisioned))
+  for (const label of await disambiguateProximityHandles(orgBeaconSalt, provisioned))
     displays.set(label.senderPublicKeyHex, label)
   return displays
 }

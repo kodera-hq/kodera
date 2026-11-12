@@ -120,11 +120,13 @@ function parse(entries: readonly string[]): Vectors {
 
 const VECTORS = parse(entriesOf(FIXTURE))
 
-/** The three things the vectors hold an implementation to. */
+/** The four things the vectors hold an implementation to. */
 interface HandleImplementation {
   validate(raw: string): boolean
   generate(orgBeaconSalt: Uint8Array, sender: Uint8Array): Promise<string>
+  fingerprint(orgBeaconSalt: Uint8Array, sender: Uint8Array): Promise<string>
   labelObserved(
+    orgBeaconSalt: Uint8Array,
     provisioned: readonly ProvisionedProximitySender[],
     observed: readonly Uint8Array[]
   ): Promise<ProximityRosterLabel[]>
@@ -133,6 +135,7 @@ interface HandleImplementation {
 const SHIPPED: HandleImplementation = {
   validate: isProximityHandle,
   generate: async (salt, sender) => (await generatedProximityHandle(salt, sender)).handle,
+  fingerprint: proximityKeyFingerprint,
   labelObserved: labelObservedProximitySenders,
 }
 
@@ -142,11 +145,14 @@ const SHIPPED: HandleImplementation = {
  *     a sender shows the same handle everywhere;
  *   - `groups-over-observed-only`: equal handles are told apart among the senders seen so far
  *     only, so a sender can pass for a member who has not checked in;
- *   - `foreign-character-accepted`: the grammar takes any lowercase letter or digit, of any script.
+ *   - `foreign-character-accepted`: the grammar takes any lowercase letter or digit, of any script;
+ *   - `fingerprint-ignores-the-salt`: every organisation computes fingerprints under one fixed
+ *     salt, so a member shows the same fingerprint everywhere and can be followed across them.
  * The value is the message `checkVectors` must refuse it with.
  */
 const MUTANTS = {
   'organisation-binding-removed': 'a generated handle is not bound to its organisation',
+  'fingerprint-ignores-the-salt': 'a fingerprint is not bound to its organisation',
   'groups-over-observed-only': 'equal handles are not told apart from an absent member',
   'foreign-character-accepted': 'a handle outside the grammar is accepted',
 } as const
@@ -161,12 +167,20 @@ function mutated(mutant: Mutant): HandleImplementation {
         ...SHIPPED,
         generate: (_salt, sender) => SHIPPED.generate(new Uint8Array(32), sender),
       }
+    case 'fingerprint-ignores-the-salt':
+      return {
+        ...SHIPPED,
+        fingerprint: (_salt, sender) => SHIPPED.fingerprint(new Uint8Array(32), sender),
+        labelObserved: (_salt, provisioned, observed) =>
+          SHIPPED.labelObserved(new Uint8Array(32), provisioned, observed),
+      }
     case 'groups-over-observed-only':
       return {
         ...SHIPPED,
-        labelObserved: (provisioned, observed) => {
+        labelObserved: (salt, provisioned, observed) => {
           const seen = new Set(observed.map((sender) => sender.join(',')))
           return SHIPPED.labelObserved(
+            salt,
             provisioned.filter((one) => seen.has(one.senderPublicKey.join(','))),
             observed
           )
@@ -209,6 +223,18 @@ async function checkVectors(implementation: HandleImplementation, vectors: Vecto
           `${[...shown].join(', ')} in ${salts.size} organisations)`
       )
 
+  // The same binding for the fingerprint: one sender, two organisations, two fingerprints.
+  for (const sender of bySender.keys()) {
+    const shown = new Set<string>()
+    for (const salt of salts)
+      shown.add(await implementation.fingerprint(hexToBytes(salt), hexToBytes(sender)))
+    if (shown.size < salts.size)
+      throw new Error(
+        `a fingerprint is not bound to its organisation (sender ${sender.slice(0, 8)} shows ` +
+          `${[...shown][0]?.slice(0, 8)} in ${salts.size} organisations)`
+      )
+  }
+
   for (const { salt, sender, handle } of vectors.generated) {
     const derived = await implementation.generate(hexToBytes(salt), hexToBytes(sender))
     if (derived !== handle)
@@ -232,6 +258,7 @@ async function checkVectors(implementation: HandleImplementation, vectors: Vecto
     }
     const present = lines.filter((line) => line.present)
     const labels = await implementation.labelObserved(
+      hexToBytes(lines[0]?.salt ?? ''),
       provisioned,
       present.map((line) => hexToBytes(line.sender))
     )
@@ -355,14 +382,43 @@ describe('proximity handles, beyond the vectors', () => {
     await expect(generatedProximityHandle(SALT, new Uint8Array(33))).rejects.toMatchObject({
       code: 'InvalidKeyMaterial',
     })
-    await expect(proximityKeyFingerprint(new Uint8Array(0))).rejects.toMatchObject({
+    await expect(proximityKeyFingerprint(SALT, new Uint8Array(0))).rejects.toMatchObject({
+      code: 'InvalidKeyMaterial',
+    })
+    await expect(proximityKeyFingerprint(new Uint8Array(16), ALICE)).rejects.toMatchObject({
       code: 'InvalidKeyMaterial',
     })
   })
 
+  it('shows a sender under another fingerprint in another organisation', async () => {
+    // The two values were computed a second way, outside this repository, with Node's `crypto`:
+    // HMAC-SHA256(salt, "kodera-proximity-fingerprint-v1:" || sender), salts 0x42 and 0x43.
+    const sender = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a')
+    const here = await proximityKeyFingerprint(SALT, sender)
+    const elsewhere = await proximityKeyFingerprint(new Uint8Array(32).fill(0x43), sender)
+    expect(here).toBe('95043981b19ae962c90146b1352d52b80a8fe7def49c8cf57ddd4c609fb1e226')
+    expect(elsewhere).toBe('80f17f3a96f22d4e7d8fc1331341f5198ae3b76c9da937b121c9151985a1ed51')
+    expect(here.slice(0, 8)).not.toBe(elsewhere.slice(0, 8))
+    // And in a roster: the same two members, the same pseudonym, two organisations.
+    const members = [
+      { publicKey: sender, dedicatedHandle: 'north-wing-3' },
+      { publicKey: ALICE, dedicatedHandle: 'north-wing-3' },
+    ]
+    const inOne = await proximityRosterDisplays(SALT, members)
+    const inOther = await proximityRosterDisplays(new Uint8Array(32).fill(0x43), members)
+    expect([...inOne.values()].map((label) => label.display)).toEqual([
+      'north-wing-3 [95043981]',
+      'north-wing-3 [790b4513]',
+    ])
+    expect([...inOther.values()].map((label) => label.display)).toEqual([
+      'north-wing-3 [80f17f3a]',
+      'north-wing-3 [efd69830]',
+    ])
+  })
+
   it('labels nothing for a sender the provisioned roster does not hold', async () => {
     const provisioned = await resolveProvisionedProximityRoster(SALT, [{ publicKey: ALICE }])
-    await expect(labelObservedProximitySenders(provisioned, [BRUNO])).rejects.toMatchObject({
+    await expect(labelObservedProximitySenders(SALT, provisioned, [BRUNO])).rejects.toMatchObject({
       code: 'UnauthorizedSender',
     })
   })
@@ -372,7 +428,7 @@ describe('proximity handles, beyond the vectors', () => {
       { publicKey: ALICE },
       { publicKey: ALICE },
     ])
-    const labels = await disambiguateProximityHandles(provisioned)
+    const labels = await disambiguateProximityHandles(SALT, provisioned)
     expect(labels.map((label) => label.display)).toEqual([
       'steady-brook-ah3fccbgh',
       'steady-brook-ah3fccbgh',

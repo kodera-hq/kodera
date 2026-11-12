@@ -98,8 +98,8 @@ describe('who checked in is a handle', () => {
       />
     )
     expect(await labelled()).toEqual([
-      'north-wing-3 [ff139265]En sécurité',
-      'north-wing-3 [330eb4de]En sécurité',
+      'north-wing-3 [95043981]En sécurité',
+      'north-wing-3 [790b4513]En sécurité',
       'mellow-river-pmgj8v226En sécurité',
     ])
   })
@@ -115,7 +115,7 @@ describe('who checked in is a handle', () => {
         )}
       />
     )
-    expect(await labelled()).toEqual(['north-wing-3 [ff139265]En sécurité'])
+    expect(await labelled()).toEqual(['north-wing-3 [95043981]En sécurité'])
   })
 
   it('lists nothing for a sender the provisioned roster does not hold', async () => {
@@ -190,7 +190,7 @@ describe('the roster a controller is provisioned with', () => {
   })
 
   it('refuses a roster whose pseudonym is outside the handle grammar', () => {
-    for (const raw of ['Jean Dupont', 'jean@example.org', 'north-wing-3 [ff139265]', 'ab'])
+    for (const raw of ['Jean Dupont', 'jean@example.org', 'north-wing-3 [95043981]', 'ab'])
       expect(() => new ProximityRoomController(options([member(FIRST, raw)]))).toThrowError(
         ProximityCodecError
       )
