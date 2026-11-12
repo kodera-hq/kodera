@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Agent API
-  version: 0.5.0
+  version: 0.6.0
   summary: The contract every tenant VM implements, spoken by the agent and served by kodera-server.
   description: |
     Contract 2 of the architecture strategy (Appendix A). The agent runs on every tenant VM and is
@@ -820,6 +820,20 @@ components:
         erased_subjects:
           $ref: '#/components/schemas/MemberSubjects'
           description: '`engine_set_member_subjects`: inactive subjects of people who were erased. The agent erases their messaging account once (Synapse''s erase flag: their messages are no longer served to anyone who joins later), and never reactivates it. Absent or empty when no one was erased.'
+        banned_subjects:
+          $ref: '#/components/schemas/MemberSubjects'
+          description: 'engine_set_channel_members: organisation-wide banned subjects. Ban in every workspace room, including community native-join rooms; remove obsolete bans on an authoritative newer revision. Never deactivate unrelated accounts.'
+        muted_subjects:
+          type: array
+          maxItems: 10000
+          description: 'engine_set_channel_members: temporary workspace mutes. Publish the expiry in io.kodera.room.policy for every room; message and media enforcement checks server time on every event. Missing or empty on older producers means no moderation facts.'
+          items:
+            type: object
+            additionalProperties: false
+            required: [subject, expires_at]
+            properties:
+              subject: { type: string, minLength: 1, maxLength: 255, pattern: '^[\x21-\x7e]+$' }
+              expires_at: { type: string, format: date-time }
         all_members:
           $ref: '#/components/schemas/MemberSubjects'
           description: '`engine_set_channel_members`: the organisation''s Espace members, listed once: its current active memberships with an enabled realm identity. A channel open to them all names only who is denied.'

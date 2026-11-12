@@ -22,8 +22,8 @@ export interface Spec extends JsonObject {
   components: { schemas: Record<string, JsonObject>; [k: string]: unknown }
 }
 
-/** The verbs the contract uses. `PUT` does not exist in this API (CONSOLE_RECONCILIATION §4.6). */
-export const METHODS = ['get', 'post', 'patch', 'delete'] as const
+/** The verbs supported by the contract, including device subscription replacement. */
+export const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const
 export type Method = (typeof METHODS)[number]
 
 export interface Operation {

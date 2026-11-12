@@ -30,7 +30,7 @@ export const CONTRACT_PATH = join(
 
 const API_PREFIX = '/api/v1'
 const ORIGIN = 'https://core.test'
-const METHODS = ['get', 'post', 'patch', 'delete'] as const
+const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const
 export type Method = (typeof METHODS)[number]
 
 /** Stands in for a path parameter a handler matches on shape rather than on value. */
@@ -305,7 +305,7 @@ export async function runHandler(
 ): Promise<Response | undefined> {
   const headers = new Headers()
   let body: string | undefined
-  if (method === 'post' || method === 'patch') {
+  if (method === 'post' || method === 'put' || method === 'patch') {
     headers.set(
       'Content-Type',
       method === 'patch' ? 'application/merge-patch+json' : 'application/json'

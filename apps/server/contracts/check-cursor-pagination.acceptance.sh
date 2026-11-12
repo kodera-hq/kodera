@@ -97,9 +97,9 @@ def inline_parameters(document):
 
 
 probes: list[tuple[str, Callable[[Any], Any], int, str]] = [
-    ("actual inventory", lambda d: None, 0, "27 operations validated"),
-    ("equivalent response alias", alias_response, 0, "27 operations validated"),
-    ("inline parameter equivalence", inline_parameters, 0, "27 operations validated"),
+    ("actual inventory", lambda d: None, 0, "33 operations validated"),
+    ("equivalent response alias", alias_response, 0, "33 operations validated"),
+    ("inline parameter equivalence", inline_parameters, 0, "33 operations validated"),
     ("population removal", shrink_population, 1, "PAG-INVENTORY"),
     (
         "alias cannot hide missing parameters",
@@ -220,7 +220,7 @@ def deep_response(d):
 
 
 probes += [
-    ("escaped response pointer", escaped_response, 0, "27 operations validated"),
+    ("escaped response pointer", escaped_response, 0, "33 operations validated"),
     ("reference depth budget", deep_response, 2, "PAG-INPUT"),
     (
         "contradictory page constraint",
@@ -228,7 +228,7 @@ probes += [
         1,
         "PAG-RESPONSE",
     ),
-    ("path parameter equivalence", path_parameters, 0, "27 operations validated"),
+    ("path parameter equivalence", path_parameters, 0, "33 operations validated"),
     ("effective override", lambda d: path_parameters(d, True), 1, "PAG-PARAMETER"),
     (
         "duplicate operation ID",
@@ -345,7 +345,7 @@ for annotation in ("description", "title"):
                     {a: "Synthetic pagination annotation"}
                 ),
                 0,
-                "27 operations validated",
+                "33 operations validated",
             )
         )
 
@@ -354,7 +354,7 @@ probes += [
         "equivalent numeric cursor length",
         lambda d: parameter_schema(d, "Cursor").update(maxLength=512.0),
         0,
-        "27 operations validated",
+        "33 operations validated",
     ),
     (
         "equivalent numeric limit bounds",
@@ -362,7 +362,7 @@ probes += [
             minimum=1.0, maximum=200.0, default=50.0
         ),
         0,
-        "27 operations validated",
+        "33 operations validated",
     ),
     (
         "equivalent nullable type order",
@@ -370,7 +370,7 @@ probes += [
             type=["null", "string"]
         ),
         0,
-        "27 operations validated",
+        "33 operations validated",
     ),
     (
         "boolean minimum cannot equal one",
@@ -432,7 +432,7 @@ probes += [
         "required continuation handling is unchanged",
         lambda d: d["components"]["schemas"]["CursorPage"]["required"].append("next_cursor"),
         0,
-        "27 operations validated",
+        "33 operations validated",
     ),
 ]
 
