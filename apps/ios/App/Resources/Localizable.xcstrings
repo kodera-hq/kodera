@@ -902,45 +902,13 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vous n'avez pas encore accès à une organisation. Si l'on vous a demandé d'en configurer une, terminez dans la Console."
+            "value": "Vous n'avez pas encore accès à une organisation. Si l'on vous a demandé d'en configurer une, terminez sur le web, puis vérifiez à nouveau ici."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "You don't have access to an organisation yet. If you were asked to set one up, finish in the Console."
-          }
-        }
-      }
-    },
-    "session.open_console": {
-      "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ouvrir la Console"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open the Console"
-          }
-        }
-      }
-    },
-    "session.open_console_hint": {
-      "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ouvre la Console Kodera dans votre navigateur."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Opens the Kodera Console in your browser."
+            "value": "You don't have access to an organisation yet. If you were asked to set one up, finish on the web, then check again here."
           }
         }
       }
@@ -1345,23 +1313,23 @@
         }
       }
     },
-    "emergency.title": {
+    "proximity.title": {
       "localizations": {
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "around-me"
+            "value": "#proximité"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "around-me"
+            "value": "#proximity"
           }
         }
       }
     },
-    "emergency.unprovisioned": {
+    "proximity.unprovisioned": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1377,23 +1345,23 @@
         }
       }
     },
-    "emergency.description": {
+    "proximity.description": {
       "localizations": {
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Vous pouvez préparer un pointage sur cet appareil. Les clés de votre organisation et le transport de proximité ne sont pas encore configurés dans cette application."
+            "value": "Vous pouvez préparer un pointage sur cet appareil. Le pointage est volontaire et s’affiche sous un pseudonyme, jamais sous votre nom. Les clés de votre organisation et le transport de proximité ne sont pas encore configurés dans cette application."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "You can prepare a check-in on this device. Your organisation’s keys and proximity transport are not configured in this app yet."
+            "value": "You can prepare a check-in on this device. A check-in is voluntary and shown under a pseudonym, never your name. Your organisation’s keys and proximity transport are not configured in this app yet."
           }
         }
       }
     },
-    "emergency.local_draft": {
+    "proximity.local_draft": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1409,7 +1377,7 @@
         }
       }
     },
-    "emergency.not_sent": {
+    "proximity.not_sent": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1425,7 +1393,7 @@
         }
       }
     },
-    "emergency.prepare": {
+    "proximity.prepare": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1441,7 +1409,7 @@
         }
       }
     },
-    "emergency.cancel": {
+    "proximity.cancel": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1457,7 +1425,7 @@
         }
       }
     },
-    "emergency.safe": {
+    "proximity.safe": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1473,7 +1441,7 @@
         }
       }
     },
-    "emergency.need_assistance": {
+    "proximity.need_assistance": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -1489,7 +1457,7 @@
         }
       }
     },
-    "emergency.muster_point": {
+    "proximity.muster_point": {
       "localizations": {
         "fr": {
           "stringUnit": {
@@ -3341,6 +3309,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Action"
+          }
+        }
+      }
+    },
+    "proximity.notice": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "#proximité n’est pas un service d’urgence. En cas d’urgence, appelez le numéro d’urgence de votre pays."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "#proximity is not an emergency service. In an emergency, call your local emergency number."
           }
         }
       }

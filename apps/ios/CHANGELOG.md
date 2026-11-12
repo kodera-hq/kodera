@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Refresh native design tokens from the monorepo source and align local document bounds across clients.
+- Rename the `#urgence` channel to `#proximity` (translated in the French catalogue) in code and copy, and state on its card that it is not an emergency service. The frame v1 wire bytes are unchanged and now held to vectors shared with the Rust core.
+- Show check-ins under a pseudonymous handle, picked by the member or derived from the sender key inside the organisation, never a name; equal handles in a roster carry a key fingerprint.
+- Remove the Open the Console action: the app is a companion and links to no page outside sign-in. The resource check now refuses commercial wording, prices, billing providers, billing addresses and any page opened from app code.
 
 Status: Kodera for iOS is in development; no store release is recorded here.
 

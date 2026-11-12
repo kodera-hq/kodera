@@ -8,7 +8,6 @@ import KoderaDomain
 @MainActor
 struct SignedInView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.openURL) private var openURL
     @State private var lastAnnouncement: String? = nil
     @ObservedObject var session: AppSessionModel
 
@@ -40,7 +39,7 @@ struct SignedInView: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel(Text("session.sign_out"))
                 .accessibilityHint(Text("session.sign_out_hint"))
-                EmergencyCheckInCard(organisationId: soundScope?.organisationId)
+                ProximityCheckInCard(organisationId: soundScope?.organisationId)
                 workspaceSection
                 VoiceCallDockCard(scope: voiceScope)
                 DocsWorkspaceCard(scope: docsScope)
@@ -140,26 +139,14 @@ struct SignedInView: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel(Text("session.retry"))
             case .unavailable(.noOrganisationYet):
-                // A 403 is an answer, not an outage, and never a dead end: the Console, when this build names one,
-                // Check again, and sign-out below. An owner's claim is finished in the Console, never in the app;
-                // that changes Core's answer, so returning to the foreground checks again too (see `body`).
+                // A 403 is an answer, not an outage, and never a dead end: Check again, and sign-out below. An
+                // owner's claim is finished on the web, never in the app; that changes Core's answer, so returning
+                // to the foreground checks again too (see `body`). The app is a companion: it opens no page
+                // outside sign-in, so it offers no link to the Console, where the organisation's commercial pages live.
                 Label("session.no_organisation", systemImage: "person.crop.circle.badge.questionmark")
                     .font(NativeTypography.body)
                     .foregroundStyle(palette.ink2)
                     .fixedSize(horizontal: false, vertical: true)
-                if let console = session.configuration.consoleOrigin {
-                    Button { openURL(console) } label: {
-                        // accentInk, not the action tint: action on surface is under 4.5:1 in the dark palettes.
-                        Text("session.open_console")
-                            .font(NativeTypography.emphasis)
-                            .foregroundStyle(palette.accentInk)
-                            .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s12)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel(Text("session.open_console"))
-                    .accessibilityHint(Text("session.open_console_hint"))
-                }
                 Button(action: session.checkMemberAgain) {
                     // accentInk, not the action tint: action on surface is under 4.5:1 in the dark palettes.
                     Text("session.check_again")
