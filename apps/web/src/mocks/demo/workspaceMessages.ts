@@ -51,13 +51,13 @@ export const workspaceDemoMessages = {
         'Bienvenue dans le salon privé infrastructure, Keycloak et monitoring.',
         'Avant toute intervention, vérifiez les alertes, l’issuer OIDC concerné et les procédures opérateur. Conservez les secrets hors des conversations.',
       ],
-      'partner-dinum': [
-        'Bienvenue dans la boucle de feedback privée DINUM / La Suite.',
-        'Exemple de message depuis Element, client Matrix standard : notre équipe DINUM souhaite retrouver le même fil de feedback dans Element et dans le Workspace Kodera, sans recopier la conversation.',
+      'partner-onboarding': [
+        'Bienvenue dans le salon privé d’accueil des partenaires de conception.',
+        'Exemple de message depuis Element, client Matrix standard : notre équipe souhaite retrouver le même fil de feedback dans Element et dans le Workspace Kodera, sans recopier la conversation.',
       ],
-      'partner-octo': [
-        'Bienvenue dans la boucle de feedback privée OCTO.',
-        'Exemple de message envoyé avec Element via Matrix : côté OCTO, nous pouvons suivre les réponses et le même historique du salon partenaire depuis un client Matrix standard ou le Workspace Kodera.',
+      'partner-feedback': [
+        'Bienvenue dans la boucle de feedback privée des partenaires de conception.',
+        'Exemple de message envoyé avec Element via Matrix : de notre côté, nous pouvons suivre les réponses et le même historique du salon partenaire depuis un client Matrix standard ou le Workspace Kodera.',
       ],
     },
     viewer: 'Inès Kaci',
@@ -110,13 +110,13 @@ export const workspaceDemoMessages = {
         'Welcome to the private infrastructure, Keycloak and monitoring channel.',
         'Before an intervention, check alerts, the affected OIDC issuer and operator procedures. Keep secrets out of conversations.',
       ],
-      'partner-dinum': [
-        'Welcome to the private DINUM / La Suite feedback loop.',
-        'Example message from Element, a standard Matrix client: our DINUM team wants to follow the same feedback thread in Element and the Kodera Workspace without copying the conversation.',
+      'partner-onboarding': [
+        'Welcome to the private onboarding room for design partners.',
+        'Example message from Element, a standard Matrix client: our team wants to follow the same feedback thread in Element and the Kodera Workspace without copying the conversation.',
       ],
-      'partner-octo': [
-        'Welcome to the private OCTO feedback loop.',
-        'Example message sent with Element over Matrix: OCTO can follow replies and the same partner-room history from a standard Matrix client or the Kodera Workspace.',
+      'partner-feedback': [
+        'Welcome to the private feedback loop with design partners.',
+        'Example message sent with Element over Matrix: we can follow replies and the same partner-room history from a standard Matrix client or the Kodera Workspace.',
       ],
     },
     viewer: 'Inès Kaci',

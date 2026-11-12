@@ -69,7 +69,7 @@
   "console.workspace.channel-invite.copy-error": "Copy failed. Select the link to copy it manually.",
   "console.workspace.channel-invite.description": "Invite someone to #{{channel}} or copy a link to this channel. Links respect the channel’s access rules.",
   "console.workspace.channel-invite.error": "The Matrix invitation failed. Check your invitation permissions and server rules, then try again.",
-  "console.workspace.channel-invite.id-help": "For example: @firstname.lastname:agent.dinum.tech.gouv.fr or @architect:octo.com",
+  "console.workspace.channel-invite.id-help": "For example: @firstname.lastname:example.org or @architect:example.com",
   "console.workspace.channel-invite.invalid": "Enter a complete Matrix user ID in the format @user:domain.tld.",
   "console.workspace.channel-invite.matrix-id": "Matrix user ID",
   "console.workspace.channel-invite.matrix-to": "Universal Matrix link (matrix.to)",

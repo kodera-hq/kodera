@@ -1809,7 +1809,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.channel-invite.title` | Inviter au salon (Matrix) |
 | `console.workspace.channel-invite.description` | Invitez une personne dans #{channel} ou copiez un lien vers ce salon. Les liens respectent les règles d’accès du salon. |
 | `console.workspace.channel-invite.matrix-id` | Identifiant Matrix |
-| `console.workspace.channel-invite.id-help` | Par exemple : @prenom.nom:agent.dinum.tech.gouv.fr ou @architecte:octo.com |
+| `console.workspace.channel-invite.id-help` | Par exemple : @prenom.nom:example.org ou @architecte:example.com |
 | `console.workspace.channel-invite.invalid` | Saisissez un identifiant Matrix complet au format @utilisateur:domaine.tld. |
 | `console.workspace.channel-invite.action-send` | Envoyer l’invitation Matrix |
 | `console.workspace.channel-invite.success` | Invitation Matrix envoyée à {userId} |

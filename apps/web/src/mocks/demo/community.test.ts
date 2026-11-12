@@ -93,8 +93,8 @@ it('serves the matching organisation, tenant and three exact categories and twel
       ['ops-oncall', 'text'],
     ],
     [
-      ['partner-dinum', 'text'],
-      ['partner-octo', 'text'],
+      ['partner-onboarding', 'text'],
+      ['partner-feedback', 'text'],
     ],
   ])
   expect(workspace.organisation_id).toBe(COMMUNITY_ORGANISATION_ID)
@@ -120,7 +120,7 @@ it('registers both local stores, preserving per-organisation isolation and norma
       ['announcements', 'support'].includes(room.name) ? /simul/i : /Bienvenue/
     )
     expect(community.getTimeline(room.roomId)).toHaveLength(room.name === 'announcements' ? 3 : 2)
-    if (room.name === 'partner-dinum' || room.name === 'partner-octo') {
+    if (room.name === 'partner-onboarding' || room.name === 'partner-feedback') {
       expect(community.getTimeline(room.roomId)[1]?.body).toMatch(/Element.*Matrix|Matrix.*Element/)
     }
   }
@@ -147,12 +147,12 @@ it.each(['community', 'vercelli'] as const)(
     store.subscribe(listener)
     const previousMembers = store.getMembers!(other!.roomId)
     const previousTimeline = store.getTimeline(other!.roomId)
-    const invitee = '@marie:dinum.gouv.fr'
+    const invitee = '@marie:example.org'
     for (const invalid of [
-      'marie:dinum.gouv.fr',
+      'marie:example.org',
       '@marie',
       '@marie:',
-      '@:dinum.gouv.fr',
+      '@:example.org',
       '@marie:bad/path',
     ]) {
       await expect(store.inviteToRoom!(room!.roomId, invalid)).rejects.toThrow()

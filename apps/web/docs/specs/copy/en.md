@@ -1795,7 +1795,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.channel-invite.title` | Invite to channel (Matrix) |
 | `console.workspace.channel-invite.description` | Invite someone to #{channel} or copy a link to this channel. Links respect the channel’s access rules. |
 | `console.workspace.channel-invite.matrix-id` | Matrix user ID |
-| `console.workspace.channel-invite.id-help` | For example: @firstname.lastname:agent.dinum.tech.gouv.fr or @architect:octo.com |
+| `console.workspace.channel-invite.id-help` | For example: @firstname.lastname:example.org or @architect:example.com |
 | `console.workspace.channel-invite.invalid` | Enter a complete Matrix user ID in the format @user:domain.tld. |
 | `console.workspace.channel-invite.action-send` | Send Matrix invitation |
 | `console.workspace.channel-invite.success` | Matrix invitation sent to {userId} |

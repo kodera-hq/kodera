@@ -1741,21 +1741,21 @@ describe('outgoing Matrix room invitations', () => {
       { baseUrl: HS, userId: '@me:example.test', deviceId: 'TEST', accessToken: 'synthetic' },
       fetcher
     )
-    await store.inviteToRoom('!room:example.test', '@marie:dinum.gouv.fr')
+    await store.inviteToRoom('!room:example.test', '@marie:example.org')
     const [url, request] = fetcher.mock.calls[0]!
     expect(String(url)).toBe(`${HS}/_matrix/client/v3/rooms/!room%3Aexample.test/invite`)
     expect(request?.method).toBe('POST')
-    expect(JSON.parse(request?.body as string)).toEqual({ user_id: '@marie:dinum.gouv.fr' })
+    expect(JSON.parse(request?.body as string)).toEqual({ user_id: '@marie:example.org' })
   })
 
   it('uses the standard SDK invitation and propagates homeserver refusals', async () => {
     const { store } = setup()
     const invite = vi.spyOn(matrixClientForTests(store), 'invite').mockResolvedValue({})
-    await store.inviteToRoom('!room:example.test', '@marie:dinum.gouv.fr')
-    expect(invite).toHaveBeenCalledWith('!room:example.test', '@marie:dinum.gouv.fr')
+    await store.inviteToRoom('!room:example.test', '@marie:example.org')
+    expect(invite).toHaveBeenCalledWith('!room:example.test', '@marie:example.org')
     const refused = new Error('M_FORBIDDEN')
     invite.mockRejectedValueOnce(refused)
-    await expect(store.inviteToRoom('!room:example.test', '@marie:dinum.gouv.fr')).rejects.toBe(
+    await expect(store.inviteToRoom('!room:example.test', '@marie:example.org')).rejects.toBe(
       refused
     )
   })
@@ -1764,7 +1764,7 @@ describe('outgoing Matrix room invitations', () => {
     const { store } = setup()
     const invite = vi.spyOn(matrixClientForTests(store), 'invite')
     for (const invalid of [
-      'marie:dinum.gouv.fr',
+      'marie:example.org',
       '@marie',
       '@marie:',
       '@:example.test',

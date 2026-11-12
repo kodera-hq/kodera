@@ -1,5 +1,5 @@
 /**
- * DINUM Docs (`docs.<tenant>.kodera.io`) collaborative document surface types.
+ * Docs (`docs.<tenant>.kodera.io`) collaborative document surface types.
  *
  * Aligns with Core ADR-0023 tenant host reservation rules and the console's
  * application rail (`AppCode = 'docs'`).

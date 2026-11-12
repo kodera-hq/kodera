@@ -50,7 +50,7 @@ const PROXIMITY_CHANNEL: WorkspaceChannel = {
   kind: 'text',
   name: 'proximity',
   template_key: null,
-  topic: 'Continuité bâtiment et pointage de sécurité',
+  topic: 'Présence de proximité, pointage volontaire',
   lifecycle: 'active',
   room_state: 'ready',
 }
@@ -128,7 +128,7 @@ function GuardedDocsSurface({
   )
 }
 
-describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Docs + Espace #proximity', () => {
+describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Espace #proximity', () => {
   beforeEach(() => {
     localStorage.clear()
     clearSynthCache()
@@ -430,7 +430,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
     })
   })
 
-  it('renders the sovereign DINUM Docs collaboration surface for https://docs.acme.kodera.io, builds deterministic channel-bound URLs, and fails closed (role="alert") on http://, credentialed, or localhost URLs alongside #proximity', async () => {
+  it('renders the sovereign Docs collaboration surface for https://docs.acme.kodera.io, builds deterministic channel-bound URLs, and fails closed (role="alert") on http://, credentialed, or localhost URLs alongside #proximity', async () => {
     const user = userEvent.setup()
     const docsOrigin = buildTenantDocsOrigin('acme')
     expect(docsOrigin).toBe('https://docs.acme.kodera.io')

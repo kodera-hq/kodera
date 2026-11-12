@@ -1405,7 +1405,7 @@
   "console.workspace.channel-invite.copy-error": "La copie a échoué. Sélectionnez le lien pour le copier manuellement.",
   "console.workspace.channel-invite.description": "Invitez une personne dans #{{channel}} ou copiez un lien vers ce salon. Les liens respectent les règles d’accès du salon.",
   "console.workspace.channel-invite.error": "L’invitation Matrix a échoué. Vérifiez vos droits d’invitation et les règles du serveur, puis réessayez.",
-  "console.workspace.channel-invite.id-help": "Par exemple : @prenom.nom:agent.dinum.tech.gouv.fr ou @architecte:octo.com",
+  "console.workspace.channel-invite.id-help": "Par exemple : @prenom.nom:example.org ou @architecte:example.com",
   "console.workspace.channel-invite.invalid": "Saisissez un identifiant Matrix complet au format @utilisateur:domaine.tld.",
   "console.workspace.channel-invite.matrix-id": "Identifiant Matrix",
   "console.workspace.channel-invite.matrix-to": "Lien universel Matrix (matrix.to)",

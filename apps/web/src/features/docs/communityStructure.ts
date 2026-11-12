@@ -34,8 +34,18 @@ export const COMMUNITY_CATEGORIES = [
     name: 'Design Partners',
     audience: 'audiencePartners',
     channels: [
-      { id: 'partner-dinum', name: 'partner-dinum', description: 'partnerDinum', voice: false },
-      { id: 'partner-octo', name: 'partner-octo', description: 'partnerOcto', voice: false },
+      {
+        id: 'partner-onboarding',
+        name: 'partner-onboarding',
+        description: 'partnerOnboarding',
+        voice: false,
+      },
+      {
+        id: 'partner-feedback',
+        name: 'partner-feedback',
+        description: 'partnerFeedback',
+        voice: false,
+      },
     ],
   },
 ] as const

@@ -3987,7 +3987,7 @@ describe('Matrix channel invitations', () => {
     const store = createLocalWorkspaceStore(workspace, 'community')
     const channel = workspace.categories
       .flatMap((category) => category.channels)
-      .find((channel) => channel.name === 'partner-dinum')!
+      .find((channel) => channel.name === 'partner-onboarding')!
     const invite = vi.spyOn(store, 'inviteToRoom')
     render(
       <EspaceLiveView
@@ -4001,15 +4001,15 @@ describe('Matrix channel invitations', () => {
     const trigger = screen.getByTestId('espace-channel-invite-btn')
     await user.click(trigger)
     const dialog = screen.getByRole('dialog', { name: 'Inviter au salon (Matrix)' })
-    expect(within(dialog).getByText('#partner-dinum:demo.invalid')).toBeInTheDocument()
+    expect(within(dialog).getByText('#partner-onboarding:demo.invalid')).toBeInTheDocument()
     expect(
       within(dialog).getByText(
-        'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=community.kodera.io'
+        'https://matrix.to/#/%23partner-onboarding%3Ademo.invalid?via=community.kodera.io'
       )
     ).toBeInTheDocument()
     expect(
       within(dialog).getByText(
-        'matrix:r/partner-dinum:demo.invalid?action=join&via=community.kodera.io'
+        'matrix:r/partner-onboarding:demo.invalid?action=join&via=community.kodera.io'
       )
     ).toBeInTheDocument()
     expect(
@@ -4017,7 +4017,7 @@ describe('Matrix channel invitations', () => {
     ).toBeInTheDocument()
     const field = within(dialog).getByRole('textbox', { name: 'Identifiant Matrix' })
     expect(field).toHaveFocus()
-    for (const invalid of ['marie:dinum.gouv.fr', '@marie']) {
+    for (const invalid of ['marie:example.org', '@marie']) {
       await user.clear(field)
       await user.type(field, invalid)
       await user.click(within(dialog).getByTestId('espace-channel-invite-submit'))
@@ -4025,11 +4025,11 @@ describe('Matrix channel invitations', () => {
       expect(invite).not.toHaveBeenCalled()
     }
     await user.clear(field)
-    await user.type(field, '@marie:dinum.gouv.fr')
+    await user.type(field, '@marie:example.org')
     await user.click(within(dialog).getByTestId('espace-channel-invite-submit'))
-    expect(invite).toHaveBeenCalledWith(`!${channel.id}:demo.invalid`, '@marie:dinum.gouv.fr')
+    expect(invite).toHaveBeenCalledWith(`!${channel.id}:demo.invalid`, '@marie:example.org')
     expect(within(dialog).getByRole('status')).toHaveTextContent(
-      'Invitation Matrix envoyée à @marie:dinum.gouv.fr'
+      'Invitation Matrix envoyée à @marie:example.org'
     )
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
