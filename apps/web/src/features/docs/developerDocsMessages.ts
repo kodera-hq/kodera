@@ -23,7 +23,7 @@ export const developerDocsMessages = {
     llms: 'Preview /llms.txt',
     copyLlms: 'Copy /llms.txt',
     openLlms: 'Open /llms.txt',
-    catalogue: 'Official connector implementations',
+    catalogue: 'Reference connector implementations',
     path: 'Repository path',
     local: 'Local reference',
     lab: 'Webhook signature lab',
@@ -62,10 +62,10 @@ export const developerDocsMessages = {
     engineering: 'Core engineering, CI/CD, Rust core and control plane.',
     strategy: 'Product strategy, roadmap and go-to-market.',
     operations: 'Infrastructure, Keycloak and monitoring.',
-    partnerDinum:
-      'Private DINUM / La Suite feedback loop, interoperable with standard Matrix clients such as Element.',
-    partnerOcto:
-      'Private OCTO feedback loop, interoperable with standard Matrix clients such as Element.',
+    partnerOnboarding:
+      'Private onboarding room for design partners, interoperable with standard Matrix clients such as Element.',
+    partnerFeedback:
+      'Private feedback loop with design partners, interoperable with standard Matrix clients such as Element.',
     communityChannels: 'Community channels',
     communityDiscussion: 'Community discussion preview',
     noMessages: 'No live messages or members are loaded in this preview.',
@@ -104,7 +104,7 @@ export const developerDocsMessages = {
     llms: 'Aperçu de /llms.txt',
     copyLlms: 'Copier /llms.txt',
     openLlms: 'Ouvrir /llms.txt',
-    catalogue: 'Implémentations officielles des connecteurs',
+    catalogue: 'Implémentations de référence des connecteurs',
     path: 'Chemin dans le dépôt',
     local: 'Référence locale',
     lab: 'Laboratoire de signatures webhook',
@@ -143,10 +143,10 @@ export const developerDocsMessages = {
     engineering: 'Ingénierie cœur, CI/CD, noyau Rust et control plane.',
     strategy: 'Produit, roadmap et go-to-market.',
     operations: 'Infrastructure, Keycloak et monitoring.',
-    partnerDinum:
-      'Boucle de feedback privée DINUM / La Suite, interopérable avec les clients Matrix standards comme Element.',
-    partnerOcto:
-      'Boucle de feedback privée OCTO, interopérable avec les clients Matrix standards comme Element.',
+    partnerOnboarding:
+      'Salon privé d’accueil des partenaires de conception, interopérable avec les clients Matrix standards comme Element.',
+    partnerFeedback:
+      'Boucle de feedback privée avec les partenaires de conception, interopérable avec les clients Matrix standards comme Element.',
     communityChannels: 'Salons communautaires',
     communityDiscussion: 'Aperçu de discussion communautaire',
     noMessages: 'Aucun message live ni membre n’est chargé dans cet aperçu.',

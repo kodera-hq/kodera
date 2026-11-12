@@ -95,7 +95,7 @@ it('shows exact category audiences, partner interoperability and the community v
   expect(within(nav).getByText('Ouverte à tous')).toBeInTheDocument()
   expect(within(nav).getByText('Équipe cœur Kodera')).toBeInTheDocument()
   expect(within(nav).getByRole('button', { name: '🔊 office-hours' })).toBeInTheDocument()
-  for (const name of ['partner-dinum', 'partner-octo']) {
+  for (const name of ['partner-onboarding', 'partner-feedback']) {
     await user.click(within(nav).getByRole('button', { name: `# ${name}` }))
     expect(screen.getByRole('heading', { name: `# ${name}` })).toBeInTheDocument()
     expect(

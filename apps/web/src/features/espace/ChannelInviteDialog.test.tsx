@@ -11,7 +11,7 @@ function setup() {
   const workspace = communityWorkspace()
   const channel = workspace.categories
     .flatMap((category) => category.channels)
-    .find((channel) => channel.name === 'partner-dinum')!
+    .find((channel) => channel.name === 'partner-onboarding')!
   const store = createLocalWorkspaceStore(workspace, 'community')
   const room = store.getSnapshot().rooms.find((room) => room.name === channel.name)!
   return { org: 'community', channel, room, store, unavailable: false }
@@ -22,7 +22,7 @@ describe('universal Matrix invitation links', () => {
     expect(
       roomInvitationLinks({
         roomId: '!opaque:example.test',
-        alias: '#partner-dinum:community.kodera.test',
+        alias: '#partner-onboarding:community.kodera.test',
         serverName: 'routing.example.test:8448',
         channelSlug: 'renamed',
         org: 'a/b',
@@ -31,10 +31,10 @@ describe('universal Matrix invitation links', () => {
       })
     ).toEqual({
       matrixTo:
-        'https://matrix.to/#/%23partner-dinum%3Acommunity.kodera.test?via=routing.example.test%3A8448',
+        'https://matrix.to/#/%23partner-onboarding%3Acommunity.kodera.test?via=routing.example.test%3A8448',
       matrixUri:
-        'matrix:r/partner-dinum:community.kodera.test?action=join&via=routing.example.test%3A8448',
-      alias: '#partner-dinum:community.kodera.test',
+        'matrix:r/partner-onboarding:community.kodera.test?action=join&via=routing.example.test%3A8448',
+      alias: '#partner-onboarding:community.kodera.test',
       web: 'https://console.example.test/a%2Fb/workspace/one%2Ftwo',
     })
   })
@@ -44,7 +44,7 @@ describe('universal Matrix invitation links', () => {
       roomId: '!opaque/hash',
       alias: null,
       serverName: 'community.example.test',
-      channelSlug: 'partner-dinum',
+      channelSlug: 'partner-onboarding',
       org: 'community',
       channelId: 'id',
       origin: 'https://console.example.test',
@@ -53,19 +53,19 @@ describe('universal Matrix invitation links', () => {
     expect(links.matrixUri).toBe(
       'matrix:roomid/opaque%2Fhash?action=join&via=community.example.test'
     )
-    expect(links.alias).toBe('#partner-dinum:community.example.test')
+    expect(links.alias).toBe('#partner-onboarding:community.example.test')
   })
 
   it.each([
-    '@marie:dinum.gouv.fr',
-    '@prenom.nom:agent.dinum.tech.gouv.fr',
-    '@architecte:octo.com',
+    '@marie:example.org',
+    '@prenom.nom:example.org',
+    '@architecte:example.com',
     '@legacy=2fUser:localhost:8448',
     '@user:[2001:db8::1]:8448',
   ])('accepts an existing Matrix identity %s', (id) => expect(isMatrixUserId(id)).toBe(true))
 
   it.each([
-    'marie:dinum.gouv.fr',
+    'marie:example.org',
     '@marie',
     '@marie:',
     '@:example.test',
@@ -87,9 +87,9 @@ describe('Matrix channel invitation dialog', () => {
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
     const dialog = screen.getByRole('dialog')
     const expected = [
-      'https://matrix.to/#/%23partner-dinum%3Ademo.invalid?via=community.kodera.io',
-      '#partner-dinum:demo.invalid',
-      'matrix:r/partner-dinum:demo.invalid?action=join&via=community.kodera.io',
+      'https://matrix.to/#/%23partner-onboarding%3Ademo.invalid?via=community.kodera.io',
+      '#partner-onboarding:demo.invalid',
+      'matrix:r/partner-onboarding:demo.invalid?action=join&via=community.kodera.io',
       `${window.location.origin}/community/workspace/${setup().channel.id}`,
     ]
     const buttons = within(dialog).getAllByRole('button', { name: /^Copier :/ })
@@ -111,7 +111,7 @@ describe('Matrix channel invitation dialog', () => {
       .mockRejectedValueOnce(new Error('M_FORBIDDEN'))
     render(<ChannelInviteDialog {...props} />)
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
-    await user.type(screen.getByRole('textbox'), '@marie:dinum.gouv.fr')
+    await user.type(screen.getByRole('textbox'), '@marie:example.org')
     await user.click(screen.getByTestId('espace-channel-invite-submit'))
     expect(screen.getByRole('alert')).toHaveTextContent('L’invitation Matrix a échoué')
     await user.click(screen.getByTestId('espace-channel-invite-submit'))
@@ -146,7 +146,7 @@ describe('Matrix channel invitation dialog', () => {
     )
     render(<ChannelInviteDialog {...props} />)
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
-    await user.type(screen.getByRole('textbox'), '@marie:dinum.gouv.fr')
+    await user.type(screen.getByRole('textbox'), '@marie:example.org')
     const submit = screen.getByTestId('espace-channel-invite-submit')
     await user.dblClick(submit)
     expect(invite).toHaveBeenCalledTimes(1)
@@ -162,7 +162,7 @@ describe('Matrix channel invitation dialog', () => {
     const props = setup()
     const view = render(<ChannelInviteDialog {...props} />)
     await user.click(screen.getByTestId('espace-channel-invite-btn'))
-    await user.type(screen.getByRole('textbox'), '@marie:dinum.gouv.fr')
+    await user.type(screen.getByRole('textbox'), '@marie:example.org')
     view.rerender(<ChannelInviteDialog {...props} store={setup().store} />)
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await user.click(screen.getByTestId('espace-channel-invite-btn'))

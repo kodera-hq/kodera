@@ -201,7 +201,12 @@ export function localWorkspace(claim: ClaimedWorkspace): components['schemas']['
           ...channel,
           ...item,
           id: localFixtureIds(claim).channels[item.id]!,
-          template_key: null,
+          // As Core answers for the proximity template: its one channel carries the template's
+          // row key, which is what the console labels « proximité ». No other local channel has one.
+          template_key:
+            claim.payload.templateId === 'proximity' && item.name === 'proximity'
+              ? 'proximity'
+              : null,
           room_state: 'ready',
           topic: '',
         })),

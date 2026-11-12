@@ -101,7 +101,7 @@ export function FirstRunOnboardingModal({
         'studio-tech': 'tech-studio',
         'conseil-b2b': 'b2b-advisory',
         'secteur-public': 'public-sector',
-        'cellule-crise': 'crisis-cell',
+        proximity: 'proximity',
         'open-source': 'open-source-community',
       } as Record<string, TemplateId>
     )[selectedTemplate] ?? 'tech-studio'
@@ -210,7 +210,7 @@ export function FirstRunOnboardingModal({
     ['studio-tech', copy.productTemplate],
     ['conseil-b2b', t('console.onboarding.studio.consulting')],
     ['secteur-public', copy.publicTemplate],
-    ['cellule-crise', t('console.onboarding.studio.crisis')],
+    ['proximity', t('console.onboarding.studio.proximity')],
     ...(previewMode ? [['open-source', copy.communityTemplate]] : []),
   ]
   return (
@@ -332,7 +332,10 @@ export function FirstRunOnboardingModal({
                             ? t('console.onboarding.studio.stage')
                             : channel === 'editing-room'
                               ? t('console.onboarding.studio.editing')
-                              : channel}
+                              : channel === 'proximity'
+                                ? // A label only: the channel is still named `proximity`.
+                                  t('console.onboarding.studio.channel-proximity')
+                                : channel}
                         </li>
                       ))}
                     </ul>

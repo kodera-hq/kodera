@@ -10,6 +10,7 @@
   "console.order._.error-owner-role": "Seul le propriétaire de l’organisation peut préparer cette commande et générer son DPA.",
   "console.order._.error-owner-unavailable": "Nous n’avons pas pu vérifier vos droits pour cette commande. Réessayez avant de poursuivre.",
   "console.order._.error-role": "Seul le propriétaire peut passer commande. Demandez à {{owner}}.",
+  "console.order._.error-role-generic": "Seul le propriétaire peut passer commande. Demandez à un⋅e administrateur⋅trice de votre organisation.",
   "console.order._.label-step-agreements": "Contrat",
   "console.order._.label-step-confirmation": "Confirmation",
   "console.order._.label-step-contacts": "Organisation",

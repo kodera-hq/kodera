@@ -107,6 +107,19 @@ When a provider **is** active, the same slot carries the reverse note: accounts 
 provider, inviting stays available for people outside it, and removing someone is worded as
 withdrawing access rather than deleting them.
 
+**Directory privacy (contract 0.42.0).** Core discloses a person's private member facts (their
+address, last sign-in, kind of account, second factor and identity) on their own row and to
+an owner or an administrator, and withholds them, omitted or `null`, from everyone else. The
+list has two projections, chosen from who is asking and never from a fact's absence. An owner or
+administrator reads the directory: name, address, role, last sign-in. Any other role reads the
+colleagues' list: name, role and state, with no address column, no sign-in and no private fact
+drawn as a dash, as « never » or as a word. Its search field searches names only and says so
+(`console.people.list.placeholder-search-name`). A person with neither a name nor a disclosed
+address is listed under `console.people.list.label-unnamed`, never under an empty cell. In the
+directory, an account that has no address (an on-site access) shows a dash to the eye and
+`console.people.list.sr-no-email` to a screen reader. Runnable acceptance: `npx vitest run
+src/features/people/PeopleDirectoryPrivacy.test.tsx`.
+
 ### 4.2 `invite` — by email (drawer)
 
 ```text
@@ -784,6 +797,11 @@ No personal data: never an email address, a name, or a domain. Counts and reason
 - One-click export and delete of the organisation's data (planned after launch).
 
 ## Changelog
+
+- Contract 0.42.0, directory privacy (§4.1): the list and the member drawer draw what Core
+  discloses to the caller, in two projections; three keys are new
+  (`console.people.list.placeholder-search-name`, `console.people.list.label-unnamed`,
+  `console.people.list.sr-no-email`).
 
 - The invitation's validity (gap report G16): the help text now says the invitation is valid for
   14 days, as Core issues it, instead of an activation link valid for seven days, a number no mail

@@ -33,11 +33,11 @@ Native GitHub uses sha256= over rawBody without the SDK timestamp prefix. The Fr
 
 > Signature verification alone is neither tenant authorization nor a persistent replay guarantee.
 
-## Ten official implementations
+## Ten reference implementations
 
 The connector list below describes repository implementations, not connected production accounts. Frame.io routes asset.ready to dailies and comment/review events to post-production without fetching assets.
 
-Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional official connectors for those services.
+Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional reference connectors for those services.
 
 > HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.
 

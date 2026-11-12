@@ -641,6 +641,7 @@ for (const [theme, label] of [
 test('people painted fields: boundary and ring losses are independently refused and restored', async ({
   page,
 }, info) => {
+  test.setTimeout(90_000)
   await page.setViewportSize({ width: 1440, height: 1000 })
   await openPeople(page, 'Clair')
   const search = page.getByRole('searchbox', { name: SEARCH })

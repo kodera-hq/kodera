@@ -91,6 +91,13 @@ export type ExtensionWebhookValidationResult =
       readonly message: string
     }
 
+/**
+ * The starters this checkout ships: reference implementations to adapt, each a manifest and a
+ * sample command. None is a connector endorsed by the service it names, and listing one here
+ * connects no account. What the screen says of them is « implémentations de référence »
+ * (`console.onboarding.extensions.*`); the `Official` in these identifiers is only the name the
+ * code has had since before that wording, kept because modules outside this feature import it.
+ */
 export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[] = Object.freeze<
   readonly OfficialExtensionDescriptor[]
 >([
@@ -207,7 +214,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     version: '1.0.0',
     category: 'productivity',
     description:
-      'Partage et épingle les documents collaboratifs DINUM Docs directement depuis une commande slash.',
+      'Partage et épingle les documents collaboratifs Docs directement depuis une commande slash.',
     slashCommand: '/doc-pad',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -233,7 +240,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     version: '1.0.0',
     category: 'devops',
     description:
-      "Suit en temps réel l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans le salon.",
+      "Suit l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans le salon.",
     slashCommand: '/github-track',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -291,7 +298,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     version: '1.0.0',
     category: 'productivity',
     description:
-      'Partage et synchronise les pages et entrées de bases Notion dans un salon aux côtés de DINUM Docs.',
+      'Partage et synchronise les pages et entrées de bases Notion dans un salon aux côtés de Docs.',
     slashCommand: '/notion-page',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -304,7 +311,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         name: 'notion-page',
         slashCommand: '/notion-page' as const,
         usage: '/notion-page [share|sync|database] --page=<id> --title=<titre>',
-        description: 'Partage ou synchronise une page ou base Notion aux côtés de DINUM Docs.',
+        description: 'Partage ou synchronise une page ou base Notion aux côtés de Docs.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/notion-bridge',

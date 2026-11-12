@@ -1,0 +1,229 @@
+// A channel's message log: how far back it reaches, its day and « new messages » dividers, what
+// is drawn between the messages (polls), and one `MessageRow` per message. Memoised, and it reads
+// the store itself: it is drawn again when the room's messages, its members' presence or its
+// threads change, never when the member types, when a call's sound level moves or when a sidebar
+// is resized. Each row then draws only if its own message, or what is said about it, changed.
+
+import { memo, useSyncExternalStore } from 'react'
+import type { RefObject } from 'react'
+import { useTranslation } from 'react-i18next'
+import { demoMessages } from '../../app/demoMessages'
+import { calendarDay, formatDayDivider, previousCalendarDay } from '../../i18n/format'
+import { Button } from '../../ui/Button/Button'
+import { TimelineDivider } from '../../ui/TimelineDivider/TimelineDivider'
+import type { ChannelDoc } from '../docs/ChannelDocsEditor'
+import type { MemberProfile } from '../profile/UserProfilePopover'
+import {
+  mergeTimelineInserts,
+  NO_MESSAGES,
+  profileRoleIn,
+  type EspaceStoreLike,
+  type TimelineInsert,
+} from './liveViewModel'
+import type { History } from './matrix/store'
+import type { MessageView } from './matrix/timeline'
+import { MessageRow, type MessageRowActions } from './MessageRow'
+import { timelineRows } from './timelineRows'
+import { useCalendarToday } from './useCalendarToday'
+
+/** The top of the message log: how far back it reaches, and the way to read further. */
+function HistoryEdge({
+  history,
+  channel,
+  onLoadOlder,
+}: {
+  history: History
+  channel: string
+  onLoadOlder: () => void
+}) {
+  const { t } = useTranslation()
+  if (history === 'start') {
+    return (
+      <p className="py-2 text-center text-xs text-c-ink-3">
+        {t('console.workspace.channel.label-history-start', { channel })}
+      </p>
+    )
+  }
+  if (history === 'loading') {
+    return (
+      <p className="py-2 text-center text-xs text-c-ink-3">
+        {t('console.workspace.channel.status-loading-older')}
+      </p>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2 py-2 text-xs text-c-ink-3">
+      {history === 'failed' ? <span>{t('console.workspace.channel.error-load-older')}</span> : null}
+      <Button variant="secondary" size="sm" onClick={onLoadOlder}>
+        {history === 'failed'
+          ? t('console.common.action-retry')
+          : t('console.workspace.channel.action-load-older')}
+      </Button>
+    </div>
+  )
+}
+
+/** The message a reply answers, among the loaded ones: the first that carries each event id. */
+function firstByEventId(timeline: readonly MessageView[]): ReadonlyMap<string, MessageView> {
+  const found = new Map<string, MessageView>()
+  for (const message of timeline) {
+    if (!found.has(message.eventId)) found.set(message.eventId, message)
+  }
+  return found
+}
+
+export interface MessageTimelineProps {
+  store: EspaceStoreLike
+  /** The room shown; none while the channel's room is not found, when the log is empty. */
+  roomId: string | null
+  channelId: string
+  /** The channel as the sidebar labels it: the log's name and its welcome. */
+  channelName: string
+  viewerId: string
+  archived: boolean
+  simulation: boolean
+  /** The message whose thread is open beside the log. */
+  expandedEventId: string | null
+  /** The first message the member has not read: « Nouveaux messages » is drawn before it. */
+  unreadFrom: string | null
+  /** What a message's menu belongs to (the session, the member, the room): another closes it. */
+  menuContext: string
+  documents: readonly ChannelDoc[]
+  onOpenDocument: ((doc: ChannelDoc) => void) | undefined
+  inserts: readonly TimelineInsert[]
+  /** « Mentionner », from an author's profile; none where the member cannot write. */
+  onMention: ((member: MemberProfile) => void) | undefined
+  actions: MessageRowActions
+  /** The log's scrolling (`useTimelineScroll`), which the view keeps across the log's absences. */
+  logRef: RefObject<HTMLDivElement | null>
+  onScroll: () => void
+  onLoadOlder: () => void
+}
+
+function MessageTimelineView({
+  store,
+  roomId,
+  channelId,
+  channelName,
+  viewerId,
+  archived,
+  simulation,
+  expandedEventId,
+  unreadFrom,
+  menuContext,
+  documents,
+  onOpenDocument,
+  inserts,
+  onMention,
+  actions,
+  logRef,
+  onScroll,
+  onLoadOlder,
+}: MessageTimelineProps) {
+  const { t, i18n } = useTranslation()
+  const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
+  const demoCopy = demoMessages[locale]
+  // The snapshot is the token for the store's getters: each one below is read again with it.
+  useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const timeline = roomId !== null ? store.getTimeline(roomId) : NO_MESSAGES
+  const history = roomId !== null ? store.getHistory?.(roomId) : undefined
+  /** A day divider's label: « Aujourd’hui », « Hier », or the date, with its year if not this one. */
+  const today = useCalendarToday()
+  function dayLabel(day: string, ts: number): string {
+    if (day === today) return t('console.workspace.channel.label-day-today')
+    if (day === previousCalendarDay(today))
+      return t('console.workspace.channel.label-day-yesterday')
+    return formatDayDivider(ts, locale, day.slice(0, 4) !== today.slice(0, 4))
+  }
+  const rows = timelineRows(timeline, { dayOf: calendarDay, unreadFrom, me: viewerId })
+  const byEventId = firstByEventId(timeline)
+  const shown = timeline.length === 0 ? [] : rows
+
+  return (
+    <div
+      ref={logRef}
+      onScroll={onScroll}
+      role="log"
+      aria-label={t('console.workspace.channel.log-label', {
+        channel: channelName,
+      })}
+      aria-busy={history === 'loading' ? true : undefined}
+      // Conversation history begins under the header, matching the document canvas.
+      className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto py-2"
+    >
+      {history === undefined || (history === 'start' && timeline.length === 0) ? null : (
+        <HistoryEdge history={history} channel={channelName} onLoadOlder={onLoadOlder} />
+      )}
+      {history === 'start' || (timeline.length === 0 && history === undefined) ? (
+        <div className="flex flex-col gap-2 py-8">
+          <span
+            aria-hidden="true"
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-c-muted text-xl text-c-ink-3"
+          >
+            #
+          </span>
+          <h2 className="text-xl font-bold text-c-ink">
+            {t('console.workspace.channel.welcome-title', { channel: channelName })}
+          </h2>
+          {timeline.length === 0 ? (
+            <p className="text-sm text-c-ink-3">
+              {t('console.workspace.channel.live-empty', { channel: channelName })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {shown.length === 0 && inserts.length === 0
+        ? null
+        : mergeTimelineInserts(shown, inserts).map((row) =>
+            row.kind === 'insert' ? (
+              <div key={row.key} data-testid="espace-timeline-insert">
+                {row.node}
+              </div>
+            ) : row.kind === 'day' ? (
+              <TimelineDivider key={row.key}>{dayLabel(row.day, row.ts)}</TimelineDivider>
+            ) : row.kind === 'new' ? (
+              <TimelineDivider key={row.key} tone="new">
+                {t('console.workspace.channel.label-new-messages')}
+              </TimelineDivider>
+            ) : (
+              <MessageRow
+                profileRole={profileRoleIn(store, roomId, row.message.sender)}
+                onMention={onMention}
+                key={row.key}
+                onlineLabel={
+                  store.isOnline?.(row.message.sender)
+                    ? simulation
+                      ? demoCopy.presence
+                      : t('console.workspace.presence.online')
+                    : undefined
+                }
+                document={documents.find(
+                  (doc) => doc.id === row.message.document?.id && doc.channelId === channelId
+                )}
+                onOpenDocument={onOpenDocument}
+                message={row.message}
+                placement="timeline"
+                viewerId={viewerId}
+                archived={archived}
+                expanded={expandedEventId === row.message.eventId}
+                repliedMessage={
+                  row.message.replyTo === null ? undefined : byEventId.get(row.message.replyTo)
+                }
+                threadReplies={
+                  roomId === null ? NO_MESSAGES : store.getThread(roomId, row.message.eventId)
+                }
+                menuContextKey={`${menuContext}:${row.message.key}`}
+                onRetry={actions.onRetry}
+                onReaction={actions.onReaction}
+                onReply={actions.onReply}
+                onEdit={actions.onEdit}
+                onRemove={actions.onRemove}
+                onOpenThread={actions.onOpenThread}
+              />
+            )
+          )}
+    </div>
+  )
+}
+
+export const MessageTimeline = memo(MessageTimelineView)

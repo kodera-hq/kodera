@@ -78,7 +78,7 @@ function normalizeBaseDomain(baseDomain?: string): string {
 }
 
 /**
- * Builds the canonical HTTPS origin for a tenant's dedicated DINUM Docs instance:
+ * Builds the canonical HTTPS origin for a tenant's dedicated Docs instance:
  * `https://docs.<tenantSlug>.<baseDomain>`.
  */
 export function buildTenantDocsOrigin(
@@ -140,7 +140,7 @@ export function buildChannelDocsPadUrl(options: ChannelDocsPadUrlOptions): strin
 }
 
 /**
- * Validates a candidate DINUM Docs URL against open-redirect, SSRF, credential injection,
+ * Validates a candidate Docs URL against open-redirect, SSRF, credential injection,
  * path traversal, and non-HTTPS schemes (`javascript:`, `data:`, `http:`, `file:`).
  */
 export function validateExternalDocsUrl(
@@ -205,7 +205,7 @@ export function validateExternalDocsUrl(
 }
 
 /**
- * Strictly verifies the `MessageEvent.origin` of a DINUM Docs window/iframe handoff event.
+ * Strictly verifies the `MessageEvent.origin` of a Docs window/iframe handoff event.
  */
 export function verifyDocsPostMessageOrigin(
   eventOrigin: string,

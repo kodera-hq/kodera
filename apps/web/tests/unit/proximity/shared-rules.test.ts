@@ -2,20 +2,20 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  EMERGENCY_MAX_FUTURE_SKEW_MS,
-  EMERGENCY_QUEUE_CAPACITY,
-  EMERGENCY_REPLAY_ENTRIES,
-  EMERGENCY_ROSTER_MEMBERS,
-  EmergencyCodecError,
-  EmergencyFrame,
-  EmergencyReplayGuard,
-  EmergencyRoomController,
+  PROXIMITY_MAX_FUTURE_SKEW_MS,
+  PROXIMITY_QUEUE_CAPACITY,
+  PROXIMITY_REPLAY_ENTRIES,
+  PROXIMITY_ROSTER_MEMBERS,
+  ProximityCodecError,
+  ProximityFrame,
+  ProximityReplayGuard,
+  ProximityRoomController,
   SafetyStatus,
   UuidV7,
   createKeyedMacSigner,
   createKeyedMacVerifier,
   isTooFarAhead,
-} from '@/features/emergency'
+} from '@/features/proximity'
 
 // The same file the Rust, Swift and Kotlin tests read: every platform agrees line for line.
 const RULES = join(
@@ -62,16 +62,16 @@ function readRules(): Rules {
   return { bounds, rules, cases }
 }
 
-describe('emergency v1 shared rules (packages/kodera-rs/vectors/emergency-v1-rules.txt)', () => {
+describe('proximity v1 shared rules (packages/kodera-rs/vectors/emergency-v1-rules.txt)', () => {
   const shared = readRules()
 
   it('states the same bounds and clock rule as Rust', () => {
     expect(shared.bounds).toEqual({
-      queue_capacity: EMERGENCY_QUEUE_CAPACITY,
-      roster_members: EMERGENCY_ROSTER_MEMBERS,
-      replay_entries: EMERGENCY_REPLAY_ENTRIES,
+      queue_capacity: PROXIMITY_QUEUE_CAPACITY,
+      roster_members: PROXIMITY_ROSTER_MEMBERS,
+      replay_entries: PROXIMITY_REPLAY_ENTRIES,
     })
-    expect(shared.rules).toEqual({ max_future_skew_ms: EMERGENCY_MAX_FUTURE_SKEW_MS })
+    expect(shared.rules).toEqual({ max_future_skew_ms: PROXIMITY_MAX_FUTURE_SKEW_MS })
   })
 
   it('decides every shared clock case as Rust does', () => {
@@ -85,19 +85,19 @@ describe('emergency v1 shared rules (packages/kodera-rs/vectors/emergency-v1-rul
   })
 
   it('caps the replay guard at the shared bound', () => {
-    expect(new EmergencyReplayGuard(1_000_000).maxEntries).toBe(EMERGENCY_REPLAY_ENTRIES)
+    expect(new ProximityReplayGuard(1_000_000).maxEntries).toBe(PROXIMITY_REPLAY_ENTRIES)
   })
 })
 
-describe('EmergencyRoomController clock and roster bounds', () => {
+describe('ProximityRoomController clock and roster bounds', () => {
   const salt = new Uint8Array(32).fill(0x42)
   const secret = new Uint8Array(32).fill(0x07)
   const pkLocal = new Uint8Array(32).fill(0x0a)
   const pkPeer = new Uint8Array(32).fill(0x0b)
   const clockMs = 1_762_520_100_000
 
-  function controller(members = [{ publicKey: pkPeer, displayName: 'Marina Loiseau' }]) {
-    return new EmergencyRoomController({
+  function controller(members = [{ publicKey: pkPeer }]) {
+    return new ProximityRoomController({
       orgBeaconSalt: salt,
       localSigner: createKeyedMacSigner(secret, pkLocal),
       verifier: createKeyedMacVerifier(secret),
@@ -108,7 +108,7 @@ describe('EmergencyRoomController clock and roster bounds', () => {
   }
 
   function frame(timestampMs: number, status: SafetyStatus, fill: number) {
-    return EmergencyFrame.newSigned(
+    return ProximityFrame.newSigned(
       UuidV7.fromParts(timestampMs, new Uint8Array(10).fill(fill)),
       4,
       status,
@@ -120,7 +120,7 @@ describe('EmergencyRoomController clock and roster bounds', () => {
   it('refuses a frame dated past the skew bound before it can mask a real check-in', () => {
     const node = controller()
     const beacon = node.currentBeacon()
-    const ahead = frame(clockMs + EMERGENCY_MAX_FUTURE_SKEW_MS + 1, SafetyStatus.Safe, 9)
+    const ahead = frame(clockMs + PROXIMITY_MAX_FUTURE_SKEW_MS + 1, SafetyStatus.Safe, 9)
     expect(node.ingestPeerFrame(beacon, ahead.encode())).toEqual({
       accepted: false,
       reason: 'future_frame',
@@ -130,7 +130,7 @@ describe('EmergencyRoomController clock and roster bounds', () => {
 
     const real = frame(clockMs, SafetyStatus.NeedAssistance, 1)
     expect(node.ingestPeerFrame(beacon, real.encode()).accepted).toBe(true)
-    const atBound = frame(clockMs + EMERGENCY_MAX_FUTURE_SKEW_MS, SafetyStatus.Safe, 2)
+    const atBound = frame(clockMs + PROXIMITY_MAX_FUTURE_SKEW_MS, SafetyStatus.Safe, 2)
     expect(node.ingestPeerFrame(beacon, atBound.encode()).accepted).toBe(true)
     node.close()
   })
@@ -143,7 +143,7 @@ describe('EmergencyRoomController clock and roster bounds', () => {
     const callerSecs = Math.floor(clockMs / 1000) + 200
     expect(node.ingestPeerFrame(beacon, ahead.encode(), callerSecs).accepted).toBe(true)
     const further = frame(
-      clockMs + 200_000 + EMERGENCY_MAX_FUTURE_SKEW_MS + 1,
+      clockMs + 200_000 + PROXIMITY_MAX_FUTURE_SKEW_MS + 1,
       SafetyStatus.Safe,
       4
     )
@@ -155,14 +155,14 @@ describe('EmergencyRoomController clock and roster bounds', () => {
   })
 
   it('refuses a roster larger than the shared bound', () => {
-    const members = Array.from({ length: EMERGENCY_ROSTER_MEMBERS }, (_, index) => {
+    const members = Array.from({ length: PROXIMITY_ROSTER_MEMBERS }, (_, index) => {
       const key = new Uint8Array(32)
       key[0] = index & 0xff
       key[1] = index >> 8
       key[31] = 0xee
-      return { publicKey: key, displayName: `member ${index}` }
+      return { publicKey: key }
     })
-    expect(() => controller(members.slice(0, EMERGENCY_ROSTER_MEMBERS - 1)).close()).not.toThrow()
-    expect(() => controller(members)).toThrow(EmergencyCodecError)
+    expect(() => controller(members.slice(0, PROXIMITY_ROSTER_MEMBERS - 1)).close()).not.toThrow()
+    expect(() => controller(members)).toThrow(ProximityCodecError)
   })
 })

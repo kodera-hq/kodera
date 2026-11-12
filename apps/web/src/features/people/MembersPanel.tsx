@@ -1,6 +1,13 @@
 // docs/specs/03-people.md §4.1 and §5 (`list` row): search, role filter,
 // the "Inviter" menu, the members table with its row menu, the cursor "load
 // more", and the empty, error and offline states.
+//
+// Two projections of the same list (contract 0.42.0, « Directory privacy »). A caller who manages
+// people (owner, administrator) reads the directory: every address, every last sign-in, and the
+// row menus. Any other caller reads their colleagues: names, roles and each membership's state.
+// Core withholds a colleague's address and sign-in from them, so that projection draws no column
+// for either, searches names only, and offers nothing that needs an address to work. Which one is
+// drawn is decided by who is asking (`managesPeople`), never by a fact being absent from a row.
 
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -30,7 +37,16 @@ import { TextField } from '../../ui/TextField/TextField'
 import { useToast } from '../../ui/Toast/Toast'
 import { useLocale } from '../invoices/useLocale'
 import { trackMemberRemoved, trackRoleChanged } from './analytics'
-import { formatLastSeen, personName, ROLE_ACTION, ROLE_LABEL } from './format'
+import {
+  disclosedEmail,
+  formatLastSeen,
+  managesPeople,
+  personLabel,
+  personName,
+  ROLE_ACTION,
+  ROLE_LABEL,
+  STATE_LABEL,
+} from './format'
 import type { PeopleTarget } from './PeopleScreen'
 import {
   changeRole,
@@ -55,6 +71,24 @@ export interface MembersPanelProps {
 
 type Pending = { kind: 'remove'; member: Membership } | { kind: 'owner'; member: Membership } | null
 
+/**
+ * The search field's words, by projection. The directory searches names and addresses, and says
+ * so. A colleague's address is withheld from the other projection, so its field must not offer to
+ * search one: « Rechercher un nom ».
+ */
+const SEARCH_LABEL = {
+  directory: 'console.people.list.placeholder-search',
+  colleagues: 'console.people.list.placeholder-search-name',
+} as const satisfies Record<string, MessageKey>
+
+/** A membership's state as a pill: what the colleagues' projection says in place of a sign-in. */
+const STATE_PILL = {
+  invited: 'info',
+  active: 'success',
+  suspended: 'warning',
+  removed: 'neutral',
+} as const satisfies Record<Membership['state'], string>
+
 function useDebounced(value: string, ms: number): string {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -74,6 +108,8 @@ export function MembersPanel({
   const locale = useLocale()
   const notify = useToast()
   const online = useOnlineStatus()
+  /** The directory, for a caller who manages people; their colleagues, for any other. */
+  const directory = managesPeople(callerRole)
   const invalidate = useInvalidatePeople(organisationId)
   const resendInvitation = useResendInvitation(organisationId)
   const [filter, setFilter] = useState<MemberFilter>('all')
@@ -100,11 +136,16 @@ export function MembersPanel({
   const memberships = useMembershipsQuery(organisationId, filter)
 
   const rows = (memberships.data?.pages ?? []).flatMap((page) => page.data)
-  // No search parameter in the contract: the search narrows the rows loaded.
+  // No search parameter in the contract: the search narrows the rows loaded, by the words each
+  // row is listed under, and by its address only where addresses are shown at all.
   const visible =
     query.length === 0
       ? rows
-      : rows.filter((m) => `${m.display_name ?? ''} ${m.email ?? ''}`.toLowerCase().includes(query))
+      : rows.filter((m) =>
+          `${personLabel(m, t)} ${directory ? (disclosedEmail(m) ?? '') : ''}`
+            .toLowerCase()
+            .includes(query)
+        )
   const alone =
     filter === 'all' && query.length === 0 && !memberships.hasNextPage && rows.length <= 1
 
@@ -134,7 +175,7 @@ export function MembersPanel({
       notify({
         kind: 'success',
         title: t('console.people.members.toast-role-changed', {
-          person: personName(member),
+          person: personLabel(member, t),
           role: t(ROLE_LABEL[role]).toLowerCase(),
         }),
       })
@@ -166,7 +207,7 @@ export function MembersPanel({
       await invalidate()
       notify({
         kind: 'success',
-        title: t('console.people.members.toast-removed', { person: personName(member) }),
+        title: t('console.people.members.toast-removed', { person: personLabel(member, t) }),
       })
     } catch (error) {
       refused(error, 'console.common.error-unavailable')
@@ -183,7 +224,9 @@ export function MembersPanel({
       onSelect: () =>
         role === 'org_owner' ? setPending({ kind: 'owner', member }) : void applyRole(member, role),
     }))
-    if (member.state === 'invited') {
+    // Sending an invitation again needs its address, and the right to invite: a caller who reads
+    // no address is offered no such action.
+    if (directory && member.state === 'invited') {
       entries.push({
         label: t('console.people.members.action-resend'),
         disabled: !online,
@@ -210,7 +253,7 @@ export function MembersPanel({
       await resendInvitation(invitationId)
       notify({
         kind: 'success',
-        title: t('console.people.members.toast-resent', { person: personName(member) }),
+        title: t('console.people.members.toast-resent', { person: personLabel(member, t) }),
       })
     } catch (error) {
       notify({ kind: 'error', title: t(resendFailureKey(error)) })
@@ -221,7 +264,9 @@ export function MembersPanel({
   // On-site panel's h2 sit in one outline under the page h1.
   const heading = <h2 className="sr-only">{t('console.people.list.label-tab-members')}</h2>
 
-  if (alone && !memberships.isLoading && !memberships.isError) {
+  // The empty state is an invitation to invite: only for a caller who can. A member alone in their
+  // organisation reads the list, with their own row.
+  if (alone && directory && !memberships.isLoading && !memberships.isError) {
     return (
       <>
         {heading}
@@ -249,7 +294,10 @@ export function MembersPanel({
     )
   }
 
-  const canInvite = callerRole === 'org_owner' || callerRole === 'org_admin'
+  const canInvite = directory
+  const searchLabel = t(SEARCH_LABEL[directory ? 'directory' : 'colleagues'])
+  // The directory has five columns; the colleagues' list has three: no address, no row menu.
+  const columns = directory ? 5 : 3
   const inviteItems: DropdownMenuEntry[] = [
     {
       label: t('console.people.list.action-invite-email'),
@@ -285,8 +333,8 @@ export function MembersPanel({
           <TextField
             ref={searchRef}
             type="search"
-            label={t('console.people.list.placeholder-search')}
-            placeholder={t('console.people.list.placeholder-search')}
+            label={searchLabel}
+            placeholder={searchLabel}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => {
@@ -333,20 +381,28 @@ export function MembersPanel({
           <TableHead>
             <TableRow>
               <TableHeaderCell>{t('console.people.list.label-column-name')}</TableHeaderCell>
-              <TableHeaderCell>{t('console.people.list.label-column-email')}</TableHeaderCell>
+              {directory ? (
+                <TableHeaderCell>{t('console.people.list.label-column-email')}</TableHeaderCell>
+              ) : null}
               <TableHeaderCell>{t('console.people.list.label-column-role')}</TableHeaderCell>
               <TableHeaderCell status>
-                {t('console.people.list.label-column-last-sign-in')}
+                {t(
+                  directory
+                    ? 'console.people.list.label-column-last-sign-in'
+                    : 'console.people.members.label-state'
+                )}
               </TableHeaderCell>
-              <TableHeaderCell>
-                <span className="sr-only">{t('console.people.list.label-column-actions')}</span>
-              </TableHeaderCell>
+              {directory ? (
+                <TableHeaderCell>
+                  <span className="sr-only">{t('console.people.list.label-column-actions')}</span>
+                </TableHeaderCell>
+              ) : null}
             </TableRow>
           </TableHead>
           <TableBody aria-busy={memberships.isLoading ? true : undefined}>
             {memberships.isLoading ? (
               <TableRow>
-                <TableCell colSpan={5}>
+                <TableCell colSpan={columns}>
                   <span role="status" className="sr-only">
                     {t('console.common.a11y-loading')}
                   </span>
@@ -358,7 +414,7 @@ export function MembersPanel({
               </TableRow>
             ) : visible.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center">
+                <TableCell colSpan={columns} className="py-8 text-center">
                   <div className="flex flex-col items-center gap-3">
                     <p>{t('console.people.list.empty-search', { query: search.trim() })}</p>
                     <Button variant="secondary" onClick={() => setSearch('')}>
@@ -369,7 +425,8 @@ export function MembersPanel({
               </TableRow>
             ) : (
               visible.map((member) => {
-                const name = personName(member)
+                const name = personLabel(member, t)
+                const email = disclosedEmail(member)
                 const menu = menuFor(member)
                 return (
                   <TableRow key={member.id}>
@@ -381,6 +438,9 @@ export function MembersPanel({
                         <Avatar
                           aria-hidden="true"
                           name={name}
+                          // Initials come from the person's name, or from their address. With
+                          // neither, a person glyph: never a letter of their role's label.
+                          anonymous={personName(member).length === 0}
                           variant={
                             member.state === 'invited'
                               ? 'pending'
@@ -399,14 +459,31 @@ export function MembersPanel({
                         </button>
                       </span>
                     </TableHeaderCell>
-                    <TableCell className="max-w-[240px] truncate">
-                      {member.email == null || member.email.length === 0 ? '—' : member.email}
-                    </TableCell>
+                    {directory ? (
+                      <TableCell className="max-w-[240px] truncate">
+                        {/* A manager is told every address Core holds: none here is an account
+                            with no address (an on-site access). A dash for the eye, and the
+                            words for a screen reader, which would otherwise read an empty cell. */}
+                        {email ?? (
+                          <>
+                            <span aria-hidden="true">—</span>
+                            <span className="sr-only">{t('console.people.list.sr-no-email')}</span>
+                          </>
+                        )}
+                      </TableCell>
+                    ) : null}
                     <TableCell>
                       <Badge>{t(ROLE_LABEL[member.role])}</Badge>
                     </TableCell>
                     <TableStatusCell>
-                      {member.state === 'invited' ? (
+                      {!directory ? (
+                        // A colleague's sign-in and kind of account are withheld: the row says
+                        // the membership's state, which Core says of everyone, and nothing a
+                        // missing fact could be mistaken for.
+                        <StatusPill state={STATE_PILL[member.state]}>
+                          {t(STATE_LABEL[member.state])}
+                        </StatusPill>
+                      ) : member.state === 'invited' ? (
                         <StatusPill state="info">
                           {t('console.people.list.status-invited')}
                         </StatusPill>
@@ -422,25 +499,27 @@ export function MembersPanel({
                         formatLastSeen(member.last_seen_at, now, locale)
                       )}
                     </TableStatusCell>
-                    <TableRowActions>
-                      {menu.length === 0 ? null : (
-                        <DropdownMenu
-                          label={t('console.people.list.a11y-row-actions', { person: name })}
-                          items={menu}
-                          trigger={
-                            <Button
-                              variant="tertiary"
-                              size="sm"
-                              aria-label={t('console.people.list.a11y-row-actions', {
-                                person: name,
-                              })}
-                            >
-                              ⋯
-                            </Button>
-                          }
-                        />
-                      )}
-                    </TableRowActions>
+                    {directory ? (
+                      <TableRowActions>
+                        {menu.length === 0 ? null : (
+                          <DropdownMenu
+                            label={t('console.people.list.a11y-row-actions', { person: name })}
+                            items={menu}
+                            trigger={
+                              <Button
+                                variant="tertiary"
+                                size="sm"
+                                aria-label={t('console.people.list.a11y-row-actions', {
+                                  person: name,
+                                })}
+                              >
+                                ⋯
+                              </Button>
+                            }
+                          />
+                        )}
+                      </TableRowActions>
+                    ) : null}
                   </TableRow>
                 )
               })
@@ -471,13 +550,13 @@ export function MembersPanel({
           initialFocus="title"
           onOpenChange={(open) => (open ? undefined : setPending(null))}
           title={t('console.people.members.confirm-remove-title', {
-            person: personName(pending.member),
+            person: personLabel(pending.member, t),
           })}
           consequence={t('console.people.members.confirm-remove-body', {
-            person: personName(pending.member),
+            person: personLabel(pending.member, t),
           })}
           confirmLabel={t('console.people.members.action-confirm-remove', {
-            person: personName(pending.member),
+            person: personLabel(pending.member, t),
           })}
           cancelLabel={t('console.common.action-cancel')}
           closeLabel={t('console.common.action-close')}
@@ -492,7 +571,7 @@ export function MembersPanel({
           onOpenChange={(open) => (open ? undefined : setPending(null))}
           size="sm"
           title={t('console.people.members.confirm-owner-title', {
-            person: personName(pending.member),
+            person: personLabel(pending.member, t),
           })}
           description={t('console.people.members.confirm-owner-body')}
           closeLabel={t('console.common.action-close')}

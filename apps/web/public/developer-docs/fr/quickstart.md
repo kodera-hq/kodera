@@ -6,7 +6,7 @@
 
 Depuis un checkout de kodera-hq/kodera, lancez le CLI Node sans dépendance externe. Ce dry-run valide domaine public, émetteur HTTPS externe et template, sans créer de fichier ni de service.
 
-Les cinq templates sont audiovisual-production, tech-studio, b2b-advisory, public-sector et crisis-cell. Le template audiovisuel inclut une intention de configuration Frame.io.
+Les cinq templates sont audiovisual-production, tech-studio, b2b-advisory, public-sector et proximity ; crisis-cell est un alias permanent de proximity. Le template audiovisuel inclut une intention de configuration Frame.io.
 
 > Le CLI est une préversion locale. La publication registre n’est pas confirmée ; utilisez immédiatement l’exécutable du dépôt.
 

@@ -63,7 +63,7 @@ exactly three categories:
 - **Community**, open to everyone: `announcements`, `developers-community`, `support`,
   `extensions`, `self-hosting`, `show-and-tell` and the voice room `office-hours`.
 - **Core Kodera**, private core-team rooms: `dev`, `strategy` and `ops-oncall`.
-- **Design Partners**, separate private partner rooms: `partner-dinum` and `partner-octo`.
+- **Design Partners**, separate private partner rooms: `partner-onboarding` and `partner-feedback`.
 
 Each text channel has a local conversation; both partner rooms include an example of feedback
 sent with Element over Matrix. Audience descriptions are display metadata in this owner demo,

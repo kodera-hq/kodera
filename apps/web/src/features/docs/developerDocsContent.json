@@ -73,7 +73,7 @@
             "title": "Start with a configuration plan",
             "paragraphs": [
               "From a checkout of kodera-hq/kodera, run the dependency-free Node CLI. This dry run validates public domain, external HTTPS issuer and template without creating files or services.",
-              "The five templates are audiovisual-production, tech-studio, b2b-advisory, public-sector and crisis-cell. The audiovisual template includes a Frame.io connector intent."
+              "The five templates are audiovisual-production, tech-studio, b2b-advisory, public-sector and proximity; crisis-cell is a permanent alias of proximity. The audiovisual template includes a Frame.io connector intent."
             ],
             "callout": "The CLI is a local pre-release. Registry publication is not confirmed; use the checked-out executable now.",
             "language": "Shell",
@@ -152,10 +152,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Ten official implementations",
+            "title": "Ten reference implementations",
             "paragraphs": [
               "The connector list below describes repository implementations, not connected production accounts. Frame.io routes asset.ready to dailies and comment/review events to post-production without fetching assets.",
-              "Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional official connectors for those services."
+              "Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional reference connectors for those services."
             ],
             "callout": "HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.",
             "language": "",
@@ -224,7 +224,7 @@
           "hwk",
           "48 kHz",
           "Ed25519",
-          "EmergencyFrame",
+          "ProximityFrame",
           "theme",
           "synapse"
         ],
@@ -251,7 +251,7 @@
             "id": "native",
             "title": "Rust codecs, audio and proximity",
             "paragraphs": [
-              "kodera-rs supplies identifiers, bounded native metadata and EmergencyFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.",
+              "kodera-rs supplies identifiers, bounded native metadata and ProximityFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.",
               "Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. MLS and native hardware/provider seams must not be presented as finished integrations."
             ],
             "callout": "No active BLE radio, end-to-end media encryption or emergency-service guarantee is created by this reference.",
@@ -287,7 +287,7 @@
             "title": "Commencer par un plan de configuration",
             "paragraphs": [
               "Depuis un checkout de kodera-hq/kodera, lancez le CLI Node sans dépendance externe. Ce dry-run valide domaine public, émetteur HTTPS externe et template, sans créer de fichier ni de service.",
-              "Les cinq templates sont audiovisual-production, tech-studio, b2b-advisory, public-sector et crisis-cell. Le template audiovisuel inclut une intention de configuration Frame.io."
+              "Les cinq templates sont audiovisual-production, tech-studio, b2b-advisory, public-sector et proximity ; crisis-cell est un alias permanent de proximity. Le template audiovisuel inclut une intention de configuration Frame.io."
             ],
             "callout": "Le CLI est une préversion locale. La publication registre n’est pas confirmée ; utilisez immédiatement l’exécutable du dépôt.",
             "language": "Shell",
@@ -366,10 +366,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Dix implémentations officielles",
+            "title": "Dix implémentations de référence",
             "paragraphs": [
               "La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Frame.io route asset.ready vers les dailies et les commentaires/revues vers la post-production sans récupérer les médias.",
-              "Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur officiel supplémentaire pour ces services."
+              "Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire pour ces services."
             ],
             "callout": "Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.",
             "language": "",
@@ -438,7 +438,7 @@
           "hwk",
           "48 kHz",
           "Ed25519",
-          "EmergencyFrame",
+          "ProximityFrame",
           "theme",
           "synapse"
         ],
@@ -465,7 +465,7 @@
             "id": "native",
             "title": "Codecs Rust, audio et proximité",
             "paragraphs": [
-              "kodera-rs fournit identifiants, métadonnées natives bornées et codecs EmergencyFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.",
+              "kodera-rs fournit identifiants, métadonnées natives bornées et codecs ProximityFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.",
               "La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les interfaces MLS et matérielles ne doivent pas être présentées comme des intégrations achevées."
             ],
             "callout": "Cette référence n’active ni radio BLE, ni chiffrement média de bout en bout, ni garantie de service d’urgence.",

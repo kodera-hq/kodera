@@ -276,7 +276,13 @@ export function PlanStep({
     return (
       <Banner
         kind="info"
-        headline={t('console.order._.error-role', { owner: ownerQuery.data ?? '—' })}
+        // With no owner to name (their name not set, their address withheld from a member), the
+        // sentence still says whom to ask: a sentence of its own, not a name slotted into one.
+        headline={
+          ownerQuery.data === null || ownerQuery.data === undefined
+            ? t('console.order._.error-role-generic')
+            : t('console.order._.error-role', { owner: ownerQuery.data })
+        }
       />
     )
   }

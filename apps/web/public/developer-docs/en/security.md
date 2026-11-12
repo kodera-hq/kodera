@@ -12,7 +12,7 @@ synapse-policy 0.1.5 enforces the configured room policy alongside the room-acce
 
 ## Rust codecs, audio and proximity
 
-kodera-rs supplies identifiers, bounded native metadata and EmergencyFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.
+kodera-rs supplies identifiers, bounded native metadata and ProximityFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.
 
 Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. MLS and native hardware/provider seams must not be presented as finished integrations.
 

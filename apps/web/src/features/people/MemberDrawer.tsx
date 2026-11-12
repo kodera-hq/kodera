@@ -31,16 +31,23 @@ import { Select } from '../../ui/Select/Select'
 import { useToast } from '../../ui/Toast/Toast'
 import { useLocale } from '../invoices/useLocale'
 import { trackMemberRemoved, trackRoleChanged } from './analytics'
-import { formatLastSeen, personName, ROLE_LABEL } from './format'
+import {
+  disclosedEmail,
+  formatLastSeen,
+  personLabel,
+  ROLE_LABEL,
+  seesPrivateFacts,
+  STATE_LABEL,
+} from './format'
 import type { FocusTarget } from '../../ui/returnFocus'
 import { membershipProblem, sameAsShown, staleRecord } from './memberActions'
+import { boundMember, record } from './memberWire'
 import {
   changeMembership,
   changeRole,
   removeMembership,
   useInvalidatePeople,
   peopleKeys,
-  type Membership,
   type Tagged,
   type MembershipDetail,
 } from './queries'
@@ -49,6 +56,12 @@ import { mayRemove, roleChangeTargets, type OrganisationRole } from './roles'
 export interface MemberDrawerProps {
   organisationId: string
   callerRole: OrganisationRole
+  /**
+   * The caller's own membership. Core discloses a person's private facts (address, last sign-in)
+   * to that person and to those who manage people; to anyone else they are withheld, and the
+   * drawer then says nothing about them (`seesPrivateFacts`).
+   */
+  callerMembershipId?: string
   memberId: string
   onClose: () => void
 }
@@ -57,13 +70,6 @@ const BLOCKED_REASON: Record<string, MessageKey> = {
   last_owner: 'console.people.members.error-last-owner',
   self: 'console.people.members.error-self-change',
   staff_managed: 'console.people.members.error-staff-managed',
-}
-
-const STATE_LABEL: Record<MembershipDetail['state'], MessageKey> = {
-  invited: 'console.people.list.status-invited',
-  active: 'console.people.list.status-active',
-  suspended: 'console.people.list.status-suspended',
-  removed: 'console.people.list.status-removed',
 }
 
 /**
@@ -105,41 +111,6 @@ function removeBlocked(caller: OrganisationRole, member: MembershipDetail): Mess
   }
   if (!mayRemove(caller, member.role)) return 'console.people.members.error-owner-only-role'
   return null
-}
-
-const ROLES = ['org_owner', 'org_admin', 'org_billing', 'org_member'] as const
-const STATES = ['invited', 'active', 'suspended', 'removed'] as const
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function timestamp(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    /^\d{4}-\d{2}-\d{2}T/.test(value) &&
-    Number.isFinite(Date.parse(value))
-  )
-}
-
-/** Check the required wire facts and every optional fact this drawer renders. */
-function boundMember(
-  value: unknown,
-  organisationId: string,
-  memberId: string
-): value is Membership {
-  return (
-    record(value) &&
-    value['id'] === memberId &&
-    value['organisation_id'] === organisationId &&
-    ROLES.some((role) => role === value['role']) &&
-    STATES.some((state) => state === value['state']) &&
-    timestamp(value['created_at']) &&
-    (value['updated_at'] === undefined || timestamp(value['updated_at'])) &&
-    (value['email'] === undefined || typeof value['email'] === 'string') &&
-    (value['display_name'] == null || typeof value['display_name'] === 'string') &&
-    (value['last_seen_at'] == null || timestamp(value['last_seen_at']))
-  )
 }
 
 function detail(
@@ -207,6 +178,7 @@ export function MemberDrawer(props: MemberDrawerProps) {
 function OwnedMemberDrawer({
   organisationId,
   callerRole,
+  callerMembershipId,
   memberId,
   onClose,
   session,
@@ -333,7 +305,10 @@ function OwnedMemberDrawer({
   )
 
   const member = membership.data?.value
-  const name = member === undefined ? '' : personName(member)
+  const name = member === undefined ? '' : personLabel(member, t)
+  const email = member === undefined ? undefined : disclosedEmail(member)
+  // Decided by who is asking, never by a fact's absence: a withheld sign-in is not « never ».
+  const privateFacts = seesPrivateFacts(callerRole, callerMembershipId, memberId)
 
   /** A read made now, for its tag: the drawer's own read may be minutes old. When the person
    * changed since they were shown, nothing is sent: the drawer and the list show them again and
@@ -412,7 +387,7 @@ function OwnedMemberDrawer({
         notify({
           kind: 'success',
           title: t('console.people.members.toast-role-changed', {
-            person: personName(current.value),
+            person: personLabel(current.value, t),
             role: t(ROLE_LABEL[current.value.role]).toLowerCase(),
           }),
         })
@@ -598,7 +573,7 @@ function OwnedMemberDrawer({
         onClose()
       }}
       title={name}
-      {...(member?.email ? { description: member.email } : {})}
+      {...(email === undefined ? {} : { description: email })}
       closeLabel={t('console.common.action-close')}
       returnFocusTo={returnFocusTo}
     >
@@ -703,13 +678,15 @@ function OwnedMemberDrawer({
                 date: formatDate(member.created_at, locale),
               })}
             </p>
-            <p>
-              {member.last_seen_at === null || member.last_seen_at === undefined
-                ? t('console.people.list.status-never-signed-in')
-                : t('console.people.members.label-last-sign-in', {
-                    duration: formatLastSeen(member.last_seen_at, now, locale),
-                  })}
-            </p>
+            {privateFacts ? (
+              <p>
+                {member.last_seen_at === null || member.last_seen_at === undefined
+                  ? t('console.people.list.status-never-signed-in')
+                  : t('console.people.members.label-last-sign-in', {
+                      duration: formatLastSeen(member.last_seen_at, now, locale),
+                    })}
+              </p>
+            ) : null}
           </div>
           {member.state === 'active' || member.state === 'suspended' ? (
             <div className="flex flex-col items-start gap-2">

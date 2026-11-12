@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { onboardingCopy } from './onboardingMessages'
-import type { TemplateId } from './instantClaimClient'
+import { deployTemplateId, type TemplateId } from './instantClaimClient'
 export function terminalCommand(
   mode: 'script' | 'package',
   domain: string,
@@ -32,9 +32,11 @@ export function terminalCommand(
       /\.(local|internal|localhost|test|invalid)$/u.test(url.hostname)
     )
       return null
+    // The tooling's own identifier for the template (`deployTemplateId`).
+    const named = deployTemplateId(template)
     return mode === 'package'
-      ? `npx create-kodera --self-host --domain '${domain}' --oidc-issuer '${url.href}' --oidc-client-id '${client}' --template '${template}' --trust-file public-trust.json --support-mailbox '${mailbox}' --source-dir . --output-dir kodera-workspace`
-      : `bash deploy/community/kodera-deploy.sh --domain '${domain}' --oidc-issuer '${url.href}' --oidc-origin '${url.origin}' --oidc-client-id '${client}' --template '${template}' --support-mailbox '${mailbox}' --trust-file public-trust.json --env-file kodera-generated.conf --generate-only`
+      ? `npx create-kodera --self-host --domain '${domain}' --oidc-issuer '${url.href}' --oidc-client-id '${client}' --template '${named}' --trust-file public-trust.json --support-mailbox '${mailbox}' --source-dir . --output-dir kodera-workspace`
+      : `bash deploy/community/kodera-deploy.sh --domain '${domain}' --oidc-issuer '${url.href}' --oidc-origin '${url.origin}' --oidc-client-id '${client}' --template '${named}' --support-mailbox '${mailbox}' --trust-file public-trust.json --env-file kodera-generated.conf --generate-only`
   } catch {
     return null
   }

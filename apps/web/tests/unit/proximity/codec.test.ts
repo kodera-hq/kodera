@@ -3,15 +3,15 @@ import { describe, expect, it } from 'vitest'
 import {
   BEACON_ROTATION_WINDOW_SECS,
   type BroadcastChannelLike,
-  EMERGENCY_FIXED_OVERHEAD_BYTES,
-  EMERGENCY_MESH_CHANNEL_NAME,
-  EmergencyCodecError,
-  EmergencyFrame,
-  EmergencyReplayGuard,
-  EmergencyRoomController,
-  MAX_EMERGENCY_FRAME_BYTES,
-  MAX_EMERGENCY_TEXT_BYTES,
-  MAX_EMERGENCY_TTL_HOPS,
+  PROXIMITY_FIXED_OVERHEAD_BYTES,
+  PROXIMITY_MESH_CHANNEL_NAME,
+  ProximityCodecError,
+  ProximityFrame,
+  ProximityReplayGuard,
+  ProximityRoomController,
+  MAX_PROXIMITY_FRAME_BYTES,
+  MAX_PROXIMITY_TEXT_BYTES,
+  MAX_PROXIMITY_TTL_HOPS,
   SafetyStatus,
   type SignatureVerifier,
   UuidV7,
@@ -24,7 +24,7 @@ import {
   hmacSha256,
   sha256,
   verifyProximityBeacon,
-} from '@/features/emergency'
+} from '@/features/proximity'
 
 const UTF8 = new TextEncoder()
 const ED25519_SPKI_PREFIX = hexToBytes('302a300506032b6570032100')
@@ -44,7 +44,7 @@ const nodeEd25519Verifier: SignatureVerifier = {
   },
 }
 
-describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', () => {
+describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)', () => {
   describe('FIPS 180-4 SHA-256 & RFC 4231 HMAC-SHA256', () => {
     it('computes canonical SHA-256 digests', () => {
       const abcDigest = sha256(UTF8.encode('abc'))
@@ -54,14 +54,11 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
     })
 
     it('matches RFC 4231 Test Case 2 (identical to kodera-rs)', () => {
-      const mac = hmacSha256(
-        UTF8.encode('Jefe'),
-        UTF8.encode('what do ya want for nothing?')
-      )
+      const mac = hmacSha256(UTF8.encode('Jefe'), UTF8.encode('what do ya want for nothing?'))
       const expected = new Uint8Array([
-        0x5b, 0xdc, 0xc1, 0x46, 0xbf, 0x60, 0x75, 0x4e, 0x6a, 0x04, 0x24, 0x26, 0x08, 0x95,
-        0x75, 0xc7, 0x5a, 0x00, 0x3f, 0x08, 0x9d, 0x27, 0x39, 0x83, 0x9d, 0xec, 0x58, 0xb9,
-        0x64, 0xec, 0x38, 0x43,
+        0x5b, 0xdc, 0xc1, 0x46, 0xbf, 0x60, 0x75, 0x4e, 0x6a, 0x04, 0x24, 0x26, 0x08, 0x95, 0x75,
+        0xc7, 0x5a, 0x00, 0x3f, 0x08, 0x9d, 0x27, 0x39, 0x83, 0x9d, 0xec, 0x58, 0xb9, 0x64, 0xec,
+        0x38, 0x43,
       ])
       expect(mac).toEqual(expected)
     })
@@ -117,18 +114,9 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       const salt = new Uint8Array(32).fill(0x42)
       const nowSecs = 1_762_520_100
       const currentBeacon = computeProximityBeacon(salt, nowSecs)
-      const prevWindowBeacon = computeProximityBeacon(
-        salt,
-        nowSecs - BEACON_ROTATION_WINDOW_SECS
-      )
-      const nextWindowBeacon = computeProximityBeacon(
-        salt,
-        nowSecs + BEACON_ROTATION_WINDOW_SECS
-      )
-      const staleBeacon = computeProximityBeacon(
-        salt,
-        nowSecs - BEACON_ROTATION_WINDOW_SECS * 2
-      )
+      const prevWindowBeacon = computeProximityBeacon(salt, nowSecs - BEACON_ROTATION_WINDOW_SECS)
+      const nextWindowBeacon = computeProximityBeacon(salt, nowSecs + BEACON_ROTATION_WINDOW_SECS)
+      const staleBeacon = computeProximityBeacon(salt, nowSecs - BEACON_ROTATION_WINDOW_SECS * 2)
 
       expect(verifyProximityBeacon(currentBeacon, salt, nowSecs)).toBe(true)
       expect(verifyProximityBeacon(prevWindowBeacon, salt, nowSecs)).toBe(true)
@@ -137,7 +125,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
     })
   })
 
-  describe('EmergencyFrame v1 wire codec ("KE" magic, 118B fixed overhead, <= 256B MTU)', () => {
+  describe('ProximityFrame v1 wire codec ("KE" magic, 118B fixed overhead, <= 256B MTU)', () => {
     const secret = new Uint8Array(32).fill(7)
     const pk = new Uint8Array(32).fill(9)
     const signer = createKeyedMacSigner(secret, pk)
@@ -147,17 +135,11 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
     it('encodes exact header offsets, survives TTL hop decrement, and rejects tampering', () => {
       const id = UuidV7.fromParts(1_762_520_000_500, new Uint8Array(10).fill(3))
       const text = 'Floor 3 clear - gathering at north courtyard'
-      const frame = EmergencyFrame.newSigned(
-        id,
-        4,
-        SafetyStatus.Safe,
-        text,
-        signer
-      )
+      const frame = ProximityFrame.newSigned(id, 4, SafetyStatus.Safe, text, signer)
 
       const wire = frame.encode()
-      expect(wire.length).toBe(EMERGENCY_FIXED_OVERHEAD_BYTES + text.length)
-      expect(wire.length).toBeLessThanOrEqual(MAX_EMERGENCY_FRAME_BYTES)
+      expect(wire.length).toBe(PROXIMITY_FIXED_OVERHEAD_BYTES + text.length)
+      expect(wire.length).toBeLessThanOrEqual(MAX_PROXIMITY_FRAME_BYTES)
 
       // Exact wire header layout check (ROADMAP §3):
       expect(wire[0]).toBe(0x4b) // 'K'
@@ -169,7 +151,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       expect(wire[52]).toBe(SafetyStatus.Safe) // status = 1
       expect(wire[53]).toBe(text.length) // text_len
 
-      const decoded = EmergencyFrame.decode(wire)
+      const decoded = ProximityFrame.decode(wire)
       expect(decoded.equals(frame)).toBe(true)
       expect(decoded.verifySender(roster, verifier)).toBe(true)
 
@@ -180,11 +162,11 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       expect(relayed?.verifySender(roster, verifier)).toBe(true)
 
       // TTL=1 frame stops relaying on decrementHop()
-      const finalHop = EmergencyFrame.newSigned(id, 1, SafetyStatus.Safe, 'Last hop', signer)
+      const finalHop = ProximityFrame.newSigned(id, 1, SafetyStatus.Safe, 'Last hop', signer)
       expect(finalHop.decrementHop()).toBeNull()
 
       // Mutation self-test 1: tampered text MUST fail signature verification
-      const forged = new EmergencyFrame({
+      const forged = new ProximityFrame({
         messageId: decoded.messageId,
         senderPublicKey: decoded.senderPublicKey,
         ttlHops: decoded.ttlHops,
@@ -205,33 +187,27 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
     it('enforces TTL bounds (1..=6) and UTF-8 text payload bounds (<= 138B)', () => {
       const id = UuidV7.fromParts(1_762_520_000_500, new Uint8Array(10).fill(3))
 
-      expect(() =>
-        EmergencyFrame.newSigned(id, 0, SafetyStatus.Safe, 'ok', signer)
-      ).toThrowError(expect.objectContaining({ code: 'InvalidTtl' }))
+      expect(() => ProximityFrame.newSigned(id, 0, SafetyStatus.Safe, 'ok', signer)).toThrowError(
+        expect.objectContaining({ code: 'InvalidTtl' })
+      )
 
       expect(() =>
-        EmergencyFrame.newSigned(
-          id,
-          MAX_EMERGENCY_TTL_HOPS + 1,
-          SafetyStatus.Safe,
-          'ok',
-          signer
-        )
+        ProximityFrame.newSigned(id, MAX_PROXIMITY_TTL_HOPS + 1, SafetyStatus.Safe, 'ok', signer)
       ).toThrowError(expect.objectContaining({ code: 'InvalidTtl' }))
 
-      const maxText = 'a'.repeat(MAX_EMERGENCY_TEXT_BYTES)
-      const maxFrame = EmergencyFrame.newSigned(
+      const maxText = 'a'.repeat(MAX_PROXIMITY_TEXT_BYTES)
+      const maxFrame = ProximityFrame.newSigned(
         id,
-        MAX_EMERGENCY_TTL_HOPS,
+        MAX_PROXIMITY_TTL_HOPS,
         SafetyStatus.NeedAssistance,
         maxText,
         signer
       )
-      expect(maxFrame.encode().length).toBe(MAX_EMERGENCY_FRAME_BYTES)
+      expect(maxFrame.encode().length).toBe(MAX_PROXIMITY_FRAME_BYTES)
 
-      const oversizedText = 'a'.repeat(MAX_EMERGENCY_TEXT_BYTES + 1)
+      const oversizedText = 'a'.repeat(MAX_PROXIMITY_TEXT_BYTES + 1)
       expect(() =>
-        EmergencyFrame.newSigned(id, 3, SafetyStatus.Safe, oversizedText, signer)
+        ProximityFrame.newSigned(id, 3, SafetyStatus.Safe, oversizedText, signer)
       ).toThrowError(expect.objectContaining({ code: 'PayloadTooLarge' }))
     })
 
@@ -250,7 +226,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       expect(raw.byteLength).toBe(129)
 
       // 1. Decode exact fields from the canonical 129-byte frame
-      const decoded = EmergencyFrame.decode(raw)
+      const decoded = ProximityFrame.decode(raw)
       expect(decoded.messageId.toString()).toBe('019a5e62-6ca0-7303-8303-030303030303')
       expect(bytesToHex(decoded.messageId.asBytes())).toBe('019a5e626ca073038303030303030303')
       expect(bytesToHex(decoded.senderPublicKey)).toBe(canonicalPublicKeyHex)
@@ -270,7 +246,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       expect(decremented?.verifySender([canonicalPublicKey], nodeEd25519Verifier)).toBe(true)
 
       // 4. Mutating text, status, or senderPublicKey fails verifySender
-      const mutatedText = new EmergencyFrame({
+      const mutatedText = new ProximityFrame({
         messageId: decoded.messageId,
         senderPublicKey: decoded.senderPublicKey,
         ttlHops: decoded.ttlHops,
@@ -282,7 +258,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
         mutatedText.verifySender([canonicalPublicKey], nodeEd25519Verifier)
       ).toThrowError(expect.objectContaining({ code: 'InvalidSignature' }))
 
-      const mutatedStatus = new EmergencyFrame({
+      const mutatedStatus = new ProximityFrame({
         messageId: decoded.messageId,
         senderPublicKey: decoded.senderPublicKey,
         ttlHops: decoded.ttlHops,
@@ -296,7 +272,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
 
       const mutatedSenderKey = new Uint8Array(canonicalPublicKey)
       mutatedSenderKey[0] = (mutatedSenderKey[0] ?? 0) ^ 0xff
-      const mutatedKeyFrame = new EmergencyFrame({
+      const mutatedKeyFrame = new ProximityFrame({
         messageId: decoded.messageId,
         senderPublicKey: mutatedSenderKey,
         ttlHops: decoded.ttlHops,
@@ -313,9 +289,9 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
     })
   })
 
-  describe('EmergencyReplayGuard', () => {
+  describe('ProximityReplayGuard', () => {
     it('deduplicates seen UUIDv7 frames and evicts the oldest ID when exceeding capacity', () => {
-      const guard = new EmergencyReplayGuard(64)
+      const guard = new ProximityReplayGuard(64)
       const firstId = UuidV7.fromParts(1_762_520_000_000, new Uint8Array(10).fill(5))
       expect(guard.acceptOnce(firstId)).toBe(true)
       expect(guard.acceptOnce(firstId)).toBe(false)
@@ -330,7 +306,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
     })
   })
 
-  describe('EmergencyRoomController mesh relay & priority ordering', () => {
+  describe('ProximityRoomController mesh relay & priority ordering', () => {
     it('orders relay queue by priority (NeedAssistance > MusterPoint > Safe > MessageOnly) and syncs across BroadcastChannel', () => {
       const channels = new Map<string, Set<BroadcastChannelLike>>()
       const createMockChannel = (name: string): BroadcastChannelLike => {
@@ -364,52 +340,48 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       const signerC = createKeyedMacSigner(secret, pkNodeC)
       const verifier = createKeyedMacVerifier(secret)
 
-      const members = [
-        { publicKey: pkNodeA, displayName: 'Alice' },
-        { publicKey: pkNodeB, displayName: 'Bruno' },
-        { publicKey: pkNodeC, displayName: 'Chloé' },
-      ]
+      const members = [{ publicKey: pkNodeA }, { publicKey: pkNodeB }, { publicKey: pkNodeC }]
 
       let clockMs = 1_762_520_100_000
-      const controllerA = new EmergencyRoomController({
+      const controllerA = new ProximityRoomController({
         orgBeaconSalt: salt,
         localSigner: signerA,
         verifier,
         members,
-        localDisplayName: 'Alice',
         nowMs: () => clockMs,
         broadcastChannelFactory: createMockChannel,
       })
 
-      const controllerB = new EmergencyRoomController({
+      const controllerB = new ProximityRoomController({
         orgBeaconSalt: salt,
         localSigner: signerB,
         verifier,
         members,
-        localDisplayName: 'Bruno',
         nowMs: () => clockMs,
         broadcastChannelFactory: createMockChannel,
       })
 
-      expect(channels.has(EMERGENCY_MESH_CHANNEL_NAME)).toBe(true)
+      expect(channels.has(PROXIMITY_MESH_CHANNEL_NAME)).toBe(true)
 
       // Alice emits a Safe check-in -> Bruno receives it over BroadcastChannel
       controllerA.emitCheckIn(SafetyStatus.Safe, 'Alice au RDC', 4)
       expect(controllerB.getRoster()).toHaveLength(1)
-      expect(controllerB.getRoster()[0]?.displayName).toBe('Alice')
+      // Who checked in is the sender's public half: a check-in carries no name.
+      expect(controllerB.getRoster()[0]?.senderPublicKeyHex).toBe(bytesToHex(pkNodeA))
+      expect(controllerB.getRoster()[0]).not.toHaveProperty('displayName')
       expect(controllerB.getRoster()[0]?.ttlHops).toBe(4)
 
       // Chloé injects a MusterPoint frame and a NeedAssistance frame into Bruno
       clockMs += 1000
       const beacon = controllerB.currentBeacon()
-      const musterFrame = EmergencyFrame.newSigned(
+      const musterFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs, new Uint8Array(10).fill(1)),
         5,
         SafetyStatus.MusterPoint,
         'Cour Nord ouverte',
         signerC
       )
-      const assistFrame = EmergencyFrame.newSigned(
+      const assistFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 100, new Uint8Array(10).fill(2)),
         3,
         SafetyStatus.NeedAssistance,
@@ -438,7 +410,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
 
       controllerA.close()
       controllerB.close()
-      expect(EmergencyCodecError).toBeDefined()
+      expect(ProximityCodecError).toBeDefined()
     })
 
     it('rejects out-of-order stale frames without overwriting newer roster status or enqueueing relay frames', () => {
@@ -452,24 +424,24 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       const verifier = createKeyedMacVerifier(secret)
 
       const clockMs = 1_762_520_100_000
-      const controller = new EmergencyRoomController({
+      const controller = new ProximityRoomController({
         orgBeaconSalt: salt,
         localSigner,
         verifier,
-        members: [{ publicKey: pkPeer, displayName: 'Bruno' }],
+        members: [{ publicKey: pkPeer }],
         nowMs: () => clockMs,
         broadcastChannelFactory: () => null,
       })
 
       const beacon = controller.currentBeacon()
-      const newerFrame = EmergencyFrame.newSigned(
+      const newerFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 5_000, new Uint8Array(10).fill(2)),
         4,
         SafetyStatus.Safe,
         'Sorti du bâtiment',
         peerSigner
       )
-      const olderStaleFrame = EmergencyFrame.newSigned(
+      const olderStaleFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 1_000, new Uint8Array(10).fill(1)),
         4,
         SafetyStatus.NeedAssistance,
@@ -516,15 +488,15 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       const verifier = createKeyedMacVerifier(secret)
 
       const clockMs = 1_762_520_100_000
-      const controller = new EmergencyRoomController({
+      const controller = new ProximityRoomController({
         orgBeaconSalt: salt,
         localSigner,
         verifier,
         members: [
-          { publicKey: pkPeerB, displayName: 'Bruno' },
-          { publicKey: pkPeerC, displayName: 'Chloé' },
-          { publicKey: pkPeerD, displayName: 'David' },
-          { publicKey: pkPeerE, displayName: 'Emma' },
+          { publicKey: pkPeerB },
+          { publicKey: pkPeerC },
+          { publicKey: pkPeerD },
+          { publicKey: pkPeerE },
         ],
         nowMs: () => clockMs,
         maxQueueCapacity: 2,
@@ -534,14 +506,14 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       const beacon = controller.currentBeacon()
 
       // Fill the 2-slot relay queue with MusterPoint (priority 2) and Safe (priority 1)
-      const musterFrame = EmergencyFrame.newSigned(
+      const musterFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 100, new Uint8Array(10).fill(1)),
         4,
         SafetyStatus.MusterPoint,
         'Rassemblement parking',
         signerB
       )
-      const safeFrame = EmergencyFrame.newSigned(
+      const safeFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 200, new Uint8Array(10).fill(2)),
         4,
         SafetyStatus.Safe,
@@ -555,7 +527,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
 
       // A lower-priority MessageOnly frame from David is refused by the full relay queue
       // (relayedFrame === null) yet still updates David's verified status in the roster
-      const messageOnlyFrame = EmergencyFrame.newSigned(
+      const messageOnlyFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 300, new Uint8Array(10).fill(3)),
         4,
         SafetyStatus.MessageOnly,
@@ -566,11 +538,11 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       expect(refusedRelayRes.accepted).toBe(true)
       if (refusedRelayRes.accepted) {
         expect(refusedRelayRes.relayedFrame).toBeNull()
-        expect(refusedRelayRes.checkIn.displayName).toBe('David')
+        expect(refusedRelayRes.checkIn.senderPublicKeyHex).toBe(bytesToHex(pkPeerD))
         expect(refusedRelayRes.checkIn.status).toBe(SafetyStatus.MessageOnly)
       }
       expect(
-        controller.getRoster().some((entry) => entry.displayName === 'David')
+        controller.getRoster().some((entry) => entry.senderPublicKeyHex === bytesToHex(pkPeerD))
       ).toBe(true)
       expect(controller.peekRelayQueue().map((q) => q.frame.status)).toEqual([
         SafetyStatus.MusterPoint,
@@ -578,7 +550,7 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       ])
 
       // A higher-priority NeedAssistance frame from Emma preempts and evicts the lowest queued frame (Safe)
-      const assistFrame = EmergencyFrame.newSigned(
+      const assistFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 400, new Uint8Array(10).fill(4)),
         4,
         SafetyStatus.NeedAssistance,
@@ -610,11 +582,11 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       const verifier = createKeyedMacVerifier(secret)
 
       const clockMs = 1_762_520_100_000
-      const controller = new EmergencyRoomController({
+      const controller = new ProximityRoomController({
         orgBeaconSalt: salt,
         localSigner,
         verifier,
-        members: [{ publicKey: pkPeer, displayName: 'Bruno' }],
+        members: [{ publicKey: pkPeer }],
         nowMs: () => clockMs,
         maxReplayEntries: 1,
         maxQueueCapacity: 4,
@@ -622,14 +594,14 @@ describe('#urgence BLE wire codec & cryptographic parity (packages/kodera-rs)', 
       })
 
       const beacon = controller.currentBeacon()
-      const firstFrame = EmergencyFrame.newSigned(
+      const firstFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 100, new Uint8Array(10).fill(1)),
         4,
         SafetyStatus.NeedAssistance,
         'Premier signal',
         peerSigner
       )
-      const secondFrame = EmergencyFrame.newSigned(
+      const secondFrame = ProximityFrame.newSigned(
         UuidV7.fromParts(clockMs + 200, new Uint8Array(10).fill(2)),
         4,
         SafetyStatus.Safe,

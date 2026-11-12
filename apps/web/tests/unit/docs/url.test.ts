@@ -10,7 +10,7 @@ import {
   verifyDocsPostMessageOrigin,
 } from '@/features/docs'
 
-describe('DINUM Docs URL and origin security guards', () => {
+describe('Docs URL and origin security guards', () => {
   describe('buildTenantDocsOrigin & isValidTenantDocsSlug', () => {
     it('builds the canonical HTTPS Docs origin for a valid tenant slug', () => {
       expect(buildTenantDocsOrigin('acme-sa')).toBe('https://docs.acme-sa.kodera.io')

@@ -26,7 +26,7 @@ it('keeps all generated public guides and llms.txt byte-identical to the rendere
     }
   }
 })
-it('indexes the actual ten official connectors with existing source paths', () => {
+it('indexes the actual ten reference connectors with existing source paths', () => {
   expect(developerDocsContent.connectors).toHaveLength(10)
   expect(developerDocsContent.connectors.map((connector) => connector.slug).sort()).toEqual(
     OFFICIAL_EXTENSIONS_CATALOG.map((connector) => connector.slug).sort()
@@ -65,7 +65,7 @@ it('keeps both locales structurally complete, with explicit integration limits',
         .find((other) => other.id === page.id)
         ?.sections.map((section) => section.id)
     )
-  expect(buildLlmsText()).toContain('not additional official connectors')
+  expect(buildLlmsText()).toContain('not additional reference connectors')
   expect(buildLlmsText()).toContain('is a local pre-release')
   expect(buildLlmsText()).toContain('availability are not confirmed')
 })

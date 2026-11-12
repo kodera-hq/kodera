@@ -192,7 +192,13 @@ export function useOrganisationOwnerQuery(organisationId: string | undefined) {
         params: { path: { organisation_id: organisationId ?? '' }, query: {} },
       })
       const owner = (data?.data ?? []).find((membership) => membership.role === 'org_owner')
-      return owner?.display_name ?? owner?.email
+      // The owner's name, else their address where Core discloses it. From a member it withholds
+      // a colleague's address (contract 0.42.0, « Directory privacy »), omitted or `null` alike:
+      // there is then no one to name, which is `null` here, never a blank or the word « null ».
+      const name = owner?.display_name?.trim()
+      if (name !== undefined && name.length > 0) return name
+      const email = owner?.email?.trim()
+      return email !== undefined && email.length > 0 ? email : null
     },
     enabled: organisationId !== undefined,
   })

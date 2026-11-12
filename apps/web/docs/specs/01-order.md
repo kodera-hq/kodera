@@ -488,7 +488,7 @@ field is wrong, not "une erreur est survenue".
 | `billing_pending: true` | `console.order.confirmation.error-invoice-deferred` | Nothing to do; the invoice arrives by email; support link |
 | `upstream-unavailable` on the payment link | `console.order.confirmation.error-payment-link` | Pay by transfer using the invoice, or retry |
 | `dpa-not-accepted` | `console.order.agreements.error-acceptance-required` | Return to the agreements step |
-| `forbidden` | `console.order._.error-role` | Name the owner to ask |
+| `forbidden` | `console.order._.error-role`, or `console.order._.error-role-generic` when the owner has no name and Core withholds their address from the caller | Name the owner to ask, or say whom to ask |
 | `idempotency-key-reuse` | `console.common.error-unavailable` | Keep submission held and the previous outcome unresolved. Do not infer no commit or start another purchase after reload. Retain an already available original key/body for reconciliation; do not reconstruct a lost tuple or add persistence. Use authoritative readback of a known order reference when available, or contact support. |
 
 ## 10. Accessibility
