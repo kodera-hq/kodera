@@ -36,6 +36,22 @@ A channel opens on what it last showed, before the first sync answers (`src/feat
   - A browser without IndexedDB, or one that refuses it, keeps nothing and loses no message.
 - **Reading back.** Every record is checked field by field. A record of another version, shape or member is ignored.
 
+### Pinned messages
+
+A room's pins are its `m.room.pinned_events` state, read by the store (`getPinned`), in the order the room keeps them. Only event ids are read, each once.
+
+- **Pinning.** The message menu offers « Épingler » or « Désépingler » where the room's power levels let the member send that state (`canPin`). Archived channels, deleted messages and thread replies offer neither. Pinning sends the whole list with the event added or removed. A refused change leaves the room's list as it was, and that list is what shows.
+- **The list.** A header button names how many pins the room has. Its popover lists them, the most recently pinned first. Each entry shows the author, the time and one line of the message. A pin older than the loaded history is listed as such.
+- **Jumping.** Choosing an entry closes the popover and brings the message into sight through `showMessage`. The row is marked and takes the focus, rather than the trigger.
+
+### Search
+
+A header button opens a field that searches the channel's loaded messages (`searchMatching.ts`). It does not use the homeserver's search: history is searched as far back as it is loaded.
+
+- **Matching.** Every word of the query must appear in the message's text or its author's name, ignoring case and accents. A query shorter than two characters searches nothing. Deleted messages never match.
+- **Results.** At most 50, newest first; a line says when more matched. The count is announced in a polite status. The list follows the field through `useDeferredValue`, so typing stays responsive in a long channel. Each message's folded text is computed once.
+- **Jumping.** Choosing a result works like choosing a pin.
+
 ## Acceptance
 
 Run `npx vitest run src/features/espace` and `npx playwright test -c playwright.espace.config.ts tests/espace/layout/scale.spec.ts tests/espace/layout/cache.spec.ts`.
@@ -48,6 +64,9 @@ Run `npx vitest run src/features/espace` and `npx playwright test -c playwright.
   - The log scrolls back to its first message.
 - `timelineCache.test.ts` covers the cache over a map: the 200-message cap, sent messages only, one write per burst, member isolation, rejected shapes, a copy taken at save, forgetting a room, writing on stop, the wipe that cancels a waiting write, and refused storage.
 - `store.cache.test.ts` runs the real SDK against a fake homeserver. Cached messages are shown before the first sync, the live room replaces them and is then kept, and a sign-out wipes the cache.
+- `searchMatching.test.ts` covers folding, the two-character floor, all-words matching by text and author, deleted messages, the 50-result cap, and 10,000 messages searched within a frame.
+- `store.pins.test.ts` runs the real SDK. Pins are read from the room's state, ids only and once each; pinning sends the whole list; nothing is sent for a pin already there; and a stopped store lets no one pin.
+- `EspaceLiveView.pins.test.tsx` pins and unpins from the menu, hides the item from a member without the right, lists pins latest first with the unloaded one said, finds messages regardless of accents, and focuses the message chosen.
 - `cache.spec.ts` runs on the browser's real IndexedDB. A room is read back at 200 messages for its member and for no one else, and ending the Matrix session wipes every record.
 
 ## Evidence

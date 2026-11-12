@@ -9,7 +9,7 @@
 // the others' place (`timelineVirtualizer.ts`). Each row carries its own top gap, so a row's
 // measured height is all the room it takes.
 
-import { memo, useImperativeHandle, useSyncExternalStore } from 'react'
+import { memo, useCallback, useImperativeHandle, useSyncExternalStore } from 'react'
 import type { ReactNode, Ref, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { demoMessages } from '../../app/demoMessages'
@@ -88,6 +88,19 @@ function HistoryEdge({
       </Button>
     </div>
   )
+}
+
+const NO_PINS: readonly string[] = []
+const pinSets = new WeakMap<readonly string[], ReadonlySet<string>>()
+
+/** The room's pins as a set, built once per list. */
+function pinSetOf(pins: readonly string[]): ReadonlySet<string> {
+  let set = pinSets.get(pins)
+  if (set === undefined) {
+    set = new Set(pins)
+    pinSets.set(pins, set)
+  }
+  return set
 }
 
 /** Each loaded message by event id, the first that carries it; built once per timeline. */
@@ -178,6 +191,16 @@ function MessageTimelineView({
   // Read again at every draw, not memoised on the array: a store may hand back the same array
   // changed in place, and the log must draw what it holds now.
   const byEventId = firstByEventId(timeline)
+  const pins = pinSetOf(roomId !== null ? (store.getPinned?.(roomId) ?? NO_PINS) : NO_PINS)
+  const canPin = roomId !== null && !archived && store.canPin?.(roomId) === true
+  const pin = useCallback(
+    (eventId: string, pinned: boolean) => {
+      if (roomId === null) return
+      // Refused (no right, no network): the pins stay as the room has them, which is what shows.
+      store.setPinned?.(roomId, eventId, pinned).catch(() => undefined)
+    },
+    [store, roomId]
+  )
   const shown =
     timeline.length === 0
       ? []
@@ -203,7 +226,9 @@ function MessageTimelineView({
         if (element !== undefined) {
           element.dataset.shown = 'true'
           setTimeout(() => delete element.dataset.shown, SHOWN_MARK_MS)
-          element.querySelector<HTMLElement>('article, [tabindex]')?.focus({ preventScroll: true })
+          // The row itself takes the focus, out of the tab order: the next Tab reaches its controls.
+          element.tabIndex = -1
+          element.focus({ preventScroll: true })
         }
         return true
       },
@@ -291,6 +316,8 @@ function MessageTimelineView({
                   roomId === null ? NO_MESSAGES : store.getThread(roomId, row.message.eventId)
                 }
                 menuContextKey={`${menuContext}:${row.message.key}`}
+                pinned={pins.has(row.message.eventId)}
+                onPin={canPin ? pin : undefined}
                 onRetry={actions.onRetry}
                 onReaction={actions.onReaction}
                 onReply={actions.onReply}

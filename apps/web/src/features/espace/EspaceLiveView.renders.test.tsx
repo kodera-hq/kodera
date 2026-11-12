@@ -230,10 +230,7 @@ function makeStore(count: number) {
   // A recent message, in the log's window: its thread's opener is drawn.
   const root = timeline[Math.max(0, count - 3)]!
   const threadOf = root.eventId
-  const threadReplies = [
-    reply('$t1', BOB, root.ts + 1),
-    reply('$t2', ELODIE, root.ts + 2),
-  ]
+  const threadReplies = [reply('$t1', BOB, root.ts + 1), reply('$t2', ELODIE, root.ts + 2)]
   const members: readonly MemberView[] = [
     { userId: ALICE, name: 'Marina Loiseau' },
     { userId: BOB, name: 'Bob Dupont' },

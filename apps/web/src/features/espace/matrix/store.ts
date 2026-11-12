@@ -141,6 +141,16 @@ const POLICY = 'io.kodera.room.policy'
 const FIRST_SYNC_WAIT_MS = 10_000
 const OCCUPANCY = 'io.kodera.room.occupancy'
 const NONE: readonly MessageView[] = Object.freeze([])
+const NO_PINS: readonly string[] = Object.freeze([])
+
+/** The room's pinned events (`m.room.pinned_events`), in the order the room keeps them. */
+export function pinnedOf(content: unknown): readonly string[] {
+  if (content === null || typeof content !== 'object') return NO_PINS
+  const pinned = (content as { pinned?: unknown }).pinned
+  if (!Array.isArray(pinned)) return NO_PINS
+  const ids = pinned.filter((id): id is string => typeof id === 'string' && id.startsWith('$'))
+  return ids.length === 0 ? NO_PINS : [...new Set(ids)]
+}
 const NO_MEMBERS: readonly MemberView[] = Object.freeze([])
 const NO_CHANNELS: ReadonlyMap<string, ChannelRoom> = new Map()
 /** The events asked for with each page back: the SDK's default. */
@@ -212,6 +222,12 @@ function same(a: unknown, b: unknown): boolean {
 
 /** `next`, but with every element equal to the previous one's reused, and the previous array
  * itself when nothing changed: a screen memoised on identity re-renders only what moved. */
+const PINNED_EVENTS = 'm.room.pinned_events'
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index])
+}
+
 function reuse<T extends object>(
   previous: readonly T[] | undefined,
   next: T[],
@@ -251,6 +267,8 @@ export class EspaceStore {
   readonly #cached = new Map<string, readonly MessageView[]>()
   readonly #cache: TimelineCache | undefined
   readonly #threads = new Map<string, Map<string, readonly MessageView[]>>()
+  /** Each joined room's pinned events: the same array until the room's pins change. */
+  readonly #pins = new Map<string, readonly string[]>()
   readonly #eventsByRoom = new Map<string, TimelineEvent[]>()
   /** Relations seen before a redaction erased them (see timelineView). */
   readonly #relations = new Map<string, Relation>()
@@ -645,6 +663,7 @@ export class EspaceStore {
         if (this.#cached.delete(roomId)) messageDataChanged = true
         this.#cache?.forget(roomId)
         this.#threads.delete(roomId)
+        this.#pins.delete(roomId)
         this.#eventsByRoom.delete(roomId)
         this.#histories.delete(roomId)
         this.#members.delete(roomId)
@@ -659,6 +678,12 @@ export class EspaceStore {
       this.#timelines.set(roomId, timeline)
       this.#cached.delete(roomId)
       this.#cache?.save(roomId, timeline)
+      const pins = pinnedOf(room.currentState.getStateEvents(PINNED_EVENTS, '')?.getContent())
+      const knownPins = this.#pins.get(roomId)
+      this.#pins.set(
+        roomId,
+        knownPins !== undefined && sameIds(knownPins, pins) ? knownPins : pins
+      )
       const prevThreads = this.#threads.get(roomId)
       const nextThreads = new Map<string, readonly MessageView[]>()
       for (const msg of next) {
@@ -849,6 +874,29 @@ export class EspaceStore {
     const roster = reuse(this.#rosters.get(roomId), next, (member) => member.userId)
     this.#rosters.set(roomId, roster)
     return roster
+  }
+
+  /** The room's pinned events, oldest pin first; the same array until they change. */
+  getPinned = (roomId: string): readonly string[] => this.#pins.get(roomId) ?? NO_PINS
+
+  /** Whether the room's power levels let the member change its pins. */
+  canPin = (roomId: string): boolean => {
+    const room = this.#client.getRoom(roomId)
+    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
+  }
+
+  /** Pins or unpins one event; the room's next state answers with the new list. */
+  async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
+    const current = this.getPinned(roomId)
+    if (current.includes(eventId) === pinned) return
+    const next = pinned ? [...current, eventId] : current.filter((id) => id !== eventId)
+    await this.#client.sendStateEvent(
+      roomId,
+      PINNED_EVENTS as Parameters<MatrixClient['sendStateEvent']>[1],
+      { pinned: next } as Parameters<MatrixClient['sendStateEvent']>[2],
+      ''
+    )
   }
 
   getMemberRole = (roomId: string, userId: string): 'admin' | 'member' => {
