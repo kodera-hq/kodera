@@ -267,7 +267,7 @@ export async function proximityHandleFromParts(
  * sender)`. A prefix of it is shown. It is keyed like the handle: the same device shows another
  * fingerprint in another organisation, so a fingerprint seen in one says nothing in another.
  */
-export async function proximityKeyFingerprint(
+export async function proximityRosterFingerprint(
   orgBeaconSalt: Uint8Array,
   senderPublicKey: Uint8Array
 ): Promise<string> {
@@ -331,7 +331,7 @@ export async function disambiguateProximityHandles(
     if (group.size < 2) continue
     const full: string[] = []
     for (const [senderHex, sender] of group) {
-      const fingerprint = await proximityKeyFingerprint(orgBeaconSalt, sender)
+      const fingerprint = await proximityRosterFingerprint(orgBeaconSalt, sender)
       fingerprints.set(senderHex, fingerprint)
       full.push(fingerprint)
     }

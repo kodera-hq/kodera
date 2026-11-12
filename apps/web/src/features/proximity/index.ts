@@ -63,7 +63,7 @@ export {
   isProximityHandle,
   labelObservedProximitySenders,
   proximityHandleFromParts,
-  proximityKeyFingerprint,
+  proximityRosterFingerprint,
   proximityRosterDisplays,
   resolveProximityHandle,
   resolveProvisionedProximityRoster,

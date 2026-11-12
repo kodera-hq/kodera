@@ -29,7 +29,7 @@ import {
   isProximityHandle,
   labelObservedProximitySenders,
   proximityHandleFromParts,
-  proximityKeyFingerprint,
+  proximityRosterFingerprint,
   proximityRosterDisplays,
   resolveProximityHandle,
   resolveProvisionedProximityRoster,
@@ -139,7 +139,7 @@ interface HandleImplementation {
 const SHIPPED: HandleImplementation = {
   validate: isProximityHandle,
   generate: async (salt, sender) => (await generatedProximityHandle(salt, sender)).handle,
-  fingerprint: proximityKeyFingerprint,
+  fingerprint: proximityRosterFingerprint,
   labelObserved: labelObservedProximitySenders,
 }
 
@@ -396,10 +396,10 @@ describe('proximity handles, beyond the vectors', () => {
     await expect(generatedProximityHandle(SALT, new Uint8Array(33))).rejects.toMatchObject({
       code: 'InvalidKeyMaterial',
     })
-    await expect(proximityKeyFingerprint(SALT, new Uint8Array(0))).rejects.toMatchObject({
+    await expect(proximityRosterFingerprint(SALT, new Uint8Array(0))).rejects.toMatchObject({
       code: 'InvalidKeyMaterial',
     })
-    await expect(proximityKeyFingerprint(new Uint8Array(16), ALICE)).rejects.toMatchObject({
+    await expect(proximityRosterFingerprint(new Uint8Array(16), ALICE)).rejects.toMatchObject({
       code: 'InvalidKeyMaterial',
     })
   })
@@ -408,8 +408,8 @@ describe('proximity handles, beyond the vectors', () => {
     // The two values were computed a second way, outside this repository, with Node's `crypto`:
     // HMAC-SHA256(salt, "kodera-proximity-fingerprint-v1:" || sender), salts 0x42 and 0x43.
     const sender = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a')
-    const here = await proximityKeyFingerprint(SALT, sender)
-    const elsewhere = await proximityKeyFingerprint(new Uint8Array(32).fill(0x43), sender)
+    const here = await proximityRosterFingerprint(SALT, sender)
+    const elsewhere = await proximityRosterFingerprint(new Uint8Array(32).fill(0x43), sender)
     expect(here).toBe('95043981b19ae962c90146b1352d52b80a8fe7def49c8cf57ddd4c609fb1e226')
     expect(elsewhere).toBe('80f17f3a96f22d4e7d8fc1331341f5198ae3b76c9da937b121c9151985a1ed51')
     expect(here.slice(0, 8)).not.toBe(elsewhere.slice(0, 8))
