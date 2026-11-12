@@ -76,7 +76,7 @@ export function emitExamples(ops: Operation[]): string {
     '',
     'export interface OperationExample {',
     '  readonly operationId: string',
-    "  readonly method: 'get' | 'post' | 'patch' | 'delete'",
+    "  readonly method: 'get' | 'post' | 'put' | 'patch' | 'delete'",
     '  /** The contract path, still templated. */',
     '  readonly path: string',
     '  readonly status: number',

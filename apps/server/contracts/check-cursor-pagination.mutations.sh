@@ -28,7 +28,7 @@ mutations = [
         'node, _ = self.resolve(value, "responses")',
         "node = mapping(value)",
         "equivalent response alias",
-        "expected 0/27 operations validated, got exit 1",
+        "expected 0/33 operations validated, got exit 1",
     ),
     (
         "error response",
@@ -56,7 +56,7 @@ mutations = [
         "MAX_BYTES = 2 * 1024 * 1024",
         "MAX_BYTES = 128 * 1024",
         "actual inventory",
-        "expected 0/27 operations validated, got exit 2",
+        "expected 0/33 operations validated, got exit 2",
     ),
     (
         "page definition",
@@ -70,14 +70,14 @@ mutations = [
         "actual.pop(annotation, None)",
         "pass",
         "equivalent Cursor schema description",
-        "expected 0/27 operations validated, got exit 1",
+        "expected 0/33 operations validated, got exit 1",
     ),
     (
         "numeric spelling compatibility",
         "actual[key] = expected",
         "pass",
         "equivalent numeric limit bounds",
-        "expected 0/27 operations validated, got exit 1",
+        "expected 0/33 operations validated, got exit 1",
     ),
     (
         "boolean numeric coercion",
@@ -91,7 +91,7 @@ mutations = [
         'in (["string", "null"], ["null", "string"])',
         '== ["string", "null"]',
         "equivalent nullable type order",
-        "expected 0/27 operations validated, got exit 1",
+        "expected 0/33 operations validated, got exit 1",
     ),
 ]
 with tempfile.TemporaryDirectory(prefix="pagination-mutations-") as directory:

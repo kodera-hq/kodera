@@ -8,7 +8,7 @@
 
 export interface OperationExample {
   readonly operationId: string
-  readonly method: 'get' | 'post' | 'patch' | 'delete'
+  readonly method: 'get' | 'post' | 'put' | 'patch' | 'delete'
   /** The contract path, still templated. */
   readonly path: string
   readonly status: number
@@ -4538,6 +4538,520 @@ export const EXAMPLES = {
     },
     isList: false,
     idempotent: true,
+    requiresIfMatch: false,
+  },
+  "moderateWorkspaceMember": {
+    operationId: "moderateWorkspaceMember",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/moderation",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "membershipId": "00000000-0000-7000-8000-000000000002",
+      "action": "mute",
+      "expiresAt": "2026-01-02T12:00:00Z",
+      "createdAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listAbuseReports": {
+    operationId: "listAbuseReports",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/reports",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "membershipId": "00000000-0000-7000-8000-000000000002",
+          "reason": "Unwanted messages",
+          "status": "open",
+          "resolution": null,
+          "createdAt": "2026-01-01T12:00:00Z"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createAbuseReport": {
+    operationId: "createAbuseReport",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/reports",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "membershipId": "00000000-0000-7000-8000-000000000002",
+      "reason": "Unwanted messages",
+      "status": "open",
+      "resolution": null,
+      "createdAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "resolveAbuseReport": {
+    operationId: "resolveAbuseReport",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/reports/{report_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "membershipId": "00000000-0000-7000-8000-000000000002",
+      "reason": "Unwanted messages",
+      "status": "open",
+      "resolution": null,
+      "createdAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "listWorkspaceInviteLinks": {
+    operationId: "listWorkspaceInviteLinks",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/invite-links",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "expiresAt": "2026-01-02T12:00:00Z",
+          "maxUses": 10,
+          "usesCount": 0,
+          "revokedAt": null,
+          "channelId": null,
+          "role": "org_member"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createWorkspaceInviteLink": {
+    operationId: "createWorkspaceInviteLink",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/invite-links",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "link": {
+        "id": "00000000-0000-7000-8000-000000000001",
+        "expiresAt": "2026-01-02T12:00:00Z",
+        "maxUses": 10,
+        "usesCount": 0,
+        "revokedAt": null,
+        "channelId": null,
+        "role": "org_member"
+      },
+      "code": "example-invite-code-do-not-redeem"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "revokeWorkspaceInviteLink": {
+    operationId: "revokeWorkspaceInviteLink",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/invite-links/{invite_link_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "previewWorkspaceInvite": {
+    operationId: "previewWorkspaceInvite",
+    method: "post",
+    path: "/workspace-invites/preview",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "organisationName": "Example workspace",
+      "role": "org_member",
+      "expiresAt": "2026-01-02T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "redeemWorkspaceInvite": {
+    operationId: "redeemWorkspaceInvite",
+    method: "post",
+    path: "/workspace-invites/redeem",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "organisationId": "00000000-0000-7000-8000-000000000001",
+      "membershipId": "00000000-0000-7000-8000-000000000002"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "createAttachmentUpload": {
+    operationId: "createAttachmentUpload",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/attachments/uploads",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "attachmentId": "00000000-0000-7000-8000-000000000001",
+      "uploadUrl": "https://storage.example.org/upload",
+      "method": "PUT",
+      "headers": {
+        "Content-Type": "image/png"
+      },
+      "expiresAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "completeAttachmentUpload": {
+    operationId: "completeAttachmentUpload",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/complete",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "filename": "example.png",
+      "contentType": "image/png",
+      "sizeBytes": 1234,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "downloadUrl": "https://storage.example.org/download",
+      "expiresAt": "2026-01-01T12:00:00Z",
+      "disposition": "inline"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getAttachment": {
+    operationId: "getAttachment",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/attachments/{attachment_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "filename": "example.png",
+      "contentType": "image/png",
+      "sizeBytes": 1234,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "downloadUrl": "https://storage.example.org/download",
+      "expiresAt": "2026-01-01T12:00:00Z",
+      "disposition": "inline"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "unfurlUrl": {
+    operationId: "unfurlUrl",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/unfurl",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "url": "https://example.org/article",
+      "canonicalUrl": "https://example.org/article",
+      "title": "Example article",
+      "description": "A public article.",
+      "siteName": "Example"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listNotifications": {
+    operationId: "listNotifications",
+    method: "get",
+    path: "/notifications",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "kind": "document",
+          "resourceId": "00000000-0000-7000-8000-000000000002",
+          "createdAt": "2026-01-01T12:00:00Z",
+          "readAt": null
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "markNotificationsRead": {
+    operationId: "markNotificationsRead",
+    method: "post",
+    path: "/notifications/read",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getPushPublicKey": {
+    operationId: "getPushPublicKey",
+    method: "get",
+    path: "/push/public-key",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "publicKey": "example-public-key-placeholder",
+      "payloadMode": "empty"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putPushSubscription": {
+    operationId: "putPushSubscription",
+    method: "put",
+    path: "/push/subscriptions/{device_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "deletePushSubscription": {
+    operationId: "deletePushSubscription",
+    method: "delete",
+    path: "/push/subscriptions/{device_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listWorkspaceDocuments": {
+    operationId: "listWorkspaceDocuments",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/documents",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "parentId": null,
+          "title": "Example specification",
+          "markdown": "# Example specification\n",
+          "role": "editor",
+          "updatedAt": "2026-01-01T12:00:00Z"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createWorkspaceDocument": {
+    operationId: "createWorkspaceDocument",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/documents",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "parentId": null,
+      "title": "Example specification",
+      "markdown": "# Example specification\n",
+      "role": "editor",
+      "updatedAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceDocument": {
+    operationId: "getWorkspaceDocument",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "parentId": null,
+      "title": "Example specification",
+      "markdown": "# Example specification\n",
+      "role": "editor",
+      "updatedAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "updateWorkspaceDocument": {
+    operationId: "updateWorkspaceDocument",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "parentId": null,
+      "title": "Example specification",
+      "markdown": "# Example specification\n",
+      "role": "editor",
+      "updatedAt": "2026-01-01T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "deleteWorkspaceDocument": {
+    operationId: "deleteWorkspaceDocument",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listDocumentBacklinks": {
+    operationId: "listDocumentBacklinks",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}/backlinks",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "documentId": "00000000-0000-7000-8000-000000000001",
+          "title": "Example specification"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createDocumentCollabSession": {
+    operationId: "createDocumentCollabSession",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/documents/{document_id}/collab-session",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "wsUrl": "wss://api.example.org/documents/collab",
+      "token": "example-ticket-placeholder",
+      "expiresAt": "2026-01-01T12:00:00Z",
+      "role": "viewer"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "searchWorkspace": {
+    operationId: "searchWorkspace",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/search",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "kind": "document",
+          "title": "Example specification",
+          "excerpt": "Example"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
     requiresIfMatch: false,
   },
 } satisfies Record<string, OperationExample>
