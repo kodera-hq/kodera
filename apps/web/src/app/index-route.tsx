@@ -6,6 +6,7 @@
 
 import { createRoute, redirect } from '@tanstack/react-router'
 import { authAdapter } from '../auth/oidc'
+import { onCommunityHost } from './communityHost'
 import { loadCurrentUser } from './currentUser'
 import { demoLandingFor, isDemoActive } from './interactiveDemo'
 import { landingIn } from './organisationLanding'
@@ -22,11 +23,7 @@ export const indexRoute = createRoute({
     if (!(await authAdapter.restoreSession())) {
       if (isDemoActive('community'))
         throw redirect({ to: '/$org/workspace', params: { org: 'community' } })
-      if (
-        import.meta.env.VITE_AUTH_MODE === 'oidc' &&
-        window.location.hostname === 'community.kodera.io'
-      )
-        throw redirect({ to: '/login', search: { org: 'community' } })
+      if (onCommunityHost()) throw redirect({ to: '/login', search: { org: 'community' } })
       throw redirect({ to: '/login' })
     }
     const { me, generation, credentialGeneration } = await loadCurrentUser()
@@ -40,11 +37,8 @@ export const indexRoute = createRoute({
       throw new DOMException('Credential authority ended.', 'AbortError')
     const demoRealm =
       current.user?.realm && isDemoActive(current.user.realm) ? current.user.realm : 'community'
-    const communityHost =
-      import.meta.env.VITE_AUTH_MODE === 'oidc' &&
-      window.location.hostname === 'community.kodera.io'
     const first =
-      (communityHost
+      (onCommunityHost()
         ? me.organisations.find(({ organisation }) => organisation.slug === 'community')
         : undefined) ??
       (isDemoActive(demoRealm)

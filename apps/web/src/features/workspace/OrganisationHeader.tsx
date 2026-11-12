@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { communityHostname } from '../../app/communityHost'
 import { useOrganisationSwitch } from '../../app/organisationSwitch'
 import { initialsOf } from '../../ui/Avatar/Avatar'
 import { cx } from '../../ui/cx'
@@ -24,7 +25,9 @@ function Identity({ name, slug }: OrganisationHeaderProps) {
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-bold text-c-ink">{name}</span>
         {slug === 'community' ? (
-          <span className="truncate text-xs text-c-ink-3">community.kodera.io</span>
+          <span className="truncate text-xs text-c-ink-3">
+            {communityHostname() ?? 'community.kodera.io'}
+          </span>
         ) : null}
       </span>
     </>

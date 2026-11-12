@@ -90,3 +90,14 @@ it('shows community initials and domain and dispatches the same actions as the r
   expect(listener.mock.calls[0]?.[0].detail).toBe('settings')
   window.removeEventListener('kodera:workspace-command', listener)
 })
+
+it('names the community by the deployment’s own base domain', () => {
+  vi.stubEnv('VITE_MATRIX_DOMAIN', 'example.org')
+  try {
+    render(<OrganisationHeader name="Kodera Community" slug="community" />)
+    expect(screen.getByText('community.example.org')).toBeInTheDocument()
+    expect(screen.queryByText('community.kodera.io')).toBeNull()
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
