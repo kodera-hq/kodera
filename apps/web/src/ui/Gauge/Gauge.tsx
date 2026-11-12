@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { cx } from '../cx'
+import { cssProperty } from '../cssom'
 
 type Tier = 'normal' | 'warning' | 'full'
 
@@ -88,8 +89,8 @@ export function Gauge({
       >
         <div
           data-gauge-fill=""
+          ref={cssProperty('width', `${percent}%`)}
           className={cx('h-full rounded-full', FILL[tier])}
-          style={{ width: `${percent}%` }}
         />
         <div aria-hidden="true" className="absolute inset-y-0 left-[90%] w-px bg-c-inverse" />
       </div>

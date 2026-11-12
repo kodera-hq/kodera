@@ -16,6 +16,7 @@ import {
   type AugmentPresetId,
   type AugmentTargetFps,
 } from './augmentPipeline'
+import { cssProperty } from '../../ui/cssom'
 
 export interface AugmentAvatarStudioPanelProps {
   readonly defaultPresetId?: AugmentPresetId | undefined
@@ -116,7 +117,7 @@ export function AugmentAvatarStudioPanel({
                   aria-pressed={isSelected}
                   onClick={() => handleSelectPreset(preset.id)}
                   className={cx(
-                    'flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors focus-visible:outline-hidden focus-visible:ring',
+                    'flex flex-col items-start gap-2 rounded-md border p-3 text-left transition-colors focus-visible:ring focus-visible:outline-hidden',
                     isSelected
                       ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
                       : 'border-c-border-soft bg-c-surface text-c-ink hover:bg-c-muted'
@@ -165,7 +166,7 @@ export function AugmentAvatarStudioPanel({
                   onChange={handleSmoothingChange}
                   data-testid="augment-smoothing-slider"
                   aria-label="Lissage temporel des expressions"
-                  className="h-2 w-full cursor-pointer rounded-full bg-c-muted focus-visible:outline-hidden focus-visible:ring"
+                  className="h-2 w-full cursor-pointer rounded-full bg-c-muted focus-visible:ring focus-visible:outline-hidden"
                 />
               </div>
 
@@ -173,7 +174,11 @@ export function AugmentAvatarStudioPanel({
                 <span className="text-xs font-medium text-c-ink">
                   Cadence cible MediaStreamTrack :
                 </span>
-                <div role="group" aria-label="Cadence cible FPS" className="flex items-center gap-2">
+                <div
+                  role="group"
+                  aria-label="Cadence cible FPS"
+                  className="flex items-center gap-2"
+                >
                   {([30, 60] as const).map((fps) => {
                     const isCurrentFps = state.targetFps === fps
                     return (
@@ -184,7 +189,7 @@ export function AugmentAvatarStudioPanel({
                         aria-pressed={isCurrentFps}
                         onClick={() => handleFpsChange(fps)}
                         className={cx(
-                          'rounded-md border px-3 py-1 font-mono text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring',
+                          'rounded-md border px-3 py-1 font-mono text-xs font-medium transition-colors focus-visible:ring focus-visible:outline-hidden',
                           isCurrentFps
                             ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
                             : 'border-c-border-soft bg-c-surface text-c-ink-2 hover:bg-c-muted'
@@ -237,19 +242,15 @@ export function AugmentAvatarStudioPanel({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-mono text-xs font-medium text-c-ink">{key}</span>
-                        <span className="font-mono text-xs font-regular text-c-ink-2">
-                          {val} %
-                        </span>
+                        <span className="font-mono text-xs font-regular text-c-ink-2">{val} %</span>
                       </div>
                       <div
                         aria-hidden="true"
                         className="h-2 w-full overflow-hidden rounded-full bg-c-muted"
                       >
                         <div
+                          ref={cssProperty('width', `${val}%`)}
                           className="h-full rounded-full bg-c-action transition-all"
-                          style={{
-                            width: `${val}%`,
-                          }}
                         />
                       </div>
                     </div>

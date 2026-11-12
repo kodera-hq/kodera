@@ -14,6 +14,7 @@ import {
   type ChannelDoc,
 } from '../docs/ChannelDocsEditor'
 import type { WorkspaceCategory, WorkspaceChannel } from './workspace'
+import { appliedTheme, themeMode } from '../../theme/theme'
 import { useThemePreference } from '../../theme/useThemePreference'
 import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { Dialog } from '../../ui/Dialog/Dialog'
@@ -759,7 +760,7 @@ export function WorkspaceScreen() {
         </Dialog>
         <ThemeStudioModal
           open={studioOpen}
-          currentThemeMode={preference === 'system' ? 'light' : preference}
+          currentThemeMode={appliedTheme(preference)}
           onSelectCoreTheme={choose}
           onShareToChannel={shareTheme}
           onClose={() => setStudioOpen(false)}
@@ -768,16 +769,8 @@ export function WorkspaceScreen() {
           key={organisationId}
           claimMode={isDemoActive(org) ? 'preview' : 'cloud'}
           open={onboardingOpen}
-          initialThemeMode={
-            preference === 'system'
-              ? document.documentElement.dataset.theme === 'black'
-                ? 'black'
-                : document.documentElement.dataset.theme === 'dark'
-                  ? 'dark'
-                  : 'light'
-              : preference
-          }
-          isDarkTheme={preference === 'dark' || preference === 'black'}
+          initialThemeMode={themeMode(appliedTheme(preference))}
+          isDarkTheme={themeMode(appliedTheme(preference)) !== 'light'}
           onSelectTheme={(dark) => choose(dark ? 'dark' : 'light')}
           onClaimed={(workspace) => {
             if (addCreatedDemoWorkspace(workspace)) {

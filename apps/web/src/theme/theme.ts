@@ -2,14 +2,48 @@
 // runs before the first paint and follows the device while the choice is
 // "system" — so this module only stores a choice and announces it.
 
-export type ThemePreference = 'system' | 'light' | 'dark' | 'black'
+export type ThemePreference = 'system' | 'ciel' | 'ciel-nuit' | 'light' | 'dark' | 'black'
+/** A theme a page can wear: every choice but « Automatique », which resolves to one of these. */
+export type AppliedTheme = Exclude<ThemePreference, 'system'>
+/** The light/dark/black axis a theme sits on, which a shareable theme code records (`themeCodec.ts`). */
+export type ThemeMode = 'light' | 'dark' | 'black'
 
 export const THEME_STORAGE_KEY = 'console:theme'
 /** Announced with the new preference as `detail`; `public/theme.js` re-applies on it. */
 export const THEME_CHANGE_EVENT = 'console:theme'
 
-/** Every choice, the default first. */
-export const THEME_PREFERENCES: readonly ThemePreference[] = ['system', 'light', 'dark', 'black']
+/**
+ * Every choice, the default first: « Automatique » follows the device inside the Ciel family
+ * (owner decision B2), then Ciel's two themes, then the three Givre themes, each one click away.
+ */
+export const THEME_PREFERENCES: readonly ThemePreference[] = [
+  'system',
+  'ciel',
+  'ciel-nuit',
+  'light',
+  'dark',
+  'black',
+]
+
+const APPLIED: readonly AppliedTheme[] = ['ciel', 'ciel-nuit', 'light', 'dark', 'black']
+
+/**
+ * The theme on the page now: the choice itself, or the theme `public/theme.js` resolved
+ * « Automatique » to — Ciel light when it cannot tell.
+ */
+export function appliedTheme(preference: ThemePreference): AppliedTheme {
+  if (preference !== 'system') return preference
+  const applied =
+    typeof document === 'undefined' ? undefined : document.documentElement.dataset.theme
+  return APPLIED.find((theme) => theme === applied) ?? 'ciel'
+}
+
+/** The mode a theme renders in: Ciel and Ciel Nuit are the light and dark sides of their family. */
+export function themeMode(theme: AppliedTheme): ThemeMode {
+  if (theme === 'ciel') return 'light'
+  if (theme === 'ciel-nuit') return 'dark'
+  return theme
+}
 
 /**
  * A choice the browser refused to store. `public/theme.js` keeps applying it

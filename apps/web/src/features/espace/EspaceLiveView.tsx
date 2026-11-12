@@ -94,6 +94,7 @@ import { MessageRow, type MessageRowActions } from './MessageRow'
 import { MessageTimeline } from './MessageTimeline'
 import { useStableHandler, useStoreSlice } from './useStoreSlice'
 import { VoiceCallDock } from './VoiceCallDock'
+import { cssProperty } from '../../ui/cssom'
 
 // The view's public names stay this module's, wherever their definitions live.
 export { isProximityChannel, mergeTimelineInserts } from './liveViewModel'
@@ -1506,7 +1507,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               }
             }}
             aria-label={t('console.workspace.members.title')}
-            style={narrow ? undefined : { width: `${rightSidebarWidth}px` }}
+            ref={cssProperty('width', narrow ? undefined : `${rightSidebarWidth}px`)}
             className="flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft bg-c-sunken p-4 narrow:w-full"
           >
             <div className="flex items-center justify-between gap-2">

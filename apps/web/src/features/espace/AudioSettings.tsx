@@ -3,7 +3,7 @@
 // goes on behind it.
 
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
-import { useEffect, useId, useState, type Ref } from 'react'
+import { useEffect, useId, useMemo, useState, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { EspaceGlyph } from '../../ui/icons/EspaceGlyph'
@@ -11,6 +11,7 @@ import { Popover } from '../../ui/Popover/Popover'
 import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { Select } from '../../ui/Select/Select'
 import { cx } from '../../ui/cx'
+import { initialCssProperty } from '../../ui/cssom'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
 import { SOUND_PACKS, SOUND_PACK_IDS, translateSoundCopy } from '../sounds/manifest'
 import { soundEngine, type SoundEngine } from '../sounds/SoundEngine'
@@ -76,6 +77,11 @@ export function AudioSettings({
   playTone = playTestTone,
   engine = soundEngine,
 }: AudioSettingsProps) {
+  // Starts empty, then the meter scales it; never a `style` attribute (src/ui/cssom.ts).
+  const meterFillRef = useMemo(
+    () => initialCssProperty<HTMLSpanElement>('transform', 'scaleX(0)', meterRef),
+    [meterRef]
+  )
   const { t, i18n } = useTranslation()
   const id = useId()
   const [open, setOpen] = useState(embedded)
@@ -220,11 +226,7 @@ export function AudioSettings({
               data-panel-meter=""
               className="block h-1 w-full overflow-hidden rounded-full bg-c-muted"
             >
-              <span
-                ref={meterRef}
-                style={{ transform: 'scaleX(0)' }}
-                className="block h-full w-full origin-left bg-c-ok"
-              />
+              <span ref={meterFillRef} className="block h-full w-full origin-left bg-c-ok" />
             </span>
           </>
         )}

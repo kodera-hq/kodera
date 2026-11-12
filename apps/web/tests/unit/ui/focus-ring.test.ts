@@ -60,7 +60,7 @@ describe('the default focus ring', () => {
 // against both surfaces it touches), read from the pinned `tokens.css`.
 const TOKENS_CSS = createRequire(import.meta.url).resolve('@kodera/design-tokens/tokens.css')
 const THEMES = {
-  light: ':root, [data-theme="light"] {',
+  light: '[data-theme="light"] {',
   dark: '[data-theme="dark"] {',
   black: '[data-theme="black"] {',
 } as const
