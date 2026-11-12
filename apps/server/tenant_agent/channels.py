@@ -237,6 +237,7 @@ class _Wanted:
         tuple[str, dict[str, Any]], ...
     ]  # (event type, content): policy, levels, name, topic
     digest: str
+    public: bool = False
 
     @property
     def closing(self) -> tuple[tuple[str, dict[str, Any]], ...]:
@@ -435,7 +436,7 @@ class Channels:
             (JOIN_RULES, {"join_rule": "public" if public else "invite"}),
         )
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
-        return _Wanted(users, state, digest)
+        return _Wanted(users, state, digest, public)
 
     # -- phase 1: take access away -----------------------------------------------------------
 
@@ -501,7 +502,9 @@ class Channels:
                 continue
             try:
                 result.removed_from_calls += self._end_calls(
-                    room_id, self._admitted(channel, wanted[channel["channel_id"]]), result
+                    room_id,
+                    self._admitted(channel, wanted[channel["channel_id"]], seen.get(room_id)),
+                    result,
                 )
                 owed.rooms.discard(room_id)
             except EngineError:
@@ -510,9 +513,32 @@ class Channels:
         return seen
 
     @staticmethod
-    def _admitted(channel: dict[str, Any], wanted: _Wanted) -> frozenset[str]:
-        """Who may stay in the channel's call: no one once it is archived."""
-        return frozenset() if channel["archived"] else wanted.users
+    def _admitted(
+        channel: dict[str, Any], wanted: _Wanted, present: set[str] | None = None
+    ) -> frozenset[str]:
+        """Native public calls follow current room membership, including a newly joined user."""
+        if channel["archived"]:
+            return frozenset()
+        return frozenset(present) if wanted.public and present is not None else wanted.users
+
+    def _removed(self, wanted: _Wanted, present: set[str], keep: set[str]) -> list[str]:
+        if not wanted.public:
+            return sorted(present - wanted.users - keep)
+        # Local authenticated users join natively before Core's next member-set poll.
+        # Absence from an older roster cannot revoke that join; explicit revocation does.
+        current = self._state.member_set()
+        revoked = (
+            set()
+            if current is None
+            else {self._synapse.user_id(subject) for subject in current.inactive | current.released}
+        )
+        return sorted(
+            user
+            for user in present - keep
+            if user in revoked
+            or user in self._barred
+            or user.partition(":")[2] != self._synapse.server_name
+        )
 
     def _clear(
         self,
@@ -535,7 +561,7 @@ class Channels:
                 self._put_state(room_id, wanted.closing, check)
             check()
             present = self._present(room_id)
-            removed = sorted(present - wanted.users - keep)
+            removed = self._removed(wanted, present, keep)
             for user in removed:
                 check()
                 synapse.kick(room_id, user)
@@ -591,7 +617,7 @@ class Channels:
             # Not read by the first phase: a room found or made just now, or one whose removals
             # failed there. Its removals run here.
             present = self._present(room_id)
-            removed = sorted(present - wanted.users - keep)
+            removed = self._removed(wanted, present, keep)
             for user in removed:
                 synapse.kick(room_id, user)
             present -= set(removed)
@@ -602,7 +628,7 @@ class Channels:
                     owed.rooms.add(room_id)
                     owed.save()  # as in the first phase: before LiveKit is asked
                 result.removed_from_calls += self._end_calls(
-                    room_id, self._admitted(channel, wanted), result
+                    room_id, self._admitted(channel, wanted, present), result
                 )
                 owed.rooms.discard(room_id)
         if not native_public(channel, synapse):

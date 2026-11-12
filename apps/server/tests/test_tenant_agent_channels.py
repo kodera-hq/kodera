@@ -1643,3 +1643,39 @@ def test_deleting_public_room_restores_invite_rule_before_forgetting_it(tmp_path
     room = homeserver.room_of(TEXT)
     assert room["state"][(POLICY, "")]["archived"] is True
     assert room["state"][("m.room.join_rules", "")] == {"join_rule": "invite"}
+
+
+def test_native_join_survives_roster_lag_but_revoked_and_remote_users_leave(tmp_path, monkeypatch):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    handlers, homeserver, _, state = build(tmp_path)
+    entry = channel(audience="all", members=[])
+    handlers.handle(CHANNEL_KIND, channel_set(1, entry))
+    late = "@new-signup:community.example.org"
+    remote = "@outsider:remote.example.org"
+    room = homeserver.room_of(TEXT)
+    room["members"].update({late: "join", remote: "join", mx(ALICE): "join"})
+    state.keep(MemberSet(2, frozenset({BOB, CAROL}), frozenset({ALICE}), frozenset()))
+    assert handlers.handle(CHANNEL_KIND, channel_set(2, entry)).status == "succeeded"
+    assert room["members"][late] == "join", "native join must survive ordinary roster lag"
+    assert room["members"][remote] == "leave"
+    assert room["members"][mx(ALICE)] == "leave", "revocation wins over a stale public channel set"
+
+
+def test_public_audio_roster_lag_does_not_end_a_new_local_members_call(tmp_path, monkeypatch):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    handlers, homeserver, livekit, _ = build(tmp_path)
+    entry = channel(AUDIO, kind="audio", audience="all", members=[])
+    handlers.handle(CHANNEL_KIND, channel_set(1, entry))
+    room = homeserver.room_of(AUDIO)
+    late = "@new-signup:community.example.org"
+    remote = "@outsider:remote.example.org"
+    room["members"].update({late: "join", remote: "join"})
+    room_id = homeserver.aliases[f"#kodera-ch-{AUDIO}:{module.SERVER}"]
+    livekit.rooms_[livekit_room(room_id)] = [f"{late}|DEV", f"{remote}|DEV"]
+    outcome = handlers.handle(CHANNEL_KIND, channel_set(2, entry))
+    assert outcome.status == "succeeded"
+    assert livekit.rooms_[livekit_room(room_id)] == [f"{late}|DEV"]

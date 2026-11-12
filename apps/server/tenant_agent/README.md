@@ -107,8 +107,8 @@ creation and converges it on subsequent full passes, without per-member join or 
 fan-out. The policy's `local_only: true` refuses remote native joins, including federated
 membership events. Native joins still require an authenticated local Matrix account.
 The directory stays private. Customer homeservers, listed partner/staff channels,
-archived channels and channels with deny overrides retain `invite` rules. Removing
-membership still kicks users and closes audio access. Announcement power levels and
+archived channels and channels with deny overrides retain `invite` rules. Explicit revocation still kicks users and closes audio access. A local native join
+survives roster refresh lag; an absent stale roster entry alone cannot revoke it. Announcement power levels and
 policy checks preserve read-only messages/state with explicit posting exemptions.
 
 Ordinary invitation setup requires email verification and a password; TOTP enrollment
