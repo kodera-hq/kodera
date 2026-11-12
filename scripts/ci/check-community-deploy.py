@@ -2056,7 +2056,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         if not any(expected in error for error in got):
             print(f"[FAIL] preflight hardening case '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
             return 1
-        if any("example.net" in error or SYNTHETIC_CREDENTIAL in error for error in got):
+        if any(re.search(r"example\.net", error) or SYNTHETIC_CREDENTIAL in error for error in got):
             print(f"[FAIL] preflight hardening case '{label}' printed a value", file=sys.stderr)
             return 1
     hardening_accepted = [
