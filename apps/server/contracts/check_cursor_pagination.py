@@ -26,6 +26,15 @@ ERROR_OPERATIONS = {"listLegalDocuments", "listEntitlements", "listTenantAvailab
 ERRORS = {"400": "MalformedRequest", "422": "ValidationError"}
 # Reviewed source inventory, independent of whatever page declarations survive.
 INVENTORY = {
+    ("get", "/organisations/{organisation_id}/workspace/reports"): "listAbuseReports",
+    ("get", "/organisations/{organisation_id}/workspace/invite-links"): "listWorkspaceInviteLinks",
+    ("get", "/notifications"): "listNotifications",
+    ("get", "/organisations/{organisation_id}/workspace/documents"): "listWorkspaceDocuments",
+    (
+        "get",
+        "/organisations/{organisation_id}/workspace/documents/{document_id}/backlinks",
+    ): "listDocumentBacklinks",
+    ("get", "/organisations/{organisation_id}/workspace/search"): "searchWorkspace",
     ("get", "/organisations"): "listOrganisations",
     ("get", "/organisations/{organisation_id}/memberships"): "listMemberships",
     ("get", "/organisations/{organisation_id}/invitations"): "listInvitations",

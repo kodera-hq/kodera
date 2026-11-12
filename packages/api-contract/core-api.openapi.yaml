@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.42.0
+  version: 0.43.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -5486,6 +5486,1280 @@ paths:
         '502': { $ref: '#/components/responses/UpstreamUnavailable' }
         '500': { $ref: '#/components/responses/InternalError' }
 
+  /organisations/{organisation_id}/workspace/moderation:
+    post:
+      operationId: moderateWorkspaceMember
+      summary: Moderate workspace member
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited. A stored workspace moderator grant is required unless the caller is an owner or admin.
+        Token-supplied moderator claims grant nothing.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_moderation:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceModeration'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceModerationRequest'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
+      - moderator
+  /organisations/{organisation_id}/workspace/reports:
+    post:
+      operationId: createAbuseReport
+      summary: Create abuse report
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_report:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbuseReport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AbuseReportRequest'
+    get:
+      operationId: listAbuseReports
+      summary: List abuse reports
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited. A stored workspace moderator grant is required unless the caller is an owner or admin.
+        Token-supplied moderator claims grant nothing.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_report:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/AbuseReport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
+      - moderator
+  /organisations/{organisation_id}/workspace/reports/{report_id}:
+    patch:
+      operationId: resolveAbuseReport
+      summary: Resolve abuse report
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited. A stored workspace moderator grant is required unless the caller is an owner or admin.
+        Token-supplied moderator claims grant nothing.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_report:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/ReportId'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbuseReport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveAbuseReportRequest'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
+      - moderator
+  /organisations/{organisation_id}/workspace/invite-links:
+    post:
+      operationId: createWorkspaceInviteLink
+      summary: Create workspace invite link
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_invite_link:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedWorkspaceInviteLink'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceInviteLinkRequest'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
+    get:
+      operationId: listWorkspaceInviteLinks
+      summary: List workspace invite links
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_invite_link:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - active
+          - revoked
+          - all
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/WorkspaceInviteLink'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
+  /organisations/{organisation_id}/workspace/invite-links/{invite_link_id}:
+    delete:
+      operationId: revokeWorkspaceInviteLink
+      summary: Revoke workspace invite link
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_invite_link:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/InviteLinkId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      x-kodera-workspace-roles:
+      - owner
+      - admin
+  /workspace-invites/preview:
+    post:
+      operationId: previewWorkspaceInvite
+      summary: Preview workspace invite
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_invite_link:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceInvitePreview'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceInviteCodeRequest'
+  /workspace-invites/redeem:
+    post:
+      operationId: redeemWorkspaceInvite
+      summary: Redeem workspace invite
+      description: Rate limited; verified identity and email required. Lock the link row, check revocation,
+        expiry and usesCount < maxUses, then add membership and increment usesCount atomically. Retries
+        and existing members never consume another use. Codes never appear in URLs or logs.
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_invite_link:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceInviteRedemption'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceInviteCodeRequest'
+  /organisations/{organisation_id}/workspace/attachments/uploads:
+    post:
+      operationId: createAttachmentUpload
+      summary: Create attachment upload
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_attachment:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentUploadTicket'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentUploadRequest'
+  /organisations/{organisation_id}/workspace/attachments/{attachment_id}/complete:
+    post:
+      operationId: completeAttachmentUpload
+      summary: Complete attachment upload
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_attachment:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/AttachmentId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/attachments/{attachment_id}:
+    get:
+      operationId: getAttachment
+      summary: Get attachment
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_attachment:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/unfurl:
+    post:
+      operationId: unfurlUrl
+      summary: Unfurl url
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_unfurl:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnfurlResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: Blocked or private target.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/UnfurlBlockedProblem'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnfurlRequest'
+  /notifications:
+    get:
+      operationId: listNotifications
+      summary: List notifications
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: notification:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Notification'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /notifications/read:
+    post:
+      operationId: markNotificationsRead
+      summary: Mark notifications read
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: notification:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkNotificationsReadRequest'
+  /push/public-key:
+    get:
+      operationId: getPushPublicKey
+      summary: Get push public key
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: push_subscription:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters: []
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushPublicKey'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /push/subscriptions/{device_id}:
+    put:
+      operationId: putPushSubscription
+      summary: Put push subscription
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: push_subscription:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushSubscriptionRequest'
+    delete:
+      operationId: deletePushSubscription
+      summary: Delete push subscription
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: push_subscription:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/documents:
+    get:
+      operationId: listWorkspaceDocuments
+      summary: List workspace documents
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: parentId
+        in: query
+        schema:
+          type: string
+          format: uuid
+        description: Direct children of this parent; omitted returns all authorized pages as a flat tree
+          with parentId edges.
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/WorkspaceDocument'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      operationId: createWorkspaceDocument
+      summary: Create workspace document
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDocument'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceDocumentRequest'
+  /organisations/{organisation_id}/workspace/documents/{document_id}:
+    get:
+      operationId: getWorkspaceDocument
+      summary: Get workspace document
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDocument'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      operationId: updateWorkspaceDocument
+      summary: Update workspace document
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDocument'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceDocumentPatch'
+    delete:
+      operationId: deleteWorkspaceDocument
+      summary: Delete workspace document
+      description: Editors only; reject deletion of non-empty parents with 409 conflict. Removal revokes
+        collaboration tickets and closes active sessions.
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '204':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/documents/{document_id}/backlinks:
+    get:
+      operationId: listDocumentBacklinks
+      summary: List document backlinks
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/DocumentBacklink'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/documents/{document_id}/collab-session:
+    post:
+      operationId: createDocumentCollabSession
+      summary: Create document collab session
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_document:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/DocumentId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentCollabSession'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /organisations/{organisation_id}/workspace/search:
+    get:
+      operationId: searchWorkspace
+      summary: Search workspace
+      description: 'Organisation is derived from the verified issuer; current active membership and resource
+        visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are
+        audited.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_search:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 200
+      responses:
+        '200':
+          description: Successful operation.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/WorkspaceSearchResult'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
 components:
   x-audit-action-registry:
     description: Normative closed keys for the future Core writer guard in `docs/domain/AUDIT_TAXONOMY.md` §3; the current runtime does not yet reject an unregistered action, and this extension does not narrow the public AuditEvent wire schema.
@@ -5755,6 +7029,41 @@ components:
       schema: { type: string, const: 'true' }
 
   parameters:
+    ReportId:
+      name: report_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    InviteLinkId:
+      name: invite_link_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AttachmentId:
+      name: attachment_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     DiscoveryCompatibilityKey:
       name: Idempotency-Key
       in: header
@@ -6149,6 +7458,804 @@ components:
         organisation_id: 6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f
 
   schemas:
+    WorkspaceModerationRequest:
+      type: object
+      title: WorkspaceModerationRequest
+      additionalProperties: false
+      required:
+      - membershipId
+      - action
+      - reason
+      properties:
+        membershipId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum:
+          - kick
+          - ban
+          - unban
+          - mute
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        expiresAt:
+          type: string
+          format: date-time
+      description: Moderator actions are audited. Moderators cannot target owners or admins. Mute requires
+        a future expiresAt, at most 30 days away; other actions refuse expiresAt. Bans block Core room tickets,
+        Matrix joins and messages. Mutes are evaluated against server time on every publish and post.
+    WorkspaceModeration:
+      type: object
+      title: WorkspaceModeration
+      additionalProperties: false
+      required:
+      - id
+      - membershipId
+      - action
+      - expiresAt
+      - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        membershipId:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum:
+          - kick
+          - ban
+          - unban
+          - mute
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        membershipId: 00000000-0000-7000-8000-000000000002
+        action: mute
+        expiresAt: '2026-01-02T12:00:00Z'
+        createdAt: '2026-01-01T12:00:00Z'
+    AbuseReportRequest:
+      type: object
+      title: AbuseReportRequest
+      additionalProperties: false
+      required:
+      - membershipId
+      - reason
+      properties:
+        membershipId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 512
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    AbuseReport:
+      type: object
+      title: AbuseReport
+      additionalProperties: false
+      required:
+      - id
+      - membershipId
+      - reason
+      - status
+      - resolution
+      - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        membershipId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        status:
+          type: string
+          enum:
+          - open
+          - resolved
+          - dismissed
+        resolution:
+          type:
+          - string
+          - 'null'
+          maxLength: 4000
+        createdAt:
+          type: string
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        membershipId: 00000000-0000-7000-8000-000000000002
+        reason: Unwanted messages
+        status: open
+        resolution: null
+        createdAt: '2026-01-01T12:00:00Z'
+    ResolveAbuseReportRequest:
+      type: object
+      title: ResolveAbuseReportRequest
+      additionalProperties: false
+      required:
+      - status
+      - resolution
+      properties:
+        status:
+          type: string
+          enum:
+          - resolved
+          - dismissed
+        resolution:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    WorkspaceInviteLinkRequest:
+      type: object
+      title: WorkspaceInviteLinkRequest
+      additionalProperties: false
+      required:
+      - expiresAt
+      - maxUses
+      properties:
+        expiresAt:
+          type: string
+          format: date-time
+        maxUses:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        channelId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+          - org_member
+          - moderator
+      description: Only owners/admins can grant moderator. Scope is restricted to this organisation; channel
+        must belong to its workspace. Expiration is mandatory and no more than 30 days away.
+    WorkspaceInviteLink:
+      type: object
+      title: WorkspaceInviteLink
+      additionalProperties: false
+      required:
+      - id
+      - expiresAt
+      - maxUses
+      - usesCount
+      - revokedAt
+      - channelId
+      - role
+      properties:
+        id:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+        maxUses:
+          type: integer
+          minimum: 1
+        usesCount:
+          type: integer
+          minimum: 0
+        revokedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        channelId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        role:
+          type: string
+          enum:
+          - org_member
+          - moderator
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        expiresAt: '2026-01-02T12:00:00Z'
+        maxUses: 10
+        usesCount: 0
+        revokedAt: null
+        channelId: null
+        role: org_member
+    CreatedWorkspaceInviteLink:
+      type: object
+      title: CreatedWorkspaceInviteLink
+      additionalProperties: false
+      required:
+      - link
+      - code
+      properties:
+        link:
+          $ref: '#/components/schemas/WorkspaceInviteLink'
+        code:
+          type: string
+          minLength: 1
+          maxLength: 256
+      examples:
+      - link:
+          id: 00000000-0000-7000-8000-000000000001
+          expiresAt: '2026-01-02T12:00:00Z'
+          maxUses: 10
+          usesCount: 0
+          revokedAt: null
+          channelId: null
+          role: org_member
+        code: example-invite-code-do-not-redeem
+      description: The random code is disclosed only on creation, never on list. Store only its cryptographic
+        digest. Redemptions serialize the usage counter and are idempotent per caller.
+    WorkspaceInviteCodeRequest:
+      type: object
+      title: WorkspaceInviteCodeRequest
+      additionalProperties: false
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 256
+    WorkspaceInvitePreview:
+      type: object
+      title: WorkspaceInvitePreview
+      additionalProperties: false
+      required:
+      - organisationName
+      - role
+      - expiresAt
+      properties:
+        organisationName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        role:
+          type: string
+          enum:
+          - org_member
+          - moderator
+        expiresAt:
+          type: string
+          format: date-time
+      examples:
+      - organisationName: Example workspace
+        role: org_member
+        expiresAt: '2026-01-02T12:00:00Z'
+      description: Rate limited and non-consuming. Invalid, expired, revoked and exhausted codes return indistinguishable
+        404 problems. No member information is disclosed.
+    WorkspaceInviteRedemption:
+      type: object
+      title: WorkspaceInviteRedemption
+      additionalProperties: false
+      required:
+      - organisationId
+      - membershipId
+      properties:
+        organisationId:
+          type: string
+          format: uuid
+        membershipId:
+          type: string
+          format: uuid
+      examples:
+      - organisationId: 00000000-0000-7000-8000-000000000001
+        membershipId: 00000000-0000-7000-8000-000000000002
+    AttachmentUploadRequest:
+      type: object
+      title: AttachmentUploadRequest
+      additionalProperties: false
+      required:
+      - filename
+      - contentType
+      - sizeBytes
+      - sha256
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        contentType:
+          type: string
+          enum:
+          - image/jpeg
+          - image/png
+          - image/webp
+          - image/gif
+          - application/pdf
+          - text/plain
+          - application/octet-stream
+        sizeBytes:
+          type: integer
+          minimum: 1
+          maximum: 26214400
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+      description: SHA-256 is the lowercase hex digest. The upload signature binds checksum, content type
+        and size to an organisation-scoped random object key. HTML and SVG are refused.
+    AttachmentUploadTicket:
+      type: object
+      title: AttachmentUploadTicket
+      additionalProperties: false
+      required:
+      - attachmentId
+      - uploadUrl
+      - method
+      - headers
+      - expiresAt
+      properties:
+        attachmentId:
+          type: string
+          format: uuid
+        uploadUrl:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum:
+          - PUT
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAt:
+          type: string
+          format: date-time
+      examples:
+      - attachmentId: 00000000-0000-7000-8000-000000000001
+        uploadUrl: https://storage.example.org/upload
+        method: PUT
+        headers:
+          Content-Type: image/png
+        expiresAt: '2026-01-01T12:00:00Z'
+      description: Short-lived presigned URL, no storage credentials. The client must send exactly these signed
+        headers. Completion verifies the actual object before making metadata visible.
+    Attachment:
+      type: object
+      title: Attachment
+      additionalProperties: false
+      required:
+      - id
+      - filename
+      - contentType
+      - sizeBytes
+      - sha256
+      - downloadUrl
+      - expiresAt
+      - disposition
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        contentType:
+          type: string
+          minLength: 1
+          maxLength: 255
+        sizeBytes:
+          type: integer
+          minimum: 1
+        sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        downloadUrl:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+        disposition:
+          type: string
+          enum:
+          - inline
+          - attachment
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        filename: example.png
+        contentType: image/png
+        sizeBytes: 1234
+        sha256: '0000000000000000000000000000000000000000000000000000000000000000'
+        downloadUrl: https://storage.example.org/download
+        expiresAt: '2026-01-01T12:00:00Z'
+        disposition: inline
+      description: Membership is checked on every metadata/download ticket request. Non-image MIME types force
+        Content-Disposition attachment. Download URLs are short-lived and must not be logged.
+    UnfurlRequest:
+      type: object
+      title: UnfurlRequest
+      additionalProperties: false
+      required:
+      - url
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+      description: Only HTTP(S), ports 80/443. Resolve once per hop, reject every non-public address including
+        mapped IPv6, pin TCP to the validated address while preserving TLS hostname verification, revalidate
+        at most three redirects. Three-second total deadline and 256 KiB text/html maximum.
+    UnfurlImage:
+      type: object
+      title: UnfurlImage
+      additionalProperties: false
+      required:
+      - url
+      - width
+      - height
+      - contentType
+      properties:
+        url:
+          type: string
+          format: uri
+        width:
+          type: integer
+          minimum: 1
+          maximum: 8192
+        height:
+          type: integer
+          minimum: 1
+          maximum: 8192
+        contentType:
+          type: string
+          enum:
+          - image/png
+          - image/jpeg
+          - image/webp
+          - image/gif
+    UnfurlResult:
+      type: object
+      title: UnfurlResult
+      additionalProperties: false
+      required:
+      - url
+      - canonicalUrl
+      - title
+      - description
+      - siteName
+      properties:
+        url:
+          type: string
+          format: uri
+        canonicalUrl:
+          type: string
+          format: uri
+        title:
+          type: string
+          maxLength: 512
+        description:
+          type: string
+          maxLength: 2000
+        siteName:
+          type: string
+          maxLength: 255
+        image:
+          $ref: '#/components/schemas/UnfurlImage'
+      examples:
+      - url: https://example.org/article
+        canonicalUrl: https://example.org/article
+        title: Example article
+        description: A public article.
+        siteName: Example
+      description: All text is plain sanitized text. Canonical and image URLs pass the same public-target
+        policy; unvalidated images are omitted. Never return HTML.
+    UnfurlBlockedProblem:
+      allOf:
+      - $ref: '#/components/schemas/Problem'
+      - type: object
+        required:
+        - reason
+        properties:
+          type:
+            const: https://kodera.io/problems/forbidden
+          reason:
+            type: string
+            enum:
+            - blocked-target
+            - private-target
+      description: 403 RFC 9457 forbidden problem. reason distinguishes policy-blocked targets and private/reserved
+        DNS answers without disclosing resolved addresses.
+    Notification:
+      type: object
+      title: Notification
+      additionalProperties: false
+      required:
+      - id
+      - kind
+      - resourceId
+      - createdAt
+      - readAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - mention
+          - invitation
+          - moderation
+          - document
+        resourceId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        readAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        kind: document
+        resourceId: 00000000-0000-7000-8000-000000000002
+        createdAt: '2026-01-01T12:00:00Z'
+        readAt: null
+      description: Authenticated inbox entry; no message plaintext is sent through Web Push.
+    MarkNotificationsReadRequest:
+      type: object
+      title: MarkNotificationsReadRequest
+      additionalProperties: false
+      required:
+      - ids
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    PushPublicKey:
+      type: object
+      title: PushPublicKey
+      additionalProperties: false
+      required:
+      - publicKey
+      - payloadMode
+      properties:
+        publicKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+        payloadMode:
+          type: string
+          enum:
+          - empty
+      examples:
+      - publicKey: example-public-key-placeholder
+        payloadMode: empty
+      description: Base64url uncompressed P-256 VAPID public key. Wakeups have an empty body; clients fetch
+        this authenticated inbox. No message, title, document text, or resource identifier is sent to the
+        push provider.
+    PushSubscriptionRequest:
+      type: object
+      title: PushSubscriptionRequest
+      additionalProperties: false
+      required:
+      - endpoint
+      - p256dh
+      - auth
+      properties:
+        endpoint:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: ^https://
+        p256dh:
+          type: string
+          minLength: 87
+          maxLength: 87
+          pattern: ^[A-Za-z0-9_-]+$
+        auth:
+          type: string
+          minLength: 22
+          maxLength: 22
+          pattern: ^[A-Za-z0-9_-]+$
+      description: Subscription belongs to this authenticated user and device only. Validate the decoded P-256
+        point and 16-byte auth secret. Endpoint uses the same public-address, pinned transport policy as unfurl;
+        do not permit a push endpoint to become an SSRF proxy. Dead 404/410 subscriptions are pruned.
+    WorkspaceDocumentRequest:
+      type: object
+      title: WorkspaceDocumentRequest
+      additionalProperties: false
+      required:
+      - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        parentId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        templateKey:
+          type: string
+          enum:
+          - spec
+          - adr
+          - meeting_notes
+          - runbook
+      description: Maximum depth 16, same-workspace parent only. No chat-thread promotion endpoint exists.
+    WorkspaceDocumentPatch:
+      type: object
+      title: WorkspaceDocumentPatch
+      additionalProperties: false
+      required: []
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        parentId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        markdown:
+          type: string
+          maxLength: 262144
+      description: At least one field required. Reject cycles and descendant trees exceeding depth 16. Markdown
+        replacement uses If-Match; collaboration snapshots remain authoritative.
+      minProperties: 1
+    WorkspaceDocument:
+      type: object
+      title: WorkspaceDocument
+      additionalProperties: false
+      required:
+      - id
+      - parentId
+      - title
+      - markdown
+      - role
+      - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        parentId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        markdown:
+          type: string
+          maxLength: 262144
+        role:
+          type: string
+          enum:
+          - editor
+          - viewer
+        updatedAt:
+          type: string
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        parentId: null
+        title: Example specification
+        markdown: '# Example specification
+
+          '
+        role: editor
+        updatedAt: '2026-01-01T12:00:00Z'
+    DocumentBacklink:
+      type: object
+      title: DocumentBacklink
+      additionalProperties: false
+      required:
+      - documentId
+      - title
+      properties:
+        documentId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+      examples:
+      - documentId: 00000000-0000-7000-8000-000000000001
+        title: Example specification
+    WorkspaceSearchResult:
+      type: object
+      title: WorkspaceSearchResult
+      additionalProperties: false
+      required:
+      - id
+      - kind
+      - title
+      - excerpt
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - document
+          - channel
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        excerpt:
+          type: string
+          maxLength: 1000
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        kind: document
+        title: Example specification
+        excerpt: Example
+      description: Only resources visible to the authenticated membership; restricted channels and documents
+        never leak via search or backlinks.
+    DocumentCollabSession:
+      type: object
+      title: DocumentCollabSession
+      additionalProperties: false
+      required:
+      - wsUrl
+      - token
+      - expiresAt
+      - role
+      properties:
+        wsUrl:
+          type: string
+          format: uri
+          pattern: ^wss://
+        token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        expiresAt:
+          type: string
+          format: date-time
+        role:
+          type: string
+          enum:
+          - editor
+          - viewer
+      examples:
+      - wsUrl: wss://api.example.org/documents/collab
+        token: example-ticket-placeholder
+        expiresAt: '2026-01-01T12:00:00Z'
+        role: viewer
+      description: Ticket lifetime at most 300 seconds, bound to one document, organisation and subject. Validate
+        current membership and document policy before minting and room join. Viewer connections receive sync,
+        updates and awareness, but client state updates are dropped and audited. Invalid/expired tickets close
+        4401; cross-org/wrong-doc/role violations close 4403. Ticket travels in the first frame, never a query
+        string or logs.
     InstantClaimTenantRequest:
       type: object
       additionalProperties: false
