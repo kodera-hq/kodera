@@ -1,6 +1,6 @@
 # Ethereal Sky Glass
 
-Status: Foundation. The engine and the first tokens are in the package; the palette is not decided. Decided by zôÖma, through the lead session: the family, its theme ids, that Givre stays selectable, the automatic opaque fallback, and the two gates that stand between this family and being a default.
+Status: Default. The engine and the first tokens are in the package; the palette is not decided. Decided by zôÖma, through the lead session: the family, its theme ids, that Givre stays selectable, the automatic opaque fallback, and the two gates that stand between this family and being a default. Owner decision B2 promotes `ciel` to the default theme now that both gates stand (item 3).
 
 ## Why
 
@@ -11,8 +11,8 @@ This is the engine for that direction, not the direction itself. The values the 
 ## What is decided
 
 1. **A second theme family, `ciel`**, with two themes: `ciel` is its light theme and `ciel-nuit` its dark one. The ids are the `[data-theme]` attribute values.
-2. **The `givre` family stays selectable, complete**: `light`, `dark`, `black`. Nothing about it changes, and `light` is still the default theme.
-3. **`ciel` becomes a default only after two gates pass**: WCAG AA on the worst-case backdrop, which `docs/adr/0003` makes measurable, and a frame-rate gate this package does not hold.
+2. **The `givre` family stays selectable, complete**: `light`, `dark`, `black`. Nothing about its values changes; since B2 it is no longer the default.
+3. **`ciel` becomes a default only after two gates pass**: WCAG AA on the worst-case backdrop, which `docs/adr/0003` makes measurable, and a frame-rate gate this package does not hold. Both stand: the contrast gate here, and the console's end-to-end guard that no screen shows more than three blurred surfaces at once (`apps/web/tests/e2e/glass-budget.spec.ts`). `ciel` is the default theme (B2); a consumer that follows the device setting pairs it with `ciel-nuit`.
 4. **Translucency is never required to read the interface.** Where the reader asks for less transparency or more contrast, or the platform forces its colours, every surface is opaque.
 
 ## The theme registry
@@ -21,10 +21,10 @@ This is the engine for that direction, not the direction itself. The values the 
 
 | id | family | mode | scheme | default |
 |---|---|---|---|---|
-| `light` | `givre` | light | light | yes |
+| `light` | `givre` | light | light | |
 | `dark` | `givre` | dark | dark | |
 | `black` | `givre` | black | dark | |
-| `ciel` | `ciel` | light | light | |
+| `ciel` | `ciel` | light | light | yes |
 | `ciel-nuit` | `ciel` | dark | dark | |
 
 Every generator reads it: the CSS theme blocks, the Tailwind preset, the TypeScript types, the Swift and Compose bindings, the native manifest. `scripts/build.mjs` holds `tokens.json` to it in both directions, so a theme cannot be declared in one place and missing from another. Consumers read the same list as `@kodera/design-tokens/themes`.
@@ -116,4 +116,4 @@ Additive members of the format the apps already pin, `kodera-native-tokens/1`: p
 
 ## Consumers
 
-Nothing changes for a consumer that does not opt in: the three Givre themes emit the same custom properties with the same values, and the new themes are two more `[data-theme]` blocks. Adopting the family is a consumer change, made behind the two gates above.
+The three Givre themes emit the same custom properties with the same values. What changes is the unthemed root: it now takes `ciel`, under `:root:where(:not(<every other theme>))`, so a document whose root names another theme keeps that theme whatever order the blocks are declared in (a bare `:root` ties with `[data-theme]` and loses to a later block). A consumer that wants Givre sets `data-theme="light"`, `"dark"` or `"black"` on the root, as it always could.

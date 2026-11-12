@@ -6,7 +6,7 @@
 //
 //   a twin in each mode  `ciel` is the family's light theme and `ciel-nuit` its
 //                        dark one, each the counterpart of a Givre theme
-//   the same roles       every role, level and type the default theme declares
+//   the same roles       every role, level and type its Givre twin declares
 //   its own values       a role resolves through its own theme's primitives or
 //                        a shared ramp, never through another theme's
 //   the same bar         every contrast row its Givre twin is held to, at the
@@ -56,19 +56,25 @@ function checkFamily() {
   assert.equal(themeInfo('ciel-nuit').mode, 'dark', 'ciel-nuit is the dark theme of its family');
   for (const theme of CIEL) {
     assert.equal(themeInfo(theme).mode, themeInfo(TWIN[theme]).mode, `${theme}: the same mode as its Givre twin ${TWIN[theme]}`);
-    assert.equal(themeInfo(theme).default, false, `${theme}: not the default until its gates say so`);
   }
-  assert.equal(DEFAULT_THEME, 'light', 'the default theme is still Givre light');
+  // Promoted by owner decision B2 once both gates stood: WCAG AA over the
+  // worst-case backdrop (this package) and the frame-rate guard (the console's
+  // end-to-end suite, at most three blurred surfaces on screen).
+  assert.equal(DEFAULT_THEME, 'ciel', 'the default theme is Ciel light');
+  assert.equal(themeInfo('ciel-nuit').default, false, 'ciel-nuit is the dark side of the default family, not a second default');
   assert.deepEqual(themesOfFamily('givre'), ['light', 'dark', 'black'], 'the givre family stays selectable, complete');
 }
 
 function checkRoles(source) {
   const index = indexTokens(source);
-  const roles = own(source.semantic.theme[DEFAULT_THEME]);
-  const levels = own(source.semantic.elevation[DEFAULT_THEME]);
+  // Held to the Givre twin, not to the default theme: since B2 the default is
+  // a ciel theme, and a family measured against itself would prove nothing.
   for (const theme of CIEL) {
-    assert.deepEqual(own(source.semantic.theme[theme]), roles, `${theme}: the role set of the default theme, in its order`);
-    assert.deepEqual(own(source.semantic.elevation[theme]), levels, `${theme}: the elevation levels of the default theme`);
+    const twin = TWIN[theme];
+    const roles = own(source.semantic.theme[twin]);
+    const levels = own(source.semantic.elevation[twin]);
+    assert.deepEqual(own(source.semantic.theme[theme]), roles, `${theme}: the role set of its Givre twin, in its order`);
+    assert.deepEqual(own(source.semantic.elevation[theme]), levels, `${theme}: the elevation levels of its Givre twin`);
     /** No step of an alias chain may be another theme's primitive. */
     const assertOwn = (path) => {
       // Followed all the way down: a role that reaches another theme's value
@@ -80,7 +86,7 @@ function checkRoles(source) {
     };
     for (const role of roles) {
       const path = `semantic.theme.${theme}.${role}`;
-      assert.equal(index.get(path).type, index.get(`semantic.theme.${DEFAULT_THEME}.${role}`).type, `${path}: the type the default theme gives this role`);
+      assert.equal(index.get(path).type, index.get(`semantic.theme.${twin}.${role}`).type, `${path}: the type its Givre twin gives this role`);
       assertOwn(path);
     }
     for (const level of levels) {
@@ -431,7 +437,7 @@ function build(source) {
 }
 
 test('ciel is a family of two themes, light and dark, beside a complete givre', () => checkFamily());
-test('each ciel theme declares the roles of the default theme, through its own values', () => checkRoles(tree));
+test('each ciel theme declares the roles of its Givre twin, through its own values', () => checkRoles(tree));
 test('each ciel theme has its own CSS block, carrying what tokens.json resolves to', () => checkCss(tree, css));
 test('each ciel theme is held to every contrast row of its Givre twin', () => checkBar(register));
 
@@ -482,8 +488,12 @@ test('every material clause fails on its own mutation', () => {
     /exactly one `@supports \(\(-webkit-backdrop-filter: blur\(1px\)\) or \(backdrop-filter: blur\(1px\)\)\) \{` block/,
   );
   assert.throws(
-    () => checkMaterialCss(tree, css.replace(':is([data-theme="ciel"], [data-theme="ciel-nuit"]) {\n    --material-bar-bg: var(--material-bar-tint);', ':is([data-theme="dark"], [data-theme="ciel"], [data-theme="ciel-nuit"]) {\n    --material-bar-bg: var(--material-bar-tint);')),
-    /the glass is enabled for :is\(\[data-theme="ciel"\], \[data-theme="ciel-nuit"\]\) and no other selector/,
+    () => {
+      const glass = `:is(${themesOfFamily('ciel').map(themeSelector).join(', ')}) {\n    --material-bar-bg: var(--material-bar-tint);`;
+      assert.ok(css.includes(glass), 'the glass block was not found, so this mutation would prove nothing');
+      return checkMaterialCss(tree, css.replace(glass, glass.replace(':is(', ':is([data-theme="dark"], ')));
+    },
+    /the glass is enabled for :is\(.*\[data-theme="ciel"\], \[data-theme="ciel-nuit"\]\) and no other selector/,
   );
   for (const query of OPAQUE_WHEN) {
     assert.throws(
@@ -673,11 +683,11 @@ test('the build refuses an incomplete material tier', () => {
 test('every clause fails on its own mutation', () => {
   assert.throws(
     () => checkRoles(mutate(tree, (t) => delete t.semantic.theme['ciel-nuit'].ink)),
-    /ciel-nuit: the role set of the default theme, in its order/,
+    /ciel-nuit: the role set of its Givre twin, in its order/,
   );
   assert.throws(
     () => checkRoles(mutate(tree, (t) => delete t.semantic.elevation.ciel.dialog)),
-    /ciel: the elevation levels of the default theme/,
+    /ciel: the elevation levels of its Givre twin/,
   );
   assert.throws(
     () => checkRoles(mutate(tree, (t) => (t.semantic.theme.ciel.ink.$value = '{color.theme-light.ink}'))),
@@ -697,7 +707,7 @@ test('every clause fails on its own mutation', () => {
   );
   assert.throws(
     () => checkRoles(mutate(tree, (t) => (t.semantic.theme.ciel.ink.$type = 'dimension'))),
-    /semantic\.theme\.ciel\.ink: the type the default theme gives this role/,
+    /semantic\.theme\.ciel\.ink: the type its Givre twin gives this role/,
   );
 
   assert.throws(() => checkCss(tree, css.replace('[data-theme="ciel-nuit"] {', '[data-theme="ciel-night"] {')), /ciel-nuit: exactly one CSS block/);

@@ -101,8 +101,13 @@ async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready)
 }
 
+// The light baselines are Givre light, chosen the way a person chooses it: Ciel is the default an
+// unchosen page gets (packages/design-tokens/docs/specs/ethereal-sky-glass.md), and Givre stays one
+// click away, so these baselines keep guarding it. A test that chooses another theme registers its
+// own choice after this one, and the later stored value is the one the boot script reads.
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(NOW)
+  await chooseTheme(page, 'light')
 })
 
 /** Chooses a theme for every page this test loads, as a person's stored choice does. */
@@ -333,7 +338,7 @@ test.describe('narrow, held sideways', () => {
 // Apparence page in all three themes, and two phone screens in dark. Each passes axe in its
 // theme first — contrast is the defect a theme introduces — and must be the theme it claims:
 // a boot script that stopped applying the choice would otherwise baseline a light page twice.
-// The light baselines above are the proof that choosing nothing changed nothing.
+// The light baselines above are the proof that choosing Givre light changed nothing.
 
 const THEMES = ['dark', 'black'] as const
 
@@ -357,17 +362,16 @@ const APPEARANCE: View = {
   open: (page) => signIn(page, 'acme-sa', '/appearance'),
 }
 
-// In light, nothing is chosen: the page's default, « Automatique » checked on a light device.
-// In dark and black, the card of that theme is the chosen one.
+// In each theme, the card of that theme is the chosen one.
 for (const theme of ['light', ...THEMES] as const) {
   test(`visual/appearance-${theme}: passes axe and matches its baseline`, async ({ page }) => {
-    if (theme !== 'light') await chooseTheme(page, theme)
+    await chooseTheme(page, theme)
     await useScenario(page, APPEARANCE.scenarios)
     await APPEARANCE.open(page)
     await settle(page)
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await expect(page.getByRole('radio', { checked: true })).toHaveAccessibleName(
-      { light: 'Automatique', dark: 'Sombre', black: 'Noir' }[theme]
+      { light: 'Clair', dark: 'Sombre', black: 'Noir' }[theme]
     )
     await expectAxeClean(page)
     await matchBaseline(page, `appearance-${theme}.png`, test.info())

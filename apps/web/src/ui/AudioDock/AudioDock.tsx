@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { studioMessages } from '../../features/workspace/studioMessages'
 import { Avatar } from '../Avatar/Avatar'
 import { StudioGlyph } from '../icons/StudioGlyph'
 import type { ReactNode, Ref } from 'react'
 import { cx } from '../cx'
+import { initialCssProperty } from '../cssom'
 import { EspaceGlyph } from '../icons/EspaceGlyph'
 import type { EspaceGlyphName } from '../icons/EspaceGlyph'
 import { hasLabel } from '../stateLabel'
@@ -199,6 +200,11 @@ export function AudioDock({
   previewCamera = false,
 }: AudioDockProps) {
   const [cameraActive, setCameraActive] = useState(false)
+  // Starts empty, then the caller scales it; never a `style` attribute (src/ui/cssom.ts).
+  const meterFillRef = useMemo(
+    () => initialCssProperty<HTMLSpanElement>('transform', 'scaleX(0)', meterRef),
+    [meterRef]
+  )
   const { i18n } = useTranslation()
   const copy = studioMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   if (onOpenCall !== undefined && !hasLabel(labels.openCall)) {
@@ -249,8 +255,7 @@ export function AudioDock({
               {/* Scaled, not sized: the caller moves it on every frame without moving layout. The
                   track's rounded clip keeps its ends round. */}
               <span
-                ref={meterRef}
-                style={{ transform: 'scaleX(0)' }}
+                ref={meterFillRef}
                 className="block h-full w-full origin-left bg-c-ok-on-dark"
               />
             </span>

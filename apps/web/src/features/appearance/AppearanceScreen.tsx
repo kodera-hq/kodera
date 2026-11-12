@@ -1,9 +1,11 @@
 // `/{org}/appearance` — « Apparence » (docs/specs/10-appearance.md), the start
 // of the delivered design's Réglages › Vous › Apparence pane: one line saying
-// how a choice applies, then one preview card per theme. The mock's three
-// cards (Clair, Sombre, Noir) come after a fourth, « Automatique », which
-// follows the device and is the default — an owner-approved deviation from the
-// mock (plan D4, 2026-09-24). The pane's density and text-size rows are not
+// how a choice applies, then one preview card per theme. « Automatique » comes
+// first and is the default — an owner-approved deviation from the mock (plan
+// D4, 2026-09-24) — and follows the device inside the Ciel family (owner
+// decision B2): Ciel on a light device, Ciel nuit on a dark one. The two Ciel
+// cards follow, then the mock's three Givre cards (Clair, Sombre, Noir), each
+// still one click away. The pane's density and text-size rows are not
 // drawn: the console has neither setting.
 //
 // This page only stores a choice and announces it (`src/theme/theme.ts`);
@@ -23,13 +25,21 @@ import {
   readThemePreference,
   saveThemePreference,
 } from '../../theme/theme'
-import type { ThemePreference } from '../../theme/theme'
+import type { AppliedTheme, ThemePreference } from '../../theme/theme'
 import { PAGE_TITLE } from '../../ui/pageTitle'
 
 const COPY: Record<ThemePreference, { label: MessageKey; hint: MessageKey }> = {
   system: {
     label: 'console.shell.appearance.label-system',
     hint: 'console.shell.appearance.hint-system',
+  },
+  ciel: {
+    label: 'console.shell.appearance.label-ciel',
+    hint: 'console.shell.appearance.hint-ciel',
+  },
+  'ciel-nuit': {
+    label: 'console.shell.appearance.label-ciel-nuit',
+    hint: 'console.shell.appearance.hint-ciel-nuit',
   },
   light: {
     label: 'console.shell.appearance.label-light',
@@ -46,8 +56,10 @@ const COPY: Record<ThemePreference, { label: MessageKey; hint: MessageKey }> = {
 }
 
 /** The themes a preview draws: « Automatique » shows both a device can ask for. */
-const PREVIEW: Record<ThemePreference, readonly ('light' | 'dark' | 'black')[]> = {
-  system: ['light', 'dark'],
+const PREVIEW: Record<ThemePreference, readonly AppliedTheme[]> = {
+  system: ['ciel', 'ciel-nuit'],
+  ciel: ['ciel'],
+  'ciel-nuit': ['ciel-nuit'],
   light: ['light'],
   dark: ['dark'],
   black: ['black'],
@@ -73,7 +85,7 @@ const CARD_CHOSEN = 'border-2 border-c-accent-ink p-[13px]'
  * pill in the primary action's colour — the mock's swatch, without its
  * hard-coded values. Decorative: the card's label names the theme.
  */
-function Preview({ themes }: { themes: readonly ('light' | 'dark' | 'black')[] }) {
+function Preview({ themes }: { themes: readonly AppliedTheme[] }) {
   return (
     <span
       aria-hidden="true"

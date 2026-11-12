@@ -253,12 +253,12 @@ export const Combobox = forwardRef<HTMLInputElement, ComboboxProps>(function Com
             }}
             onOpenAutoFocus={(event) => event.preventDefault()}
             onCloseAutoFocus={(event) => event.preventDefault()}
-            style={{ width: 'var(--radix-popover-trigger-width)' }}
             sideOffset={4}
             // `max-h-[256px]`: an arbitrary value, not a token — the preset's
             // spacing scale stops at `12` (48 px) and has no step this large.
             // Not a colour either, so the token guard has nothing to say.
-            className="z-50 max-h-[256px] overflow-auto rounded-sm border border-c-border bg-c-elevated p-1 shadow-pop shadow-c-shadow-2"
+            // The input's width, which Radix publishes on the content as a custom property.
+            className="z-50 max-h-[256px] w-(--radix-popover-trigger-width) overflow-auto rounded-sm border border-c-border bg-c-elevated p-1 shadow-pop shadow-c-shadow-2"
           >
             <ul id={listboxId} role="listbox" aria-label={label}>
               {filtered.length === 0 ? (

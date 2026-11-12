@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 const SRC = join(import.meta.dirname, '..', '..', '..', 'src')
 const TOKENS_CSS = createRequire(import.meta.url).resolve('@kodera/design-tokens/tokens.css')
 const THEMES = {
-  light: ':root, [data-theme="light"] {',
+  light: '[data-theme="light"] {',
   dark: '[data-theme="dark"] {',
   black: '[data-theme="black"] {',
 } as const

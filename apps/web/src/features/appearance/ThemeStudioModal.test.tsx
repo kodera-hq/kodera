@@ -66,3 +66,28 @@ it('reports storage failure instead of claiming that a theme was saved', async (
   expect(await screen.findByRole('alert')).toHaveTextContent('Le thème n’a pas été sauvegardé')
   write.mockRestore()
 })
+
+it('offers Ciel first and keeps every Givre theme one click away', async () => {
+  const onSelectCoreTheme = vi.fn()
+  render(
+    <ThemeStudioModal {...props} currentThemeMode="ciel" onSelectCoreTheme={onSelectCoreTheme} />
+  )
+  const official = ['ciel', 'ciel-nuit', 'light', 'dark', 'black'].map((theme) =>
+    screen.getByTestId(`theme-studio-base-${theme}`)
+  )
+  expect(official[0]).toHaveAttribute('aria-pressed', 'true')
+  for (const [index, theme] of (['ciel-nuit', 'light', 'dark', 'black'] as const).entries()) {
+    await userEvent.click(official[index + 1]!)
+    expect(onSelectCoreTheme).toHaveBeenLastCalledWith(theme)
+  }
+  expect(onSelectCoreTheme).toHaveBeenCalledTimes(4)
+})
+
+it('records a Ciel theme in a share code by its mode, which the v1 code knows', () => {
+  render(<ThemeStudioModal {...props} currentThemeMode="ciel-nuit" />)
+  const code = (
+    screen.getByRole('textbox', { name: 'Code de partage du thème' }) as HTMLInputElement
+  ).value
+  const payload = JSON.parse(atob(code.slice('kodera-theme:v1:'.length))) as { baseMode: string }
+  expect(payload.baseMode).toBe('dark')
+})

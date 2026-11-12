@@ -185,8 +185,46 @@
      no `color-scheme`, and without one a dark page scrolls on a light
      scrollbar. Light needs nothing: `normal` already draws light. */
   [data-theme='dark'],
-  [data-theme='black'] {
+  [data-theme='black'],
+  [data-theme='ciel-nuit'] {
     color-scheme: dark;
+  }
+
+  /* Translucency is never required to read the interface
+     (packages/design-tokens/docs/specs/ethereal-sky-glass.md, decided item 4).
+     The tokens already switch every `--material-*` surface to its opaque
+     fallback under these preferences; this also stops a blur that does not
+     come from a material, so no surface can stay frosted for a reader who
+     asked for less transparency or more contrast. Two blocks, on purpose: a
+     browser that does not know one query skips that block alone. */
+  @media (prefers-reduced-transparency: reduce) {
+    *,
+    ::before,
+    ::after {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
+    }
+  }
+  @media (prefers-contrast: more) {
+    *,
+    ::before,
+    ::after {
+      -webkit-backdrop-filter: none !important;
+      backdrop-filter: none !important;
+    }
+  }
+
+  /* A select list scrolls without a scrollbar of its own. @radix-ui/react-select
+     writes this rule as an inline `<style>`, which `style-src 'self'` refuses;
+     the build removes that element (scripts/vite/radixSelectViewportStyle.ts)
+     and the rule ships here, in the stylesheet the policy admits. */
+  [data-radix-select-viewport] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  [data-radix-select-viewport]::-webkit-scrollbar {
+    display: none;
   }
 
   /* The ground a focus ring's offset gap is painted in: the surface a control

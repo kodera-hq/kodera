@@ -29,6 +29,18 @@ export const themeStudioMessages = {
     saveDone: (name: string) => `Thème « ${name} » sauvegardé dans votre bibliothèque locale.`,
     importDone: (name: string) => `Thème « ${name} » importé et appliqué.`,
     modes: {
+      ciel: {
+        label: 'Ciel',
+        badge: 'Par défaut',
+        desc: 'Le thème officiel : des surfaces de verre sur un ciel clair.',
+        done: 'Thème Ciel activé.',
+      },
+      'ciel-nuit': {
+        label: 'Ciel nuit',
+        badge: 'Verre',
+        desc: 'Le ciel de nuit, pour les environnements peu éclairés.',
+        done: 'Thème Ciel nuit activé.',
+      },
       light: {
         label: 'Clair',
         badge: 'Givre',
@@ -85,6 +97,18 @@ export const themeStudioMessages = {
     saveDone: (name: string) => `Theme “${name}” saved to your local library.`,
     importDone: (name: string) => `Theme “${name}” imported and applied.`,
     modes: {
+      ciel: {
+        label: 'Sky',
+        badge: 'Default',
+        desc: 'The official theme: glass surfaces over a light sky.',
+        done: 'Sky theme enabled.',
+      },
+      'ciel-nuit': {
+        label: 'Sky night',
+        badge: 'Glass',
+        desc: 'The night sky, for dim environments.',
+        done: 'Sky night theme enabled.',
+      },
       light: {
         label: 'Light',
         badge: 'Frost',

@@ -1366,7 +1366,11 @@ The Appearance page (`docs/specs/10-appearance.md`): the theme choice, reached f
 | `console.shell.appearance.hint-choice` | The theme applies at once to the whole console. It is saved in this browser only: on another device or in another browser, choose it again. |
 | `console.shell.appearance.label-theme` | Theme |
 | `console.shell.appearance.label-system` | Automatic |
-| `console.shell.appearance.hint-system` | follows your device’s light or dark setting |
+| `console.shell.appearance.hint-system` | the light sky or the night sky, following your device’s setting |
+| `console.shell.appearance.label-ciel` | Sky |
+| `console.shell.appearance.hint-ciel` | the official theme, glass over a light sky |
+| `console.shell.appearance.label-ciel-nuit` | Sky night |
+| `console.shell.appearance.hint-ciel-nuit` | the night sky, low light |
 | `console.shell.appearance.label-light` | Light |
 | `console.shell.appearance.hint-light` | office, daylight |
 | `console.shell.appearance.label-dark` | Dark |

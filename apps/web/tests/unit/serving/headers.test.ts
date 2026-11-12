@@ -300,8 +300,10 @@ function security(
   expect(csp.get('default-src')).toEqual(["'self'"])
   expect(csp.get('script-src')).toEqual(["'self'"])
   expect(csp.get('script-src-attr')).toEqual(["'none'"])
+  // `'self'` alone: no `'unsafe-inline'`, no hash, no nonce. The one inline `<style>` a
+  // dependency wrote is removed at build (tests/unit/serving/radix-select-style.test.ts).
   expect(csp.get('style-src')).toEqual(["'self'"])
-  expect(csp.get('style-src-attr')).toEqual(["'unsafe-inline'"])
+  expect(csp.get('style-src-attr')).toEqual(["'none'"])
   expect(csp.get('img-src')).toEqual(["'self'"])
   expect(csp.get('font-src')).toEqual(["'self'"])
   expect(csp.get('object-src')).toEqual(["'none'"])
@@ -925,7 +927,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '73079855b1cf561a68001cc8b3f591a81fcaec908ac7f285b4264da66ee362af'
+const PRISTINE_SHA = 'c58931759c51608850cd1b1e154f2dfe44617a3e613889cfcf3dfed920e9983a'
 type Scenario =
   | 'referrer'
   | 'directive'
