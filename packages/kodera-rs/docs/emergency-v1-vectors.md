@@ -17,7 +17,16 @@ Renaming any of them is a new protocol version, never a vocabulary change. [`vec
 
 ## Sender labels
 
-A frame carries its sender's device public half and no name. The label shown next to a check-in is a handle: one the member picked for this purpose (`dedicated`) or one every device derives from the sender bytes (`generated`, `ProximityHandle::generated`). A handle is 3 to 24 characters matching `^[a-z0-9]+(?:-[a-z0-9]+)*$`. It is display metadata held beside the frame, never inside it, and it proves neither identity nor membership. [`vectors/proximity-handle-v1.txt`](../vectors/proximity-handle-v1.txt) states the grammar, the word lists and the accepted, refused and generated vectors for the three native implementations.
+A frame carries its sender's device public half and no name. The label shown next to a check-in is a handle: one the member picked for this purpose (`dedicated`) or one every device of the organisation derives for the sender (`generated`, `ProximityHandle::generated`). A handle is 3 to 24 characters matching `^[a-z0-9]+(?:-[a-z0-9]+)*$`. It is display metadata held beside the frame, never inside it.
+
+A handle is a display label, never an identity and never an authorisation input. Identity stays the signing half of the device pair; the roster and the signature decide what is admitted, and nothing is granted, refused, deduplicated or looked up by handle.
+
+- A generated handle is `<adjective>-<noun>-<9 characters>` from `HMAC-SHA256(organisation beacon salt, "kodera-proximity-handle-v1:" || sender bytes)`: five bits per word and 45 in the suffix, 55 in all. The 24-character bound and the longest word pair leave room for exactly nine suffix characters.
+- The organisation's beacon salt keys the derivation. The same sender shows another handle in another organisation, so handles are not linkable across organisations, and a handle searched for in one organisation is worth nothing in another.
+- Fifty-five bits make an accidental meeting inside a 4096-member roster negligible. They do not stop someone who can try device pairs until one matches and then have it provisioned. A matching handle gives its holder a label and nothing else.
+- A roster view runs `disambiguate_proximity_handles`. When distinct senders show the same handle, whatever its origin, each is shown as `handle [fingerprint]`, the fingerprint being a prefix of `SHA-256("kodera-proximity-fingerprint-v1:" || sender bytes)`: 8 hex characters, lengthened two at a time until the prefixes of that group differ.
+
+[`vectors/proximity-handle-v1.txt`](../vectors/proximity-handle-v1.txt) states the grammar, the word lists, accepted and refused handles, each sender in two organisations and four roster cases for the three native implementations.
 
 ## Boundary
 

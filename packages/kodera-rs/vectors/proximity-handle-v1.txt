@@ -2,15 +2,32 @@
 #
 # A proximity frame carries its sender's device public half, never a name. What a client shows
 # next to a check-in is a handle: one the member picked for this purpose (`dedicated`) or one
-# derived from the frame's sender bytes (`generated`). A real name is never required and never
-# travels in a frame. A handle is a display label: it proves neither identity nor membership.
+# derived for the frame's sender inside one organisation (`generated`). A real name is never
+# required and never travels in a frame.
+#
+# A handle is a DISPLAY LABEL. It is never an identity and never an authorisation input: identity
+# stays the Ed25519 signing key, and the roster and the signature decide what is admitted. Two
+# senders can show the same handle, by accident or on purpose; a client that lists a roster
+# disambiguates them with a fingerprint of the signing half (see `roster` below).
 #
 # A handle is 3 to 24 characters matching ^[a-z0-9]+(?:-[a-z0-9]+)*$ (ASCII only, so characters
 # and bytes agree). A generated handle is
-#   <adjective>-<noun>-<4 lowercase hex>
-# where d = SHA-256("kodera-proximity-handle-v1:" || 32 sender bytes), the adjective is entry
-# d[0] & 31, the noun is entry d[1] & 31 and the hex is d[2], d[3]. The label is hashed for
-# display only; it is not part of the frozen frame v1 and signs nothing.
+#   <adjective>-<noun>-<9 characters of the alphabet below>
+# where d = HMAC-SHA256(key = the organisation's 32-byte beacon salt,
+#                       message = "kodera-proximity-handle-v1:" || 32 sender bytes),
+# the adjective is entry d[0] & 31, the noun is entry d[1] & 31, and the 9 characters spell, most
+# significant first, the top 45 bits of d[2..8] in the alphabet 0123456789abcdefghjkmnpqrstvwxyz.
+# That is 55 bits of the digest, the most the 24-character bound leaves beside the longest word
+# pair. The organisation salt binds a handle to one organisation: the same sender shows another
+# handle elsewhere, so handles are not linkable across organisations and one searched for in one
+# organisation is worth nothing in another. The label is hashed for display only; it is not part
+# of the frozen frame v1 and signs nothing.
+#
+# A fingerprint is the lowercase hex of SHA-256("kodera-proximity-fingerprint-v1:" || 32 sender
+# bytes). When two or more distinct senders of one roster resolve to the same handle, each is
+# shown as `<handle> [<fingerprint prefix>]`: 8 hex characters, lengthened two at a time until
+# the prefixes of that group differ. A sender whose handle is unique in the roster shows no
+# fingerprint.
 #
 # Rust (`packages/kodera-rs/src/proximity_handle.rs`), Swift (`apps/ios/packages/KoderaDomain`)
 # and Kotlin (`apps/android/domain`) read this file and agree with every line.
@@ -22,11 +39,17 @@
 #   noun <index> <word>
 #   valid <handle>
 #   refuse <name> <utf8_hex|->          (`-` is the empty string)
-#   generated <sender_hex> <handle>
+#   generated <organisation_salt_hex> <sender_hex> <handle>
+#   roster <case> <organisation_salt_hex> <sender_hex> <dedicated_handle|-> <handle> <fingerprint|->
+# A `roster` case is every line sharing its name, in order: the entries of one roster, the
+# handle each resolves to and the fingerprint prefix it is shown with (`-` for none).
 # Blank lines and lines starting with `#` are ignored. Any other line is an error.
 
 bound min_chars 3
 bound max_chars 24
+bound generated_suffix_chars 9
+bound generated_digest_bits 55
+bound min_fingerprint_hex_chars 8
 
 origin dedicated
 origin generated
@@ -107,7 +130,8 @@ valid north-wing-3
 valid x-y-z
 valid a-b-c-d-e-f-g-h-i-j-k-l
 valid abcdefghijklmnopqrstuvwx
-valid calm-heron-3fa2
+valid gentle-juniper-012345678
+valid calm-heron-7k2m9x4pq
 
 refuse empty -
 refuse two_chars 6162
@@ -139,9 +163,29 @@ refuse zero_width_joiner 6162e2808d6364
 refuse en_dash 6162e280936364
 refuse display_name_shape 4a65616e204475706f6e74
 refuse email_shape 6a65616e406578616d706c652e6f7267
+refuse disambiguated_display_shape 6e6f7274682d77696e672d33205b31613262336334645d
 
-generated d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a olive-pine-f9fe
-generated 0000000000000000000000000000000000000000000000000000000000000000 hazel-river-f67b
-generated ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff hazel-glade-1915
-generated 0909090909090909090909090909090909090909090909090909090909090909 rapid-quartz-52d1
-generated 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f ivory-quartz-11bb
+# The same five senders in two organisations: every handle differs between the two.
+generated 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a gentle-ember-jn24grqyg
+generated 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 swift-alder-vcejesr6t
+generated 4242424242424242424242424242424242424242424242424242424242424242 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff clear-badger-wa9crdq6n
+generated 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 steady-brook-ah3fccbgh
+generated 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f mellow-river-pmgj8v226
+generated 4343434343434343434343434343434343434343434343434343434343434343 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a olive-quartz-dbvht784x
+generated 4343434343434343434343434343434343434343434343434343434343434343 0000000000000000000000000000000000000000000000000000000000000000 light-glade-f738r9vhw
+generated 4343434343434343434343434343434343434343434343434343434343434343 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff dusky-comet-4fxtnjp55
+generated 4343434343434343434343434343434343434343434343434343434343434343 0909090909090909090909090909090909090909090909090909090909090909 misty-sparrow-yn6kxpknp
+generated 4343434343434343434343434343434343434343434343434343434343434343 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f lunar-pebble-0jpewv25e
+
+roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a - gentle-ember-jn24grqyg -
+roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 - steady-brook-ah3fccbgh -
+roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f north-wing-3 north-wing-3 -
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a north-wing-3 north-wing-3 ff139265
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 north-wing-3 north-wing-3 330eb4de
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f - mellow-river-pmgj8v226 -
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 x-y-z x-y-z -
+roster dedicated_equals_a_generated_one 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a - gentle-ember-jn24grqyg ff139265
+roster dedicated_equals_a_generated_one 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 gentle-ember-jn24grqyg gentle-ember-jn24grqyg 330eb4de
+roster fingerprints_extend_until_distinct 4343434343434343434343434343434343434343434343434343434343434343 f57fecba72eec5baef4935b098a0874bea3ba2caf9f0f797803b7a3ca5fc1cfd kodera-7 kodera-7 d95b8db88f
+roster fingerprints_extend_until_distinct 4343434343434343434343434343434343434343434343434343434343434343 bfee3dfd63046bad8e2376217be8d4a2f6bbc24b39a57079046f2d47b57e3b1b kodera-7 kodera-7 d95b8db854
+roster fingerprints_extend_until_distinct 4343434343434343434343434343434343434343434343434343434343434343 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff kodera-7 kodera-7 95c3b485fb

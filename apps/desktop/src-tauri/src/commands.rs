@@ -646,8 +646,12 @@ impl fmt::Display for DesktopCommandRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProximityMemberStatus {
     pub sender_public_key: Ed25519PublicKey,
-    /// The pseudonym to show for this sender. Derived from the sender key; never a name.
+    /// The pseudonym to show for this sender: derived from the sender key under the organisation's
+    /// beacon salt, never a name. A display label only, never an identity or an authorisation input.
     pub sender_handle: ProximityHandle,
+    /// A fingerprint prefix of the signing key, present when another member of this roster shows
+    /// the same handle: the two are then told apart as `handle [fingerprint]`.
+    pub sender_fingerprint: Option<String>,
     pub status: SafetyStatus,
     pub text: String,
     pub timestamp_ms: u64,
@@ -842,14 +846,19 @@ impl DesktopWorkspaceSession {
                 .map_err(DesktopCommandError::Core),
             DesktopCommandRequest::ProximityMemberStatuses { organisation_id } => self
                 .member_statuses(&organisation_id)
-                .map(|members| {
+                .and_then(|members| Ok((members, self.member_labels(&organisation_id)?)))
+                .map(|(members, labels)| {
+                    // Both lists come from the roster in public-key order.
                     DesktopCommandResponse::ProximityMemberStatuses(
                         members
                             .into_iter()
-                            .map(|(sender_public_key, status, text, timestamp_ms)| {
+                            .zip(labels)
+                            .map(|((sender_public_key, status, text, timestamp_ms), label)| {
+                                debug_assert_eq!(label.sender_public_key, sender_public_key);
                                 ProximityMemberStatus {
-                                    sender_handle: ProximityHandle::generated(&sender_public_key),
                                     sender_public_key,
+                                    sender_handle: label.handle,
+                                    sender_fingerprint: label.fingerprint,
                                     status,
                                     text,
                                     timestamp_ms,
@@ -2409,10 +2418,16 @@ mod tests {
                     DesktopCommandResponse::ProximityMemberStatuses(members),
                 ) => {
                     assert_eq!(members.len(), 1);
+                    // Bound to this organisation's beacon salt, and unique here: no fingerprint.
                     assert_eq!(
                         members[0].sender_handle,
-                        ProximityHandle::generated(&members[0].sender_public_key)
+                        ProximityHandle::generated(&[0x42; 32], &members[0].sender_public_key)
                     );
+                    assert_ne!(
+                        members[0].sender_handle,
+                        ProximityHandle::generated(&[0x43; 32], &members[0].sender_public_key)
+                    );
+                    assert_eq!(members[0].sender_fingerprint, None);
                 }
                 (
                     "emergency_next_relay_batch",
@@ -2439,6 +2454,43 @@ mod tests {
                 DesktopCommandResponse::Error(DesktopCommandError::InvalidRequest)
             );
         }
+    }
+
+    /// Member statuses carry a pseudonym, never a name: one per sender, bound to this organisation.
+    #[test]
+    fn member_statuses_label_each_sender_with_an_organisation_bound_pseudonym() {
+        let mut state = session();
+        populate(&mut state, 1, 1);
+        populate(&mut state, 2, 2);
+        let DesktopCommandResponse::ProximityMemberStatuses(members) =
+            state.dispatch_command(&json("proximity_member_statuses", ""))
+        else {
+            panic!("expected member statuses")
+        };
+        assert_eq!(members.len(), 2);
+        let labels = state.member_labels(ORG).unwrap();
+        for (member, label) in members.iter().zip(&labels) {
+            assert_eq!(member.sender_public_key, label.sender_public_key);
+            assert_eq!(member.sender_handle, label.handle);
+            assert_eq!(
+                member.sender_handle,
+                ProximityHandle::generated(&[0x42; 32], &member.sender_public_key)
+            );
+            assert_eq!(member.sender_fingerprint, None);
+            assert_eq!(label.display(), member.sender_handle.as_str());
+            assert!(kodera_rs::validate_proximity_handle(member.sender_handle.as_str()).is_ok());
+        }
+        assert_ne!(members[0].sender_handle, members[1].sender_handle);
+        // A label is display only: a wrong organisation still gets nothing, whatever it shows.
+        assert_eq!(
+            state.member_labels(OTHER_ORG),
+            Err(CoreError::OrganisationMismatch)
+        );
+        state.clear_session();
+        assert_eq!(
+            state.member_labels(ORG),
+            Err(CoreError::TransportUnavailable)
+        );
     }
 
     /// Refusal mutation: drop one alias at a time. The legacy name must then be refused and the

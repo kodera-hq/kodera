@@ -26,12 +26,13 @@ pub const DESKTOP_APP_IDENTIFIER: &str = "io.kodera.desktop";
 use core::fmt;
 use kodera_rs::{
     compute_proximity_beacon, curated_desktop_themes, decode_shareable_theme,
-    encode_shareable_theme, evaluate_channel_access, redact_iban, validate_channel_poll_id,
-    validate_connector_post_url, validate_docs_host, validate_docs_pad_url, validate_user_profile,
-    ChannelAccessDecision, ChannelPermissionPolicy, ChannelPoll, ChannelPollSnapshot, CoreError,
-    CoreThemeMode, DeviceIdentitySigner, DocsPadDocument, DocsPadUrl, Ed25519PublicKey,
-    ExtensionWebhookVerifier, OrganisationId, ProximityFrame, ProximityMeshQueue,
-    ProximityReplayGuard, ProximityRosterTracker, SafetyStatus, ShareableThemePayload,
+    disambiguate_proximity_handles, encode_shareable_theme, evaluate_channel_access, redact_iban,
+    validate_channel_poll_id, validate_connector_post_url, validate_docs_host,
+    validate_docs_pad_url, validate_user_profile, ChannelAccessDecision, ChannelPermissionPolicy,
+    ChannelPoll, ChannelPollSnapshot, CoreError, CoreThemeMode, DeviceIdentitySigner,
+    DocsPadDocument, DocsPadUrl, Ed25519PublicKey, ExtensionWebhookVerifier, OrganisationId,
+    ProximityFrame, ProximityHandle, ProximityMeshQueue, ProximityReplayGuard,
+    ProximityRosterLabel, ProximityRosterTracker, SafetyStatus, ShareableThemePayload,
     SignatureVerifier, SoundPackId, UserProfile, UuidV7, VerifiedProximityFrame,
     MAX_PROXIMITY_STATE_ENTRIES, MAX_PROXIMITY_TTL_HOPS,
 };
@@ -579,6 +580,23 @@ impl DesktopProximityNode {
             })
             .collect()
     }
+
+    /// One display label per roster member, in the order of [`Self::member_statuses`]. Each handle
+    /// is derived from the sender key under this organisation's beacon salt, and senders whose
+    /// handles are equal carry a fingerprint of their signing key. Labels are for display only:
+    /// identity and admission stay with the key, the roster and the signature.
+    pub fn member_labels(&self) -> Vec<ProximityRosterLabel> {
+        let resolved: Vec<(Ed25519PublicKey, ProximityHandle)> = self
+            .roster
+            .statuses()
+            .into_iter()
+            .map(|member| {
+                let handle = member.generated_handle(&self.org_beacon_salt);
+                (member.sender_public_key, handle)
+            })
+            .collect();
+        disambiguate_proximity_handles(&resolved)
+    }
 }
 
 /// Organisation-bound native backend seam. A future trusted adapter owns provisioning and crypto;
@@ -766,6 +784,18 @@ impl DesktopWorkspaceSession {
         self.proximity
             .as_ref()
             .map(DesktopProximityNode::member_statuses)
+            .ok_or(CoreError::TransportUnavailable)
+    }
+
+    /// Display labels for the current organisation's roster, in [`Self::member_statuses`] order.
+    pub fn member_labels(
+        &self,
+        organisation_id: &str,
+    ) -> Result<Vec<ProximityRosterLabel>, CoreError> {
+        self.check_organisation(organisation_id)?;
+        self.proximity
+            .as_ref()
+            .map(DesktopProximityNode::member_labels)
             .ok_or(CoreError::TransportUnavailable)
     }
 

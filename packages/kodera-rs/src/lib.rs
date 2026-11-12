@@ -29,8 +29,10 @@ pub use poll_connector::{
 
 mod proximity_handle;
 pub use proximity_handle::{
-    validate_proximity_handle, ProximityHandle, ProximityHandleOrigin, MAX_PROXIMITY_HANDLE_CHARS,
-    MIN_PROXIMITY_HANDLE_CHARS,
+    disambiguate_proximity_handles, proximity_key_fingerprint, validate_proximity_handle,
+    ProximityHandle, ProximityHandleOrigin, ProximityRosterLabel, MAX_PROXIMITY_HANDLE_CHARS,
+    MIN_PROXIMITY_FINGERPRINT_HEX_CHARS, MIN_PROXIMITY_HANDLE_CHARS, PROXIMITY_HANDLE_DIGEST_BITS,
+    PROXIMITY_HANDLE_SUFFIX_CHARS,
 };
 
 #[cfg(test)]
@@ -1427,9 +1429,10 @@ pub struct ProximityMemberStatus {
 
 impl ProximityMemberStatus {
     /// The pseudonym to show for this check-in when its sender picked none: derived from the
-    /// sender key, so no name is needed and none is revealed.
-    pub fn generated_handle(&self) -> ProximityHandle {
-        ProximityHandle::generated(&self.sender_public_key)
+    /// sender key inside the organisation `org_beacon_salt` belongs to, so no name is needed and
+    /// none is revealed. A display label only; run [`disambiguate_proximity_handles`] over a roster.
+    pub fn generated_handle(&self, org_beacon_salt: &[u8; 32]) -> ProximityHandle {
+        ProximityHandle::generated(org_beacon_salt, &self.sender_public_key)
     }
 }
 
