@@ -13,6 +13,7 @@ class ProximityHandleTests {
         val adjectives = mutableListOf<String>(); val nouns = mutableListOf<String>()
         val valid = mutableListOf<String>(); val refused = mutableListOf<Pair<String, String>>()
         val generated = mutableListOf<Generated>(); val rosters = mutableListOf<RosterEntry>()
+        val fingerprints = mutableListOf<Generated>() // salt, sender, the 64-character fingerprint
     }
     private fun refuses(block: () -> Unit) {
         try { block(); fail("expected INVALID_HANDLE") }
@@ -37,6 +38,8 @@ class ProximityHandleTests {
                     parsed.refused += f[1] to (if (f[2] == "-") "" else String(decodeProximityHex(f[2]), Charsets.UTF_8))
                 f[0] == "generated" && f.size == 4 ->
                     parsed.generated += Generated(decodeProximityHex(f[1]), ProximityPublicKey(decodeProximityHex(f[2])), f[3])
+                f[0] == "fingerprint" && f.size == 4 ->
+                    parsed.fingerprints += Generated(decodeProximityHex(f[1]), ProximityPublicKey(decodeProximityHex(f[2])), f[3])
                 f[0] == "roster" && f.size == 8 && f[7] in setOf("present", "absent") ->
                     parsed.rosters += RosterEntry(f[1], decodeProximityHex(f[2]), ProximityPublicKey(decodeProximityHex(f[3])),
                         f[4].takeUnless { it == "-" }, f[5], f[6].takeUnless { it == "-" }, f[7] == "present")
@@ -165,14 +168,14 @@ class ProximityHandleTests {
         assertTrue(cases.size >= 6)
         var disambiguated = 0; var extended = 0
         for ((name, entries) in cases) {
-            val labels = ProximityHandle.disambiguate(resolved(entries, name))
+            val labels = ProximityHandle.disambiguate(entries.first().salt, resolved(entries, name))
             assertEquals(name, entries.size, labels.size)
             for ((label, entry) in labels.zip(entries)) {
                 assertEquals(name, entry.sender, label.senderPublicKey)
                 assertEquals(name, entry.fingerprint, label.fingerprint)
                 assertEquals(name, entry.fingerprint?.let { "${entry.handle} [$it]" } ?: entry.handle, label.display)
                 entry.fingerprint?.let { fingerprint ->
-                    assertTrue(name, ProximityHandle.fingerprint(entry.sender).startsWith(fingerprint))
+                    assertTrue(name, ProximityHandle.fingerprint(entry.salt, entry.sender).startsWith(fingerprint))
                     // The disambiguated display is not a handle and cannot be stored as one.
                     assertFalse(name, ProximityHandle.isValid(label.display))
                     disambiguated++; if (fingerprint.length > 8) extended++
@@ -193,7 +196,8 @@ class ProximityHandleTests {
         for ((name, entries) in vectors().rosters.groupBy { it.name }) {
             val provisioned = resolved(entries, name)
             val present = entries.filter { it.present }; val observed = present.map { it.sender }
-            val labels = ProximityHandle.labelsFor(provisioned, observed)
+            val salt = entries.first().salt
+            val labels = ProximityHandle.labelsFor(salt, provisioned, observed)
             assertEquals(name, present.size, labels.size)
             for ((label, entry) in labels.zip(present)) {
                 assertEquals(name, entry.sender, label.senderPublicKey)
@@ -203,7 +207,7 @@ class ProximityHandleTests {
             // Refusal mutation: groups restricted to the senders seen so far. Where a present sender shares
             // its handle only with absent members, that computation shows the bare handle.
             val observedOnly = provisioned.filter { it.first in observed }
-            for ((label, weak) in labels.zip(ProximityHandle.disambiguate(observedOnly))) {
+            for ((label, weak) in labels.zip(ProximityHandle.disambiguate(salt, observedOnly))) {
                 val holders = provisioned.count { it.second.value == label.handle.value }
                 val presentHolders = observedOnly.count { it.second.value == label.handle.value }
                 if (holders > 1 && presentHolders == 1) {
@@ -213,21 +217,69 @@ class ProximityHandleTests {
                 }
             }
             // A label does not change when the absent members appear.
-            val later = ProximityHandle.labelsFor(provisioned, entries.map { it.sender })
+            val later = ProximityHandle.labelsFor(salt, provisioned, entries.map { it.sender })
             for (label in labels) assertTrue(name, label in later)
         }
         assertTrue("the vectors must hold a handle shared with an absent member", guarded >= 2)
         // A sender the roster does not hold is not labelled at all.
-        try { ProximityHandle.labelsFor(emptyList(), listOf(ProximityPublicKey(ByteArray(32) { 9 }))); fail("an unknown sender was labelled") }
+        val anySalt = ByteArray(32) { 1 }
+        try { ProximityHandle.labelsFor(anySalt, emptyList(), listOf(ProximityPublicKey(ByteArray(32) { 9 }))); fail("an unknown sender was labelled") }
         catch (error: ProximityFailure) { assertEquals(ProximityError.UNAUTHORIZED, error.reason) }
-        assertTrue(ProximityHandle.labelsFor(emptyList(), emptyList()).isEmpty())
+        assertTrue(ProximityHandle.labelsFor(anySalt, emptyList(), emptyList()).isEmpty())
+    }
+
+    @Test fun rosterFingerprintsMatchTheSharedVectors() {
+        val shared = vectors()
+        assertTrue(shared.fingerprints.size >= 10)
+        for (vector in shared.fingerprints) {
+            assertEquals(64, vector.handle.length)
+            assertEquals(vector.handle, ProximityHandle.fingerprint(vector.salt, vector.sender))
+        }
+    }
+
+    /**
+     * The organisation binding: one sender key, two organisations, two fingerprints. The fingerprint beside a
+     * handle must not link a member across organisations.
+     */
+    @Test fun theSameSenderKeyYieldsDifferentFingerprintsInTwoOrganisations() {
+        val shared = vectors(); var compared = 0
+        for (one in shared.fingerprints) for (other in shared.fingerprints) {
+            if (one.sender != other.sender || one.salt.contentEquals(other.salt)) continue
+            // Not even the shortest displayed prefix is shared.
+            assertNotEquals(one.handle.take(ProximityHandle.MIN_FINGERPRINT_HEX_CHARS), other.handle.take(ProximityHandle.MIN_FINGERPRINT_HEX_CHARS))
+            assertNotEquals(ProximityHandle.fingerprint(one.salt, one.sender), ProximityHandle.fingerprint(other.salt, one.sender))
+            compared++
+        }
+        assertTrue("the vectors must hold each sender in two organisations", compared >= 10)
+        // The same roster in two organisations is shown with different fingerprints.
+        val roster = listOf(ProximityPublicKey(ByteArray(32) { 1 }) to ProximityHandle.dedicated("north-wing-3"),
+            ProximityPublicKey(ByteArray(32) { 2 }) to ProximityHandle.dedicated("north-wing-3"))
+        val here = ProximityHandle.disambiguate(ByteArray(32) { 0x42 }, roster)
+        val elsewhere = ProximityHandle.disambiguate(ByteArray(32) { 0x43 }, roster)
+        for ((one, other) in here.zip(elsewhere)) {
+            assertNotNull(one.fingerprint); assertNotNull(other.fingerprint)
+            assertNotEquals(one.fingerprint, other.fingerprint)
+        }
+    }
+
+    /**
+     * Refusal mutation on the binding itself: a fingerprint that ignores the organisation (one fixed binding
+     * for everyone) matches no shared vector.
+     */
+    @Test fun aFingerprintWithoutTheOrganisationBindingMatchesNoSharedVector() {
+        for (vector in vectors().fingerprints) {
+            assertNotEquals(vector.handle, ProximityHandle.deriveFingerprint(ByteArray(0), vector.sender))
+            assertEquals(vector.handle, ProximityHandle.deriveFingerprint(vector.salt, vector.sender))
+        }
     }
 
     @Test fun aKeyListedTwiceDoesNotCollideWithItself() {
         val salt = ByteArray(32) { 0x42 }; val sender = ProximityPublicKey(ByteArray(32) { 9 })
         val handle = ProximityHandle.generated(salt, sender)
-        assertTrue(ProximityHandle.disambiguate(listOf(sender to handle, sender to handle)).all { it.fingerprint == null })
-        assertTrue(ProximityHandle.disambiguate(emptyList()).isEmpty())
-        assertEquals(64, ProximityHandle.fingerprint(sender).length)
+        assertTrue(ProximityHandle.disambiguate(salt, listOf(sender to handle, sender to handle)).all { it.fingerprint == null })
+        assertTrue(ProximityHandle.disambiguate(salt, emptyList()).isEmpty())
+        assertEquals(64, ProximityHandle.fingerprint(salt, sender).length)
+        // A fingerprint needs its organisation: a salt of the wrong size is refused.
+        for (size in listOf(0, 31, 33)) refuses { ProximityHandle.fingerprint(ByteArray(size), sender) }
     }
 }

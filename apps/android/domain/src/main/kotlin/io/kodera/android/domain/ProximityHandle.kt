@@ -1,6 +1,5 @@
 package io.kodera.android.domain
 
-import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -28,7 +27,8 @@ enum class ProximityHandleOrigin(val slug: String) {
  * refused, deduplicated or looked up by handle. A generated handle keeps 55 bits of a digest keyed with the
  * organisation's beacon salt, so the same key shows another handle in another organisation; two senders can
  * still show the same handle, and a roster view must go through [labelsFor], which adds a fingerprint of each
- * signing key and judges equality over the whole provisioned roster, absent members included.
+ * signing key and judges equality over the whole provisioned roster, absent members included. The fingerprint
+ * is keyed with the organisation's beacon salt too, so it links nothing across organisations.
  *
  * The grammar, the word lists and the vectors are shared with `kodera-rs` and the iOS client through
  * `packages/kodera-rs/vectors/proximity-handle-v1.txt`, which the tests read.
@@ -104,11 +104,7 @@ class ProximityHandle private constructor(val value: String, val origin: Proximi
          * the organisation's beacon salt; the tests pass another one to show what the binding buys.
          */
         internal fun derive(binding: ByteArray, sender: ProximityPublicKey): String {
-            val message = GENERATED_LABEL.toByteArray(Charsets.US_ASCII) + sender.bytes()
-            // HMAC with an empty key is defined (the key is zero-padded); SecretKeySpec refuses an empty array.
-            val key = if (binding.isEmpty()) ByteArray(64) else binding.copyOf()
-            val digest = try { Mac.getInstance("HmacSHA256").run { init(SecretKeySpec(key, "HmacSHA256")); doFinal(message) } }
-                catch (error: java.security.GeneralSecurityException) { throw ProximityFailure(ProximityError.CRYPTO_UNAVAILABLE) }
+            val digest = hmac(binding, GENERATED_LABEL.toByteArray(Charsets.US_ASCII) + sender.bytes())
             // The top 45 bits of digest[2..8], most significant character first.
             var bits = (2..7).fold(0L) { value, index -> (value shl 8) or (digest[index].toLong() and 255) } ushr 3
             val suffix = CharArray(GENERATED_SUFFIX_CHARS)
@@ -136,12 +132,31 @@ class ProximityHandle private constructor(val value: String, val origin: Proximi
         }
 
         /**
-         * The 64 lowercase hex characters a sender key is told apart by when handles are equal:
-         * `SHA-256("kodera-proximity-fingerprint-v1:" || sender key)`. A prefix of it is shown.
+         * The 64 lowercase hex characters a sender is told apart by, inside one organisation, when handles are
+         * equal: `HMAC-SHA256(organisation beacon salt, "kodera-proximity-fingerprint-v1:" || sender key)`. A
+         * prefix of it is shown.
+         *
+         * It is keyed with the organisation's beacon salt, like the generated handle and for the same reason:
+         * the same key shows another fingerprint in another organisation, so the fingerprint beside a handle
+         * does not link a member across organisations. There is deliberately no unkeyed fingerprint of a sender
+         * key in this module.
          */
-        fun fingerprint(sender: ProximityPublicKey): String = MessageDigest.getInstance("SHA-256")
-            .digest(FINGERPRINT_LABEL.toByteArray(Charsets.US_ASCII) + sender.bytes())
-            .joinToString("") { byte -> val value = byte.toInt() and 255; "${HEX_DIGITS[value shr 4]}${HEX_DIGITS[value and 15]}" }
+        fun fingerprint(organisationSalt: ByteArray, sender: ProximityPublicKey): String {
+            if (organisationSalt.size != 32) throw ProximityFailure(ProximityError.INVALID_HANDLE)
+            return deriveFingerprint(organisationSalt, sender)
+        }
+
+        /** [binding] is the organisation's beacon salt; the tests pass another one to show what the binding buys. */
+        internal fun deriveFingerprint(binding: ByteArray, sender: ProximityPublicKey): String =
+            hmac(binding, FINGERPRINT_LABEL.toByteArray(Charsets.US_ASCII) + sender.bytes())
+                .joinToString("") { byte -> val value = byte.toInt() and 255; "${HEX_DIGITS[value shr 4]}${HEX_DIGITS[value and 15]}" }
+
+        private fun hmac(binding: ByteArray, message: ByteArray): ByteArray {
+            // HMAC with an empty key is defined (the key is zero-padded); SecretKeySpec refuses an empty array.
+            val key = if (binding.isEmpty()) ByteArray(64) else binding.copyOf()
+            return try { Mac.getInstance("HmacSHA256").run { init(SecretKeySpec(key, "HmacSHA256")); doFinal(message) } }
+                catch (error: java.security.GeneralSecurityException) { throw ProximityFailure(ProximityError.CRYPTO_UNAVAILABLE) }
+        }
 
         /**
          * Labels for every provisioned sender of one roster, in the order given. When two or more distinct
@@ -152,17 +167,21 @@ class ProximityHandle private constructor(val value: String, val origin: Proximi
          * [provisioned] must be the whole provisioned roster, never only the senders seen so far: a group
          * computed over observed senders alone would show a bare handle to a sender whose handle equals an
          * absent member's. To label the senders that have checked in, use [labelsFor].
+         *
+         * [organisationSalt] keys the fingerprints: they belong to this organisation and say nothing about the
+         * same key elsewhere.
          */
-        fun disambiguate(provisioned: List<Pair<ProximityPublicKey, ProximityHandle>>): List<ProximityRosterLabel> {
+        fun disambiguate(organisationSalt: ByteArray,
+            provisioned: List<Pair<ProximityPublicKey, ProximityHandle>>): List<ProximityRosterLabel> {
             val lengths = provisioned.groupBy({ it.second.value }, { it.first }).mapValues { it.value.toSet() }
                 .filterValues { it.size > 1 }.mapValues { (_, keys) ->
-                    val fingerprints = keys.map(::fingerprint)
+                    val fingerprints = keys.map { fingerprint(organisationSalt, it) }
                     var length = MIN_FINGERPRINT_HEX_CHARS
                     while (length < 64 && fingerprints.map { it.take(length) }.toSet().size < fingerprints.size) length += 2
                     length
                 }
             return provisioned.map { (sender, handle) ->
-                ProximityRosterLabel(sender, handle, lengths[handle.value]?.let { fingerprint(sender).take(it) })
+                ProximityRosterLabel(sender, handle, lengths[handle.value]?.let { fingerprint(organisationSalt, sender).take(it) })
             }
         }
 
@@ -173,9 +192,9 @@ class ProximityHandle private constructor(val value: String, val origin: Proximi
          * when another member appears. An observed key outside the provisioned roster is refused: nothing is
          * labelled for a sender the roster does not hold.
          */
-        fun labelsFor(provisioned: List<Pair<ProximityPublicKey, ProximityHandle>>,
+        fun labelsFor(organisationSalt: ByteArray, provisioned: List<Pair<ProximityPublicKey, ProximityHandle>>,
             observed: List<ProximityPublicKey>): List<ProximityRosterLabel> {
-            val byKey = disambiguate(provisioned).associateBy { it.senderPublicKey }
+            val byKey = disambiguate(organisationSalt, provisioned).associateBy { it.senderPublicKey }
             return observed.map { byKey[it] ?: throw ProximityFailure(ProximityError.UNAUTHORIZED) }
         }
     }

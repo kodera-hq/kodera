@@ -29,7 +29,7 @@ pub use poll_connector::{
 
 mod proximity_handle;
 pub use proximity_handle::{
-    disambiguate_proximity_handles, label_observed_proximity_senders, proximity_key_fingerprint,
+    disambiguate_proximity_handles, label_observed_proximity_senders, proximity_roster_fingerprint,
     validate_proximity_handle, ProximityHandle, ProximityHandleOrigin, ProximityRosterLabel,
     MAX_PROXIMITY_HANDLE_CHARS, MIN_PROXIMITY_FINGERPRINT_HEX_CHARS, MIN_PROXIMITY_HANDLE_CHARS,
     PROXIMITY_HANDLE_DIGEST_BITS, PROXIMITY_HANDLE_SUFFIX_CHARS,

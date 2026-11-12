@@ -12,6 +12,7 @@ final class ProximityHandleTests: XCTestCase {
         var bounds: [String: Int] = [:], origins: [String] = [], adjectives: [String] = [], nouns: [String] = []
         var valid: [String] = [], refused: [(name: String, text: String)] = []
         var generated: [(salt: Data, sender: Data, handle: String)] = [], rosters: [RosterEntry] = []
+        var fingerprints: [(salt: Data, sender: Data, fingerprint: String)] = []
     }
 
     private func bytes(_ hex: String) throws -> Data {
@@ -42,6 +43,7 @@ final class ProximityHandleTests: XCTestCase {
                 let raw = fields[2] == "-" ? Data() : try bytes(fields[2])
                 parsed.refused.append((fields[1], try XCTUnwrap(String(data: raw, encoding: .utf8), String(line))))
             case ("generated", 4): parsed.generated.append((try bytes(fields[1]), try bytes(fields[2]), fields[3]))
+            case ("fingerprint", 4): parsed.fingerprints.append((try bytes(fields[1]), try bytes(fields[2]), fields[3]))
             case ("roster", 8):
                 XCTAssertTrue(["present", "absent"].contains(fields[7]), String(line))
                 parsed.rosters.append(RosterEntry(
@@ -199,14 +201,15 @@ final class ProximityHandleTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(cases.count, 6)
         var disambiguated = 0, extended = 0
         for (name, entries) in cases {
-            let labels = ProximityHandle.disambiguate(try resolved(entries, name))
+            let labels = try ProximityHandle.disambiguate(try resolved(entries, name), organisationSalt: entries[0].salt)
             XCTAssertEqual(labels.count, entries.count, name)
             for (label, entry) in zip(labels, entries) {
                 XCTAssertEqual(label.senderPublicKey, entry.sender, name)
                 XCTAssertEqual(label.fingerprint, entry.fingerprint, name)
                 XCTAssertEqual(label.display, entry.fingerprint.map { "\(entry.handle) [\($0)]" } ?? entry.handle, name)
                 if let fingerprint = entry.fingerprint {
-                    XCTAssertTrue(ProximityHandle.fingerprint(senderPublicKey: entry.sender).hasPrefix(fingerprint), name)
+                    XCTAssertTrue(try ProximityHandle.fingerprint(organisationSalt: entry.salt, senderPublicKey: entry.sender)
+                        .hasPrefix(fingerprint), name)
                     // The disambiguated display is not a handle and cannot be stored as one.
                     XCTAssertFalse(ProximityHandle.isValid(label.display), name)
                     disambiguated += 1
@@ -227,7 +230,8 @@ final class ProximityHandleTests: XCTestCase {
         for (name, entries) in try rosterCases() {
             let provisioned = try resolved(entries, name)
             let present = entries.filter(\.present), observed = present.map(\.sender)
-            let labels = try ProximityHandle.labels(provisioned: provisioned, observed: observed)
+            let salt = entries[0].salt
+            let labels = try ProximityHandle.labels(provisioned: provisioned, observed: observed, organisationSalt: salt)
             XCTAssertEqual(labels.count, present.count, name)
             for (label, entry) in zip(labels, present) {
                 XCTAssertEqual(label.senderPublicKey, entry.sender, name)
@@ -237,7 +241,7 @@ final class ProximityHandleTests: XCTestCase {
             // Refusal mutation: groups restricted to the senders seen so far. Where a present sender
             // shares its handle only with absent members, that computation shows the bare handle.
             let observedOnly = provisioned.filter { observed.contains($0.senderPublicKey) }
-            for (label, weak) in zip(labels, ProximityHandle.disambiguate(observedOnly)) {
+            for (label, weak) in zip(labels, try ProximityHandle.disambiguate(observedOnly, organisationSalt: salt)) {
                 let holders = provisioned.filter { $0.handle.value == label.handle.value }.count
                 let presentHolders = observedOnly.filter { $0.handle.value == label.handle.value }.count
                 if holders > 1, presentHolders == 1 {
@@ -247,23 +251,75 @@ final class ProximityHandleTests: XCTestCase {
                 }
             }
             // A label does not change when the absent members appear.
-            let later = try ProximityHandle.labels(provisioned: provisioned, observed: entries.map(\.sender))
+            let later = try ProximityHandle.labels(provisioned: provisioned, observed: entries.map(\.sender), organisationSalt: salt)
             for label in labels { XCTAssertTrue(later.contains(label), name) }
         }
         XCTAssertGreaterThanOrEqual(guarded, 2, "the vectors must hold a handle shared with an absent member")
         // A sender the roster does not hold is not labelled at all.
-        XCTAssertThrowsError(try ProximityHandle.labels(provisioned: [], observed: [Data(repeating: 9, count: 32)])) {
+        let anySalt = Data(repeating: 1, count: 32)
+        XCTAssertThrowsError(try ProximityHandle.labels(provisioned: [], observed: [Data(repeating: 9, count: 32)], organisationSalt: anySalt)) {
             XCTAssertEqual($0 as? ProximityError, .unauthorizedSender)
         }
-        XCTAssertTrue(try ProximityHandle.labels(provisioned: [], observed: []).isEmpty)
+        XCTAssertTrue(try ProximityHandle.labels(provisioned: [], observed: [], organisationSalt: anySalt).isEmpty)
+    }
+
+    func testRosterFingerprintsMatchTheSharedVectors() throws {
+        let shared = try vectors()
+        XCTAssertGreaterThanOrEqual(shared.fingerprints.count, 10)
+        for (salt, sender, expected) in shared.fingerprints {
+            XCTAssertEqual(expected.count, 64)
+            XCTAssertEqual(try ProximityHandle.fingerprint(organisationSalt: salt, senderPublicKey: sender), expected)
+        }
+    }
+
+    /// The organisation binding: one sender key, two organisations, two fingerprints. The fingerprint
+    /// beside a handle must not link a member across organisations.
+    func testTheSameSenderKeyYieldsDifferentFingerprintsInTwoOrganisations() throws {
+        let shared = try vectors()
+        var compared = 0
+        for (salt, sender, fingerprint) in shared.fingerprints {
+            for (otherSalt, otherSender, otherFingerprint) in shared.fingerprints where sender == otherSender && salt != otherSalt {
+                // Not even the shortest displayed prefix is shared.
+                XCTAssertNotEqual(fingerprint.prefix(ProximityHandle.minimumFingerprintHexCharacters),
+                                  otherFingerprint.prefix(ProximityHandle.minimumFingerprintHexCharacters))
+                XCTAssertNotEqual(try ProximityHandle.fingerprint(organisationSalt: salt, senderPublicKey: sender),
+                                  try ProximityHandle.fingerprint(organisationSalt: otherSalt, senderPublicKey: sender))
+                compared += 1
+            }
+        }
+        XCTAssertGreaterThanOrEqual(compared, 10, "the vectors must hold each sender in two organisations")
+        // The same roster in two organisations is shown with different fingerprints.
+        let roster = [(senderPublicKey: Data(repeating: 1, count: 32), handle: try ProximityHandle(dedicated: "north-wing-3")),
+                      (senderPublicKey: Data(repeating: 2, count: 32), handle: try ProximityHandle(dedicated: "north-wing-3"))]
+        let here = try ProximityHandle.disambiguate(roster, organisationSalt: Data(repeating: 0x42, count: 32))
+        let elsewhere = try ProximityHandle.disambiguate(roster, organisationSalt: Data(repeating: 0x43, count: 32))
+        for (one, other) in zip(here, elsewhere) {
+            XCTAssertNotNil(one.fingerprint); XCTAssertNotNil(other.fingerprint)
+            XCTAssertNotEqual(one.fingerprint, other.fingerprint)
+        }
+    }
+
+    /// Refusal mutation on the binding itself: a fingerprint that ignores the organisation (one fixed
+    /// binding for everyone) matches no shared vector.
+    func testAFingerprintWithoutTheOrganisationBindingMatchesNoSharedVector() throws {
+        for (salt, sender, expected) in try vectors().fingerprints {
+            XCTAssertNotEqual(ProximityHandle.deriveFingerprint(binding: Data(), senderPublicKey: sender), expected)
+            XCTAssertEqual(ProximityHandle.deriveFingerprint(binding: salt, senderPublicKey: sender), expected)
+        }
     }
 
     func testAKeyListedTwiceDoesNotCollideWithItself() throws {
         let salt = Data(repeating: 0x42, count: 32), sender = Data(repeating: 9, count: 32)
         let handle = try ProximityHandle.generated(organisationSalt: salt, senderPublicKey: sender)
-        let labels = ProximityHandle.disambiguate([(sender, handle), (sender, handle)])
+        let labels = try ProximityHandle.disambiguate([(sender, handle), (sender, handle)], organisationSalt: salt)
         XCTAssertTrue(labels.allSatisfy { $0.fingerprint == nil })
-        XCTAssertTrue(ProximityHandle.disambiguate([]).isEmpty)
-        XCTAssertEqual(ProximityHandle.fingerprint(senderPublicKey: sender).count, 64)
+        XCTAssertTrue(try ProximityHandle.disambiguate([], organisationSalt: salt).isEmpty)
+        XCTAssertEqual(try ProximityHandle.fingerprint(organisationSalt: salt, senderPublicKey: sender).count, 64)
+        // A fingerprint needs its organisation: a salt or a key of the wrong size is refused.
+        for count in [0, 31, 33] {
+            let bad = Data(repeating: 1, count: count)
+            XCTAssertThrowsError(try ProximityHandle.fingerprint(organisationSalt: bad, senderPublicKey: sender))
+            XCTAssertThrowsError(try ProximityHandle.fingerprint(organisationSalt: salt, senderPublicKey: bad))
+        }
     }
 }

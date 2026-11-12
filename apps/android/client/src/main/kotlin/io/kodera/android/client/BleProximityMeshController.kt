@@ -71,7 +71,8 @@ class BleProximityMeshController(
     /**
      * Every provisioned member's label. A handle is the member's dedicated pseudonym when one was provisioned,
      * else derived from the key under the organisation's beacon salt, so no name is needed and none is revealed.
-     * Equal handles are told apart with a fingerprint of the signing key, and equality is judged over EVERY
+     * Equal handles are told apart with a fingerprint of the signing key, keyed with the organisation's beacon
+     * salt so it links nothing across organisations, and equality is judged over EVERY
      * provisioned key, never over the members seen so far.
      */
     private fun provisionedHandles(): List<Pair<ProximityPublicKey, ProximityHandle>> =
@@ -82,10 +83,10 @@ class BleProximityMeshController(
      * label, never an identity: admission stays with the key, the roster and the signature.
      */
     @Synchronized fun label(sender: ProximityPublicKey): ProximityRosterLabel =
-        ProximityHandle.labelsFor(provisionedHandles(), listOf(sender)).single()
+        ProximityHandle.labelsFor(salt, provisionedHandles(), listOf(sender)).single()
     /** One display label per member that has checked in, in [memberStatuses] order; see [label]. */
     @Synchronized fun memberLabels(): List<ProximityRosterLabel> =
-        ProximityHandle.labelsFor(provisionedHandles(), memberStatuses().map { it.publicKey })
+        ProximityHandle.labelsFor(salt, provisionedHandles(), memberStatuses().map { it.publicKey })
     @Synchronized fun queuedFrameCount(): Int = queue.size
     /** Local and peer traffic share the same priority/capacity policy. Rejection changes nothing. */
     private fun admit(frame: ProximityFrame): Boolean {

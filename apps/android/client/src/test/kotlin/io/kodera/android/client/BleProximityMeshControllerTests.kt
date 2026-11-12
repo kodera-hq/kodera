@@ -58,7 +58,9 @@ class BleProximityMeshControllerTests {
         assertEquals(ProximityHandleOrigin.DEDICATED, alone.handle.origin)
         val fingerprint = alone.fingerprint
         assertNotNull("the handle is shared with a member that has not checked in", fingerprint)
-        assertTrue(ProximityHandle.fingerprint(signer.publicKey).startsWith(fingerprint!!))
+        // Keyed with this organisation's beacon salt: the same key elsewhere shows another one.
+        assertTrue(ProximityHandle.fingerprint(salt, signer.publicKey).startsWith(fingerprint!!))
+        assertFalse(ProximityHandle.fingerprint(ByteArray(32) { 0x43 }, signer.publicKey).startsWith(fingerprint))
         assertEquals("north-wing-3 [$fingerprint]", alone.display)
         assertEquals(alone, node.label(signer.publicKey))
 

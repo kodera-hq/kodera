@@ -142,7 +142,8 @@ public actor BLEProximityCoordinator {
     /// member's dedicated pseudonym when one was provisioned, else derived from the sender key under
     /// this organisation's beacon salt, so no name is needed and none is revealed.
     ///
-    /// Equal handles are told apart with a fingerprint of the signing key, and equality is judged over
+    /// Equal handles are told apart with a fingerprint of the signing key, keyed with this organisation's
+    /// beacon salt so it links nothing across organisations, and equality is judged over
     /// EVERY provisioned key, not over the members seen so far: a member whose handle equals that of
     /// someone who has not checked in yet already carries its fingerprint, so it cannot pass for the
     /// absent member and no label changes when that member appears. Labels are for display only:
@@ -153,7 +154,8 @@ public actor BLEProximityCoordinator {
             (senderPublicKey: key,
              handle: try dedicatedHandles[key] ?? ProximityHandle.generated(organisationSalt: salt, senderPublicKey: key))
         }
-        return try ProximityHandle.labels(provisioned: provisioned, observed: memberStatuses().map(\.publicKey))
+        return try ProximityHandle.labels(provisioned: provisioned, observed: memberStatuses().map(\.publicKey),
+                                          organisationSalt: salt)
     }
 
     /// The selected frame stays pinned within queue capacity until completion. Failure or cancellation

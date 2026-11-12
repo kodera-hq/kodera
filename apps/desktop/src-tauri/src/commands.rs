@@ -2521,7 +2521,15 @@ mod tests {
             .sender_fingerprint
             .clone()
             .expect("the handle is shared with a provisioned member that has not checked in");
-        assert!(kodera_rs::proximity_key_fingerprint(&[1; 32]).starts_with(&fingerprint));
+        // Keyed with this organisation's beacon salt: the same key elsewhere shows another one.
+        assert!(
+            kodera_rs::proximity_roster_fingerprint(&[0x42; 32], &[1; 32])
+                .starts_with(&fingerprint)
+        );
+        assert!(
+            !kodera_rs::proximity_roster_fingerprint(&[0x43; 32], &[1; 32])
+                .starts_with(&fingerprint)
+        );
         assert_eq!(
             state.member_labels(ORG).unwrap()[0].display(),
             format!("north-wing-3 [{fingerprint}]")

@@ -20,6 +20,10 @@
 //! signing key. Equality is judged over the whole provisioned roster, absent members included:
 //! a sender cannot borrow the handle of a member who has not checked in yet.
 //!
+//! The fingerprint is keyed with the organisation's beacon salt too. An unkeyed fingerprint of
+//! the sender key would be the same everywhere and would hand back the cross-organisation link
+//! the handle derivation removes.
+//!
 //! The derivation is keyed with the organisation's beacon salt, so the same key shows another
 //! handle in another organisation: handles are not linkable across organisations, and one
 //! searched for in one organisation is worth nothing elsewhere.
@@ -27,7 +31,7 @@
 //! `vectors/proximity-handle-v1.txt` states the grammar, the word lists and the vectors for the
 //! Swift and Kotlin ports.
 
-use crate::{encode_hex, hmac_sha256, sha256, CoreError, Ed25519PublicKey};
+use crate::{encode_hex, hmac_sha256, CoreError, Ed25519PublicKey};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Fewest characters in a handle.
@@ -45,7 +49,8 @@ pub const MIN_PROXIMITY_FINGERPRINT_HEX_CHARS: usize = 8;
 /// MACed with the sender key under the organisation's beacon salt to derive a generated handle.
 /// It labels a display value only: it is not part of the frozen frame v1 and signs nothing.
 const GENERATED_HANDLE_LABEL: &[u8] = b"kodera-proximity-handle-v1:";
-/// Hashed with the sender key for the fingerprint that tells equal handles apart.
+/// MACed with the sender key under the organisation's beacon salt for the fingerprint that tells
+/// equal handles apart inside one organisation.
 const FINGERPRINT_LABEL: &[u8] = b"kodera-proximity-fingerprint-v1:";
 /// Lowercase, digits first, without `i`, `l`, `o` and `u`: five bits per character.
 const SUFFIX_ALPHABET: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
@@ -213,13 +218,29 @@ impl ProximityHandle {
     }
 }
 
-/// The 64 lowercase hex characters a sender key is told apart by when handles are equal:
-/// `SHA-256("kodera-proximity-fingerprint-v1:" || sender key)`. A prefix of it is shown.
-pub fn proximity_key_fingerprint(sender_public_key: &Ed25519PublicKey) -> String {
-    let mut input = Vec::with_capacity(FINGERPRINT_LABEL.len() + sender_public_key.len());
-    input.extend_from_slice(FINGERPRINT_LABEL);
-    input.extend_from_slice(sender_public_key);
-    encode_hex(&sha256(&input))
+/// `HMAC-SHA256(binding, "kodera-proximity-fingerprint-v1:" || sender key)` in lowercase hex.
+/// `binding` is the organisation's beacon salt; the tests pass another one to show what the
+/// binding buys.
+fn derive_roster_fingerprint(binding: &[u8], sender_public_key: &Ed25519PublicKey) -> String {
+    let mut message = Vec::with_capacity(FINGERPRINT_LABEL.len() + sender_public_key.len());
+    message.extend_from_slice(FINGERPRINT_LABEL);
+    message.extend_from_slice(sender_public_key);
+    encode_hex(&hmac_sha256(binding, &message))
+}
+
+/// The 64 lowercase hex characters a sender is told apart by, inside one organisation, when
+/// handles are equal: `HMAC-SHA256(org_beacon_salt, "kodera-proximity-fingerprint-v1:" || sender
+/// key)`. A prefix of it is shown.
+///
+/// It is keyed with the organisation's beacon salt, like the generated handle and for the same
+/// reason: the same key shows another fingerprint in another organisation, so the fingerprint
+/// beside a handle does not link a member across organisations. There is deliberately no
+/// unkeyed fingerprint of a sender key in this crate.
+pub fn proximity_roster_fingerprint(
+    org_beacon_salt: &[u8; 32],
+    sender_public_key: &Ed25519PublicKey,
+) -> String {
+    derive_roster_fingerprint(org_beacon_salt, sender_public_key)
 }
 
 /// What a roster view shows for one sender: the handle, and a fingerprint prefix of the signing
@@ -253,7 +274,11 @@ impl ProximityRosterLabel {
 /// group computed over observed senders alone would show a bare handle to a sender whose handle
 /// equals an absent member's, who could then pass for that member until it appears. To label the
 /// senders that have checked in, use [`label_observed_proximity_senders`].
+///
+/// `org_beacon_salt` keys the fingerprints ([`proximity_roster_fingerprint`]): they belong to
+/// this organisation and say nothing about the same key elsewhere.
 pub fn disambiguate_proximity_handles(
+    org_beacon_salt: &[u8; 32],
     provisioned: &[(Ed25519PublicKey, ProximityHandle)],
 ) -> Vec<ProximityRosterLabel> {
     // Handle text to the distinct keys showing it, then to the prefix length that separates them.
@@ -267,7 +292,7 @@ pub fn disambiguate_proximity_handles(
         .map(|(handle, keys)| {
             let fingerprints: Vec<String> = keys
                 .iter()
-                .map(|key| proximity_key_fingerprint(key))
+                .map(|key| proximity_roster_fingerprint(org_beacon_salt, key))
                 .collect();
             let mut length = MIN_PROXIMITY_FINGERPRINT_HEX_CHARS;
             while length < 64
@@ -288,9 +313,10 @@ pub fn disambiguate_proximity_handles(
         .map(|(sender_public_key, handle)| ProximityRosterLabel {
             sender_public_key: *sender_public_key,
             handle: handle.clone(),
-            fingerprint: lengths
-                .get(handle.as_str())
-                .map(|length| proximity_key_fingerprint(sender_public_key)[..*length].to_owned()),
+            fingerprint: lengths.get(handle.as_str()).map(|length| {
+                proximity_roster_fingerprint(org_beacon_salt, sender_public_key)[..*length]
+                    .to_owned()
+            }),
         })
         .collect()
 }
@@ -301,11 +327,12 @@ pub fn disambiguate_proximity_handles(
 /// label never changes when another member appears. An observed key outside the provisioned
 /// roster is refused: nothing is labelled for a sender the roster does not hold.
 pub fn label_observed_proximity_senders(
+    org_beacon_salt: &[u8; 32],
     provisioned: &[(Ed25519PublicKey, ProximityHandle)],
     observed: &[Ed25519PublicKey],
 ) -> Result<Vec<ProximityRosterLabel>, CoreError> {
     let labels: BTreeMap<Ed25519PublicKey, ProximityRosterLabel> =
-        disambiguate_proximity_handles(provisioned)
+        disambiguate_proximity_handles(org_beacon_salt, provisioned)
             .into_iter()
             .map(|label| (label.sender_public_key, label))
             .collect();
@@ -346,6 +373,7 @@ mod tests {
         valid: Vec<String>,
         refused: Vec<(String, Vec<u8>)>,
         generated: Vec<([u8; 32], [u8; 32], String)>,
+        fingerprints: Vec<([u8; 32], [u8; 32], String)>,
         rosters: Vec<RosterEntry>,
     }
 
@@ -403,6 +431,11 @@ mod tests {
                     bytes32(salt, number),
                     bytes32(sender, number),
                     (*handle).to_owned(),
+                )),
+                ["fingerprint", salt, sender, fingerprint] => parsed.fingerprints.push((
+                    bytes32(salt, number),
+                    bytes32(sender, number),
+                    (*fingerprint).to_owned(),
                 )),
                 ["roster", case, salt, sender, dedicated, handle, fingerprint, presence] => {
                     parsed.rosters.push(RosterEntry {
@@ -673,7 +706,8 @@ mod tests {
         let mut disambiguated = 0;
         let mut extended = 0;
         for (name, entries) in cases {
-            let labels = disambiguate_proximity_handles(&resolved(&entries, name));
+            let labels =
+                disambiguate_proximity_handles(&entries[0].salt, &resolved(&entries, name));
             assert_eq!(labels.len(), entries.len());
             for (label, entry) in labels.iter().zip(&entries) {
                 assert_eq!(label.sender_public_key, entry.sender, "{name}");
@@ -684,7 +718,8 @@ mod tests {
                 };
                 assert_eq!(label.display(), expected, "{name}");
                 if let Some(fingerprint) = &entry.fingerprint {
-                    assert!(proximity_key_fingerprint(&entry.sender).starts_with(fingerprint));
+                    assert!(proximity_roster_fingerprint(&entry.salt, &entry.sender)
+                        .starts_with(fingerprint));
                     // The disambiguated display is not a handle and cannot be stored as one.
                     assert!(validate_proximity_handle(&label.display()).is_err());
                     disambiguated += 1;
@@ -715,7 +750,8 @@ mod tests {
                 .collect();
             let observed: Vec<Ed25519PublicKey> =
                 present.iter().map(|entry| entry.sender).collect();
-            let labels = label_observed_proximity_senders(&provisioned, &observed).unwrap();
+            let salt = &entries[0].salt;
+            let labels = label_observed_proximity_senders(salt, &provisioned, &observed).unwrap();
             assert_eq!(labels.len(), present.len(), "{name}");
             for (label, entry) in labels.iter().zip(&present) {
                 assert_eq!(label.sender_public_key, entry.sender, "{name}");
@@ -730,7 +766,7 @@ mod tests {
                 .filter(|(key, _)| observed.contains(key))
                 .cloned()
                 .collect();
-            let narrowed = disambiguate_proximity_handles(&observed_only);
+            let narrowed = disambiguate_proximity_handles(salt, &observed_only);
             for (label, weak) in labels.iter().zip(&narrowed) {
                 let handle_holders = provisioned
                     .iter()
@@ -752,7 +788,7 @@ mod tests {
             // A label does not change when the absent members appear.
             let everyone: Vec<Ed25519PublicKey> =
                 entries.iter().map(|entry| entry.sender).collect();
-            let later = label_observed_proximity_senders(&provisioned, &everyone).unwrap();
+            let later = label_observed_proximity_senders(salt, &provisioned, &everyone).unwrap();
             for label in &labels {
                 assert!(later.contains(label), "{name}");
             }
@@ -763,10 +799,81 @@ mod tests {
         );
         // A sender the roster does not hold is not labelled at all.
         assert_eq!(
-            label_observed_proximity_senders(&[], &[[9; 32]]),
+            label_observed_proximity_senders(&[1; 32], &[], &[[9; 32]]),
             Err(CoreError::UnauthorizedSender)
         );
-        assert_eq!(label_observed_proximity_senders(&[], &[]), Ok(Vec::new()));
+        assert_eq!(
+            label_observed_proximity_senders(&[1; 32], &[], &[]),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn roster_fingerprints_match_the_shared_vectors() {
+        let shared = vectors();
+        assert!(shared.fingerprints.len() >= 10);
+        for (salt, sender, expected) in &shared.fingerprints {
+            assert_eq!(expected.len(), 64);
+            assert_eq!(&proximity_roster_fingerprint(salt, sender), expected);
+        }
+    }
+
+    /// The organisation binding: one sender key, two organisations, two fingerprints. The
+    /// fingerprint beside a handle must not link a member across organisations.
+    #[test]
+    fn the_same_sender_key_yields_different_fingerprints_in_two_organisations() {
+        let shared = vectors();
+        let mut compared = 0;
+        for (salt, sender, fingerprint) in &shared.fingerprints {
+            for (other_salt, other_sender, other_fingerprint) in &shared.fingerprints {
+                if sender == other_sender && salt != other_salt {
+                    // Not even the shortest displayed prefix is shared.
+                    assert_ne!(
+                        fingerprint[..MIN_PROXIMITY_FINGERPRINT_HEX_CHARS],
+                        other_fingerprint[..MIN_PROXIMITY_FINGERPRINT_HEX_CHARS],
+                        "sender {}",
+                        encode_hex(sender)
+                    );
+                    assert_ne!(
+                        proximity_roster_fingerprint(salt, sender),
+                        proximity_roster_fingerprint(other_salt, sender)
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        assert!(
+            compared >= 10,
+            "the vectors must hold each sender in two organisations"
+        );
+        // The same roster in two organisations is shown with different fingerprints.
+        let roster = [
+            (
+                [1u8; 32],
+                ProximityHandle::dedicated("north-wing-3").unwrap(),
+            ),
+            (
+                [2u8; 32],
+                ProximityHandle::dedicated("north-wing-3").unwrap(),
+            ),
+        ];
+        let here = disambiguate_proximity_handles(&[0x42; 32], &roster);
+        let elsewhere = disambiguate_proximity_handles(&[0x43; 32], &roster);
+        for (one, other) in here.iter().zip(&elsewhere) {
+            assert!(one.fingerprint.is_some() && other.fingerprint.is_some());
+            assert_ne!(one.fingerprint, other.fingerprint);
+        }
+    }
+
+    /// Refusal mutation on the binding itself: a fingerprint that ignores the organisation (one
+    /// fixed binding for everyone) matches no shared vector and is the same in both organisations.
+    #[test]
+    fn a_fingerprint_without_the_organisation_binding_matches_no_shared_vector() {
+        let unbound = |sender: &[u8; 32]| derive_roster_fingerprint(&[], sender);
+        for (salt, sender, expected) in &vectors().fingerprints {
+            assert_ne!(&unbound(sender), expected, "sender {}", encode_hex(sender));
+            assert_eq!(&derive_roster_fingerprint(salt, sender), expected);
+        }
     }
 
     #[test]
@@ -774,9 +881,10 @@ mod tests {
         let salt = [0x42u8; 32];
         let sender = [9u8; 32];
         let handle = ProximityHandle::generated(&salt, &sender);
-        let labels = disambiguate_proximity_handles(&[(sender, handle.clone()), (sender, handle)]);
+        let labels =
+            disambiguate_proximity_handles(&salt, &[(sender, handle.clone()), (sender, handle)]);
         assert!(labels.iter().all(|label| label.fingerprint.is_none()));
-        assert!(disambiguate_proximity_handles(&[]).is_empty());
-        assert_eq!(proximity_key_fingerprint(&sender).len(), 64);
+        assert!(disambiguate_proximity_handles(&salt, &[]).is_empty());
+        assert_eq!(proximity_roster_fingerprint(&salt, &sender).len(), 64);
     }
 }

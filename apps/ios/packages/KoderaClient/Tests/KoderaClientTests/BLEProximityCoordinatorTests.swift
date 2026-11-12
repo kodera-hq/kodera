@@ -103,7 +103,10 @@ final class BLEProximityCoordinatorTests: XCTestCase {
         XCTAssertEqual(alone[0].handle.value, "north-wing-3")
         XCTAssertEqual(alone[0].handle.origin, .dedicated)
         let fingerprint = try XCTUnwrap(alone[0].fingerprint, "the handle is shared with a member that has not checked in")
-        XCTAssertTrue(ProximityHandle.fingerprint(senderPublicKey: first.publicKey).hasPrefix(fingerprint))
+        // Keyed with this organisation's beacon salt: the same key elsewhere shows another one.
+        XCTAssertTrue(try ProximityHandle.fingerprint(organisationSalt: salt, senderPublicKey: first.publicKey).hasPrefix(fingerprint))
+        XCTAssertFalse(try ProximityHandle.fingerprint(organisationSalt: Data(repeating: 0x43, count: 32),
+                                                       senderPublicKey: first.publicKey).hasPrefix(fingerprint))
         XCTAssertEqual(alone[0].display, "north-wing-3 [\(fingerprint)]")
 
         try await node.createLocalCheckIn(messageID: id(1), status: .safe, text: "", signer: second)

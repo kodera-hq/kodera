@@ -19,8 +19,9 @@ public enum ProximityHandleOrigin: String, CaseIterable, Sendable {
 /// may be granted, refused, deduplicated or looked up by handle. A generated handle keeps 55 bits
 /// of a digest keyed with the organisation's beacon salt, so the same key shows another handle in
 /// another organisation; two senders can still show the same handle, and a roster view must go
-/// through `labels(provisioned:observed:)`, which adds a fingerprint of each signing key and judges
-/// equality over the whole provisioned roster, absent members included.
+/// through `labels(provisioned:observed:organisationSalt:)`, which adds a fingerprint of each signing
+/// key and judges equality over the whole provisioned roster, absent members included. The fingerprint
+/// is keyed with the organisation's beacon salt too, so it links nothing across organisations.
 ///
 /// The grammar, the word lists and the vectors are shared with `kodera-rs` and the Android client
 /// through `packages/kodera-rs/vectors/proximity-handle-v1.txt`, which the tests read.
@@ -105,10 +106,23 @@ public struct ProximityHandle: Hashable, Sendable {
         }
     }
 
-    /// The 64 lowercase hex characters a sender key is told apart by when handles are equal:
-    /// `SHA-256("kodera-proximity-fingerprint-v1:" || sender key)`. A prefix of it is shown.
-    public static func fingerprint(senderPublicKey: Data) -> String {
-        ProximitySHA256.digest(Data(fingerprintLabel.utf8) + senderPublicKey).map { byte in
+    /// The 64 lowercase hex characters a sender is told apart by, inside one organisation, when
+    /// handles are equal: `HMAC-SHA256(organisation beacon salt, "kodera-proximity-fingerprint-v1:"
+    /// || sender key)`. A prefix of it is shown.
+    ///
+    /// It is keyed with the organisation's beacon salt, like the generated handle and for the same
+    /// reason: the same key shows another fingerprint in another organisation, so the fingerprint
+    /// beside a handle does not link a member across organisations. There is deliberately no
+    /// unkeyed fingerprint of a sender key in this package.
+    public static func fingerprint(organisationSalt: Data, senderPublicKey: Data) throws -> String {
+        guard organisationSalt.count == 32, senderPublicKey.count == 32 else { throw ProximityError.invalidHandle }
+        return deriveFingerprint(binding: organisationSalt, senderPublicKey: senderPublicKey)
+    }
+
+    /// `binding` is the organisation's beacon salt; the tests pass another one to show what the
+    /// binding buys.
+    static func deriveFingerprint(binding: Data, senderPublicKey: Data) -> String {
+        ProximitySHA256.hmac(key: binding, data: Data(fingerprintLabel.utf8) + senderPublicKey).map { byte in
             String(hexDigits[Int(byte >> 4)]) + String(hexDigits[Int(byte & 0x0f)])
         }.joined()
     }
@@ -121,21 +135,26 @@ public struct ProximityHandle: Hashable, Sendable {
     /// `provisioned` must be the whole provisioned roster, never only the senders seen so far: a
     /// group computed over observed senders alone would show a bare handle to a sender whose
     /// handle equals an absent member's. To label the senders that have checked in, use
-    /// `labels(provisioned:observed:)`.
-    public static func disambiguate(_ provisioned: [(senderPublicKey: Data, handle: ProximityHandle)]) -> [ProximityRosterLabel] {
+    /// `labels(provisioned:observed:organisationSalt:)`.
+    ///
+    /// `organisationSalt` keys the fingerprints: they belong to this organisation and say nothing
+    /// about the same key elsewhere.
+    public static func disambiguate(_ provisioned: [(senderPublicKey: Data, handle: ProximityHandle)],
+                                    organisationSalt: Data) throws -> [ProximityRosterLabel] {
         var groups: [String: Set<Data>] = [:]
         for entry in provisioned { groups[entry.handle.value, default: []].insert(entry.senderPublicKey) }
         var lengths: [String: Int] = [:]
         for (handle, keys) in groups where keys.count > 1 {
-            let fingerprints = keys.map { fingerprint(senderPublicKey: $0) }
+            let fingerprints = try keys.map { try fingerprint(organisationSalt: organisationSalt, senderPublicKey: $0) }
             var length = minimumFingerprintHexCharacters
             while length < 64, Set(fingerprints.map { $0.prefix(length) }).count < fingerprints.count { length += 2 }
             lengths[handle] = length
         }
-        return provisioned.map { entry in
+        return try provisioned.map { entry in
             ProximityRosterLabel(senderPublicKey: entry.senderPublicKey, handle: entry.handle,
-                                 fingerprint: lengths[entry.handle.value].map {
-                                     String(fingerprint(senderPublicKey: entry.senderPublicKey).prefix($0))
+                                 fingerprint: try lengths[entry.handle.value].map {
+                                     String(try fingerprint(organisationSalt: organisationSalt,
+                                                            senderPublicKey: entry.senderPublicKey).prefix($0))
                                  })
         }
     }
@@ -146,9 +165,9 @@ public struct ProximityHandle: Hashable, Sendable {
     /// so a label never changes when another member appears. An observed key outside the
     /// provisioned roster throws: nothing is labelled for a sender the roster does not hold.
     public static func labels(provisioned: [(senderPublicKey: Data, handle: ProximityHandle)],
-                              observed: [Data]) throws -> [ProximityRosterLabel] {
+                              observed: [Data], organisationSalt: Data) throws -> [ProximityRosterLabel] {
         var byKey: [Data: ProximityRosterLabel] = [:]
-        for label in disambiguate(provisioned) { byKey[label.senderPublicKey] = label }
+        for label in try disambiguate(provisioned, organisationSalt: organisationSalt) { byKey[label.senderPublicKey] = label }
         return try observed.map { key in
             guard let label = byKey[key] else { throw ProximityError.unauthorizedSender }
             return label

@@ -606,7 +606,8 @@ impl DesktopProximityNode {
     /// [`Self::member_statuses`]. A handle is the member's dedicated pseudonym when one was
     /// provisioned, else derived from the sender key under this organisation's beacon salt.
     ///
-    /// Equal handles are told apart with a fingerprint of the signing key, and equality is judged
+    /// Equal handles are told apart with a fingerprint of the signing key keyed with this
+    /// organisation's beacon salt (so it links nothing across organisations), and equality is judged
     /// over EVERY provisioned key, not over the members seen so far: a member whose handle equals
     /// that of someone who has not checked in yet already carries its fingerprint, so it cannot
     /// pass for the absent member and no label changes when that member appears. Labels are for
@@ -629,7 +630,7 @@ impl DesktopProximityNode {
             .into_iter()
             .map(|member| member.sender_public_key)
             .collect();
-        label_observed_proximity_senders(&provisioned, &observed)
+        label_observed_proximity_senders(&self.org_beacon_salt, &provisioned, &observed)
     }
 }
 
