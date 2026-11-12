@@ -359,7 +359,7 @@ function checkMaterialRows(source, contrast) {
         const id = `material.${theme}.${level}/${name}`;
         const row = contrast.pairs.find((candidate) => candidate.id === id);
         assert.ok(row, `${id}: every material level is held to this row`);
-        assert.equal(row.fg, fg.replace('%', theme), `${id}: measures its own theme's ${name}`);
+        assert.equal(row.fg, fg.replaceAll('%', theme), `${id}: measures its own theme's ${name}`);
         assert.equal(row.min, min, `${id}: a minimum of ${min}`);
         assert.equal(row.layers, undefined, `${id}: the level itself, with nothing stacked under it`);
       }
@@ -403,7 +403,7 @@ function checkSky(source, contrast, styles) {
       const id = `theme.${theme}/${name}/page-grad`;
       const row = contrast.pairs.find((candidate) => candidate.id === id);
       assert.ok(row, `${id}: text straight on the sky is held to this row`);
-      assert.equal(row.fg, fg.replace('%', theme), `${id}: measures its own theme's ${name}`);
+      assert.equal(row.fg, fg.replaceAll('%', theme), `${id}: measures its own theme's ${name}`);
       assert.equal(row.bg, `semantic.theme.${theme}.page-grad`, `${id}: measured on the gradient, so over every stop`);
       assert.equal(row.min, min, `${id}: a minimum of ${min}`);
       assert.equal(row.exempt ?? row.expect, undefined, `${id}: no exemption and no inverted acceptance`);
@@ -488,7 +488,7 @@ test('every material clause fails on its own mutation', () => {
   for (const query of OPAQUE_WHEN) {
     assert.throws(
       () => checkMaterialCss(tree, css.replace(`@media ${query} {`, '@media (min-width: 1px) {')),
-      new RegExp(`exactly one \`@media ${query.replace(/[()]/g, '\\$&')} \\{\` block`),
+      new RegExp(`exactly one \`@media ${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{\` block`),
     );
   }
   // The same rules in the other order: the reader's preference loses the cascade.
