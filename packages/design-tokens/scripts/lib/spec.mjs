@@ -14,13 +14,14 @@
 // fails the build and the gate rather than the browser.
 
 import { resolve, parseColor } from './tokens.mjs';
+import { THEMES } from './themes.mjs';
 
 /**
- * The complete theme set, in the order the generated CSS declares it.
- * scripts/build.mjs holds tokens.json to it: a theme that is not here, or a
- * role one theme is missing, fails the build rather than the browser.
+ * The complete theme set, in the order the generated CSS declares it. It is the
+ * registry's list (scripts/lib/themes.mjs), re-exported under the name the
+ * gates and self-tests already import: this module keeps no list of its own.
  */
-export const THEMES = ['light', 'dark', 'black'];
+export { THEMES };
 
 export const SPEC = {
   // Owner white-light correction: preserve the legacy gradient API and stop geometry.

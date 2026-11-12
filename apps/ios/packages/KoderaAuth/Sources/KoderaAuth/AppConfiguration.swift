@@ -11,7 +11,7 @@ public struct AppConfiguration: Sendable {
     public let coreApiOrigin: String?
     /// Development builds only: a realm issuer to sign in to without Core discovery.
     public let developmentIssuer: String?
-    /// Where a member with no organisation yet finishes in the browser. Nil hides the Console action.
+    /// The validated Console origin, or nil. Held only: no screen opens it (the app links to no commercial page).
     public let consoleOrigin: URL?
 
     public static let unconfigured = AppConfiguration(discoveryConfiguration: nil, signIn: nil, coreApiOrigin: nil,

@@ -1,6 +1,6 @@
 # Git Tracker
 
-Status: Implemented
+Status: Reference implementation
 
 `@kodera/extension-git-tracker` accepts native GitHub and GitLab deliveries and
 queues English or French metadata cards for a configured private Kodera channel.

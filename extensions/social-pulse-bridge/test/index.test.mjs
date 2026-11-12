@@ -102,7 +102,7 @@ test('syndicates X, Mastodon, and Instagram webhooks with trackingStripped: true
     payload: {
       postId: 'masto_1134',
       author: '@kodera@mastodon.social',
-      content: 'Interopérabilité ouverte Matrix + DINUM Docs',
+      content: 'Interopérabilité ouverte Matrix + Docs',
       postUrl: 'https://mastodon.social/@kodera/1134?utm_medium=fediverse&fbclid=xyz',
     },
   });

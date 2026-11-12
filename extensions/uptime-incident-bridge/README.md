@@ -1,6 +1,6 @@
 # `@kodera/ext-uptime-incident-bridge`
 
-Status: Active (`Apache-2.0`)
+Status: Reference implementation (`Apache-2.0`)
 
 Reference Kodera extension built on [`@kodera/extension-sdk`](../../packages/extension-sdk) that bridges external monitoring alerts (`incident.opened`, `incident.acknowledged`, `incident.resolved`) into Espace incident cards and threaded status transitions.
 

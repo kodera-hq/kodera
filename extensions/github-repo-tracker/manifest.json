@@ -28,5 +28,5 @@
       "description": "Configurer ou afficher le suivi d'un dépôt GitHub (owner/repo) dans le salon"
     }
   ],
-  "webhookUrl": "https://extensions.example.kodera.io/hooks/github-repo-tracker"
+  "webhookUrl": "https://extensions.example.org/hooks/github-repo-tracker"
 }

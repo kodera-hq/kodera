@@ -2,7 +2,7 @@
 
 Status: Active
 
-This Docker Compose stack runs a single-node Kodera Community workspace: `Caddy` (automatic HTTPS), the `@kodera/web` client, the `apps/server` migrator and API, `room-access`, `PostgreSQL 17`, `Valkey 8`, `Synapse` and the `LiveKit` SFU. The `community-governance` profile adds the Matrix-only tenant agent and persistent reconciliation state.
+This Docker Compose stack runs a single-node Kodera Community workspace: `Caddy` (automatic HTTPS), the `@kodera/web` client, the `apps/server` migrator and API, `room-access`, `PostgreSQL 17`, `Valkey 8`, `Synapse` on its own `PostgreSQL 17` database, and the `LiveKit` SFU. The `community-governance` profile adds the Matrix-only tenant agent and persistent reconciliation state.
 
 It runs **no identity provider**. Sign-in uses an OIDC issuer you already operate (see "Sign-in"), so plan for one before you start.
 
@@ -21,7 +21,8 @@ cp .env.example .env
 # 1. Set KODERA_DOMAIN and KODERA_ACME_EMAIL.
 # 2. Set KODERA_OIDC_PROVIDER_ORIGIN and KODERA_AUTH_TRUST (see "Sign-in").
 #    For the canonical shared workspace, complete "Canonical Community" below first.
-# 3. Generate hex secrets (POSTGRES_PASSWORD, DJANGO_SECRET_KEY, HMAC and LiveKit secrets):
+# 3. Generate hex secrets (POSTGRES_PASSWORD, SYNAPSE_POSTGRES_PASSWORD, DJANGO_SECRET_KEY,
+#    HMAC and LiveKit secrets):
 #      openssl rand -hex 32
 # 4. Generate 32-byte base64url seal keys (KODERA_CONTACT_SEAL_KEY, KODERA_OUTBOX_SEAL_KEY):
 #      openssl rand -base64 32 | tr '+/' '-_'
@@ -53,19 +54,92 @@ Two settings connect the stack to your issuer:
 
   `lane` is `customer` for your members (`staff` is for operators). `issuer` must be a public `https` URL: a plain-`http` or loopback issuer is refused. `expires_at` is in Unix seconds and is checked on every request, so renew the entry before it lapses. `public_jwks` holds the issuer's public keys only. The server never fetches keys from the issuer: when the issuer rotates its keys, update this value and restart `server`. At most 8 entries. If the value does not parse, the server refuses to start.
 
+## Matrix sign-in
+
+Members sign in to Synapse through your identity provider, never with a Matrix password: the web client sends the browser to Synapse's single sign-on, Synapse to your realm, and Synapse returns a single-use login token to the web origin. On every start `configure_synapse.py` therefore keeps password sign-in and open registration off, issues refreshable access tokens (the web client refuses a token that never expires) and, when a realm is configured, writes one OIDC provider:
+
+- the confidential client **`synapse`** of your realm, with the callback `https://<KODERA_DOMAIN>/_synapse/client/oidc/callback`, PKCE S256 and back-channel logout;
+- the Matrix localpart from the stable `sub` claim, never from an e-mail address or a mutable user name;
+- `sso.client_whitelist` holding `https://<KODERA_DOMAIN>/` only, with its trailing slash: Synapse matches by prefix.
+
+Which realm it is:
+
+- **Canonical Community** (`KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community`): the issuer is `KODERA_DEFAULT_COMMUNITY_ISSUER`. Leave `KODERA_SYNAPSE_OIDC_ISSUER` empty.
+- **Isolated self-host:** set `KODERA_SYNAPSE_OIDC_ISSUER` to your realm's issuer, which must be admitted on the customer lane of `KODERA_AUTH_TRUST`, and `KODERA_SYNAPSE_OIDC_CLIENT_SECRET` to the secret your identity provider issued for the `synapse` client. The generator takes it with `--synapse-oidc-secret-file`.
+- **Both empty:** Synapse starts with no sign-in at all. The control plane and the web client run, but nobody can open a Matrix session, so channels and audio rooms stay unavailable.
+
+Synapse reads the realm's discovery document when it starts and refuses to start if it cannot reach it. A provider written by anyone else is never silently replaced: the start fails instead.
+
+## What the internet can reach
+
+Caddy is the only service that publishes HTTP ports. It routes:
+
+| Path | To |
+| :--- | :--- |
+| `/api/*`, `/health/*` | the server API |
+| `/_kodera/rooms/token` | `room-access` |
+| `/_matrix/client/*`, `/_matrix/media/*`, `/_synapse/client/*` | Synapse's client API and its sign-in callback |
+| `/rtc`, `/rtc/*` | LiveKit signalling |
+| everything else | the web client |
+
+**Caddy alone names the client.** For every upstream it overwrites `X-Forwarded-For` with the address of the peer it accepted, and drops `X-Real-IP` and `Forwarded`: a value a client sends in those headers never reaches Synapse or the API. The `Caddyfile` declares no `trusted_proxies`, because nothing sits in front of Caddy in this profile; if you put your own proxy or load balancer in front, that is a change to review, since Caddy would then see the proxy's address as every client's. Only Caddy and LiveKit publish ports on the host. Synapse, the API and the databases are reachable on the stack's internal network only, so the listener that believes the forwarded address cannot be called around Caddy.
+
+It answers `404` on `/agent/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50060/udp).
+
+## Synapse database
+
+Synapse runs on PostgreSQL, in the dedicated `synapse-db` service (collation `C`, as Synapse requires), with its own password, `SYNAPSE_POSTGRES_PASSWORD`. That password reaches Synapse as `PGPASSWORD` and is not written to `homeserver.yaml`; the server API never holds it, and Synapse never holds the server's `POSTGRES_PASSWORD`.
+
+Status: the upgrade path below is documented, not rehearsed in this repository.
+
+A stack started from an earlier revision of this profile kept Synapse's data in SQLite (`homeserver.db` in the `synapse_data` volume). The stack no longer runs on it and never abandons it silently: when that file exists, Synapse refuses to start and says so. Before upgrading such a stack:
+
+1. Stop `synapse` and back up the `synapse_data` volume.
+2. Start `synapse-db` alone, then port the data with Synapse's own `synapse_port_db` tool, following the [Synapse PostgreSQL guide](https://element-hq.github.io/synapse/latest/postgres.html#porting-from-sqlite).
+3. Move `homeserver.db` out of the volume (keep the backup), then start the stack.
+
+## Upgrading an existing stack
+
+A stack started from an earlier revision of this profile meets four changes. None is applied silently:
+
+- **A new required secret.** Add `SYNAPSE_POSTGRES_PASSWORD` to your `.env` (`openssl rand -hex 32`). Compose refuses to start without it, and the preflight names it.
+- **Synapse's data moves to PostgreSQL.** Port it first, as "Synapse database" describes; Synapse refuses to start while the SQLite file is still there.
+- **Matrix password sign-in is off in every mode.** Members sign in through your identity provider ("Matrix sign-in"). An account that only ever had a Matrix password can no longer sign in.
+- **`/agent/*` and the Matrix federation, key and admin paths are no longer routed by Caddy.** The tenant agent is unaffected: it calls the server on the internal network. Anything else that called those paths through your public domain must move inside the stack's network.
+
+## Federation
+
+Status: closed by default. Matrix federation is not part of the product yet; opening it is an operator's own decision and is not tested here.
+
+By default the homeserver talks to no other server:
+
+- `federation_domain_whitelist` is empty, no key server is trusted, and Synapse's listener serves the client API only;
+- Caddy routes no `/_matrix/federation/*` or `/_matrix/key/*` path, and the federation port 8448 is not published.
+
+To open federation to servers you name, and only those:
+
+1. Set `KODERA_MATRIX_FEDERATION_ALLOWLIST` to their server names, comma-separated (`partner.example.org,other.example.org`). A wildcard or a private name is refused. Synapse then admits those servers only and serves the federation API on its listener.
+2. Route the federation paths yourself, in your own copy of the `Caddyfile`: add `/_matrix/federation/*` and `/_matrix/key/*` to the `@matrix` matcher, and publish server discovery (`/.well-known/matrix/server` naming `<KODERA_DOMAIN>:443`).
+
+The room policy still applies: a member may invite a user of another server only in a room whose `io.kodera.room.policy` allows it (see `packages/synapse-policy`).
+
 ## Images and limits
 
 - Synapse installs `kodera-synapse-policy` 0.1.5 from the local read-only package mount on every start, with `--no-index --no-deps --no-build-isolation`. No package download occurs. Keep the repository's `packages/synapse-policy` directory beside this deployment tree.
 - Fresh and existing Synapse configurations enable `kodera_synapse_policy.KoderaPolicy`. The tenant agent is `@kodera-agent:<domain>` and the occupancy writer is `@kodera-rooms:<domain>`; provision `ROOM_ACCESS_MATRIX_TOKEN` for that room-access account. The generated configuration preserves other operator modules and replaces the policy entry idempotently.
 - Every pulled image is pinned by tag and digest (`name:tag@sha256:…`), matching the versions the CI runs where the CI runs them (Postgres 17.6, Synapse v1.163.0, LiveKit v1.13.10). The `server`, `migrate`, `room-access` and `web` images are built from this repository.
 - Every service sets `mem_limit`.
-- `scripts/ci/check-community-deploy.py` checks both, with the rest of this stack's invariants, on every change; `--selftest` proves each check can fail.
+- Synapse is rate limited (`rc_message`, `rc_registration`, `rc_login`, `rc_joins`, `rc_invites`). Every value is Synapse's documented default, written out so that a later default cannot loosen it, with one exception: **`rc_login.address` is 20 sign-ins, then one every 6 seconds**, where the default is 5, then one every 5.5 minutes. The default would lock out a team that shares one office address, and the web client signs in again on every reload. Password sign-in is off, so the only login an address can attempt is a single-use token that Synapse itself issued after your identity provider authenticated the member; failed attempts (`rc_login.failed_attempts`) and per-account sign-ins (`rc_login.account`) keep the default. The check refuses any value looser than these. One consequence of the per-account default: Synapse counts every sign-in of a member, a reload of the web client included, so a member who reloads more than five times in quick succession waits a few minutes for the next Matrix session.
+- A per-address limit is only as good as the address. Synapse reads the client address from `X-Forwarded-For` on the one listener Caddy targets (port 8008) and on no other; see "What the internet can reach" for why that header can be believed.
+- `scripts/ci/check-community-deploy.py` checks all of this, with the rest of this stack's invariants, on every change: it runs `configure_synapse.py` on a freshly generated homeserver and refuses SQLite, an open federation, a missing policy module, missing or loosened rate limits, a route to `/agent/*`, and a default in `.env.example` or the Compose file that looks like a secret. `--selftest` proves each check can fail.
+- The check refuses what it cannot follow, instead of passing over it. The Compose file is read as block mappings with reviewed keys only: an anchor, alias or merge key, an inline or quoted form, `env_file`, `extends`, `network_mode`, a new bind mount or a new build context is refused. The `Caddyfile` is held to its reviewed shape: one site block, single-line path matchers, the reviewed directives, and no `import` of anything but the snippet it defines. `livekit.yaml` is exactly its reviewed settings. A symbolic link in place of any of these files is refused and never followed. Changing one of them therefore means updating the check in the same change, which is the review.
 
 ## Security and secret isolation (`ADR-0003` and `ADR-0018`)
 
 - `migrate` runs schema migrations in a dedicated one-shot container (`Dockerfile.migrator`) before `server` starts, keeping the customer-facing API container migration-free.
 - `server` runs with `KODERA_BILLING_ENABLED=false` and receives **only** the application keys admitted by `ADMITTED_SECRET_NAMES`.
 - `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` and `ROOM_ACCESS_MATRIX_TOKEN` are isolated inside `room-access` and `livekit`.
+- `SYNAPSE_POSTGRES_PASSWORD` is isolated inside `synapse` and `synapse-db`.
 - Licensed under [`Apache-2.0`](./LICENSE) (orchestration files); container images keep their own component licences (`Apache-2.0` for `@kodera/web`, `AGPL-3.0-or-later` for `apps/server`).
 
 ## Support
@@ -95,8 +169,18 @@ never reads an existing deployment configuration. The tool supplies no OIDC prov
 The optional `--template` selects a workspace template and writes
 `<configuration-path>.workspace-template.json` without overwriting existing data.
 This is a provisioning intent for an operator, not proof that remote channels or
-connectors are active. The standalone `packages/create-kodera` package uses the same
-template definitions.
+connectors are active: the extensions a template names are reference
+implementations in `extensions/`, and nothing in this stack installs or connects
+them. The standalone `packages/create-kodera` package uses the same template
+definitions and ships a checked copy of this directory's Compose assets.
+
+The templates are `audiovisual-production`, `tech-studio`, `b2b-advisory`,
+`public-sector`, `proximity` and `community`. `crisis-cell` is a permanent alias of
+`proximity`, the name this template had before: it stays accepted and selects the
+same template, and the manifest then records `proximity`. The template's
+`#proximity` channel (`#proximité` in French) is an everyday proximity and presence
+channel with a voluntary, pseudonymous check-in. It is not an emergency service
+and does not replace emergency numbers.
 
 ## Canonical Community
 
@@ -105,9 +189,11 @@ Status: Repository profile and local policy verification; operator rehearsal req
 The `community` template creates the `Kodera Community` workspace through the
 server's idempotent `bootstrap_community_workspace` command after both migration
 profiles complete. It includes public Community channels, read-only announcements,
-staff-only Core Kodera channels, explicit-grant Design Partners channels and the
+staff-only Core Kodera channels, an explicit-grant Design Partners category and the
 `office-hours` voice room. Its provisioning manifest records this structure; the
 server remains the authority that creates the rows and emits member/channel sets.
+The manifest names the Design Partners category but not its rooms: those are
+created and named by the server's bootstrap, one per partner, and are never public.
 Bootstrap also creates the canonical tenant in `provisioning`; public web entry
 remains gated until an authorized operator verifies the real backend and activates it.
 The web image already enforces `VITE_AUTH_MODE=oidc` and `VITE_ENABLE_MSW=0`.
@@ -130,9 +216,11 @@ Before starting this profile, the operator must have:
   for the one-time tenant-agent enrollment.
 - Issued Synapse service-account credentials: administrator
   `@kodera-agent:<domain>` for reconciliation and the separate
-  `@kodera-rooms:<domain>` token for room-access. Provision them through the approved
-  Synapse administrator procedure before disabling password login. Keep credentials
-  in protected operator files, never in version control or shell history.
+  `@kodera-rooms:<domain>` token for room-access. Password sign-in is off from the
+  first start, so the approved Synapse administrator procedure must issue their
+  access tokens without a password login (Synapse's shared-secret registration API
+  returns one). Keep credentials in protected operator files, never in version
+  control or shell history.
 
 The isolated tenant agent uses `python -m tenant_agent run`, polls the internal
 `http://server:8000/agent/v1/commands` API, applies canonical members/channels to
@@ -186,9 +274,10 @@ Replace example domains with the exact reviewed hosts, including
 agent or identity-provider credentials; Community mode requires the credential
 files and owner UUID. The generic templates leave the canonical settings empty
 and omit the governance profile. When manually adapting `.env.example` for an
-unrelated isolated self-host, leave the three `KODERA_DEFAULT_COMMUNITY_*` values,
-the two agent credential values and the Synapse OIDC client secret empty, then
-start without `--profile community-governance`.
+unrelated isolated self-host, leave the three `KODERA_DEFAULT_COMMUNITY_*` values
+and the two agent credential values empty, set or leave empty the two Synapse OIDC
+values together (see "Matrix sign-in"), then start without
+`--profile community-governance`.
 
 `KODERA_MATRIX_DOMAIN` is the base domain, such as `kodera.io`, while
 `KODERA_DOMAIN` is the full tenant hostname, such as `community.kodera.io`.
@@ -199,11 +288,12 @@ canonical template. Caddy routes Matrix and room-access on the tenant hostname;
 a Matrix client-discovery 404 intentionally falls back to this same origin.
 
 In canonical mode, Synapse requires the configured Community issuer and one OIDC
-provider, forces PKCE, disables password login and public Matrix registration,
-and derives the Matrix localpart from the canonical `sub` claim, never from email.
-It refuses to silently replace an unrelated existing OIDC provider. Its generated
-configuration is mode 0600 because it contains the isolated confidential-client
-secret. The tenant agent creates missing accounts bound to that provider/subject.
+provider, forces PKCE, and derives the Matrix localpart from the canonical `sub`
+claim, never from email. Password login and public Matrix registration are off in
+every mode. It refuses to silently replace an unrelated existing OIDC provider. Its
+generated configuration is mode 0600 because it contains the isolated
+confidential-client secret. The tenant agent creates missing accounts bound to that
+provider/subject.
 See the [Synapse OIDC configuration](https://element-hq.github.io/synapse/latest/usage/configuration/config_documentation.html#oidc_providers)
 for the PKCE and mapping options.
 

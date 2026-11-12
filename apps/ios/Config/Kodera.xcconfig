@@ -15,8 +15,8 @@ KODERA_ISSUER_ORIGINS =
 KODERA_IOS_CLIENT_ID =
 // Debug builds only: a realm issuer to sign in to without Core discovery.
 KODERA_DEV_ISSUER =
-// Console origin, e.g. https://console.kodera.io (no trailing slash). A member
-// with no organisation yet is offered it in the browser; unset hides that action.
+// Console origin, e.g. https://console.kodera.io (no trailing slash). Validated
+// and held only: the app opens no Console page and links to no commercial page.
 KODERA_CONSOLE_ORIGIN =
 // YES requests offline_access. Keep release use off until
 // Keycloak #65 merged-tree step-1c proof and the operator rollout are qualified.

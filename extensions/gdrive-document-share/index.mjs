@@ -11,7 +11,7 @@ import {
 } from '@kodera/extension-sdk';
 
 const rawManifest = JSON.parse(
-  readFileSync(new URL('./extension.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./manifest.json', import.meta.url), 'utf8')
 );
 
 const REVERSE_DNS_ID_PREFIX = 'io.kodera.ext.';

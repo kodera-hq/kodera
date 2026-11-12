@@ -25,6 +25,11 @@
       "import": "./dist/tailwind.preset.js",
       "default": "./dist/tailwind.preset.js"
     },
+    "./themes": {
+      "types": "./dist/themes.d.ts",
+      "import": "./dist/themes.js",
+      "default": "./dist/themes.js"
+    },
     "./token-test": "./test/token-test.mjs",
     "./package.json": "./package.json"
   },

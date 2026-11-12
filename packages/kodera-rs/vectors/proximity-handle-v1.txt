@@ -1,0 +1,218 @@
+# Kodera proximity sender handle v1: the pseudonym shown for a check-in.
+#
+# A proximity frame carries its sender's device public half, never a name. What a client shows
+# next to a check-in is a handle: one the member picked for this purpose (`dedicated`) or one
+# derived for the frame's sender inside one organisation (`generated`). A real name is never
+# required and never travels in a frame.
+#
+# A handle is a DISPLAY LABEL. It is never an identity and never an authorisation input: identity
+# stays the Ed25519 signing key, and the roster and the signature decide what is admitted. Two
+# senders can show the same handle, by accident or on purpose; a client that lists a roster
+# disambiguates them with a fingerprint of the signing half (see `roster` below).
+#
+# A handle is 3 to 24 characters matching ^[a-z0-9]+(?:-[a-z0-9]+)*$ (ASCII only, so characters
+# and bytes agree). A generated handle is
+#   <adjective>-<noun>-<9 characters of the alphabet below>
+# where d = HMAC-SHA256(key = the organisation's 32-byte beacon salt,
+#                       message = "kodera-proximity-handle-v1:" || 32 sender bytes),
+# the adjective is entry d[0] & 31, the noun is entry d[1] & 31, and the 9 characters spell, most
+# significant first, the top 45 bits of d[2..8] in the alphabet 0123456789abcdefghjkmnpqrstvwxyz.
+# That is 55 bits of the digest, the most the 24-character bound leaves beside the longest word
+# pair. The organisation salt binds a handle to one organisation: the same sender shows another
+# handle elsewhere, so handles are not linkable across organisations and one searched for in one
+# organisation is worth nothing in another. The label is hashed for display only; it is not part
+# of the frozen frame v1 and signs nothing.
+#
+# A fingerprint is the lowercase hex of
+#   HMAC-SHA256(key = the organisation's 32-byte beacon salt,
+#               message = "kodera-proximity-fingerprint-v1:" || 32 sender bytes).
+# It is keyed like the handle, for the same reason: the same sender shows another fingerprint in
+# another organisation, so a fingerprint does not link a member across organisations either.
+# When two or more distinct provisioned senders of one roster resolve to the same handle, each is
+# shown as `<handle> [<fingerprint prefix>]`: 8 hex characters, lengthened two at a time until
+# the prefixes of that group differ. A sender whose handle is unique in the roster shows no
+# fingerprint.
+#
+# Rust (`packages/kodera-rs/src/proximity_handle.rs`), Swift (`apps/ios/packages/KoderaDomain`)
+# and Kotlin (`apps/android/domain`) read this file and agree with every line.
+#
+# Grammar, one entry per line, fields separated by single spaces:
+#   bound <name> <value>
+#   origin <slug>
+#   adjective <index> <word>
+#   noun <index> <word>
+#   valid <handle>
+#   refuse <name> <utf8_hex|->          (`-` is the empty string)
+#   generated <organisation_salt_hex> <sender_hex> <handle>
+#   fingerprint <organisation_salt_hex> <sender_hex> <fingerprint_hex>   (all 64 characters)
+#   roster <case> <organisation_salt_hex> <sender_hex> <dedicated_handle|-> <handle> <fingerprint|-> <present|absent>
+# A `roster` case is every line sharing its name, in order: every PROVISIONED sender of one
+# roster, the handle each resolves to and the fingerprint prefix it is shown with (`-` for
+# none). `present` senders have checked in and are listed by a client; `absent` ones have not.
+# The groups are computed over every provisioned sender, never over those seen so far: a sender
+# whose handle equals an absent member's already shows its fingerprint, so it cannot pass for the
+# absent member, and no label changes when that member appears.
+# Blank lines and lines starting with `#` are ignored. Any other line is an error.
+
+bound min_chars 3
+bound max_chars 24
+bound generated_suffix_chars 9
+bound generated_digest_bits 55
+bound min_fingerprint_hex_chars 8
+
+origin dedicated
+origin generated
+
+adjective 0 amber
+adjective 1 brisk
+adjective 2 calm
+adjective 3 clear
+adjective 4 coral
+adjective 5 crisp
+adjective 6 dusky
+adjective 7 early
+adjective 8 fair
+adjective 9 gentle
+adjective 10 golden
+adjective 11 green
+adjective 12 hazel
+adjective 13 ivory
+adjective 14 jade
+adjective 15 keen
+adjective 16 light
+adjective 17 lunar
+adjective 18 mellow
+adjective 19 misty
+adjective 20 noble
+adjective 21 olive
+adjective 22 pale
+adjective 23 quiet
+adjective 24 rapid
+adjective 25 royal
+adjective 26 sandy
+adjective 27 silver
+adjective 28 solar
+adjective 29 steady
+adjective 30 swift
+adjective 31 vivid
+
+noun 0 alder
+noun 1 aspen
+noun 2 badger
+noun 3 birch
+noun 4 brook
+noun 5 cedar
+noun 6 comet
+noun 7 crane
+noun 8 delta
+noun 9 dune
+noun 10 ember
+noun 11 falcon
+noun 12 fern
+noun 13 finch
+noun 14 glade
+noun 15 harbor
+noun 16 heron
+noun 17 island
+noun 18 juniper
+noun 19 lark
+noun 20 lynx
+noun 21 maple
+noun 22 meadow
+noun 23 otter
+noun 24 pebble
+noun 25 pine
+noun 26 quartz
+noun 27 raven
+noun 28 reef
+noun 29 river
+noun 30 sparrow
+noun 31 willow
+
+valid abc
+valid a1b
+valid 123
+valid a-b
+valid 0-0
+valid kodera-7
+valid north-wing-3
+valid x-y-z
+valid a-b-c-d-e-f-g-h-i-j-k-l
+valid abcdefghijklmnopqrstuvwx
+valid gentle-juniper-012345678
+valid calm-heron-7k2m9x4pq
+
+refuse empty -
+refuse two_chars 6162
+refuse two_chars_and_hyphen 612d
+refuse twenty_five_chars 6162636465666768696a6b6c6d6e6f70717273747576777879
+refuse uppercase_first 416263
+refuse uppercase_inside 616243
+refuse leading_hyphen 2d616263
+refuse trailing_hyphen 6162632d
+refuse double_hyphen 61622d2d6364
+refuse hyphens_only 2d2d2d
+refuse inner_space 6162206364
+refuse leading_space 20616263
+refuse trailing_space 61626320
+refuse trailing_newline 6162630a
+refuse trailing_carriage_return 6162630d
+refuse tab 6162096364
+refuse nul 61620063
+refuse underscore 61625f6364
+refuse dot 61622e6364
+refuse at_sign 40616263
+refuse slash 61622f6364
+refuse accented_latin 636166c3a9
+refuse cyrillic_lookalike d0b06263
+refuse fullwidth_letters efbd81efbd82efbd83
+refuse arabic_indic_digits d9a1d9a2d9a3
+refuse emoji 6162f09f9880
+refuse zero_width_joiner 6162e2808d6364
+refuse en_dash 6162e280936364
+refuse display_name_shape 4a65616e204475706f6e74
+refuse email_shape 6a65616e406578616d706c652e6f7267
+refuse disambiguated_display_shape 6e6f7274682d77696e672d33205b31613262336334645d
+
+# The same five senders in two organisations: every handle differs between the two.
+generated 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a gentle-ember-jn24grqyg
+generated 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 swift-alder-vcejesr6t
+generated 4242424242424242424242424242424242424242424242424242424242424242 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff clear-badger-wa9crdq6n
+generated 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 steady-brook-ah3fccbgh
+generated 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f mellow-river-pmgj8v226
+generated 4343434343434343434343434343434343434343434343434343434343434343 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a olive-quartz-dbvht784x
+generated 4343434343434343434343434343434343434343434343434343434343434343 0000000000000000000000000000000000000000000000000000000000000000 light-glade-f738r9vhw
+generated 4343434343434343434343434343434343434343434343434343434343434343 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff dusky-comet-4fxtnjp55
+generated 4343434343434343434343434343434343434343434343434343434343434343 0909090909090909090909090909090909090909090909090909090909090909 misty-sparrow-yn6kxpknp
+generated 4343434343434343434343434343434343434343434343434343434343434343 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f lunar-pebble-0jpewv25e
+
+# The same five senders in two organisations: every fingerprint differs between the two.
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a 95043981b19ae962c90146b1352d52b80a8fe7def49c8cf57ddd4c609fb1e226
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 e53042a3934ad19e5603dbd28c2bfac8b81679343b6c27388deb5a50d269ddfc
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff 9163f1da3a03ffeabdfb0735ad5af835c169f7604e88c2d477c01505877aa2cf
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 790b4513273b2d873cb980cffa23bc388fce75cf62546fdffb848e8129b3dbbb
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f a58cb2368707c0eb8726db192a99f47d46fd770ebbc28f3306f87ceb1d2b12cf
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a 80f17f3a96f22d4e7d8fc1331341f5198ae3b76c9da937b121c9151985a1ed51
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 0000000000000000000000000000000000000000000000000000000000000000 50c11123578132e13d4404942851586dd6e27b5db422100681048b5ad6e3067d
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff 39618b61c4744523e46df42bcb1b19de398317f842d0e55ddc36e9ddeb56b9bd
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 0909090909090909090909090909090909090909090909090909090909090909 efd69830ee598eb553fef319556fa64b3b141ce84dc253e7235846705d4a95c2
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f f1e95ae820b954f3ef3df80cf51fb94e96b6c265fd5752720ae8f73fb310261b
+
+roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a - gentle-ember-jn24grqyg - present
+roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 - steady-brook-ah3fccbgh - present
+roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f north-wing-3 north-wing-3 - present
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a north-wing-3 north-wing-3 95043981 present
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 north-wing-3 north-wing-3 790b4513 present
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f - mellow-river-pmgj8v226 - present
+roster shared_dedicated_handle 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 x-y-z x-y-z - present
+roster dedicated_equals_a_generated_one 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a - gentle-ember-jn24grqyg 95043981 present
+roster dedicated_equals_a_generated_one 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 gentle-ember-jn24grqyg gentle-ember-jn24grqyg 790b4513 present
+roster fingerprints_extend_until_distinct 4343434343434343434343434343434343434343434343434343434343434343 6dbc501eee001ac4dd1d9db309b0f6d5fcf352d1ab9e7dfb2278b38191e8a988 kodera-7 kodera-7 d54cf36306 present
+roster fingerprints_extend_until_distinct 4343434343434343434343434343434343434343434343434343434343434343 d32398b46d517257f912124ce7e63bb06d916ba242175b0771cbf003958613f5 kodera-7 kodera-7 d54cf363a4 present
+roster fingerprints_extend_until_distinct 4343434343434343434343434343434343434343434343434343434343434343 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff kodera-7 kodera-7 39618b61c4 present
+roster shared_handle_with_an_absent_member 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a north-wing-3 north-wing-3 95043981 present
+roster shared_handle_with_an_absent_member 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 north-wing-3 north-wing-3 790b4513 absent
+roster shared_handle_with_an_absent_member 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f - mellow-river-pmgj8v226 - present
+roster shared_handle_with_an_absent_member 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 - swift-alder-vcejesr6t - absent
+roster generated_handle_taken_by_an_absent_member 4343434343434343434343434343434343434343434343434343434343434343 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a - olive-quartz-dbvht784x 80f17f3a present
+roster generated_handle_taken_by_an_absent_member 4343434343434343434343434343434343434343434343434343434343434343 0909090909090909090909090909090909090909090909090909090909090909 olive-quartz-dbvht784x olive-quartz-dbvht784x efd69830 absent

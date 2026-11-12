@@ -1,6 +1,6 @@
 # `@kodera/ext-github-release-notifier`
 
-Status: Active (`Apache-2.0`)
+Status: Reference implementation (`Apache-2.0`)
 
 Reference Kodera extension built on [`@kodera/extension-sdk`](../../packages/extension-sdk) that transforms `release.published` and `ci.workflow_failed` webhook deliveries into structured Espace channel cards.
 
