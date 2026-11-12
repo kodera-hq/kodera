@@ -96,3 +96,22 @@ process. The Core API receives none of those credentials. Persist
 after restoring its homeserver. Community bootstrap queues real channel and member
 sets; room policy carries `read_only`, `audience`, `members` and `exempt` in
 addition to its audio controls, all mapped to actual Matrix IDs by the agent.
+
+## Canonical community native joins
+
+Status: Active
+
+On a `community.<base-domain>` Matrix homeserver, active channels with `audience: all`
+and no deny overrides use `m.room.join_rules: public`. The agent writes the rule at
+creation and converges it on subsequent full passes, without per-member join or invite
+fan-out. The policy's `local_only: true` refuses remote native joins, including federated
+membership events. Native joins still require an authenticated local Matrix account.
+The directory stays private. Customer homeservers, listed partner/staff channels,
+archived channels and channels with deny overrides retain `invite` rules. Explicit revocation still kicks users and closes audio access. A local native join
+survives roster refresh lag; an absent stale roster entry alone cannot revoke it. Announcement power levels and
+policy checks preserve read-only messages/state with explicit posting exemptions.
+
+Ordinary invitation setup requires email verification and a password; TOTP enrollment
+is optional. Staff writes and owner-claim consumption retain their mandatory MFA gates,
+including current factor evidence and replay authorization checks. Owner-claim mail
+explicitly requires enrollment and a fresh OTP login before consumption.

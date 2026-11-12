@@ -165,6 +165,10 @@ class KoderaPolicy:
             return NOT_SPAM
         if not self._governance_valid(policy_event):
             return Codes.FORBIDDEN
+        if content.get("archived", False) is not False:
+            return Codes.FORBIDDEN
+        if content.get("local_only") is True and not self._api.is_mine(user):
+            return Codes.FORBIDDEN
         if content["audience"] == "listed" and user not in content["members"]:
             return Codes.FORBIDDEN
         return NOT_SPAM
@@ -218,6 +222,10 @@ class KoderaPolicy:
             return False
         if content.get("audience") not in ("all", "listed") or type(content.get("read_only")) is not bool:
             return False
+        if type(content.get("archived", False)) is not bool:
+            return False
+        if type(content.get("local_only", False)) is not bool:
+            return False
         for key in ("members", "exempt"):
             values = content.get(key)
             if not isinstance(values, (list, tuple)) or not all(_is_valid_user_id(value) for value in values):
@@ -233,9 +241,18 @@ class KoderaPolicy:
             return True
         if not self._governance_valid(policy_event):
             return False
+        if content.get("archived") is True:
+            own_leave = (
+                event.type == "m.room.member" and getattr(event, "state_key", None) == event.sender
+                and event.content.get("membership") == "leave"
+            )
+            return own_leave or (event.type == OCCUPANCY and event.sender == self._room_access)
         if event.type == "m.room.member":
             membership = event.content.get("membership")
             target = getattr(event, "state_key", None)
+            if membership in {"join", "invite", "knock"} and content.get("local_only") is True:
+                if not _is_valid_user_id(target) or not self._api.is_mine(target):
+                    return False
             if membership in {"join", "invite", "knock"} and content["audience"] == "listed":
                 if target not in content["members"]:
                     return False

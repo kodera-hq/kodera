@@ -1202,7 +1202,7 @@ def test_a_changed_name_re_applies_that_channel_only(tmp_path):
 
     second = room_id_of(homeserver, SECOND)
     state_reads = [r for r in homeserver.reads if "/state/" in r]
-    assert len(state_reads) == 4 and all(f"/rooms/{second}/" in r for r in state_reads)
+    assert len(state_reads) == 5 and all(f"/rooms/{second}/" in r for r in state_reads)
     assert homeserver.writes == [f"PUT /_matrix/client/v3/rooms/{second}/state/m.room.name/"]
     assert homeserver.room_of(SECOND)["state"][("m.room.name", "")] == {"name": "renamed"}
 
@@ -1220,7 +1220,7 @@ def test_the_full_re_application_ignores_the_fingerprints_and_repairs_drift(tmp_
 
     assert homeserver.room_of(SECOND)["state"][("m.room.topic", "")] == {"topic": ""}
     for i in (FIRST, SECOND):
-        assert sum(f"/rooms/{room_id_of(homeserver, i)}/state/" in r for r in homeserver.reads) == 4
+        assert sum(f"/rooms/{room_id_of(homeserver, i)}/state/" in r for r in homeserver.reads) == 5
 
 
 def test_a_channel_that_fails_records_no_fingerprint(tmp_path):
@@ -1245,7 +1245,7 @@ def test_a_channel_that_fails_records_no_fingerprint(tmp_path):
     assert not [
         r for r in homeserver.reads if f"/rooms/{room_id_of(homeserver, FIRST)}/state/" in r
     ]
-    assert sum(f"/rooms/{second}/state/" in r for r in homeserver.reads) == 4
+    assert sum(f"/rooms/{second}/state/" in r for r in homeserver.reads) == 5
     assert homeserver.room_of(SECOND)["state"][("m.room.name", "")] == {"name": "b"}
 
 
@@ -1530,3 +1530,152 @@ def test_an_archived_audio_channel_does_not_rewrite_the_owed_calls_each_pass(tmp
 
     assert livekit.rooms_[call] == []
     assert not (tmp_path / "calls_owed.json").exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["welcome", "announcements", "general", "showcase", "support", "extensions"]
+)
+def test_community_public_rooms_use_native_join_without_member_fanout(tmp_path, monkeypatch, name):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    monkeypatch.setattr(module, "AGENT", "@kodera-agent:community.example.org")
+    monkeypatch.setattr(module, "ROOMS", "@kodera-rooms:community.example.org")
+    handlers, homeserver, _, _ = build(tmp_path)
+    entry = channel(
+        name=name, audience="all", members=[], read_only=name == "announcements", exempt=[BOB]
+    )
+    assert handlers.handle(CHANNEL_KIND, channel_set(1, entry)).status == "succeeded"
+    room = homeserver.room_of(TEXT)
+    assert room["state"][("m.room.join_rules", "")] == {"join_rule": "public"}, (
+        "community public room requires native join"
+    )
+    assert room["state"][(POLICY, "")]["local_only"] is True
+    assert homeserver.joined(TEXT) == {module.AGENT}, (
+        "public signup must not fan out room memberships"
+    )
+    assert not any("/join/" in call or call.endswith("/invite") for call in homeserver.writes)
+    # A full pass repairs drift and still never forces a member back into a public room.
+    room["state"][("m.room.join_rules", "")] = {"join_rule": "invite"}
+    from tenant_agent.channels import parse
+
+    Channels(homeserver, CallLiveKit({}), State(tmp_path)).apply(
+        parse(channel_set(2, entry)), full=True
+    )
+    assert room["state"][("m.room.join_rules", "")]["join_rule"] == "public"
+    if name == "announcements":
+        levels = room["state"][("m.room.power_levels", "")]
+        assert levels["events_default"] == 20 and levels["state_default"] == 100
+        assert levels["users"][mx(BOB)] == 20
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"audience": "listed", "members": [BOB]},
+        {"audience": "all", "members": [], "denied": [ALICE]},
+        {"audience": "all", "members": [], "archived": True},
+    ],
+)
+def test_community_restricted_or_closed_room_stays_invite_only(tmp_path, monkeypatch, overrides):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    handlers, homeserver, _, _ = build(tmp_path)
+    assert handlers.handle(CHANNEL_KIND, channel_set(1, channel(**overrides))).status == "succeeded"
+    assert homeserver.room_of(TEXT)["state"][("m.room.join_rules", "")] == {"join_rule": "invite"}
+
+
+def test_customer_public_channels_remain_invite_only(tmp_path):
+    handlers, homeserver, _, _ = build(tmp_path)
+    handlers.handle(CHANNEL_KIND, channel_set(1, channel(audience="all", members=[])))
+    assert homeserver.room_of(TEXT)["state"][("m.room.join_rules", "")] == {"join_rule": "invite"}
+    assert mx(ALICE) in homeserver.joined(TEXT)
+
+
+def test_ten_thousand_public_members_do_not_create_invite_or_join_fanout(tmp_path, monkeypatch):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    subjects = tuple(f"person-{index}" for index in range(10_000))
+    handlers, homeserver, _, _ = build(tmp_path, active=subjects)
+    outcome = handlers.handle(
+        CHANNEL_KIND,
+        channel_set(1, channel(audience="all", members=[]), all_members=subjects),
+    )
+    assert outcome.status == "succeeded"
+    assert not any("/join/" in call or call.endswith("/invite") for call in homeserver.writes)
+    assert not any("/admin/v2/users/" in call for call in homeserver.reads + homeserver.writes)
+
+
+def test_native_join_refusal_cases_detect_a_weakened_selector(monkeypatch):
+    from tenant_agent import channels as module
+
+    server = FakeHomeserver()
+    server.server_name = "community.example.org"
+    entry = channel(audience="all", members=[])
+
+    def require_isolation():
+        assert module.native_public(entry, server)
+        for changed in ({"audience": "listed"}, {"denied": [ALICE]}, {"archived": True}):
+            assert not module.native_public({**entry, **changed}, server), (
+                "restricted community room became public"
+            )
+        server.server_name = "customer.example.org"
+        try:
+            assert not module.native_public(entry, server), "customer room became public"
+        finally:
+            server.server_name = "community.example.org"
+
+    require_isolation()
+    monkeypatch.setattr(module, "native_public", lambda channel, synapse: True)
+    with pytest.raises(AssertionError, match="restricted community room became public"):
+        require_isolation()
+
+
+def test_deleting_public_room_restores_invite_rule_before_forgetting_it(tmp_path, monkeypatch):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    handlers, homeserver, _, _ = build(tmp_path)
+    handlers.handle(CHANNEL_KIND, channel_set(1, channel(audience="all", members=[])))
+    handlers.handle(CHANNEL_KIND, channel_set(2))
+    room = homeserver.room_of(TEXT)
+    assert room["state"][(POLICY, "")]["archived"] is True
+    assert room["state"][("m.room.join_rules", "")] == {"join_rule": "invite"}
+
+
+def test_native_join_survives_roster_lag_but_revoked_and_remote_users_leave(tmp_path, monkeypatch):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    handlers, homeserver, _, state = build(tmp_path)
+    entry = channel(audience="all", members=[])
+    handlers.handle(CHANNEL_KIND, channel_set(1, entry))
+    late = "@new-signup:community.example.org"
+    remote = "@outsider:remote.example.org"
+    room = homeserver.room_of(TEXT)
+    room["members"].update({late: "join", remote: "join", mx(ALICE): "join"})
+    state.keep(MemberSet(2, frozenset({BOB, CAROL}), frozenset({ALICE}), frozenset()))
+    assert handlers.handle(CHANNEL_KIND, channel_set(2, entry)).status == "succeeded"
+    assert room["members"][late] == "join", "native join must survive ordinary roster lag"
+    assert room["members"][remote] == "leave"
+    assert room["members"][mx(ALICE)] == "leave", "revocation wins over a stale public channel set"
+
+
+def test_public_audio_roster_lag_does_not_end_a_new_local_members_call(tmp_path, monkeypatch):
+    import test_tenant_agent_channels as module
+
+    monkeypatch.setattr(module, "SERVER", "community.example.org")
+    handlers, homeserver, livekit, _ = build(tmp_path)
+    entry = channel(AUDIO, kind="audio", audience="all", members=[])
+    handlers.handle(CHANNEL_KIND, channel_set(1, entry))
+    room = homeserver.room_of(AUDIO)
+    late = "@new-signup:community.example.org"
+    remote = "@outsider:remote.example.org"
+    room["members"].update({late: "join", remote: "join"})
+    room_id = homeserver.aliases[f"#kodera-ch-{AUDIO}:{module.SERVER}"]
+    livekit.rooms_[livekit_room(room_id)] = [f"{late}|DEV", f"{remote}|DEV"]
+    outcome = handlers.handle(CHANNEL_KIND, channel_set(2, entry))
+    assert outcome.status == "succeeded"
+    assert livekit.rooms_[livekit_room(room_id)] == [f"{late}|DEV"]

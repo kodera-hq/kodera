@@ -3,7 +3,7 @@
 For each due delivery, the run reads the invitation and its organisation from Core's own rows (the
 payload names the invitation only), then, with that realm's worker credential and outside any
 transaction: finds the account holding the invitation's address, creates it when there is none,
-with the required actions to verify the address, set a password and configure a one-time code,
+with the required actions to verify the address and set a password (TOTP enrollment is optional),
 and, while any action is still pending, has the realm mail the person the link to complete them.
 It records the account's id, which accepting the invitation requires as the caller's subject.
 
@@ -35,7 +35,7 @@ from .realm.keycloak import RealmAccountAdmin, RealmCallError, RealmTarget
 
 logger = logging.getLogger("apps.outbox.realm_accounts")
 
-REQUIRED_ACTIONS = ("VERIFY_EMAIL", "UPDATE_PASSWORD", "CONFIGURE_TOTP")
+REQUIRED_ACTIONS = ("VERIFY_EMAIL", "UPDATE_PASSWORD")
 # The set-up link stays valid three days; a late invitee asks for a resend, which sends a new one.
 ACTIONS_LIFESPAN_S = 3 * 24 * 3600
 # The organisation realm's console client (identity realm tooling's org-realm-template.json): the set-up

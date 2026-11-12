@@ -108,3 +108,34 @@ def test_frozen_synapse_event_content_enforces_governance():
     assert both_callbacks(state, event("m.room.message", ALICE, state=False)) == (False, FORBIDDEN)
     configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi({ROOM: state}))
     assert run(configured.user_may_join_room(CAROL, ROOM, True)) == FORBIDDEN
+
+
+@pytest.mark.parametrize("invited", [False, True])
+def test_public_local_only_room_refuses_remote_native_join(invited):
+    state = governed()
+    state[("io.kodera.room.policy", "")].content["local_only"] = True
+    configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi({ROOM: state}))
+    assert run(configured.user_may_join_room(ALICE, ROOM, invited)) == ALLOWED
+    remote = "@visitor:remote.example.org"
+    assert run(configured.user_may_join_room(remote, ROOM, invited)) == FORBIDDEN
+    member = event("m.room.member", remote, membership="join")
+    member.state_key = remote
+    assert both_callbacks(state, member) == (False, FORBIDDEN)
+
+
+def test_public_local_only_flag_must_be_boolean():
+    state = governed()
+    state[("io.kodera.room.policy", "")].content["local_only"] = "false"
+    assert both_callbacks(state, event("m.room.message", ALICE, state=False)) == (False, FORBIDDEN)
+
+
+def test_archived_public_room_refuses_rejoin_and_post_but_allows_leave():
+    state = governed()
+    state[("io.kodera.room.policy", "")].content.update(local_only=True, archived=True)
+    configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi({ROOM: state}))
+    assert run(configured.user_may_join_room(ALICE, ROOM, False)) == FORBIDDEN
+    assert both_callbacks(state, event("m.room.message", ALICE, state=False)) == (False, FORBIDDEN)
+    for membership, expected in [("join", (False, FORBIDDEN)), ("leave", (True, ALLOWED))]:
+        member = event("m.room.member", ALICE, membership=membership)
+        member.state_key = ALICE
+        assert both_callbacks(state, member) == expected

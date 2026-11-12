@@ -76,3 +76,12 @@ def test_an_account_with_nothing_pending_is_neither_logged_out_nor_mailed():
     realm = Realm(pending=[])
     assert ensure_account(realm, EMAIL, "fr") == ("user-1", False)
     assert realm.calls == []
+
+
+def test_ordinary_account_setup_does_not_force_totp():
+    assert REQUIRED_ACTIONS == ("VERIFY_EMAIL", "UPDATE_PASSWORD"), (
+        "ordinary signup must leave TOTP optional"
+    )
+    realm = Realm()
+    ensure_account(realm, EMAIL, "en")
+    assert realm.calls[-1][2] == ("VERIFY_EMAIL", "UPDATE_PASSWORD")
