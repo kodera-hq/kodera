@@ -162,6 +162,7 @@ function PeopleArea({
         <MemberDrawer
           organisationId={organisationId}
           callerRole={callerRole}
+          callerMembershipId={membership.membership_id}
           memberId={drawer.memberId}
           onClose={() => void onNavigate({ to: '' })}
         />
