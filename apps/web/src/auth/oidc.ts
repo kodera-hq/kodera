@@ -5,15 +5,9 @@
 // point of ADR-0007 is that only the identity provider is swapped, never this
 // code.
 
-import {
-  ErrorResponse,
-  InMemoryWebStorage,
-  OidcClient,
-  UserManager,
-  WebStorageStateStore,
-} from 'oidc-client-ts'
-import type { User } from 'oidc-client-ts'
+import type { User, UserManager } from 'oidc-client-ts'
 import { keycloakUrl, oidcClientId } from '../config'
+import { loadOidcSdk, oidcSdk, oidcSdkLoaded } from './oidcSdk'
 import type {
   AuthAdapter,
   AuthCallbackResult,
@@ -140,8 +134,12 @@ const REFUSALS = new Set([
   'invalid_scope',
   'invalid_request',
 ])
+// Only a manager's own request can be refused, and a manager exists only once the SDK does.
 const isRefusal = (error: unknown): boolean =>
-  error instanceof ErrorResponse && error.error !== null && REFUSALS.has(error.error)
+  oidcSdkLoaded() &&
+  error instanceof oidcSdk().ErrorResponse &&
+  error.error !== null &&
+  REFUSALS.has(error.error)
 
 // A consumer's failure must neither change the session outcome nor stop the
 // other consumers; it is rethrown on its own task so it still gets reported.
@@ -171,7 +169,16 @@ interface ClaimCallback {
   readonly result: Promise<void>
 }
 
+/**
+ * The SDK is fetched on demand (`./oidcSdk.ts`). Every step that builds a manager runs after this:
+ * with the SDK already here it is `Promise.resolve()`, so a step queued behind it runs exactly
+ * when it did when the SDK was bundled; otherwise the step waits for the fetch and then runs
+ * unchanged, as if it had been asked for that much later.
+ */
+const sdkReady = (): Promise<void> => (oidcSdkLoaded() ? Promise.resolve() : loadOidcSdk())
+
 function managerFor(realm: string, protectedClaim = false, registration = false): UserManager {
+  const { InMemoryWebStorage, UserManager, WebStorageStateStore } = oidcSdk()
   return new UserManager({
     authority: `${keycloakUrl()}/realms/${realm}`,
     client_id: oidcClientId(),
@@ -269,6 +276,9 @@ export class OidcAuthAdapter implements AuthAdapter {
       this.#restoration = Promise.resolve(false)
       return this.#restoration
     }
+    // Nothing above needs the SDK; restoring does. Ask again once it is here: every check above
+    // is then read afresh, so a sign-in or a sign-out that happened meanwhile is honoured.
+    if (!oidcSdkLoaded()) return loadOidcSdk().then(() => this.restoreSession())
     this.#retireManager()
     this.#user = undefined
     this.#realm = realm
@@ -433,7 +443,7 @@ export class OidcAuthAdapter implements AuthAdapter {
     const generation = this.#snapshot.generation + 1
     // Publish the replacement boundary before storage or SDK setup can throw.
     // Queue setup so concurrent callers share the request before it starts.
-    const request = Promise.resolve()
+    const request = sdkReady()
       .then(() => {
         if (this.#snapshot.generation !== generation) return
         window.sessionStorage.setItem(REALM_KEY, realm)
@@ -477,6 +487,8 @@ export class OidcAuthAdapter implements AuthAdapter {
     if (realm === undefined) {
       return Promise.reject(new Error('No pending sign-in. Start again from /login.'))
     }
+    // As in `restoreSession`: the callback is answered once the SDK is here, from the top.
+    if (!oidcSdkLoaded()) return loadOidcSdk().then(() => this.handleCallback())
     const manager = this.#manager ?? managerFor(realm)
     if (this.#manager === undefined) this.#publish('pending', true)
     if (this.#claim?.pending)
@@ -487,7 +499,7 @@ export class OidcAuthAdapter implements AuthAdapter {
     const generation = this.#snapshot.generation
     const result = (async (): Promise<AuthCallbackResult> => {
       if (new URL(url).searchParams.has('state')) {
-        const inspected = await new OidcClient(
+        const inspected = await new (oidcSdk().OidcClient)(
           manager.settings,
           manager.metadataService
         ).readSigninResponseState(url, false)
@@ -610,7 +622,7 @@ export class OidcAuthAdapter implements AuthAdapter {
     this.#restoration = Promise.resolve(false)
     const generation = this.#snapshot.generation + 1
     const controller = new AbortController()
-    const completed = Promise.resolve().then(async () => {
+    const completed = sdkReady().then(async () => {
       let manager: UserManager | undefined
       let failed = false
       let primary: unknown
@@ -799,6 +811,7 @@ export class OidcAuthAdapter implements AuthAdapter {
     }
     const realm = readRealmHint()
     if (realm === undefined) return Promise.reject(new Error('No pending protected sign-in.'))
+    if (!oidcSdkLoaded()) return loadOidcSdk().then(() => this.#notifyOwnerClaim())
     const manager = this.#manager ?? managerFor(realm, true)
     this.#manager = manager
     this.#realm = realm
@@ -890,6 +903,17 @@ export class OidcAuthAdapter implements AuthAdapter {
     return manager
   }
 }
+
+// A page that will need the SDK before anyone acts starts fetching it while the application
+// boots: a tab that already signed in (its session is about to be restored), a sign-in callback,
+// and the invitation and claim pages, whose sign-in opens a popup that the browser only allows
+// promptly after the click. A first visit to `/login` matches none of these and fetches nothing.
+if (
+  typeof window !== 'undefined' &&
+  (readRealmHint() !== undefined ||
+    /^\/(?:auth|claim|invitations)\//.test(window.location.pathname))
+)
+  void loadOidcSdk().catch(() => {})
 
 /**
  * The one adapter instance for the life of the application. `AuthProvider`

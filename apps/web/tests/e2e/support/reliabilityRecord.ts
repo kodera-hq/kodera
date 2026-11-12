@@ -67,6 +67,7 @@ const categories = [
   'theme-script',
   'bootstrap-script',
   'main-script',
+  'application-script',
   'mock-runtime-script',
   'unknown-local-script',
   'worker-script',
@@ -118,12 +119,31 @@ type EventInput =
   | { kind: 'unobserved-boundary'; boundary: 'response' | 'finished' | 'failed' }
   | { kind: 'frame-navigation'; frame: number; category: string }
 type RecordEvent = BaseEvent & EventInput
+/**
+ * How many requests of one kind a record counts without a row each: the bound on
+ * `excludedRequests` and on `deferredChunks` alike.
+ */
+const COUNTED_REQUEST_LIMIT = 256
+
 export interface ReliabilityRecord extends Identity {
-  version: 2
+  version: 3
   representation: 'response-inline'
   coverage: 'allowlisted-phase-only'
   assetMapping: 'pattern-only'
   excludedRequests: number
+  /**
+   * Requests for the files the console fetches on demand: a lazy route (`route-`), the layout
+   * they hang below (`console-`), a workspace library (`vendor-`), a message catalogue (`i18n-`).
+   *
+   * They are counted, not given rows. A row is what the 256-event cap is spent on, and the cap is
+   * there for what a flow does that a person or Core would notice: documents, the bootstrap and
+   * the application, the calls to Core and to the identity provider, and any script nobody has a
+   * name for. How many files a page's code happens to be cut into is not that: it changes with
+   * every route added, and spending rows on it took the largest case to within a few rows of its
+   * cap for a reason that had nothing to do with the flow. The count is still bounded, by the
+   * same number, so a page that fetched chunks without end is caught as it was.
+   */
+  deferredChunks: number
   status: PrimaryStatus
   disposition: 'complete' | 'incomplete'
   reason: Reason
@@ -219,6 +239,7 @@ export function reliabilityRecordReason(value: unknown): 'schema' | 'order' | 'l
       'coverage',
       'assetMapping',
       'excludedRequests',
+      'deferredChunks',
       'caseId',
       'project',
       'retry',
@@ -232,12 +253,14 @@ export function reliabilityRecordReason(value: unknown): 'schema' | 'order' | 'l
   )
     return 'schema'
   if (
-    value.version !== 2 ||
+    value.version !== 3 ||
     value.representation !== 'response-inline' ||
     value.coverage !== 'allowlisted-phase-only' ||
     value.assetMapping !== 'pattern-only' ||
     !Number.isSafeInteger(value.excludedRequests) ||
     (value.excludedRequests as number) < 0 ||
+    !Number.isSafeInteger(value.deferredChunks) ||
+    (value.deferredChunks as number) < 0 ||
     !identityValid(value as unknown as Identity) ||
     !member(value.status, ['passed', 'failed', 'timedOut', 'skipped', 'interrupted']) ||
     !member(value.reason, reasons) ||
@@ -249,7 +272,8 @@ export function reliabilityRecordReason(value: unknown): 'schema' | 'order' | 'l
   if (
     value.events.length > 256 ||
     value.pending.length > 64 ||
-    (value.excludedRequests as number) > 256
+    (value.excludedRequests as number) > COUNTED_REQUEST_LIMIT ||
+    (value.deferredChunks as number) > COUNTED_REQUEST_LIMIT
   )
     return 'limit'
   const observations: { order: number; at: number; kind: string; request?: number }[] = []
@@ -352,11 +376,12 @@ export function reliabilityRecordReason(value: unknown): 'schema' | 'order' | 'l
 
 export function reliabilityGuardControls(): string[] {
   const pristine: ReliabilityRecord = {
-    version: 2,
+    version: 3,
     representation: 'response-inline',
     coverage: 'allowlisted-phase-only',
     assetMapping: 'pattern-only',
     excludedRequests: 0,
+    deferredChunks: 0,
     caseId: 'C1',
     project: 'chromium',
     retry: 0,
@@ -411,6 +436,7 @@ export function reliabilityGuardControls(): string[] {
       reason: 'order',
     },
     { value: { ...pristine, events: Array(257).fill(pristine.events[0]) }, reason: 'limit' },
+    { value: { ...pristine, deferredChunks: COUNTED_REQUEST_LIMIT + 1 }, reason: 'limit' },
   ]
   const observed: string[] = []
   for (const mutation of mutations) {
@@ -434,6 +460,15 @@ export function reliabilityGuardControls(): string[] {
   return observed
 }
 
+/**
+ * The files `vite.config.ts` names for what the console fetches on demand. A name, not a guess:
+ * a script that matches none of these and none of the patterns in `category` stays an
+ * `unknown-local-script`, with a row of its own.
+ */
+const DEFERRED_CHUNK = /^\/assets\/(?:route|console|vendor|i18n)-[^/]*\.js$/
+/** Never a row's category: a deferred chunk has no row (`ReliabilityRecord.deferredChunks`). */
+const DEFERRED_CHUNK_CATEGORY = 'deferred-chunk'
+
 function category(raw: string): string {
   try {
     const value = new URL(raw)
@@ -444,6 +479,8 @@ function category(raw: string): string {
     if (path === '/theme.js') return 'theme-script'
     if (/^\/assets\/index-.*\.js$/.test(path)) return 'bootstrap-script'
     if (/^\/assets\/main-.*\.js$/.test(path)) return 'main-script'
+    if (/^\/assets\/app-.*\.js$/.test(path)) return 'application-script'
+    if (DEFERRED_CHUNK.test(path)) return DEFERRED_CHUNK_CATEGORY
     if (/^\/assets\/browser-.*\.js$/.test(path)) return 'mock-runtime-script'
     if (path === '/mockServiceWorker.js') return 'worker-script'
     if (/^\/auth\/realms\/[^/]+\/\.well-known\/openid-configuration$/.test(path))
@@ -482,6 +519,7 @@ export function createReliabilityRecord(
   let closed = false
   let requestCount = 0
   let excludedRequests = 0
+  let deferredChunks = 0
   let frameCount = 0
   let order = 0
   let lastAt = 0
@@ -527,11 +565,12 @@ export function createReliabilityRecord(
     if (
       reliabilityRecordReason({
         ...owner,
-        version: 2,
+        version: 3,
         representation: 'response-inline',
         coverage: 'allowlisted-phase-only',
         assetMapping: 'pattern-only',
         excludedRequests,
+        deferredChunks,
         status: 'passed',
         disposition: 'incomplete',
         reason: 'observer',
@@ -566,8 +605,16 @@ export function createReliabilityRecord(
     observe(() => {
       const selected = category(request.url())
       if (selected === 'other-local' || selected === 'external-or-opaque') {
-        if (excludedRequests >= 256) return stop('events')
+        if (excludedRequests >= COUNTED_REQUEST_LIMIT) return stop('events')
         excludedRequests += 1
+        excluded.add(request)
+        return
+      }
+      if (selected === DEFERRED_CHUNK_CATEGORY) {
+        // Counted in a bucket of its own, with the bound the excluded bucket has: no row, and
+        // still not without limit.
+        if (deferredChunks >= COUNTED_REQUEST_LIMIT) return stop('events')
+        deferredChunks += 1
         excluded.add(request)
         return
       }
@@ -601,7 +648,12 @@ export function createReliabilityRecord(
       const id = requestIds.get(request)
       if (id === undefined) {
         const selected = category(request.url())
-        if (selected === 'other-local' || selected === 'external-or-opaque') return
+        if (
+          selected === 'other-local' ||
+          selected === 'external-or-opaque' ||
+          selected === DEFERRED_CHUNK_CATEGORY
+        )
+          return
         return emit({ kind: 'unobserved-boundary', boundary: kind })
       }
       if (kind === 'response') {
@@ -679,11 +731,12 @@ export function createReliabilityRecord(
       emit({ kind: 'end' })
       disconnect()
       result = {
-        version: 2,
+        version: 3,
         representation: 'response-inline',
         coverage: 'allowlisted-phase-only',
         assetMapping: 'pattern-only',
         excludedRequests,
+        deferredChunks,
         ...owner,
         status: validStatus ? status : 'interrupted',
         disposition: reason === 'none' ? 'complete' : 'incomplete',
@@ -729,7 +782,7 @@ export function createReliabilityReceipt(value: unknown): {
     const identityFields = `case=${record.caseId} project=${record.project} retry=${record.retry} worker=${record.worker}`
     const parts: string[] = []
     for (let index = 0; index < count; index += 1) {
-      const header = `E2E_RELIABILITY_V2_PART ${identityFields} part=${index + 1}/${count} bytes=${body.length} sha256=${digest} data=`
+      const header = `E2E_RELIABILITY_V3_PART ${identityFields} part=${index + 1}/${count} bytes=${body.length} sha256=${digest} data=`
       const line = header + body.subarray(index * 4096, (index + 1) * 4096).toString('ascii')
       if (
         Buffer.byteLength(header) + 1 > 256 ||
@@ -739,7 +792,7 @@ export function createReliabilityReceipt(value: unknown): {
         throw new Error()
       parts.push(line)
     }
-    const footer = `E2E_RELIABILITY_V2_END ${identityFields} parts=${count} bytes=${body.length} sha256=${digest} attachment=`
+    const footer = `E2E_RELIABILITY_V3_END ${identityFields} parts=${count} bytes=${body.length} sha256=${digest} attachment=`
     const end = { ok: `${footer}ok`, failed: `${footer}failed` }
     if (
       Object.values(end).some(

@@ -1,66 +1,131 @@
-// The whole route tree, assembled in one place (ADR-0005): one import line
-// per area, aggregated onto `orgRoute`, plus the top-level routes that sit
-// outside any organisation. The mock identity provider's route is the one
-// exception to "one import per area" — it is not imported here at all.
+// The whole route tree, assembled in one place (ADR-0005): the top-level
+// routes that sit outside any organisation, imported here, plus the `/$org`
+// layout and one unit per area below it, listed in `ROUTE_UNITS` and fetched
+// by the browser only when someone goes there. The mock identity provider's
+// route is not imported here at all.
+//
+// Two builders, one tree:
+//
+// - `createAppRouter` is what the application runs. Its tree starts as the
+//   entry routes and grows a unit at a time (`./lazyRouteTree.ts`), so the
+//   sign-in screen is not delivered with the workspace behind it.
+// - `buildRouteTree` is the same tree with every unit attached. It is where
+//   the tree's types come from — the router `createAppRouter` returns is
+//   typed as this one, which is what it becomes — and what a test that reads
+//   the route table builds.
 
 import { createRouter } from '@tanstack/react-router'
+import type { RouterHistory } from '@tanstack/react-router'
 import { callbackRoute } from './callback-route'
 import { espaceCallbackRoute } from './espace-callback-route'
-import { appearanceRoute } from '../features/appearance/routes'
-import { domainRoute } from '../features/domain/routes'
-import { federationRoute } from '../features/federation/routes'
-import { homeRoute } from '../features/home/routes'
 import { invitationRoute } from '../features/invitation/route'
-import {
-  invoiceDetailRoute,
-  invoicesRoute,
-  invoicesSubscriptionRoute,
-} from '../features/invoices/routes'
-import { orderRouteWithChildren } from '../features/order/routes'
-import {
-  peopleImportResultRoute,
-  peopleImportRoute,
-  peopleInviteRoute,
-  peopleMemberRoute,
-  peopleOnSiteRoute,
-  peopleRoute,
-} from '../features/people/routes'
-import { securityMfaRoute, securityRoute } from '../features/security/routes'
-import { statusRoute } from '../features/status/routes'
-import { supportRoute, supportAliasRoute } from '../features/support/routes'
-import {
-  workspaceChannelRoute,
-  workspaceIndexRoute,
-  workspaceRoute,
-} from '../features/workspace/routes'
 import { loginRoute } from '../features/login/routes'
+import { entryCataloguesReady, withNamespaces } from '../i18n'
+import { ORGANISATION_NAMESPACES } from '../i18n/namespaces'
 import { indexRoute } from './index-route'
-import { orgRoute } from './org-route'
+import { createLazyRouteTree } from './lazyRouteTree'
+import type { LazyRoutes } from './lazyRouteTree'
 import { rootRoute } from './root-route'
 import { RouteError } from './RouteError'
+import { unit } from './routeUnits'
 
-const orgRouteWithChildren = orgRoute.addChildren([
-  homeRoute,
-  statusRoute,
-  workspaceRoute.addChildren([workspaceIndexRoute, workspaceChannelRoute]),
-  peopleRoute,
-  peopleInviteRoute,
-  peopleOnSiteRoute,
-  peopleImportRoute,
-  peopleImportResultRoute,
-  peopleMemberRoute,
-  domainRoute,
-  invoicesRoute,
-  invoiceDetailRoute,
-  invoicesSubscriptionRoute,
-  supportRoute,
-  supportAliasRoute,
-  orderRouteWithChildren,
-  federationRoute,
-  securityRoute,
-  securityMfaRoute,
-  appearanceRoute,
-])
+/**
+ * The lazy route units: the `/$org` layout (`organisation`: the session guard, `GET /me` and the
+ * shell) and, below it, one unit per area of the console. An area is one entry here and its
+ * routes are declared in its own `routes.tsx`, as ADR-0005 has it; what changed is that the entry
+ * is an `import()`, so the area is fetched the first time its address is asked for.
+ *
+ * An entry names the message namespaces its screens read, beside the import (a literal list, or
+ * a list `src/i18n/namespaces.ts` exports). `withNamespaces`
+ * delivers the two together, and `npm run i18n:check` follows the imports of each unit and fails
+ * when a screen reads a namespace its unit does not name
+ * (`scripts/i18n/route-namespaces.ts`): add the namespace here, in the same change as the first
+ * key that needs it. An area may count on `organisation`'s namespaces, and every unit on the
+ * entry namespaces (`src/i18n/namespaces.ts`).
+ *
+ * Only an `import()` may reach an area from this file. A static import of anything under
+ * `src/features/<area>/` would put that area, and whatever it imports, back into what every
+ * visitor downloads; `scripts/check-bundle-budget.mjs` measures that on each build.
+ */
+export const ROUTE_UNITS = {
+  organisation: unit({
+    segments: [],
+    load: () => withNamespaces(ORGANISATION_NAMESPACES, () => import('./org-route')),
+    routes: (module) => [module.orgRoute],
+  }),
+  home: unit({
+    segments: ['home'],
+    load: () => withNamespaces(['home'], () => import('../features/home/routes')),
+    routes: (module) => [module.homeRoute],
+  }),
+  status: unit({
+    segments: ['status'],
+    load: () => withNamespaces([], () => import('../features/status/routes')),
+    routes: (module) => [module.statusRoute],
+  }),
+  workspace: unit({
+    segments: ['workspace'],
+    load: () => withNamespaces(['docs'], () => import('../features/workspace/routes')),
+    routes: (module) => [
+      module.workspaceRoute.addChildren([module.workspaceIndexRoute, module.workspaceChannelRoute]),
+    ],
+  }),
+  people: unit({
+    segments: ['people'],
+    load: () => withNamespaces(['people'], () => import('../features/people/routes')),
+    routes: (module) => [
+      module.peopleRoute,
+      module.peopleInviteRoute,
+      module.peopleOnSiteRoute,
+      module.peopleImportRoute,
+      module.peopleImportResultRoute,
+      module.peopleMemberRoute,
+    ],
+  }),
+  domain: unit({
+    segments: ['domain'],
+    load: () => withNamespaces(['domain'], () => import('../features/domain/routes')),
+    routes: (module) => [module.domainRoute],
+  }),
+  invoices: unit({
+    segments: ['invoices'],
+    load: () => withNamespaces(['invoices'], () => import('../features/invoices/routes')),
+    routes: (module) => [
+      module.invoicesRoute,
+      module.invoiceDetailRoute,
+      module.invoicesSubscriptionRoute,
+    ],
+  }),
+  // Aide is one click from every screen's header and is small, so it comes with the layout
+  // rather than on its own (no segment: see `RouteUnit.segments`). Its address is also written
+  // in one place only, under `src/features/support/` (`help-links.test.ts`), and is not
+  // repeated here.
+  support: unit({
+    segments: [],
+    load: () => withNamespaces([], () => import('../features/support/routes')),
+    routes: (module) => [module.supportRoute, module.supportAliasRoute],
+  }),
+  order: unit({
+    segments: ['order'],
+    load: () => withNamespaces([], () => import('../features/order/routes')),
+    routes: (module) => [module.orderRouteWithChildren],
+  }),
+  federation: unit({
+    segments: ['federation'],
+    load: () => withNamespaces(['federation'], () => import('../features/federation/routes')),
+    routes: (module) => [module.federationRoute],
+  }),
+  security: unit({
+    segments: ['security'],
+    load: () => withNamespaces([], () => import('../features/security/routes')),
+    routes: (module) => [module.securityRoute, module.securityMfaRoute],
+  }),
+  appearance: unit({
+    segments: ['appearance'],
+    load: () => withNamespaces([], () => import('../features/appearance/routes')),
+    routes: (module) => [module.appearanceRoute],
+  }),
+}
 
 /**
  * `/__mock-idp/authorize`, loaded ONLY when this exact condition — written
@@ -105,7 +170,7 @@ type MockIdpRoute = (typeof import('./mock-idp-route'))['mockIdpRoute']
 
 async function mockIdpRoutes(): Promise<readonly MockIdpRoute[]> {
   if (import.meta.env.VITE_ENABLE_MSW === '1' && import.meta.env.VITE_AUTH_MODE === 'mock') {
-    const { mockIdpRoute } = await import('./mock-idp-route')
+    const { mockIdpRoute } = await withNamespaces(['mockidp'], () => import('./mock-idp-route'))
     return [mockIdpRoute]
   }
   return []
@@ -133,7 +198,10 @@ type MessagingDemoRoute = (typeof import('../features/messaging/demo-route'))['m
 
 async function messagingDemoRoutes(): Promise<readonly MessagingDemoRoute[]> {
   if (import.meta.env.VITE_ENABLE_MSW === '1' && import.meta.env.VITE_AUTH_MODE === 'mock') {
-    const { messagingDemoRoute } = await import('../features/messaging/demo-route')
+    const { messagingDemoRoute } = await withNamespaces(
+      ['messaging'],
+      () => import('../features/messaging/demo-route')
+    )
     return [messagingDemoRoute]
   }
   return []
@@ -150,43 +218,126 @@ type ClaimRoute = (typeof import('../features/owner-claim/route'))['claimRoute']
 
 async function firstOwnerRoutes(): Promise<readonly ClaimRoute[]> {
   if (import.meta.env.VITE_FIRST_OWNER_JOURNEY === '1') {
-    const { claimRoute } = await import('../features/owner-claim/route')
+    const { claimRoute } = await withNamespaces(
+      ['claim'],
+      () => import('../features/owner-claim/route')
+    )
     return [claimRoute]
   }
   return []
 }
 
-/** The route tree the running configuration actually registers — a function,
- * not a module-level constant, so building one reads the environment at CALL
- * time. A constant evaluated at import time would read the environment
- * before a test ever gets to stub it (`src/app/routeTree.test.ts`), and
- * would make every import of this module require the full environment just
- * to resolve. Async because `mockIdpRoutes` above is. */
-export async function buildRouteTree() {
-  return rootRoute.addChildren([
+/** The routes every visitor gets, in the order the tree lists them. Async because the gated
+ * claim route above is. */
+async function entryRoutes() {
+  return [
     indexRoute,
     loginRoute,
     callbackRoute,
     espaceCallbackRoute,
-    ...(await mockIdpRoutes()),
-    ...(await messagingDemoRoutes()),
     ...(await firstOwnerRoutes()),
     // An invitation's acceptance, in every build (docs/specs/12-invitation-accept.md).
     invitationRoute,
+  ] as const
+}
+
+/**
+ * The simulation's two routes, each fetched the first time its address is opened, with its
+ * namespace: a simulation build registers them on every page, and most pages never open either.
+ *
+ * The same literal condition as the two gates above, for the same reason: another build folds it
+ * to `false` and carries neither the addresses below nor a placeholder for them. Without the
+ * condition a placeholder would answer an address whose route can never arrive.
+ */
+function simulationRoutes(): readonly LazyRoutes[] {
+  if (import.meta.env.VITE_ENABLE_MSW === '1' && import.meta.env.VITE_AUTH_MODE === 'mock') {
+    return [
+      { paths: ['/__mock-idp/authorize'], fetch: mockIdpRoutes },
+      { paths: ['/__demo-messaging'], fetch: messagingDemoRoutes },
+    ]
+  }
+  return []
+}
+
+/** The route tree the running configuration registers once every unit has
+ * been reached — a function, not a module-level constant, so building one
+ * reads the environment at CALL time. A constant evaluated at import time
+ * would read the environment before a test ever gets to stub it
+ * (`src/app/routeTree.test.ts`), and would make every import of this module
+ * require the full environment just to resolve. Async because the gated
+ * routes and the units are. */
+export async function buildRouteTree() {
+  const [
+    [orgRoute],
+    home,
+    status,
+    workspace,
+    people,
+    domain,
+    invoices,
+    support,
+    order,
+    federation,
+    security,
+    appearance,
+  ] = await Promise.all([
+    ROUTE_UNITS.organisation.fetch(),
+    ROUTE_UNITS.home.fetch(),
+    ROUTE_UNITS.status.fetch(),
+    ROUTE_UNITS.workspace.fetch(),
+    ROUTE_UNITS.people.fetch(),
+    ROUTE_UNITS.domain.fetch(),
+    ROUTE_UNITS.invoices.fetch(),
+    ROUTE_UNITS.support.fetch(),
+    ROUTE_UNITS.order.fetch(),
+    ROUTE_UNITS.federation.fetch(),
+    ROUTE_UNITS.security.fetch(),
+    ROUTE_UNITS.appearance.fetch(),
+  ])
+  const orgRouteWithChildren = orgRoute.addChildren([
+    ...home,
+    ...status,
+    ...workspace,
+    ...people,
+    ...domain,
+    ...invoices,
+    ...support,
+    ...order,
+    ...federation,
+    ...security,
+    ...appearance,
+  ])
+  return rootRoute.addChildren([
+    ...(await entryRoutes()),
+    ...(await mockIdpRoutes()),
+    ...(await messagingDemoRoutes()),
     orgRouteWithChildren,
   ])
 }
 
+type WholeRouteTree = Awaited<ReturnType<typeof buildRouteTree>>
+
 /** Same reasoning as `buildRouteTree`: a function `main.tsx` calls once at
- * boot, not a singleton constructed on import. */
-export async function createAppRouter() {
-  return createRouter({
-    routeTree: await buildRouteTree(),
+ * boot, not a singleton constructed on import.
+ *
+ * The router starts with the entry routes only and fetches the rest as
+ * addresses ask for it. It is created after the entry catalogues of the
+ * page's language have arrived, so its first screen has its text. */
+export async function createAppRouter(options: { history?: RouterHistory } = {}) {
+  await entryCataloguesReady
+  const tree = createLazyRouteTree(await entryRoutes(), ROUTE_UNITS, simulationRoutes())
+  const router = createRouter({
+    // Typed as the tree it grows into: a link to an area is checked against
+    // that area's route whether or not the area has been fetched yet.
+    routeTree: tree.routeTree as unknown as WholeRouteTree,
     // Every route without a boundary of its own — `/`, `/login`, and each
     // route below `/$org` — fails with the console's own
     // French screen, drawn inside the shell when the shell is on screen.
     defaultErrorComponent: RouteError,
+    ...(options.history === undefined ? {} : { history: options.history }),
   })
+  tree.bind(router)
+  return router
 }
 
 export type AppRouter = Awaited<ReturnType<typeof createAppRouter>>

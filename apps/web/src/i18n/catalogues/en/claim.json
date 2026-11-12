@@ -1,0 +1,23 @@
+{
+  "console.claim.landing.action-cancel": "Cancel",
+  "console.claim.landing.action-confirm": "Become the owner",
+  "console.claim.landing.action-continue": "Continue",
+  "console.claim.landing.action-sign-in": "Sign in",
+  "console.claim.landing.busy": "One moment…",
+  "console.claim.landing.confirmed": "Your invitation is confirmed. Continue to choose your plan.",
+  "console.claim.landing.consumed": "This invitation has already been used. Sign in as usual.",
+  "console.claim.landing.contact": "Verify your email address, then reopen your invitation link",
+  "console.claim.landing.expired": "This invitation has expired. Ask us for a new link.",
+  "console.claim.landing.eyebrow": "Kodera invitation",
+  "console.claim.landing.failed": "We could not confirm your invitation. Reopen the link or write to us at {{email}}.",
+  "console.claim.landing.mfa": "Turn on two-step verification, then reopen your invitation link",
+  "console.claim.landing.mismatch": "Sign in with the account that received the invitation",
+  "console.claim.landing.missing": "Reopen your invitation link to continue",
+  "console.claim.landing.not-ready": "Your organisation is still being prepared. Reopen the link a little later.",
+  "console.claim.landing.ready": "Confirm that you are becoming your organisation’s owner",
+  "console.claim.landing.retry": "The confirmation did not go through. Try again in a moment.",
+  "console.claim.landing.revoked": "This invitation was cancelled. Ask us for a new link.",
+  "console.claim.landing.sign-in": "Sign in with the invited account to become your organisation’s owner",
+  "console.claim.landing.signing-in": "A sign-in window is open. Finish signing in in that window.",
+  "console.claim.landing.unknown": "This invitation link is not valid. Check it, or write to us at {{email}}."
+}
