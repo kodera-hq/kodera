@@ -6,6 +6,8 @@
 # LiveKit credentials isolated in `room-access`). Synapse runs on its own PostgreSQL, with
 # federation closed unless KODERA_MATRIX_FEDERATION_ALLOWLIST opens it (README.md, "Federation").
 # The agent API (`/agent/*`) is reached on the internal network only, never through Caddy.
+# This file runs the `single` topology on its own, and the `split` topology with
+# docker-compose.split.yml on top (README.md, "Topologies").
 # `scripts/ci/check-community-deploy.py` checks it.
 
 services:
@@ -24,9 +26,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    # Caddy does not wait for `web`, which the split topology does not start.
     depends_on:
-      web:
-        condition: service_started
       server:
         condition: service_healthy
       room-access:
@@ -267,6 +268,9 @@ services:
       KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
       KODERA_SYNAPSE_OIDC_ISSUER: ${KODERA_SYNAPSE_OIDC_ISSUER:-}
       KODERA_SYNAPSE_OIDC_CLIENT_SECRET: ${KODERA_SYNAPSE_OIDC_CLIENT_SECRET:-}
+      # The operator's choice, and the Compose files that actually run: Synapse refuses a mismatch.
+      KODERA_TOPOLOGY: ${KODERA_TOPOLOGY:-single}
+      KODERA_COMPOSE_TOPOLOGY: single
     volumes:
       - synapse_data:/data
       - ../../packages/synapse-policy:/opt/kodera-policy:ro
@@ -289,7 +293,7 @@ services:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in .env}: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in .env}"
     ports:
       - "7881:7881"
-      - "50000-50060:50000-50060/udp"
+      - "50000-50200:50000-50200/udp"
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 

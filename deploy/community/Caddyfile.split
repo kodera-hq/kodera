@@ -1,0 +1,103 @@
+{
+	email {$KODERA_ACME_EMAIL}
+}
+
+# Split topology (README.md, "Topologies"). The web client is served from its own static origin,
+# https://{$KODERA_DOMAIN}, by another host; this stack publishes one origin per backend and never
+# the web client. Selected by docker-compose.split.yml; checked by scripts/ci/check-community-deploy.py.
+
+# Caddy is the only proxy of this profile, so the client address an upstream reads is the peer
+# Caddy accepted, never a value the client sent. No `trusted_proxies` is declared: nothing sits
+# in front of Caddy. Every upstream imports this.
+(client_address) {
+	header_up X-Forwarded-For {remote_host}
+	header_up -X-Real-IP
+	header_up -Forwarded
+}
+
+# The Core API. It grants CORS to the exact origins of KODERA_CONSOLE_ORIGINS itself, preflight
+# included, and never `*`.
+api.{$KODERA_MATRIX_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# The agent API is for the tenant agent on the internal network only.
+	@internal path /agent /agent/*
+	handle @internal {
+		respond 404
+	}
+
+	@api path /api/* /health/*
+	handle @api {
+		reverse_proxy server:8000 {
+			import client_address
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# Synapse's client API and the room-access token endpoint. Federation, key, admin and server
+# discovery routes are not routed: they answer 404 (README.md, "Federation").
+matrix.{$KODERA_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# room-access grants CORS to ROOM_ACCESS_ALLOWED_ORIGINS itself and refuses any other preflight.
+	@room_access path /_kodera/rooms/token
+	handle @room_access {
+		rewrite * /token
+		reverse_proxy room-access:8095 {
+			import client_address
+		}
+	}
+
+	# Synapse answers every origin with `Access-Control-Allow-Origin: *`; here the grant names the
+	# web origin only.
+	@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*
+	handle @matrix {
+		reverse_proxy synapse:8008 {
+			import client_address
+			header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}
+
+# LiveKit signalling (WebSocket). Media flows on the ports LiveKit publishes itself.
+livekit.{$KODERA_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	@livekit path /rtc /rtc/*
+	handle @livekit {
+		reverse_proxy livekit:7880 {
+			import client_address
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}

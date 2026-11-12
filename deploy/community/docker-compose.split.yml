@@ -1,0 +1,31 @@
+# Split topology (README.md, "Topologies"): the web client is served from its own static origin,
+# https://<KODERA_DOMAIN>, and this stack publishes api.<KODERA_MATRIX_DOMAIN>,
+# matrix.<KODERA_DOMAIN> and livekit.<KODERA_DOMAIN>. Run it on top of the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.split.yml up -d
+#
+# It changes only what the topology needs; `scripts/ci/check-community-deploy.py` refuses anything
+# else. Set KODERA_TOPOLOGY=split in .env too: Synapse refuses to start when the two disagree.
+
+services:
+  caddy:
+    volumes:
+      - ./Caddyfile.split:/etc/caddy/Caddyfile:ro
+    environment:
+      KODERA_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
+
+  # The web client is not started: its static origin is served elsewhere.
+  web:
+    profiles: [single-origin-web]
+
+  server:
+    environment:
+      KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
+
+  room-access:
+    environment:
+      LIVEKIT_WS_URL: wss://livekit.${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
+
+  synapse:
+    environment:
+      KODERA_COMPOSE_TOPOLOGY: split

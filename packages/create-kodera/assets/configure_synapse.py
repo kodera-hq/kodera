@@ -1,8 +1,8 @@
 """Install the mandatory Community Synapse configuration on fresh and existing volumes.
 
 Every start rewrites the settings this stack relies on (Core ADR-0018): the room-policy
-module, PostgreSQL, a closed federation, rate limits, refreshable tokens and OIDC-only
-sign-in. `scripts/ci/check-community-deploy.py` runs `configure` and refuses a change that
+module, PostgreSQL, a closed federation, rate limits, refreshable tokens, OIDC-only
+sign-in and the public base URL of the topology (README.md, "Topologies"). `scripts/ci/check-community-deploy.py` runs `configure` and refuses a change that
 drops one of them.
 """
 
@@ -47,6 +47,22 @@ RATE_LIMITS = {
         "per_issuer": {"per_second": 0.3, "burst_count": 10},
     },
 }
+
+
+TOPOLOGIES = ("single", "split")
+
+
+def topology(environment):
+    """`single` or `split`: the operator's setting, which must be what the running Compose files say."""
+    chosen = environment.get("KODERA_TOPOLOGY") or "single"
+    running = environment.get("KODERA_COMPOSE_TOPOLOGY") or "single"
+    if chosen not in TOPOLOGIES or running not in TOPOLOGIES:
+        raise ValueError("KODERA_TOPOLOGY must be single or split")
+    if chosen != running:
+        raise ValueError(
+            "KODERA_TOPOLOGY does not match the Compose files: the split topology runs with docker-compose.split.yml"
+        )
+    return chosen
 
 
 def federation_allowlist(environment):
@@ -97,6 +113,7 @@ def configure(document, environment=None):
     environment = environment or {}
     server = document["server_name"]
     community = bool(environment.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG"))
+    split = topology(environment) == "split"
     issuer = oidc_issuer(environment)
     allowlist = federation_allowlist(environment)
 
@@ -145,13 +162,21 @@ def configure(document, environment=None):
     document["encryption_enabled_by_default_for_room_type"] = "off"
     document["require_auth_for_profile_requests"] = True
 
+    # The split topology publishes the client API on its own origin; the web client, where the
+    # login token returns, stays at https://<server_name>/. A return to single drops that URL.
+    split_baseurl = f"https://matrix.{server}/"
+    if split:
+        document["public_baseurl"] = split_baseurl
+    elif document.get("public_baseurl") == split_baseurl:
+        del document["public_baseurl"]
+
     if community and any(provider.get("idp_id") != "community" for provider in document.get("oidc_providers", [])):
         raise ValueError("Community Synapse requires one canonical identity provider")
     if issuer is not None:
         idp_id = "community" if community else "kodera"
         if any(provider.get("idp_id") != idp_id for provider in document.get("oidc_providers", [])):
             raise ValueError("Synapse sign-in refuses to replace an unrelated identity provider")
-        document["public_baseurl"] = f"https://{server}/"
+        document["public_baseurl"] = split_baseurl if split else f"https://{server}/"
         document["oidc_providers"] = [{
             "idp_id": idp_id, "idp_name": "Kodera Community" if community else "Kodera",
             "issuer": issuer, "client_id": "synapse",

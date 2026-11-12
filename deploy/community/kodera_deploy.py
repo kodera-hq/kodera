@@ -47,7 +47,29 @@ def https(value, origin=False):
     return value.rstrip('/')
 
 
+TOPOLOGIES = ('single', 'split')
+
+
+def split_origins(host, matrix_domain):
+    """The public origins of the split topology (README.md, "Topologies"); the web client is hosted elsewhere."""
+    return {'web': 'https://' + host, 'api': 'https://api.' + matrix_domain,
+            'matrix': 'https://matrix.' + host, 'livekit': 'wss://livekit.' + host}
+
+
+def compose_command(target, template_id, topology):
+    """The exact command an operator runs, arguments quoted as data to inspect before execution."""
+    import shlex
+    base = Path(__file__).with_name('docker-compose.yml')
+    files = [base] + ([base.with_name('docker-compose.split.yml')] if topology == 'split' else [])
+    profile = ' --profile community-governance' if template_id == 'community' else ''
+    return ('docker compose --env-file ' + shlex.quote(str(target)) + ''.join(' -f ' + shlex.quote(str(path)) for path in files)
+            + profile + ' up -d')
+
+
 def generate(args):
+    topology = getattr(args, 'topology', None) or 'single'
+    if topology not in TOPOLOGIES:
+        raise ValueError('Topology must be single or split')
     template_id = getattr(args, 'template', None)
     template_id = TEMPLATE_ALIASES.get(template_id, template_id)
     if template_id is not None and template_id not in WORKSPACE_TEMPLATES:
@@ -56,6 +78,14 @@ def generate(args):
     matrix_domain = domain(getattr(args, 'matrix_domain', None) or (host.split('.', 1)[1] if host.count('.') >= 2 else host))
     if template_id == 'community' and host != 'community.' + matrix_domain:
         raise ValueError('Community host must be community.<matrix-domain>')
+    allowed_hosts = host + ',127.0.0.1'
+    if topology == 'split':
+        # The web client keeps its own host; the API moves to api.<matrix-domain>.
+        if not host.endswith('.' + matrix_domain):
+            raise ValueError('Split topology needs a web client host below the Matrix domain')
+        allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1'
+        domain('matrix.' + host)
+        domain('livekit.' + host)
     issuer = https(args.oidc_issuer)
     origin = https(args.oidc_origin, True)
     if not issuer.startswith(origin + '/'):
@@ -78,7 +108,7 @@ def generate(args):
         raise ValueError('Invalid OIDC client identifier')
     values = dict(KODERA_OIDC_CLIENT_ID=client_id, KODERA_DOMAIN=host, KODERA_ACME_EMAIL=args.support_mailbox,
                   KODERA_MATRIX_DOMAIN=matrix_domain,
-                  DJANGO_ALLOWED_HOSTS=host+',127.0.0.1', KODERA_OIDC_PROVIDER_ORIGIN=origin,
+                  DJANGO_ALLOWED_HOSTS=allowed_hosts, KODERA_TOPOLOGY=topology, KODERA_OIDC_PROVIDER_ORIGIN=origin,
                   KODERA_AUTH_TRUST="'"+trust_json+"'")
     staff = getattr(args, 'staff_issuer', None)
     values['KODERA_STAFF_ISSUER'] = https(staff) if staff else ''
@@ -204,6 +234,25 @@ def selftest():
     assert hardened['federation_domain_whitelist'] == [] and hardened['listeners'][0]['resources'][0]['names'] == ['client']
     assert hardened['password_config'] == {'enabled': False} and 'oidc_providers' not in hardened
     assert check.check_community_deploy(compose, TEMPLATE.read_text(), Path(__file__).with_name('Caddyfile').read_text().replace('/api/* /health/*', '/api/* /health/* /agent/*'))
+    override = Path(__file__).with_name('docker-compose.split.yml').read_text()
+    split_caddyfile = Path(__file__).with_name('Caddyfile.split').read_text()
+    assert not check.check_split_topology(override, split_caddyfile, TEMPLATE.read_text())
+    assert check.check_split_topology(override, split_caddyfile.replace('/api/* /health/*', '/api/* /health/* /agent/*'), TEMPLATE.read_text())
+    assert check.check_split_topology(override, split_caddyfile.replace('/_synapse/client/*', '/_synapse/client/* /_matrix/federation/*'), TEMPLATE.read_text())
+    assert check.check_split_topology(override.replace('profiles: [single-origin-web]', 'profiles: [default]'), split_caddyfile, TEMPLATE.read_text())
+    split_environment = {'KODERA_TOPOLOGY': 'split', 'KODERA_COMPOSE_TOPOLOGY': 'split'}
+    split_homeserver = configure({'server_name': 'community.example.org'}, split_environment)
+    assert split_homeserver['public_baseurl'] == 'https://matrix.community.example.org/'
+    split_signed = configure({'server_name': 'community.example.org'}, dict(community_environment, KODERA_DEFAULT_COMMUNITY_ISSUER='https://id.example.org/realms/community', **split_environment))
+    assert split_signed['public_baseurl'] == 'https://matrix.community.example.org/'
+    assert split_signed['sso']['client_whitelist'] == ['https://community.example.org/']
+    for values in ({'KODERA_TOPOLOGY': 'split'}, {'KODERA_COMPOSE_TOPOLOGY': 'split'}, {'KODERA_TOPOLOGY': 'both', 'KODERA_COMPOSE_TOPOLOGY': 'both'}):
+        try:
+            configure({'server_name': 'community.example.org'}, values)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('Topology mismatch accepted')
     with tempfile.TemporaryDirectory(prefix='kodera-deploy-test-') as tmp:
         trust = Path(tmp)/'public-trust.json'
         trust.write_text(json.dumps([dict(lane='customer', issuer='https://id.example.org/realms/'+realm, public_jwks={'keys':[{'kty':'RSA','n':'public-test-modulus','e':'AQAB'}]}) for realm in ('studio', 'community')]))
@@ -252,6 +301,32 @@ def selftest():
                 pass
             else:
                 raise AssertionError('Invalid Community bootstrap input accepted')
+        # Topologies: `single` stays the default; `split` admits the API host and is refused where
+        # its origins cannot exist.
+        single = generate(args()).read_text()
+        assert 'KODERA_TOPOLOGY=single\n' in single and 'DJANGO_ALLOWED_HOSTS=chat.example.org,127.0.0.1\n' in single
+        split = generate(args(topology='split')).read_text()
+        assert 'KODERA_TOPOLOGY=split\n' in split and 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n' in split
+        assert 'KODERA_DOMAIN=chat.example.org\n' in split and not check.preflight_env(TEMPLATE.read_text(), split)
+        community_split = generate(args(template='community', topology='split')).read_text()
+        assert 'KODERA_DOMAIN=community.example.org\n' in community_split
+        assert 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n' in community_split
+        assert not check.preflight_env(TEMPLATE.read_text(), community_split)
+        for changes in (dict(topology='both'), dict(topology='Split'), dict(topology='split', domain='example.org')):
+            try:
+                generate(args(**changes))
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Invalid topology accepted')
+        base = Path(__file__).with_name('docker-compose.yml')
+        assert compose_command(Path('/srv/kodera.conf'), None, 'single') == 'docker compose --env-file /srv/kodera.conf -f ' + str(base) + ' up -d'
+        assert compose_command(Path('/srv/kodera.conf'), 'community', 'split') == (
+            'docker compose --env-file /srv/kodera.conf -f ' + str(base) + ' -f ' + str(base.with_name('docker-compose.split.yml'))
+            + ' --profile community-governance up -d')
+        assert split_origins('community.example.org', 'example.org') == {
+            'web': 'https://community.example.org', 'api': 'https://api.example.org',
+            'matrix': 'https://matrix.community.example.org', 'livekit': 'wss://livekit.community.example.org'}
         aliased = generate(args(template='crisis-cell'))
         manifest = json.loads(Path(str(aliased) + '.workspace-template.json').read_text())
         assert manifest['templateId'] == 'proximity' and 'proximity' in manifest['channels']
@@ -280,6 +355,8 @@ def main():
     for name in ['env-file', 'domain', 'matrix-domain', 'oidc-issuer', 'oidc-origin', 'support-mailbox', 'trust-file', 'oidc-client-id', 'owner-user-id', 'agent-token-file', 'synapse-token-file', 'synapse-oidc-secret-file', 'staff-issuer']:
         parser.add_argument('--'+name, default='kodera-generated.conf' if name == 'env-file' else None)
     parser.add_argument('--template', choices=(*WORKSPACE_TEMPLATES, *TEMPLATE_ALIASES))
+    parser.add_argument('--topology', choices=TOPOLOGIES, default='single',
+                        help='single: one origin serves everything (default); split: backends only, web client hosted elsewhere')
     parser.add_argument('--generate-only', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--selftest', action='store_true')
@@ -291,15 +368,18 @@ def main():
         if args.preflight_only:
             return subprocess.run([sys.executable, str(CHECK), '--preflight', args.env_file], check=False).returncode
         target = generate(args)
-        # Arguments are quoted as data for an operator to inspect before execution.
-        import shlex
         print('Generated configuration with mode 0600. External OIDC issuer required.')
         if args.template != 'community' and not args.synapse_oidc_secret_file:
             print('Matrix sign-in is not configured: pass --synapse-oidc-secret-file to sign members in to Synapse.')
         if args.template:
             print('Workspace template intent: '+str(target)+'.workspace-template.json (not remotely provisioned)')
-        profile = ' --profile community-governance' if args.template == 'community' else ''
-        print('docker compose --env-file '+shlex.quote(str(target.resolve()))+' -f '+shlex.quote(str(Path(__file__).with_name('docker-compose.yml')))+profile+' up -d')
+        if args.topology == 'split':
+            written = check.parse_env_example(target.read_text())[0]
+            origins = split_origins(written['KODERA_DOMAIN'], written['KODERA_MATRIX_DOMAIN'])
+            print('Split topology: this stack serves ' + ', '.join(origins[name] for name in ('api', 'matrix', 'livekit'))
+                  + '. Host the web client at ' + origins['web'] + ', with /.well-known/matrix/client naming ' + origins['matrix'] + '.')
+        template_id = TEMPLATE_ALIASES.get(args.template, args.template)
+        print(compose_command(target.resolve(), template_id, args.topology))
         return 0
     except (ValueError, OSError, TypeError) as error:
         print('Configuration refused: '+str(error).split('\n')[0], file=sys.stderr)
