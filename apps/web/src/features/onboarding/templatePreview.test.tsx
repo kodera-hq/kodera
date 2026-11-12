@@ -10,7 +10,7 @@ it.each([
   ['studio-tech', 'tech-studio'],
   ['conseil-b2b', 'b2b-advisory'],
   ['secteur-public', 'public-sector'],
-  ['cellule-crise', 'crisis-cell'],
+  ['proximity', 'proximity'],
 ] as const)('previews the channels claimed for %s', async (selection, templateId: TemplateId) => {
   const user = userEvent.setup()
   render(

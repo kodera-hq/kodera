@@ -26,6 +26,18 @@ it('keeps the selected template in both terminal commands and refuses shell inje
         'crisis-cell'
       )
     ).toContain("--template 'crisis-cell'")
+    // The proximity template is named to the self-host tooling by its permanent alias, the only
+    // identifier that tooling's template table holds.
+    expect(
+      terminalCommand(
+        mode,
+        'chat.example.org',
+        'https://id.example.org/realms/studio',
+        'console',
+        'support@example.org',
+        'proximity'
+      )
+    ).toContain("--template 'crisis-cell'")
     expect(
       terminalCommand(
         mode,

@@ -62,7 +62,7 @@ export const ONBOARDING_GUIDED_CHANNELS: readonly OnboardingGuidedChannel[] = [
     badge: 'Ingénierie',
   },
   {
-    id: 'urgence',
+    id: 'proximity',
     label: '#urgence (BLE)',
     description: 'Continuité hors-ligne Bluetooth Low Energy et pointage sécurité terrain.',
     badge: 'Résilience',
