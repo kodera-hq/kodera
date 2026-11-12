@@ -104,6 +104,7 @@ Every document under `docs/` and `contracts/` is listed here. A pull request tha
 | [`specs/IDEMPOTENCY_REPLAY.md`](specs/IDEMPOTENCY_REPLAY.md) | Proposed | API seat | The `Idempotency-Key` replay store of CONVENTIONS §8: per-principal, per-path entries, in-flight refusal, 24-hour retention, the HTTP adapter every `POST` route uses, and what it does not yet do |
 | [`specs/SUPPORT_TICKETS.md`](specs/SUPPORT_TICKETS.md) | Proposed | API seat | createSupportTicket: who may open a ticket, its limits, and the plain-text mail to the support mailbox |
 | [`specs/TRUSTED_EDGE.md`](specs/TRUSTED_EDGE.md) | Proposed | API seat | When Core believes `X-Forwarded-For` (the operator's trusted edge, rightmost untrusted hop) and the `c-` namespace of a caller's `X-Request-Id` |
+| [`specs/WORKSPACE_TEMPLATES.md`](specs/WORKSPACE_TEMPLATES.md) | Proposed | API seat | The `proximity` template with its permanent alias `crisis-cell` and its one default channel, and the theme vocabulary with the one canonicalisation a claim and a stored warm-pool plan share |
 | [`specs/ABUSE_AND_ORIGIN_CONTROLS.md`](specs/ABUSE_AND_ORIGIN_CONTROLS.md) | Proposed | API seat | Console-only CORS from `KODERA_CONSOLE_ORIGINS`, the per-principal mutation bucket answered `429`, and room-access's per-identity limit on LiveKit call tokens, with what the in-process count does not guarantee |
 | [`specs/REALM_DISCOVERY.md`](specs/REALM_DISCOVERY.md) | Proposed | API seat | Public realm discovery contract and owed runtime acceptance; the K7 pilot realm-ready fact, writer and counting reader |
 | [`specs/PILOT_WORKSPACE_ONBOARDING.md`](specs/PILOT_WORKSPACE_ONBOARDING.md) | Proposed | API seat | The text-first starter workspace, the setup state Core derives from the realm job, trust and owner confirmation, what the console shows per state, `getWorkspace` and `initialiseWorkspace`, and their acceptance |
@@ -208,3 +209,4 @@ The tenant-profile extension schema `x-kodera.schema.json` has **no row here**. 
 - Registers `../contracts/served-operations.json`, the Core operations the deployed API routes, generated from its urlconf.
 - Registers ADR-0023, the Matrix server name is the tenant's slug.
 - Registers `specs/ABUSE_AND_ORIGIN_CONTROLS.md`, the CORS and rate-limit controls at the API's edge.
+- Registers `specs/WORKSPACE_TEMPLATES.md`, the proximity template and the theme vocabulary of contract 0.42.0.
