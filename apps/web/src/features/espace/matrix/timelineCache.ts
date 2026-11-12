@@ -3,7 +3,9 @@
 // raw event, never a message this device has not had acknowledged. Each room keeps its newest
 // `CACHED_MESSAGES`, under the signed-in member's id, and the whole cache is wiped when the
 // Matrix session ends (a sign-out, or another sign-in in this tab), so the next member of a
-// shared browser finds nothing.
+// shared browser finds nothing. The console's own sign-out deletes the database too
+// (`auth/localSession.ts`), whether or not Espace was ever opened in the tab; and a member's
+// store, starting, deletes every record that is not its member's or is older than `MAX_AGE_MS`.
 //
 // The backend is pluggable: IndexedDB in the browser, a map in the unit tests. What is read back
 // is checked field by field; a record of another shape, version or member is ignored.
@@ -19,6 +21,9 @@ export const CACHE_WRITE_DELAY_MS = 750
 
 const RECORD_VERSION = 1
 
+/** A record older than this is deleted unread: a cache is for the next visit, not an archive. */
+export const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000
+
 export interface CachedRoom {
   v: number
   userId: string
@@ -29,12 +34,14 @@ export interface CachedRoom {
 
 /** Where the records live. Keys are `${userId}\n${roomId}`. */
 export interface CacheBackend {
-  /** Every record whose key starts with the prefix. */
-  entries(prefix: string): Promise<unknown[]>
+  /** Every record, with its key. */
+  entries(): Promise<[string, unknown][]>
   put(key: string, value: CachedRoom): Promise<void>
   delete(key: string): Promise<void>
   /** Every record, every member's. */
   clear(): Promise<void>
+  /** The whole store, when clearing it failed. */
+  destroy(): Promise<void>
 }
 
 const keyOf = (userId: string, roomId: string) => `${userId}\n${roomId}`
@@ -127,19 +134,32 @@ export class TimelineCache {
     open.add(this)
   }
 
-  /** Every room this member's cache holds; a backend that fails gives nothing. */
+  /**
+   * Every room this member's cache holds. Any other record (another member's, an expired one, one
+   * of another shape) is deleted on the way. A backend that fails gives nothing.
+   */
   async loadAll(): Promise<Map<string, readonly MessageView[]>> {
     const rooms = new Map<string, readonly MessageView[]>()
-    let values: unknown[]
+    let entries: [string, unknown][]
     try {
-      values = await this.#backend.entries(keyOf(this.#userId, ''))
+      entries = await this.#backend.entries()
     } catch {
       return rooms
     }
     if (this.#closed) return rooms
-    for (const value of values) {
+    const oldest = this.#now() - MAX_AGE_MS
+    for (const [key, value] of entries) {
       const record = readRecord(value, this.#userId)
-      if (record !== null && record.messages.length > 0) rooms.set(record.roomId, record.messages)
+      if (
+        record === null ||
+        record.messages.length === 0 ||
+        record.savedAt < oldest ||
+        key !== keyOf(this.#userId, record.roomId)
+      ) {
+        this.#chain(() => this.#backend.delete(key))
+        continue
+      }
+      rooms.set(record.roomId, record.messages)
     }
     return rooms
   }
@@ -220,13 +240,22 @@ export class TimelineCache {
 /** The caches of the stores alive now: a wipe stops them all first. */
 const open = new Set<TimelineCache>()
 
-/** Stops every open cache, waits for its queued writes, then clears every record. */
-export async function wipeTimelineCaches(backend: CacheBackend): Promise<void> {
+/**
+ * Stops every open cache, waits for its queued writes, then clears every record. A clear that
+ * fails deletes the whole store instead; false only when that failed too.
+ */
+export async function wipeTimelineCaches(backend: CacheBackend): Promise<boolean> {
   await Promise.all([...open].map((cache) => cache.halt()))
   try {
     await backend.clear()
+    return true
   } catch {
-    // Nothing to clear (storage refused): nothing was kept either.
+    try {
+      await backend.destroy()
+      return true
+    } catch {
+      return false
+    }
   }
 }
 
@@ -235,8 +264,7 @@ export function memoryBackend(): CacheBackend & { readonly records: Map<string, 
   const records = new Map<string, CachedRoom>()
   return {
     records,
-    entries: async (prefix) =>
-      [...records].filter(([key]) => key.startsWith(prefix)).map(([, value]) => value),
+    entries: async () => [...records],
     put: async (key, value) => {
       records.set(key, structuredClone(value))
     },
@@ -246,9 +274,13 @@ export function memoryBackend(): CacheBackend & { readonly records: Map<string, 
     clear: async () => {
       records.clear()
     },
+    destroy: async () => {
+      records.clear()
+    },
   }
 }
 
+/** The database's name; `auth/localSession.ts` deletes it by this name at sign-out. */
 export const CACHE_DATABASE = 'kodera-espace-timelines'
 const OBJECT_STORE = 'rooms'
 
@@ -293,10 +325,14 @@ export function indexedDbBackend(factory: IDBFactory = indexedDB): CacheBackend 
     return result
   }
   return {
-    entries: (prefix) =>
-      run('readonly', (store) =>
-        store.getAll(IDBKeyRange.bound(prefix, `${prefix}￿`, false, false))
-      ),
+    entries: async () => {
+      const handle = await db()
+      const transaction = handle.transaction(OBJECT_STORE, 'readonly')
+      const store = transaction.objectStore(OBJECT_STORE)
+      // Both lists in one transaction: the same records, in the same key order.
+      const [keys, values] = await Promise.all([done(store.getAllKeys()), done(store.getAll())])
+      return keys.map((key, index): [string, unknown] => [String(key), values[index]])
+    },
     put: async (key, value) => {
       await run('readwrite', (store) => store.put(value, key))
     },
@@ -306,25 +342,40 @@ export function indexedDbBackend(factory: IDBFactory = indexedDB): CacheBackend 
     clear: async () => {
       await run('readwrite', (store) => store.clear())
     },
+    destroy: async () => {
+      const handle = await database?.catch(() => null)
+      handle?.close()
+      database = null
+      await new Promise<void>((resolve, reject) => {
+        const request = factory.deleteDatabase(CACHE_DATABASE)
+        request.onsuccess = () => resolve()
+        // Another tab holds it open: the deletion waits for that tab, and happens then.
+        request.onblocked = () => resolve()
+        request.onerror = () => reject(request.error ?? new Error('IndexedDB delete refused'))
+      })
+    },
   }
 }
 
 let browserBackend: CacheBackend | null = null
-let wipeOnSignOut = false
 
-/**
- * The signed-in member's cache in this browser, or none where IndexedDB is missing. The first
- * one opened also wipes every record when the Matrix session ends.
- */
-export function openTimelineCache(userId: string): TimelineCache | undefined {
-  if (typeof indexedDB === 'undefined') return undefined
+function browserCache(): CacheBackend | null {
+  if (typeof indexedDB === 'undefined') return null
   browserBackend ??= indexedDbBackend()
-  const backend = browserBackend
-  if (!wipeOnSignOut) {
-    wipeOnSignOut = true
-    subscribeMatrixSession(() => {
-      if (getMatrixSession() === undefined) void wipeTimelineCaches(backend)
-    })
-  }
-  return new TimelineCache(backend, userId)
+  return browserBackend
+}
+
+// From the moment Espace's code is loaded, a Matrix session that ends wipes the cache, whether
+// or not a store is open.
+if (typeof indexedDB !== 'undefined') {
+  subscribeMatrixSession(() => {
+    const backend = browserCache()
+    if (backend !== null && getMatrixSession() === undefined) void wipeTimelineCaches(backend)
+  })
+}
+
+/** The signed-in member's cache in this browser, or none where IndexedDB is missing. */
+export function openTimelineCache(userId: string): TimelineCache | undefined {
+  const backend = browserCache()
+  return backend === null ? undefined : new TimelineCache(backend, userId)
 }

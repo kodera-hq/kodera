@@ -28,7 +28,12 @@ A channel opens on what it last showed, before the first sync answers (`src/feat
 - **What is kept.** For each room, the newest 200 message views that the homeserver has acknowledged. No token, no raw event, and no pending or failed message is kept. Records are keyed by member and room, so one member never reads another's.
 - **When it is written.** A room's changes are written 750 ms after a burst of events, one write per burst. A stopping store writes what is waiting.
 - **When it is shown.** The store reads the cache at start and does not wait for it. A room's cached messages are shown until that room's first sync replaces them. The cache fills a first screen; it is not a second history.
-- **When it goes.** A room the member leaves is forgotten. When the Matrix session ends (a sign-out, a refused refresh, or another sign-in in this tab), every record is wiped, and a write still waiting never lands. A browser without IndexedDB, or one that refuses it, keeps nothing and loses no message.
+- **When it goes.**
+  - A room the member leaves is forgotten.
+  - When the Matrix session ends (a sign-out, a refused refresh, or another sign-in in this tab), every record is wiped, and a write still waiting never lands. If clearing fails, the whole database is deleted instead.
+  - The console's sign-out (`auth/localSession.ts`) deletes the database by name, whether or not Espace was opened in the tab.
+  - A member's store, as it starts, deletes every record that is another member's, older than 14 days, or filed under a key that is not its own.
+  - A browser without IndexedDB, or one that refuses it, keeps nothing and loses no message.
 - **Reading back.** Every record is checked field by field. A record of another version, shape or member is ignored.
 
 ## Acceptance

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { MessageView } from './timeline'
+import { ESPACE_TIMELINE_DATABASE } from '@/auth/localSession'
 import {
+  CACHE_DATABASE,
   CACHE_WRITE_DELAY_MS,
   isCachedMessage,
+  MAX_AGE_MS,
   memoryBackend,
   TimelineCache,
   wipeTimelineCaches,
@@ -170,5 +173,57 @@ describe('the timeline cache', () => {
     cache.save(ROOM, many(2))
     await expect(cache.flush()).resolves.toBeUndefined()
     await expect(cache.loadAll()).resolves.toEqual(new Map())
+  })
+
+  it("deletes another member's records, and expired ones, as a member's store starts", async () => {
+    const backend = memoryBackend()
+    let now = 1_000_000
+    const old = new TimelineCache(backend, ME, { now: () => now })
+    old.save(ROOM, many(1))
+    await old.flush()
+    const other = new TimelineCache(backend, OTHER, { now: () => now })
+    other.save(ROOM, many(1))
+    await other.flush()
+    now += MAX_AGE_MS + 1
+    const fresh = new TimelineCache(backend, ME, { now: () => now })
+    fresh.save(ROOM_B, many(1))
+    await fresh.flush()
+    const rooms = await fresh.loadAll()
+    await fresh.flush()
+    expect([...rooms.keys()]).toEqual([ROOM_B])
+    expect([...backend.records.keys()]).toEqual([`${ME}\n${ROOM_B}`])
+  })
+
+  it('deletes a record filed under a key that is not its own', async () => {
+    const backend = memoryBackend()
+    await backend.put(`${ME}\n${ROOM_B}`, {
+      v: 1,
+      userId: ME,
+      roomId: ROOM,
+      savedAt: Date.now(),
+      messages: [message(1)],
+    })
+    const cache = new TimelineCache(backend, ME)
+    expect((await cache.loadAll()).size).toBe(0)
+    await cache.flush()
+    expect(backend.records.size).toBe(0)
+  })
+
+  it('deletes the whole store when clearing it fails, and says when that fails too', async () => {
+    const backend = memoryBackend()
+    const cache = new TimelineCache(backend, ME)
+    cache.save(ROOM, many(1))
+    await cache.flush()
+    backend.clear = () => Promise.reject(new Error('refused'))
+    const destroy = vi.spyOn(backend, 'destroy')
+    await expect(wipeTimelineCaches(backend)).resolves.toBe(true)
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(backend.records.size).toBe(0)
+    backend.destroy = () => Promise.reject(new Error('refused'))
+    await expect(wipeTimelineCaches(backend)).resolves.toBe(false)
+  })
+
+  it("is the database the console's sign-out deletes", () => {
+    expect(CACHE_DATABASE).toBe(ESPACE_TIMELINE_DATABASE)
   })
 })
