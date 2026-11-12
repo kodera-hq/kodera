@@ -84,6 +84,7 @@ as [`GOVERNANCE.md`](../../GOVERNANCE.md#3-architectural-changes-docsrfcs) descr
 | :--- | :--- |
 | `TOK-ADR-0001` | [ADR-0001: This package is the single source of design values, and its build output is committed](../../packages/design-tokens/docs/adr/0001-tokens-package-is-the-single-source.md) |
 | `TOK-ADR-0002` | [ADR-0002: A decided value moves in `tokens.json`, and the constants the build adds are measured](../../packages/design-tokens/docs/adr/0002-decided-values-move-and-spec-constants-are-measured.md) |
+| `TOK-ADR-0003` | [ADR-0003: A translucent background is measured over declared backdrop extremes, and held to the worst case](../../packages/design-tokens/docs/adr/0003-translucent-backgrounds-are-measured-over-backdrop-extremes.md) |
 
 <!-- adr-index:end -->
 
