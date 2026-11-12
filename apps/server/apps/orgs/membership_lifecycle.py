@@ -1,6 +1,8 @@
 """getMembership, changeMembershipRole and removeMembership: docs/specs/MEMBERSHIP_LIFECYCLE.md.
 
-The read runs in its own repeatable-read snapshot. Each write runs in one transaction: it resolves
+The read runs in its own repeatable-read snapshot, and applies directory privacy (§2.1) before the
+row leaves it: a caller who is neither the row's person nor an owner or admin receives a view
+that carries no contact and no identity. Each write runs in one transaction: it resolves
 the caller, touches the target row so that the membership triggers take the canonical locks (the
 person, then their organisations in id order), resolves the caller again under those locks, and
 only then checks the §2 rules in order, writes, audits and calls the engine hooks.
@@ -8,7 +10,7 @@ only then checks the §2 rules in order, writes, audits and calls the engine hoo
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID
 
@@ -30,6 +32,7 @@ from .actor_selectors import (
     organisation_state,
     read_tenant_caller,
 )
+from .membership_selectors import discloses_private_facts
 from .models import Membership
 
 OWNER = Membership.Role.OWNER
@@ -49,6 +52,8 @@ DENIAL_REASON = "role_missing"
 # Bounded like initialiseWorkspace's: an expired wait raises and the whole write rolls back.
 LOCK_TIMEOUT = "SET LOCAL lock_timeout = '2s'"
 OWNER_REQUIRED = "organisation_owner_required"
+# Names the representation without the private member facts in its strong tag (`etag`).
+WITHHELD_PROJECTION = "private-facts-withheld"
 
 
 class MembershipCallerUnknownError(Exception):
@@ -99,16 +104,21 @@ class MembershipStateError(Exception):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class MembershipView:
+    """`email` is None only on a view whose private member facts are withheld (§2.1), which then
+    carries no `identity_id` either; `private_facts` says which of the two a None identity is."""
+
     id: UUID
     organisation_id: UUID
     user_id: UUID
     identity_id: UUID | None
-    email: str
+    email: str | None
     display_name: str | None
     role: str
     state: str
     created_at: datetime
     updated_at: datetime
+    # False once directory privacy has withheld the private member facts from the reader.
+    private_facts: bool = True
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -120,19 +130,30 @@ class MembershipDetailView:
 
 
 def etag(view: MembershipView) -> str:
-    """A strong tag over the authoritative fields and `updated_at` (CONVENTIONS §10)."""
-    canonical = json.dumps(
-        {
-            "id": str(view.id),
-            "organisation_id": str(view.organisation_id),
-            "role": view.role,
-            "state": view.state,
-            "updated_at": view.updated_at.isoformat(),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    """A strong tag over the authoritative fields and `updated_at` (CONVENTIONS §10).
+
+    It hashes no private member fact, so it is never an oracle for one: a caller who cannot read
+    an address cannot confirm a guess against the tag. The representation directory privacy
+    withholds facts from is a different representation, so it carries a different strong tag,
+    derived from the same fields and a constant: the tag an administrator round-trips as
+    `If-Match` is unchanged, and no validator names two different bodies."""
+    fields = {
+        "id": str(view.id),
+        "organisation_id": str(view.organisation_id),
+        "role": view.role,
+        "state": view.state,
+        "updated_at": view.updated_at.isoformat(),
+    }
+    if not view.private_facts:
+        fields["projection"] = WITHHELD_PROJECTION
+    canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"))
     return '"' + hashlib.sha256(canonical.encode()).hexdigest() + '"'
+
+
+def withheld(view: MembershipView) -> MembershipView:
+    """The view as directory privacy shows it to a caller it withholds the private member facts
+    from: no contact and no identity leave the snapshot."""
+    return replace(view, email=None, identity_id=None, private_facts=False)
 
 
 def parse_patch(body: bytes) -> dict[str, str]:
@@ -174,6 +195,12 @@ def read_membership(
             and caller.organisation_state == "active"
             and (caller.role == OWNER or view.role in ADMIN_REACH)
         )
+        # Directory privacy (§2.1), after every decision that reads the stored row: the answer is
+        # still 200, without the private member facts of a colleague.
+        if not discloses_private_facts(
+            caller_role=caller.role, own_row=view.id == caller.membership_id
+        ):
+            view = withheld(view)
         # The same rules the writes apply: a role changes on an accepted membership, while an
         # invitation can still be removed.
         return (
