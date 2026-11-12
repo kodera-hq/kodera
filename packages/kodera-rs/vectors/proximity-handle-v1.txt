@@ -1,0 +1,147 @@
+# Kodera proximity sender handle v1: the pseudonym shown for a check-in.
+#
+# A proximity frame carries its sender's device public half, never a name. What a client shows
+# next to a check-in is a handle: one the member picked for this purpose (`dedicated`) or one
+# derived from the frame's sender bytes (`generated`). A real name is never required and never
+# travels in a frame. A handle is a display label: it proves neither identity nor membership.
+#
+# A handle is 3 to 24 characters matching ^[a-z0-9]+(?:-[a-z0-9]+)*$ (ASCII only, so characters
+# and bytes agree). A generated handle is
+#   <adjective>-<noun>-<4 lowercase hex>
+# where d = SHA-256("kodera-proximity-handle-v1:" || 32 sender bytes), the adjective is entry
+# d[0] & 31, the noun is entry d[1] & 31 and the hex is d[2], d[3]. The label is hashed for
+# display only; it is not part of the frozen frame v1 and signs nothing.
+#
+# Rust (`packages/kodera-rs/src/proximity_handle.rs`), Swift (`apps/ios/packages/KoderaDomain`)
+# and Kotlin (`apps/android/domain`) read this file and agree with every line.
+#
+# Grammar, one entry per line, fields separated by single spaces:
+#   bound <name> <value>
+#   origin <slug>
+#   adjective <index> <word>
+#   noun <index> <word>
+#   valid <handle>
+#   refuse <name> <utf8_hex|->          (`-` is the empty string)
+#   generated <sender_hex> <handle>
+# Blank lines and lines starting with `#` are ignored. Any other line is an error.
+
+bound min_chars 3
+bound max_chars 24
+
+origin dedicated
+origin generated
+
+adjective 0 amber
+adjective 1 brisk
+adjective 2 calm
+adjective 3 clear
+adjective 4 coral
+adjective 5 crisp
+adjective 6 dusky
+adjective 7 early
+adjective 8 fair
+adjective 9 gentle
+adjective 10 golden
+adjective 11 green
+adjective 12 hazel
+adjective 13 ivory
+adjective 14 jade
+adjective 15 keen
+adjective 16 light
+adjective 17 lunar
+adjective 18 mellow
+adjective 19 misty
+adjective 20 noble
+adjective 21 olive
+adjective 22 pale
+adjective 23 quiet
+adjective 24 rapid
+adjective 25 royal
+adjective 26 sandy
+adjective 27 silver
+adjective 28 solar
+adjective 29 steady
+adjective 30 swift
+adjective 31 vivid
+
+noun 0 alder
+noun 1 aspen
+noun 2 badger
+noun 3 birch
+noun 4 brook
+noun 5 cedar
+noun 6 comet
+noun 7 crane
+noun 8 delta
+noun 9 dune
+noun 10 ember
+noun 11 falcon
+noun 12 fern
+noun 13 finch
+noun 14 glade
+noun 15 harbor
+noun 16 heron
+noun 17 island
+noun 18 juniper
+noun 19 lark
+noun 20 lynx
+noun 21 maple
+noun 22 meadow
+noun 23 otter
+noun 24 pebble
+noun 25 pine
+noun 26 quartz
+noun 27 raven
+noun 28 reef
+noun 29 river
+noun 30 sparrow
+noun 31 willow
+
+valid abc
+valid a1b
+valid 123
+valid a-b
+valid 0-0
+valid kodera-7
+valid north-wing-3
+valid x-y-z
+valid a-b-c-d-e-f-g-h-i-j-k-l
+valid abcdefghijklmnopqrstuvwx
+valid calm-heron-3fa2
+
+refuse empty -
+refuse two_chars 6162
+refuse two_chars_and_hyphen 612d
+refuse twenty_five_chars 6162636465666768696a6b6c6d6e6f70717273747576777879
+refuse uppercase_first 416263
+refuse uppercase_inside 616243
+refuse leading_hyphen 2d616263
+refuse trailing_hyphen 6162632d
+refuse double_hyphen 61622d2d6364
+refuse hyphens_only 2d2d2d
+refuse inner_space 6162206364
+refuse leading_space 20616263
+refuse trailing_space 61626320
+refuse trailing_newline 6162630a
+refuse trailing_carriage_return 6162630d
+refuse tab 6162096364
+refuse nul 61620063
+refuse underscore 61625f6364
+refuse dot 61622e6364
+refuse at_sign 40616263
+refuse slash 61622f6364
+refuse accented_latin 636166c3a9
+refuse cyrillic_lookalike d0b06263
+refuse fullwidth_letters efbd81efbd82efbd83
+refuse arabic_indic_digits d9a1d9a2d9a3
+refuse emoji 6162f09f9880
+refuse zero_width_joiner 6162e2808d6364
+refuse en_dash 6162e280936364
+refuse display_name_shape 4a65616e204475706f6e74
+refuse email_shape 6a65616e406578616d706c652e6f7267
+
+generated d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a olive-pine-f9fe
+generated 0000000000000000000000000000000000000000000000000000000000000000 hazel-river-f67b
+generated ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff hazel-glade-1915
+generated 0909090909090909090909090909090909090909090909090909090909090909 rapid-quartz-52d1
+generated 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f ivory-quartz-11bb

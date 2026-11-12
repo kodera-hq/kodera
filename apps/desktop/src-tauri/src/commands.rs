@@ -7,13 +7,31 @@ use super::{
 use kodera_rs::{
     encode_hex, ChannelAccessDecision, ChannelPermissionPolicy, ChannelPollSnapshot, CoreError,
     CoreThemeMode, DocsPadDocument, DocsPadUrl, Ed25519PublicKey, OrgRoleRank, PresenceStatus,
-    SafetyStatus, ShareableThemePayload, SoundPackId, UserProfile, KODERA_MONOGRAM_BG_HEX,
-    MAX_EMERGENCY_QUEUE_CAPACITY,
+    ProximityHandle, SafetyStatus, ShareableThemePayload, SoundPackId, UserProfile,
+    KODERA_MONOGRAM_BG_HEX, MAX_PROXIMITY_QUEUE_CAPACITY,
 };
 use std::{collections::BTreeMap, fmt};
 
 /// Bound raw UTF-8 requests before parsing or allocating decoded fields.
 pub const MAX_IPC_COMMAND_BYTES: usize = 16_384;
+
+/// The proximity routes answer under two names, permanently. The channel was first called
+/// `#urgence` and its routes `emergency_*`; a caller written then keeps working. Each legacy name
+/// is resolved to its `proximity_*` route before the decoder runs, so both names share one schema,
+/// one set of effects and one response. Removing a pair breaks deployed callers: the tests pin all
+/// three and fail when one is dropped.
+pub const LEGACY_ROUTE_ALIASES: [(&str, &str); 3] = [
+    ("emergency_current_beacon", "proximity_current_beacon"),
+    ("emergency_member_statuses", "proximity_member_statuses"),
+    ("emergency_next_relay_batch", "proximity_next_relay_batch"),
+];
+
+fn canonical_route<'a>(command: &'a str, aliases: &[(&'static str, &'static str)]) -> &'a str {
+    aliases
+        .iter()
+        .find(|(legacy, _)| *legacy == command)
+        .map_or(command, |(_, canonical)| canonical)
+}
 
 /// Every variant is bound to the active organisation, including clear and local planning.
 /// Debug and Display intentionally redact the entire request, because a caller can copy a token
@@ -64,14 +82,14 @@ pub enum DesktopCommandRequest {
         organisation_id: String,
         raw_url: String,
     },
-    EmergencyCurrentBeacon {
+    ProximityCurrentBeacon {
         organisation_id: String,
         now_unix_secs: u64,
     },
-    EmergencyMemberStatuses {
+    ProximityMemberStatuses {
         organisation_id: String,
     },
-    EmergencyNextRelayBatch {
+    ProximityNextRelayBatch {
         organisation_id: String,
         max_frames: usize,
     },
@@ -120,6 +138,15 @@ impl DesktopCommandRequest {
     /// Unknown/duplicate fields are refused, including duplicate escaped spellings of a key.
     /// Arrays have at most ten scalar elements; no recursive descent or nested objects.
     pub fn from_json(raw_json: &str) -> Result<Self, DesktopCommandError> {
+        Self::from_json_with_aliases(raw_json, &LEGACY_ROUTE_ALIASES)
+    }
+
+    /// [`Self::from_json`] with the alias table as an argument, so a test can drop a pair and
+    /// watch the legacy name be refused.
+    fn from_json_with_aliases(
+        raw_json: &str,
+        aliases: &[(&'static str, &'static str)],
+    ) -> Result<Self, DesktopCommandError> {
         if raw_json.len() > MAX_IPC_COMMAND_BYTES {
             return Err(DesktopCommandError::RequestTooLarge);
         }
@@ -149,7 +176,7 @@ impl DesktopCommandRequest {
             take_string(&mut fields, "command")?
         };
         let organisation_id = take_string(&mut fields, "organisation_id")?;
-        let request = match command.as_str() {
+        let request = match canonical_route(command.as_str(), aliases) {
             "create_channel_poll" => Self::CreateChannelPoll {
                 organisation_id,
                 channel_id: take_string(&mut fields, "channel_id")?,
@@ -201,12 +228,12 @@ impl DesktopCommandRequest {
                 organisation_id,
                 raw_url: take_string(&mut fields, "raw_url")?,
             },
-            "emergency_current_beacon" => Self::EmergencyCurrentBeacon {
+            "proximity_current_beacon" => Self::ProximityCurrentBeacon {
                 organisation_id,
                 now_unix_secs: take_integer(&mut fields, "now_unix_secs")?,
             },
-            "emergency_member_statuses" => Self::EmergencyMemberStatuses { organisation_id },
-            "emergency_next_relay_batch" => Self::EmergencyNextRelayBatch {
+            "proximity_member_statuses" => Self::ProximityMemberStatuses { organisation_id },
+            "proximity_next_relay_batch" => Self::ProximityNextRelayBatch {
                 organisation_id,
                 max_frames: usize::try_from(take_integer(&mut fields, "max_frames")?)
                     .map_err(|_| DesktopCommandError::InvalidRequest)?,
@@ -309,11 +336,11 @@ impl DesktopCommandRequest {
             | Self::ValidateDocsPadUrl {
                 organisation_id, ..
             }
-            | Self::EmergencyCurrentBeacon {
+            | Self::ProximityCurrentBeacon {
                 organisation_id, ..
             }
-            | Self::EmergencyMemberStatuses { organisation_id }
-            | Self::EmergencyNextRelayBatch {
+            | Self::ProximityMemberStatuses { organisation_id }
+            | Self::ProximityNextRelayBatch {
                 organisation_id, ..
             }
             | Self::ClearWorkspaceSession { organisation_id }
@@ -617,8 +644,10 @@ impl fmt::Display for DesktopCommandRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmergencyMemberStatus {
+pub struct ProximityMemberStatus {
     pub sender_public_key: Ed25519PublicKey,
+    /// The pseudonym to show for this sender. Derived from the sender key; never a name.
+    pub sender_handle: ProximityHandle,
     pub status: SafetyStatus,
     pub text: String,
     pub timestamp_ms: u64,
@@ -641,12 +670,12 @@ pub enum DesktopCommandResponse {
     ConnectorPostUrl(String),
     SelfHostPlan(SelfHostDeploymentPlan),
     DocsPadUrl(DocsPadUrl),
-    EmergencyBeacon {
+    ProximityBeacon {
         bytes: [u8; 8],
         hex: String,
     },
-    EmergencyMemberStatuses(Vec<EmergencyMemberStatus>),
-    EmergencyRelayBatch(Vec<Vec<u8>>),
+    ProximityMemberStatuses(Vec<ProximityMemberStatus>),
+    ProximityRelayBatch(Vec<Vec<u8>>),
     SoundPack(SoundPackId),
     ThemeMode {
         mode: CoreThemeMode,
@@ -686,7 +715,15 @@ impl DesktopWorkspaceSession {
     /// Bounded command-only JSON admission. Parsing/schema errors carry no input text and have
     /// no side effects; this method neither registers JS IPC nor establishes caller identity.
     pub fn dispatch_command(&mut self, raw_json: &str) -> DesktopCommandResponse {
-        match DesktopCommandRequest::from_json(raw_json) {
+        self.dispatch_command_with_aliases(raw_json, &LEGACY_ROUTE_ALIASES)
+    }
+
+    fn dispatch_command_with_aliases(
+        &mut self,
+        raw_json: &str,
+        aliases: &[(&'static str, &'static str)],
+    ) -> DesktopCommandResponse {
+        match DesktopCommandRequest::from_json_with_aliases(raw_json, aliases) {
             Ok(request) => self.execute_command(request),
             Err(error) => DesktopCommandResponse::Error(error),
         }
@@ -793,24 +830,25 @@ impl DesktopWorkspaceSession {
                 .validate_docs_pad_url(&organisation_id, &raw_url)
                 .map(DesktopCommandResponse::DocsPadUrl)
                 .map_err(DesktopCommandError::Core),
-            DesktopCommandRequest::EmergencyCurrentBeacon {
+            DesktopCommandRequest::ProximityCurrentBeacon {
                 organisation_id,
                 now_unix_secs,
             } => self
                 .current_beacon(&organisation_id, now_unix_secs)
-                .map(|bytes| DesktopCommandResponse::EmergencyBeacon {
+                .map(|bytes| DesktopCommandResponse::ProximityBeacon {
                     hex: encode_hex(&bytes),
                     bytes,
                 })
                 .map_err(DesktopCommandError::Core),
-            DesktopCommandRequest::EmergencyMemberStatuses { organisation_id } => self
+            DesktopCommandRequest::ProximityMemberStatuses { organisation_id } => self
                 .member_statuses(&organisation_id)
                 .map(|members| {
-                    DesktopCommandResponse::EmergencyMemberStatuses(
+                    DesktopCommandResponse::ProximityMemberStatuses(
                         members
                             .into_iter()
                             .map(|(sender_public_key, status, text, timestamp_ms)| {
-                                EmergencyMemberStatus {
+                                ProximityMemberStatus {
+                                    sender_handle: ProximityHandle::generated(&sender_public_key),
                                     sender_public_key,
                                     status,
                                     text,
@@ -821,15 +859,15 @@ impl DesktopWorkspaceSession {
                     )
                 })
                 .map_err(DesktopCommandError::Core),
-            DesktopCommandRequest::EmergencyNextRelayBatch {
+            DesktopCommandRequest::ProximityNextRelayBatch {
                 organisation_id,
                 max_frames,
             } => self
                 .next_relay_batch(
                     &organisation_id,
-                    max_frames.min(MAX_EMERGENCY_QUEUE_CAPACITY),
+                    max_frames.min(MAX_PROXIMITY_QUEUE_CAPACITY),
                 )
-                .map(DesktopCommandResponse::EmergencyRelayBatch)
+                .map(DesktopCommandResponse::ProximityRelayBatch)
                 .map_err(DesktopCommandError::Core),
             DesktopCommandRequest::ClearWorkspaceSession { .. } => {
                 self.clear_session();
@@ -1037,14 +1075,14 @@ mod tests {
                 organisation_id: OTHER_ORG.to_owned(),
                 raw_url: "https://docs.example.org/docs/one".to_owned(),
             },
-            DesktopCommandRequest::EmergencyCurrentBeacon {
+            DesktopCommandRequest::ProximityCurrentBeacon {
                 organisation_id: OTHER_ORG.to_owned(),
                 now_unix_secs: 1,
             },
-            DesktopCommandRequest::EmergencyMemberStatuses {
+            DesktopCommandRequest::ProximityMemberStatuses {
                 organisation_id: OTHER_ORG.to_owned(),
             },
-            DesktopCommandRequest::EmergencyNextRelayBatch {
+            DesktopCommandRequest::ProximityNextRelayBatch {
                 organisation_id: OTHER_ORG.to_owned(),
                 max_frames: usize::MAX,
             },
@@ -1096,13 +1134,13 @@ mod tests {
 
     #[test]
     fn beacon_response_has_same_bytes_and_canonical_hex() {
-        let response = session().execute_command(DesktopCommandRequest::EmergencyCurrentBeacon {
+        let response = session().execute_command(DesktopCommandRequest::ProximityCurrentBeacon {
             organisation_id: ORG.to_owned(),
             now_unix_secs: 1_762_520_100,
         });
         assert_eq!(
             response,
-            DesktopCommandResponse::EmergencyBeacon {
+            DesktopCommandResponse::ProximityBeacon {
                 bytes: [0x1b, 0xe3, 0x96, 0x76, 0x37, 0xeb, 0xb0, 0xea],
                 hex: "1be3967637ebb0ea".to_owned(),
             }
@@ -1114,8 +1152,8 @@ mod tests {
         let mut session = session();
         populate(&mut session, 2, 2);
         populate(&mut session, 1, 1);
-        let DesktopCommandResponse::EmergencyMemberStatuses(statuses) =
-            session.execute_command(DesktopCommandRequest::EmergencyMemberStatuses {
+        let DesktopCommandResponse::ProximityMemberStatuses(statuses) =
+            session.execute_command(DesktopCommandRequest::ProximityMemberStatuses {
                 organisation_id: ORG.to_owned(),
             })
         else {
@@ -1137,15 +1175,15 @@ mod tests {
         let mut session = session();
         populate(&mut session, 1, 1);
         populate(&mut session, 2, 2);
-        let request = |max_frames| DesktopCommandRequest::EmergencyNextRelayBatch {
+        let request = |max_frames| DesktopCommandRequest::ProximityNextRelayBatch {
             organisation_id: ORG.to_owned(),
             max_frames,
         };
         assert_eq!(
             session.execute_command(request(0)),
-            DesktopCommandResponse::EmergencyRelayBatch(vec![])
+            DesktopCommandResponse::ProximityRelayBatch(vec![])
         );
-        let DesktopCommandResponse::EmergencyRelayBatch(frames) =
+        let DesktopCommandResponse::ProximityRelayBatch(frames) =
             session.execute_command(request(usize::MAX))
         else {
             panic!("expected frames")
@@ -1153,7 +1191,7 @@ mod tests {
         assert_eq!(frames.len(), 2);
         assert_eq!(
             session.execute_command(request(1)),
-            DesktopCommandResponse::EmergencyRelayBatch(vec![])
+            DesktopCommandResponse::ProximityRelayBatch(vec![])
         );
     }
 
@@ -1200,7 +1238,7 @@ mod tests {
         );
         assert!(
             session.organisation_id.is_none()
-                && session.emergency.is_none()
+                && session.proximity.is_none()
                 && session.allowed_docs_host.is_none()
                 && session.extension_webhooks.is_none()
                 && session.sound_pack.is_none()
@@ -1274,18 +1312,18 @@ mod tests {
         ));
         assert!(matches!(
             session.dispatch_command(&json(
-                "emergency_current_beacon",
+                "proximity_current_beacon",
                 r#", "now_unix_secs":1762520100"#
             )),
-            DesktopCommandResponse::EmergencyBeacon { .. }
+            DesktopCommandResponse::ProximityBeacon { .. }
         ));
         assert_eq!(
-            session.dispatch_command(&json("emergency_member_statuses", "")),
-            DesktopCommandResponse::EmergencyMemberStatuses(vec![])
+            session.dispatch_command(&json("proximity_member_statuses", "")),
+            DesktopCommandResponse::ProximityMemberStatuses(vec![])
         );
         assert_eq!(
-            session.dispatch_command(&json("emergency_next_relay_batch", r#", "max_frames":128"#)),
-            DesktopCommandResponse::EmergencyRelayBatch(vec![])
+            session.dispatch_command(&json("proximity_next_relay_batch", r#", "max_frames":128"#)),
+            DesktopCommandResponse::ProximityRelayBatch(vec![])
         );
         assert_eq!(
             session.dispatch_command(&json("set_sound_pack", r#", "sound_pack":"404""#)),
@@ -1312,7 +1350,7 @@ mod tests {
                 r#", "unknown":"fixture-sensitive-field""#,
             ),
             json(
-                "emergency_next_relay_batch",
+                "proximity_next_relay_batch",
                 r#", "max_frames":128,"raw_token":"fixture-sensitive-field""#,
             ),
             json("clear_workspace_session", r#", "command":"get_sound_pack""#),
@@ -1368,7 +1406,7 @@ mod tests {
         ] {
             assert_eq!(
                 session.dispatch_command(&json(
-                    "emergency_next_relay_batch",
+                    "proximity_next_relay_batch",
                     &format!(",\"max_frames\":{number}")
                 )),
                 DesktopCommandResponse::Error(DesktopCommandError::InvalidRequest),
@@ -1377,10 +1415,10 @@ mod tests {
         }
         assert!(matches!(
             session.dispatch_command(&json(
-                "emergency_current_beacon",
+                "proximity_current_beacon",
                 ",\"now_unix_secs\":18446744073709551615"
             )),
-            DesktopCommandResponse::EmergencyBeacon { .. }
+            DesktopCommandResponse::ProximityBeacon { .. }
         ));
     }
 
@@ -1561,7 +1599,7 @@ mod tests {
                 "vote_channel_poll",
                 &format!(r#", "voter_id":"{ORG}", "selections":[true]"#),
             ),
-            json("emergency_next_relay_batch", r#", "max_frames":[1]"#),
+            json("proximity_next_relay_batch", r#", "max_frames":[1]"#),
             json("get_sound_pack", r#", "extra":false"#),
         ];
         for input in invalid {
@@ -1995,16 +2033,16 @@ mod tests {
                 ),
             ),
             (
-                "emergency_current_beacon",
-                json("emergency_current_beacon", r#","now_unix_secs":1"#),
+                "proximity_current_beacon",
+                json("proximity_current_beacon", r#","now_unix_secs":1"#),
             ),
             (
-                "emergency_member_statuses",
-                json("emergency_member_statuses", ""),
+                "proximity_member_statuses",
+                json("proximity_member_statuses", ""),
             ),
             (
-                "emergency_next_relay_batch",
-                json("emergency_next_relay_batch", r#","max_frames":128"#),
+                "proximity_next_relay_batch",
+                json("proximity_next_relay_batch", r#","max_frames":128"#),
             ),
             (
                 "clear_workspace_session",
@@ -2090,19 +2128,19 @@ mod tests {
                     assert_eq!(url.as_str(), "https://docs.example.org/docs/one");
                 }
                 (
-                    "emergency_current_beacon",
-                    DesktopCommandResponse::EmergencyBeacon { bytes, hex },
+                    "proximity_current_beacon",
+                    DesktopCommandResponse::ProximityBeacon { bytes, hex },
                 ) => {
                     assert_eq!(bytes, state.current_beacon(ORG, 1).unwrap());
                     assert_eq!(hex, encode_hex(&bytes));
                 }
                 (
-                    "emergency_member_statuses",
-                    DesktopCommandResponse::EmergencyMemberStatuses(members),
+                    "proximity_member_statuses",
+                    DesktopCommandResponse::ProximityMemberStatuses(members),
                 ) => assert_eq!(members.len(), 1),
                 (
-                    "emergency_next_relay_batch",
-                    DesktopCommandResponse::EmergencyRelayBatch(frames),
+                    "proximity_next_relay_batch",
+                    DesktopCommandResponse::ProximityRelayBatch(frames),
                 ) => {
                     assert_eq!(frames.len(), 1);
                     assert!(state.next_relay_batch(ORG, 1).unwrap().is_empty());
@@ -2185,7 +2223,10 @@ mod tests {
                 state.allowed_docs_host.clone(),
             )
         };
-        for (name, request) in audit_command_cases() {
+        for (name, request) in audit_command_cases()
+            .into_iter()
+            .chain(legacy_route_cases())
+        {
             let stem = request.strip_suffix('}').unwrap();
             let attempts = [
                 (
@@ -2221,7 +2262,7 @@ mod tests {
                 assert_eq!(
                     state.next_relay_batch(ORG, 128).unwrap().len(),
                     1,
-                    "route {name} drained the emergency queue"
+                    "route {name} drained the proximity queue"
                 );
             }
         }
@@ -2229,7 +2270,10 @@ mod tests {
 
     #[test]
     fn every_json_route_fails_closed_after_workspace_teardown() {
-        for (name, request) in audit_command_cases() {
+        for (name, request) in audit_command_cases()
+            .into_iter()
+            .chain(legacy_route_cases())
+        {
             let mut state = audit_workspace();
             state.clear_session();
             assert_eq!(
@@ -2242,5 +2286,196 @@ mod tests {
             assert!(state.organisation_id().is_none());
             assert!(state.user_profile.is_none() && state.docs_pads.is_empty());
         }
+    }
+
+    /// The three legacy names, spelled here on purpose: this list does not read the table it pins.
+    const PINNED_LEGACY_ROUTES: [(&str, &str); 3] = [
+        ("emergency_current_beacon", "proximity_current_beacon"),
+        ("emergency_member_statuses", "proximity_member_statuses"),
+        ("emergency_next_relay_batch", "proximity_next_relay_batch"),
+    ];
+
+    /// Each proximity request of the audit, re-addressed to its legacy route name.
+    fn legacy_route_cases() -> Vec<(&'static str, String)> {
+        let canonical = audit_command_cases();
+        PINNED_LEGACY_ROUTES
+            .iter()
+            .map(|(legacy, proximity)| {
+                let (_, request) = canonical
+                    .iter()
+                    .find(|(name, _)| name == proximity)
+                    .expect("every proximity route is in the audit");
+                let renamed = request.replacen(
+                    &format!(r#""command":"{proximity}""#),
+                    &format!(r#""command":"{legacy}""#),
+                    1,
+                );
+                assert_ne!(&renamed, request);
+                (*legacy, renamed)
+            })
+            .collect()
+    }
+
+    /// Everything a proximity route can change or reveal, for comparing two sessions.
+    fn proximity_outcome(
+        state: &mut DesktopWorkspaceSession,
+        request: &str,
+        aliases: &[(&'static str, &'static str)],
+    ) -> (DesktopCommandResponse, usize, usize) {
+        let response = state.dispatch_command_with_aliases(request, aliases);
+        let members = state
+            .member_statuses(ORG)
+            .map_or(0, |members| members.len());
+        let queued = state
+            .next_relay_batch(ORG, 128)
+            .map_or(0, |frames| frames.len());
+        (response, members, queued)
+    }
+
+    /// The dual-name contract: with `aliases` in force, each legacy route answers exactly like its
+    /// proximity route, on success and on every refusal, and leaves the same state behind.
+    fn legacy_routes_answer_like_proximity_routes(
+        aliases: &[(&'static str, &'static str)],
+    ) -> Result<(), String> {
+        let canonical = audit_command_cases();
+        for ((legacy, legacy_request), (_, proximity)) in
+            legacy_route_cases().into_iter().zip(PINNED_LEGACY_ROUTES)
+        {
+            let (_, proximity_request) = canonical
+                .iter()
+                .find(|(name, _)| *name == proximity)
+                .expect("every proximity route is in the audit");
+            let variants = |request: &str| {
+                let stem = request.strip_suffix('}').unwrap();
+                vec![
+                    request.to_owned(),
+                    request.replacen(ORG, OTHER_ORG, 1),
+                    format!(r#"{stem},"audit_unknown":true}}"#),
+                    format!(r#"{stem},"max_frames":"128"}}"#),
+                ]
+            };
+            for (index, (old, new)) in variants(&legacy_request)
+                .into_iter()
+                .zip(variants(proximity_request))
+                .enumerate()
+            {
+                let answered_old = proximity_outcome(&mut audit_workspace(), &old, aliases);
+                let answered_new = proximity_outcome(&mut audit_workspace(), &new, aliases);
+                if answered_old != answered_new {
+                    return Err(format!(
+                        "{legacy} differs from {proximity} on variant {index}"
+                    ));
+                }
+                let succeeded = !matches!(answered_new.0, DesktopCommandResponse::Error(_));
+                if succeeded != (index == 0) {
+                    return Err(format!("{proximity} variant {index} had the wrong verdict"));
+                }
+            }
+            for ended in [&legacy_request, proximity_request] {
+                let mut state = audit_workspace();
+                state.clear_session();
+                if state.dispatch_command_with_aliases(ended, aliases)
+                    != DesktopCommandResponse::Error(DesktopCommandError::Core(
+                        CoreError::TransportUnavailable,
+                    ))
+                {
+                    return Err(format!("{legacy} or {proximity} answered after teardown"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_emergency_routes_are_permanent_aliases_of_the_proximity_routes() {
+        assert_eq!(LEGACY_ROUTE_ALIASES, PINNED_LEGACY_ROUTES);
+        assert_eq!(
+            legacy_routes_answer_like_proximity_routes(&LEGACY_ROUTE_ALIASES),
+            Ok(())
+        );
+        // Through the public entry point too: each name reaches its typed proximity result.
+        for (name, request) in legacy_route_cases() {
+            let mut state = audit_workspace();
+            match (name, state.dispatch_command(&request)) {
+                (
+                    "emergency_current_beacon",
+                    DesktopCommandResponse::ProximityBeacon { bytes, hex },
+                ) => {
+                    assert_eq!(bytes, state.current_beacon(ORG, 1).unwrap());
+                    assert_eq!(hex, encode_hex(&bytes));
+                }
+                (
+                    "emergency_member_statuses",
+                    DesktopCommandResponse::ProximityMemberStatuses(members),
+                ) => {
+                    assert_eq!(members.len(), 1);
+                    assert_eq!(
+                        members[0].sender_handle,
+                        ProximityHandle::generated(&members[0].sender_public_key)
+                    );
+                }
+                (
+                    "emergency_next_relay_batch",
+                    DesktopCommandResponse::ProximityRelayBatch(frames),
+                ) => {
+                    assert_eq!(frames.len(), 1);
+                    assert!(state.next_relay_batch(ORG, 1).unwrap().is_empty());
+                }
+                (route, unexpected) => {
+                    panic!("{route} produced unexpected response: {unexpected:?}")
+                }
+            }
+        }
+        // An alias is a route name only: it is not admitted through the `op` discriminator, and
+        // no other spelling of the old name is invented.
+        for request in [
+            format!(r#"{{"op":"emergency_member_statuses","organisation_id":"{ORG}"}}"#),
+            json("Emergency_member_statuses", ""),
+            json("emergency_member_status", ""),
+            json("urgence_member_statuses", ""),
+        ] {
+            assert_eq!(
+                audit_workspace().dispatch_command(&request),
+                DesktopCommandResponse::Error(DesktopCommandError::InvalidRequest)
+            );
+        }
+    }
+
+    /// Refusal mutation: drop one alias at a time. The legacy name must then be refused and the
+    /// dual-name check above must fail, while the proximity name keeps answering.
+    #[test]
+    fn dropping_any_legacy_alias_is_refused_by_the_dual_name_check() {
+        for (dropped, (legacy, proximity)) in PINNED_LEGACY_ROUTES.into_iter().enumerate() {
+            let mutated: Vec<(&'static str, &'static str)> = LEGACY_ROUTE_ALIASES
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| *index != dropped)
+                .map(|(_, pair)| pair)
+                .collect();
+            assert_eq!(mutated.len(), 2);
+            let failure = legacy_routes_answer_like_proximity_routes(&mutated)
+                .expect_err("a dropped alias must fail the dual-name check");
+            assert!(failure.starts_with(legacy), "{failure}");
+
+            let (_, legacy_request) = legacy_route_cases().swap_remove(dropped);
+            assert_eq!(
+                audit_workspace().dispatch_command_with_aliases(&legacy_request, &mutated),
+                DesktopCommandResponse::Error(DesktopCommandError::InvalidRequest),
+                "{legacy} without its alias"
+            );
+            let proximity_request =
+                legacy_request.replacen(&format!(r#""{legacy}""#), &format!(r#""{proximity}""#), 1);
+            assert!(!matches!(
+                audit_workspace().dispatch_command_with_aliases(&proximity_request, &mutated),
+                DesktopCommandResponse::Error(_)
+            ));
+        }
+        // An alias pointing at another route is caught as well.
+        let crossed = [
+            ("emergency_current_beacon", "proximity_member_statuses"),
+            LEGACY_ROUTE_ALIASES[1],
+            LEGACY_ROUTE_ALIASES[2],
+        ];
+        assert!(legacy_routes_answer_like_proximity_routes(&crossed).is_err());
     }
 }

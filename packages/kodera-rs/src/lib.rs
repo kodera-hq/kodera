@@ -4,12 +4,17 @@
 //! 1. **Transport Seam (`UuidV7`):** Clients address channels and messages exclusively via canonical
 //!    RFC 9562 UUIDv7 identifiers, keeping Matrix/Synapse room IDs isolated behind `MessagingTransport`.
 //! 2. **Device Cryptographic Identity (`Ed25519`):** Hardware-backed/OS-keyring signing abstraction
-//!    used to authenticate confidential envelopes and offline emergency frames.
+//!    used to authenticate confidential envelopes and offline proximity frames.
 //! 3. **Group E2EE Seam (`OpenMLS` RFC 9420):** Wire envelope and session trait preparing LiveKit
 //!    voice/video frame encryption and confidential channels without coupling standard workspace search.
-//! 4. **Building Blackout Lifeline (`#urgence`):** Pre-provisioned intra-organisation proximity beacon
+//! 4. **Proximity Channel (`#proximity`):** Pre-provisioned intra-organisation proximity beacon
 //!    (`HMAC-SHA256` rotating salt) and bounded `<= 256`-byte store-and-forward frame codec (`TTL <= 6`)
-//!    over local Wi-Fi (`mDNS + QUIC`) and `BLE GATT`.
+//!    over local Wi-Fi (`mDNS + QUIC`) and `BLE GATT`. It is an everyday presence channel with a
+//!    voluntary, pseudonymous check-in. It is not an emergency service.
+//!
+//! The channel was first named `#urgence` and its types `Emergency*`. The v1 wire format is frozen,
+//! so every byte that reaches the wire or a signature keeps its historical value, old word included:
+//! see [`ProximityFrame`] and `vectors/proximity-frame-v1.txt`.
 
 #![forbid(unsafe_code)]
 
@@ -22,6 +27,15 @@ pub use poll_connector::{
     ChannelPollOption, ChannelPollSnapshot, MAX_CHANNEL_POLL_VOTERS,
 };
 
+mod proximity_handle;
+pub use proximity_handle::{
+    validate_proximity_handle, ProximityHandle, ProximityHandleOrigin, MAX_PROXIMITY_HANDLE_CHARS,
+    MIN_PROXIMITY_HANDLE_CHARS,
+};
+
+#[cfg(test)]
+mod proximity_frame_vectors;
+
 mod workspace_prefs;
 pub use workspace_prefs::{
     curated_desktop_themes, decode_shareable_theme, encode_shareable_theme,
@@ -32,29 +46,30 @@ pub use workspace_prefs::{
     MAX_THEME_SHARE_CODE_BYTES, THEME_SHARE_PREFIX,
 };
 
-/// Maximum wire size in bytes for a single `#urgence` BLE GATT frame.
-pub const MAX_EMERGENCY_FRAME_BYTES: usize = 256;
-/// Maximum UTF-8 byte length for `#urgence` short text payloads (`256 - 118` fixed overhead).
-pub const MAX_EMERGENCY_TEXT_BYTES: usize = 138;
+/// Maximum wire size in bytes for a single `#proximity` BLE GATT frame.
+pub const MAX_PROXIMITY_FRAME_BYTES: usize = 256;
+/// Maximum UTF-8 byte length for `#proximity` short text payloads (`256 - 118` fixed overhead).
+pub const MAX_PROXIMITY_TEXT_BYTES: usize = 138;
 /// Maximum store-and-forward relay hop count across a building.
-pub const MAX_EMERGENCY_TTL_HOPS: u8 = 6;
+pub const MAX_PROXIMITY_TTL_HOPS: u8 = 6;
 /// Rotating BLE advertisement window in seconds (5 minutes) to prevent external tracking.
 pub const BEACON_ROTATION_WINDOW_SECS: u64 = 300;
 
-// Shared emergency bounds. Every platform is to enforce these values; `vectors/emergency-v1-rules.txt`
-// states them for the Swift, Kotlin and Web ports, and the tests below hold this file to it.
+// Shared proximity bounds. Every platform is to enforce these values; `vectors/emergency-v1-rules.txt`
+// (a path other checks read, kept under its historical name) states them for the Swift, Kotlin and
+// Web ports, and the tests below hold this file to it.
 
 /// Hard upper bound for replay history and an organisation's tracked device roster.
-pub const MAX_EMERGENCY_STATE_ENTRIES: usize = 4096;
+pub const MAX_PROXIMITY_STATE_ENTRIES: usize = 4096;
 /// Hard upper bound on queued radio frames, independent of caller-provided capacities.
-pub const MAX_EMERGENCY_QUEUE_CAPACITY: usize = 128;
+pub const MAX_PROXIMITY_QUEUE_CAPACITY: usize = 128;
 /// Hard upper bound on the device keys an organisation's roster tracks.
-pub const MAX_EMERGENCY_ROSTER_MEMBERS: usize = MAX_EMERGENCY_STATE_ENTRIES;
+pub const MAX_PROXIMITY_ROSTER_MEMBERS: usize = MAX_PROXIMITY_STATE_ENTRIES;
 /// Hard upper bound on the message IDs a replay guard remembers.
-pub const MAX_EMERGENCY_REPLAY_ENTRIES: usize = MAX_EMERGENCY_STATE_ENTRIES;
+pub const MAX_PROXIMITY_REPLAY_ENTRIES: usize = MAX_PROXIMITY_STATE_ENTRIES;
 /// How far a frame's UUIDv7 time may run ahead of the verifier's clock (5 minutes). A frame dated
 /// further ahead is refused: kept, it would outrank its sender's real check-ins in the roster.
-pub const MAX_EMERGENCY_FUTURE_SKEW_MS: u64 = 5 * 60 * 1000;
+pub const MAX_PROXIMITY_FUTURE_SKEW_MS: u64 = 5 * 60 * 1000;
 
 /// Native sound preference identifiers. These do not activate an audio renderer.
 /// Legacy Web pack names are a separate contract and are not accepted as aliases.
@@ -317,8 +332,8 @@ impl SessionEnvelopeTracker {
         room_capacity: usize,
         replay_capacity: usize,
     ) -> Result<Self, CoreError> {
-        if !(1..=MAX_EMERGENCY_STATE_ENTRIES).contains(&room_capacity)
-            || !(1..=MAX_EMERGENCY_STATE_ENTRIES).contains(&replay_capacity)
+        if !(1..=MAX_PROXIMITY_STATE_ENTRIES).contains(&room_capacity)
+            || !(1..=MAX_PROXIMITY_STATE_ENTRIES).contains(&replay_capacity)
         {
             return Err(CoreError::InvalidCapacity);
         }
@@ -533,7 +548,7 @@ pub struct ExtensionWebhookVerifier {
 
 impl ExtensionWebhookVerifier {
     pub fn new(organisation_id: OrganisationId, capacity: usize) -> Result<Self, CoreError> {
-        if !(1..=MAX_EMERGENCY_STATE_ENTRIES).contains(&capacity) {
+        if !(1..=MAX_PROXIMITY_STATE_ENTRIES).contains(&capacity) {
             return Err(CoreError::InvalidCapacity);
         }
         Ok(Self {
@@ -681,7 +696,7 @@ pub struct ScopedWebhookVerifierRegistry {
 
 impl ScopedWebhookVerifierRegistry {
     pub fn new(per_org_replay_capacity: usize) -> Result<Self, CoreError> {
-        if !(1..=MAX_EMERGENCY_STATE_ENTRIES).contains(&per_org_replay_capacity) {
+        if !(1..=MAX_PROXIMITY_STATE_ENTRIES).contains(&per_org_replay_capacity) {
             return Err(CoreError::InvalidCapacity);
         }
         Ok(Self {
@@ -707,7 +722,7 @@ impl ScopedWebhookVerifierRegistry {
             }
         }
         if !self.pair_secret_fingerprints.contains_key(&pair)
-            && self.pair_secret_fingerprints.len() == MAX_EMERGENCY_STATE_ENTRIES
+            && self.pair_secret_fingerprints.len() == MAX_PROXIMITY_STATE_ENTRIES
         {
             return Err(CoreError::CapacityExceeded);
         }
@@ -777,10 +792,10 @@ impl ScopedWebhookVerifierRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// 3. `#urgence` Proximity Beacon & Store-and-Forward Frame Codec
+// 3. `#proximity` Beacon & Store-and-Forward Frame Codec
 // ---------------------------------------------------------------------------
 
-/// Quick safety status badges for `#urgence` check-ins during a building outage.
+/// Status badge of a voluntary `#proximity` check-in. The wire values 0 to 3 are frozen with v1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SafetyStatus {
@@ -802,9 +817,9 @@ impl SafetyStatus {
     }
 }
 
-/// Compact, authenticated `#urgence` frame designed to fit inside a single BLE GATT write (`<= 256 B`).
+/// Compact, authenticated `#proximity` frame designed to fit inside a single BLE GATT write (`<= 256 B`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmergencyFrame {
+pub struct ProximityFrame {
     pub message_id: UuidV7,
     pub sender_public_key: Ed25519PublicKey,
     pub ttl_hops: u8,
@@ -813,13 +828,19 @@ pub struct EmergencyFrame {
     pub signature: Ed25519Signature,
 }
 
-impl EmergencyFrame {
-    const MAGIC: [u8; 2] = *b"KE"; // Kodera Emergency v1
+impl ProximityFrame {
+    // FROZEN v1 WIRE FORMAT. The magic, the version, the field layout below and the two signing
+    // labels in `signing_transcript` / `organisation_signing_transcript` are bytes that deployed
+    // peers sign and verify. They keep their historical value: the magic still reads "KE" and the
+    // labels still say "emergency", although the channel is now called proximity. Changing any of
+    // them is a new protocol version, never a rename. `vectors/proximity-frame-v1.txt` pins them
+    // for Rust, Swift and Kotlin.
+    const MAGIC: [u8; 2] = *b"KE";
     const VERSION: u8 = 1;
     // 2 (magic) + 1 (ver) + 16 (uuid) + 32 (pk) + 1 (ttl) + 1 (status) + 1 (len) + 64 (sig) = 118 bytes fixed overhead
     const FIXED_OVERHEAD: usize = 118;
 
-    /// Creates and signs a new outbound `#urgence` frame.
+    /// Creates and signs a new outbound `#proximity` frame.
     ///
     /// Note: `ttl_hops` is NOT covered by the author's signature so intermediate nodes can
     /// decrement `ttl_hops` at each hop without invalidating end-to-end sender authenticity.
@@ -830,11 +851,11 @@ impl EmergencyFrame {
         text: impl Into<String>,
         signer: &dyn DeviceIdentitySigner,
     ) -> Result<Self, CoreError> {
-        if ttl_hops == 0 || ttl_hops > MAX_EMERGENCY_TTL_HOPS {
+        if ttl_hops == 0 || ttl_hops > MAX_PROXIMITY_TTL_HOPS {
             return Err(CoreError::InvalidTtl);
         }
         let text = text.into();
-        if text.len() > MAX_EMERGENCY_TEXT_BYTES {
+        if text.len() > MAX_PROXIMITY_TEXT_BYTES {
             return Err(CoreError::PayloadTooLarge);
         }
         let sender_public_key = signer.public_key();
@@ -871,7 +892,7 @@ impl EmergencyFrame {
 
     /// Decrements hop TTL for store-and-forward relaying; returns `None` when TTL reaches 0.
     pub fn decrement_hop(&self) -> Option<Self> {
-        if !(2..=MAX_EMERGENCY_TTL_HOPS).contains(&self.ttl_hops) {
+        if !(2..=MAX_PROXIMITY_TTL_HOPS).contains(&self.ttl_hops) {
             return None;
         }
         let mut next = self.clone();
@@ -879,10 +900,10 @@ impl EmergencyFrame {
         Some(next)
     }
 
-    /// Refuses a frame whose UUIDv7 time is more than [`MAX_EMERGENCY_FUTURE_SKEW_MS`] ahead of
+    /// Refuses a frame whose UUIDv7 time is more than [`MAX_PROXIMITY_FUTURE_SKEW_MS`] ahead of
     /// `now_unix_ms`, the verifier's own clock. A frame exactly at the bound is accepted.
     pub fn check_not_future(&self, now_unix_ms: u64) -> Result<(), CoreError> {
-        if self.message_id.timestamp_ms() > now_unix_ms.saturating_add(MAX_EMERGENCY_FUTURE_SKEW_MS)
+        if self.message_id.timestamp_ms() > now_unix_ms.saturating_add(MAX_PROXIMITY_FUTURE_SKEW_MS)
         {
             return Err(CoreError::FutureFrame);
         }
@@ -901,7 +922,7 @@ impl EmergencyFrame {
         allowed_org_roster: &HashSet<Ed25519PublicKey>,
         verifier: &dyn SignatureVerifier,
         now_unix_ms: u64,
-    ) -> Result<VerifiedEmergencyFrame, CoreError> {
+    ) -> Result<VerifiedProximityFrame, CoreError> {
         self.check_not_future(now_unix_ms)?;
         self.verified(allowed_org_roster, verifier)
     }
@@ -911,7 +932,7 @@ impl EmergencyFrame {
         &self,
         allowed_org_roster: &HashSet<Ed25519PublicKey>,
         verifier: &dyn SignatureVerifier,
-    ) -> Result<VerifiedEmergencyFrame, CoreError> {
+    ) -> Result<VerifiedProximityFrame, CoreError> {
         self.verified_at(allowed_org_roster, verifier, system_unix_ms())
     }
 
@@ -921,16 +942,16 @@ impl EmergencyFrame {
         &self,
         allowed_org_roster: &HashSet<Ed25519PublicKey>,
         verifier: &dyn SignatureVerifier,
-    ) -> Result<VerifiedEmergencyFrame, CoreError> {
+    ) -> Result<VerifiedProximityFrame, CoreError> {
         self.verify_sender(allowed_org_roster, verifier)?;
-        Ok(VerifiedEmergencyFrame(self.clone()))
+        Ok(VerifiedProximityFrame(self.clone()))
     }
 
     fn validate_structure(&self) -> Result<(), CoreError> {
-        if !(1..=MAX_EMERGENCY_TTL_HOPS).contains(&self.ttl_hops) {
+        if !(1..=MAX_PROXIMITY_TTL_HOPS).contains(&self.ttl_hops) {
             return Err(CoreError::InvalidTtl);
         }
-        if self.text.len() > MAX_EMERGENCY_TEXT_BYTES {
+        if self.text.len() > MAX_PROXIMITY_TEXT_BYTES {
             return Err(CoreError::PayloadTooLarge);
         }
         Ok(())
@@ -939,11 +960,11 @@ impl EmergencyFrame {
     pub fn encode(&self) -> Result<Vec<u8>, CoreError> {
         self.validate_structure()?;
         let text_bytes = self.text.as_bytes();
-        if text_bytes.len() > MAX_EMERGENCY_TEXT_BYTES {
+        if text_bytes.len() > MAX_PROXIMITY_TEXT_BYTES {
             return Err(CoreError::PayloadTooLarge);
         }
         let total = Self::FIXED_OVERHEAD + text_bytes.len();
-        if total > MAX_EMERGENCY_FRAME_BYTES {
+        if total > MAX_PROXIMITY_FRAME_BYTES {
             return Err(CoreError::PayloadTooLarge);
         }
         let mut out = Vec::with_capacity(total);
@@ -960,7 +981,7 @@ impl EmergencyFrame {
     }
 
     pub fn decode(raw: &[u8]) -> Result<Self, CoreError> {
-        if raw.len() < Self::FIXED_OVERHEAD || raw.len() > MAX_EMERGENCY_FRAME_BYTES {
+        if raw.len() < Self::FIXED_OVERHEAD || raw.len() > MAX_PROXIMITY_FRAME_BYTES {
             return Err(CoreError::MalformedFrame);
         }
         if raw[0..2] != Self::MAGIC || raw[2] != Self::VERSION {
@@ -974,12 +995,12 @@ impl EmergencyFrame {
         sender_public_key.copy_from_slice(&raw[19..51]);
 
         let ttl_hops = raw[51];
-        if ttl_hops == 0 || ttl_hops > MAX_EMERGENCY_TTL_HOPS {
+        if ttl_hops == 0 || ttl_hops > MAX_PROXIMITY_TTL_HOPS {
             return Err(CoreError::InvalidTtl);
         }
         let status = SafetyStatus::from_u8(raw[52])?;
         let text_len = raw[53] as usize;
-        if text_len > MAX_EMERGENCY_TEXT_BYTES || Self::FIXED_OVERHEAD + text_len != raw.len() {
+        if text_len > MAX_PROXIMITY_TEXT_BYTES || Self::FIXED_OVERHEAD + text_len != raw.len() {
             return Err(CoreError::MalformedFrame);
         }
         let text = std::str::from_utf8(&raw[54..54 + text_len])
@@ -999,7 +1020,7 @@ impl EmergencyFrame {
         })
     }
 
-    /// Creates and signs an organisation-context-bound `#urgence` frame whose signature
+    /// Creates and signs an organisation-context-bound `#proximity` frame whose signature
     /// transcript commits to `organisation_id` and `organisation_beacon`, preventing cross-org
     /// public beacon retagging even if an `Ed25519` device key were present in two rosters.
     pub fn sign_for_organisation(
@@ -1011,11 +1032,11 @@ impl EmergencyFrame {
         text: impl Into<String>,
         signer: &dyn DeviceIdentitySigner,
     ) -> Result<Self, CoreError> {
-        if ttl_hops == 0 || ttl_hops > MAX_EMERGENCY_TTL_HOPS {
+        if ttl_hops == 0 || ttl_hops > MAX_PROXIMITY_TTL_HOPS {
             return Err(CoreError::InvalidTtl);
         }
         let text = text.into();
-        if text.len() > MAX_EMERGENCY_TEXT_BYTES {
+        if text.len() > MAX_PROXIMITY_TEXT_BYTES {
             return Err(CoreError::PayloadTooLarge);
         }
         let sender_public_key = signer.public_key();
@@ -1066,14 +1087,14 @@ impl EmergencyFrame {
         organisation_beacon: [u8; 8],
         allowed_org_roster: &HashSet<Ed25519PublicKey>,
         verifier: &dyn SignatureVerifier,
-    ) -> Result<VerifiedEmergencyFrame, CoreError> {
+    ) -> Result<VerifiedProximityFrame, CoreError> {
         self.verify_for_organisation(
             organisation_id,
             organisation_beacon,
             allowed_org_roster,
             verifier,
         )?;
-        Ok(VerifiedEmergencyFrame(self.clone()))
+        Ok(VerifiedProximityFrame(self.clone()))
     }
 
     pub fn verified_for_organisation_at(
@@ -1083,7 +1104,7 @@ impl EmergencyFrame {
         allowed_org_roster: &HashSet<Ed25519PublicKey>,
         verifier: &dyn SignatureVerifier,
         now_unix_ms: u64,
-    ) -> Result<VerifiedEmergencyFrame, CoreError> {
+    ) -> Result<VerifiedProximityFrame, CoreError> {
         self.check_not_future(now_unix_ms)?;
         self.verified_for_organisation(
             organisation_id,
@@ -1100,6 +1121,7 @@ impl EmergencyFrame {
         text: &[u8],
     ) -> Vec<u8> {
         let mut buf = Vec::with_capacity(70 + text.len());
+        // Frozen signed label (see the note on `MAGIC`): the historical word stays.
         buf.extend_from_slice(b"kodera-emergency-v1:");
         buf.extend_from_slice(message_id.as_bytes());
         buf.extend_from_slice(sender_pk);
@@ -1119,6 +1141,7 @@ impl EmergencyFrame {
     ) -> Vec<u8> {
         let org_bytes = organisation_id.as_str().as_bytes();
         let mut buf = Vec::with_capacity(83 + org_bytes.len() + text.len());
+        // Frozen signed label (see the note on `MAGIC`): the historical word stays.
         buf.extend_from_slice(b"kodera-emergency-org-v1:");
         buf.extend_from_slice(org_bytes);
         buf.push(b':');
@@ -1132,19 +1155,19 @@ impl EmergencyFrame {
     }
 }
 
-/// Multi-organisation signing key isolation guard for `#urgence` rosters.
+/// Multi-organisation signing key isolation guard for `#proximity` rosters.
 ///
 /// Rejects registering or reusing the same `Ed25519PublicKey` (or `organisation_beacon`)
 /// across distinct `(OrganisationId, organisation_beacon)` contexts so v1 frames cannot be
 /// retagged across organisations via a shared device key.
 #[derive(Debug, Default)]
-pub struct EmergencyOrganisationKeyGuard {
+pub struct ProximityOrganisationKeyGuard {
     rosters: BTreeMap<OrganisationId, ([u8; 8], HashSet<Ed25519PublicKey>)>,
     key_owners: BTreeMap<Ed25519PublicKey, (OrganisationId, [u8; 8])>,
     beacon_owners: BTreeMap<[u8; 8], OrganisationId>,
 }
 
-impl EmergencyOrganisationKeyGuard {
+impl ProximityOrganisationKeyGuard {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1155,7 +1178,7 @@ impl EmergencyOrganisationKeyGuard {
         organisation_beacon: [u8; 8],
         roster: HashSet<Ed25519PublicKey>,
     ) -> Result<(), CoreError> {
-        if roster.is_empty() || roster.len() > MAX_EMERGENCY_ROSTER_MEMBERS {
+        if roster.is_empty() || roster.len() > MAX_PROXIMITY_ROSTER_MEMBERS {
             return Err(CoreError::InvalidCapacity);
         }
         if let Some(owner) = self.beacon_owners.get(&organisation_beacon) {
@@ -1179,7 +1202,7 @@ impl EmergencyOrganisationKeyGuard {
             .len()
             .saturating_sub(existing_len)
             .saturating_add(roster.len())
-            > MAX_EMERGENCY_ROSTER_MEMBERS
+            > MAX_PROXIMITY_ROSTER_MEMBERS
         {
             return Err(CoreError::CapacityExceeded);
         }
@@ -1204,10 +1227,10 @@ impl EmergencyOrganisationKeyGuard {
         &self,
         organisation_id: &OrganisationId,
         observed_beacon: [u8; 8],
-        frame: &EmergencyFrame,
+        frame: &ProximityFrame,
         verifier: &dyn SignatureVerifier,
         now_unix_ms: u64,
-    ) -> Result<VerifiedEmergencyFrame, CoreError> {
+    ) -> Result<VerifiedProximityFrame, CoreError> {
         let Some((expected_beacon, roster)) = self.rosters.get(organisation_id) else {
             return Err(CoreError::UnauthorizedSender);
         };
@@ -1232,12 +1255,12 @@ impl EmergencyOrganisationKeyGuard {
 
 /// Deduplication ring preventing epidemic gossip broadcast storms across BLE/mDNS hops.
 #[derive(Debug)]
-pub struct EmergencyReplayGuard {
+pub struct ProximityReplayGuard {
     seen: HashSet<UuidV7>,
     max_entries: usize,
 }
 
-impl EmergencyReplayGuard {
+impl ProximityReplayGuard {
     pub fn clear(&mut self) {
         self.seen.clear();
     }
@@ -1245,7 +1268,7 @@ impl EmergencyReplayGuard {
     pub fn new(max_entries: usize) -> Self {
         Self {
             seen: HashSet::new(),
-            max_entries: max_entries.clamp(1, MAX_EMERGENCY_REPLAY_ENTRIES),
+            max_entries: max_entries.clamp(1, MAX_PROXIMITY_REPLAY_ENTRIES),
         }
     }
 
@@ -1268,7 +1291,7 @@ impl EmergencyReplayGuard {
     }
 }
 
-impl Default for EmergencyReplayGuard {
+impl Default for ProximityReplayGuard {
     fn default() -> Self {
         Self::new(512)
     }
@@ -1277,15 +1300,15 @@ impl Default for EmergencyReplayGuard {
 /// Immutable frame whose signature and organisation membership were checked by a trusted provider.
 /// The inner frame cannot be constructed or modified by callers after verification.
 #[derive(Debug, Clone)]
-pub struct VerifiedEmergencyFrame(EmergencyFrame);
+pub struct VerifiedProximityFrame(ProximityFrame);
 
-impl VerifiedEmergencyFrame {
-    pub fn frame(&self) -> &EmergencyFrame {
+impl VerifiedProximityFrame {
+    pub fn frame(&self) -> &ProximityFrame {
         &self.0
     }
 }
 
-fn relay_priority(frame: &EmergencyFrame) -> (u8, UuidV7) {
+fn relay_priority(frame: &ProximityFrame) -> (u8, UuidV7) {
     let priority = match frame.status {
         SafetyStatus::NeedAssistance => 3,
         SafetyStatus::MusterPoint => 2,
@@ -1298,25 +1321,25 @@ fn relay_priority(frame: &EmergencyFrame) -> (u8, UuidV7) {
 /// Bounded verified outbox. At capacity, a higher-priority/newer frame replaces the least
 /// important pending frame; lower-priority frames are refused without poisoning replay history.
 #[derive(Debug)]
-pub struct EmergencyMeshQueue {
-    frames: Vec<EmergencyFrame>,
-    replay: EmergencyReplayGuard,
+pub struct ProximityMeshQueue {
+    frames: Vec<ProximityFrame>,
+    replay: ProximityReplayGuard,
     capacity: usize,
 }
 
-impl EmergencyMeshQueue {
+impl ProximityMeshQueue {
     pub fn clear(&mut self) {
         self.frames.clear();
         self.replay.clear();
     }
 
     pub fn new(max_capacity: usize) -> Result<Self, CoreError> {
-        if !(1..=MAX_EMERGENCY_QUEUE_CAPACITY).contains(&max_capacity) {
+        if !(1..=MAX_PROXIMITY_QUEUE_CAPACITY).contains(&max_capacity) {
             return Err(CoreError::InvalidCapacity);
         }
         Ok(Self {
             frames: Vec::new(),
-            replay: EmergencyReplayGuard::new(max_capacity.saturating_mul(4)),
+            replay: ProximityReplayGuard::new(max_capacity.saturating_mul(4)),
             capacity: max_capacity,
         })
     }
@@ -1338,18 +1361,18 @@ impl EmergencyMeshQueue {
     }
 
     /// Originating frames retain their hop budget; only a receiving relay decrements it.
-    pub fn enqueue_local(&mut self, verified: &VerifiedEmergencyFrame) -> bool {
+    pub fn enqueue_local(&mut self, verified: &VerifiedProximityFrame) -> bool {
         self.enqueue(verified.frame().clone())
     }
 
-    pub fn enqueue_relay(&mut self, verified: &VerifiedEmergencyFrame) -> bool {
+    pub fn enqueue_relay(&mut self, verified: &VerifiedProximityFrame) -> bool {
         verified
             .frame()
             .decrement_hop()
             .is_some_and(|frame| self.enqueue(frame))
     }
 
-    fn enqueue(&mut self, frame: EmergencyFrame) -> bool {
+    fn enqueue(&mut self, frame: ProximityFrame) -> bool {
         if self.contains(&frame.message_id) {
             return false;
         }
@@ -1371,7 +1394,7 @@ impl EmergencyMeshQueue {
     }
 
     /// Returns highest priority first; newer complete UUIDv7 values break timestamp ties.
-    pub fn drain(&mut self, max_frames: usize) -> Vec<EmergencyFrame> {
+    pub fn drain(&mut self, max_frames: usize) -> Vec<ProximityFrame> {
         self.frames
             .sort_unstable_by_key(|frame| std::cmp::Reverse(relay_priority(frame)));
         self.frames
@@ -1392,7 +1415,7 @@ pub fn compute_relay_backoff_ms(message_id: &UuidV7, device_pk: &Ed25519PublicKe
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmergencyMemberStatus {
+pub struct ProximityMemberStatus {
     pub message_id: UuidV7,
     pub sender_public_key: Ed25519PublicKey,
     pub status: SafetyStatus,
@@ -1402,21 +1425,29 @@ pub struct EmergencyMemberStatus {
     pub ttl_hops: u8,
 }
 
+impl ProximityMemberStatus {
+    /// The pseudonym to show for this check-in when its sender picked none: derived from the
+    /// sender key, so no name is needed and none is revealed.
+    pub fn generated_handle(&self) -> ProximityHandle {
+        ProximityHandle::generated(&self.sender_public_key)
+    }
+}
+
 /// Latest verified status per device. No expiration implies current safety: these remain
 /// historical check-ins until replaced; the UI must display their timestamps.
 #[derive(Debug)]
-pub struct EmergencyRosterTracker {
-    members: BTreeMap<Ed25519PublicKey, EmergencyMemberStatus>,
+pub struct ProximityRosterTracker {
+    members: BTreeMap<Ed25519PublicKey, ProximityMemberStatus>,
     max_members: usize,
 }
 
-impl EmergencyRosterTracker {
+impl ProximityRosterTracker {
     pub fn clear(&mut self) {
         self.members.clear();
     }
 
     pub fn new(max_members: usize) -> Result<Self, CoreError> {
-        if max_members > MAX_EMERGENCY_ROSTER_MEMBERS {
+        if max_members > MAX_PROXIMITY_ROSTER_MEMBERS {
             return Err(CoreError::InvalidCapacity);
         }
         Ok(Self {
@@ -1425,7 +1456,7 @@ impl EmergencyRosterTracker {
         })
     }
 
-    pub fn can_observe(&self, verified: &VerifiedEmergencyFrame) -> Result<bool, CoreError> {
+    pub fn can_observe(&self, verified: &VerifiedProximityFrame) -> Result<bool, CoreError> {
         let frame = verified.frame();
         if let Some(previous) = self.members.get(&frame.sender_public_key) {
             return Ok(frame.message_id > previous.message_id);
@@ -1436,14 +1467,14 @@ impl EmergencyRosterTracker {
         Ok(true)
     }
 
-    pub fn observe(&mut self, verified: &VerifiedEmergencyFrame) -> Result<bool, CoreError> {
+    pub fn observe(&mut self, verified: &VerifiedProximityFrame) -> Result<bool, CoreError> {
         if !self.can_observe(verified)? {
             return Ok(false);
         }
         let frame = verified.frame();
         self.members.insert(
             frame.sender_public_key,
-            EmergencyMemberStatus {
+            ProximityMemberStatus {
                 message_id: frame.message_id,
                 sender_public_key: frame.sender_public_key,
                 status: frame.status,
@@ -1455,7 +1486,7 @@ impl EmergencyRosterTracker {
         Ok(true)
     }
 
-    pub fn statuses(&self) -> Vec<EmergencyMemberStatus> {
+    pub fn statuses(&self) -> Vec<ProximityMemberStatus> {
         self.members.values().cloned().collect()
     }
 }
@@ -1671,10 +1702,13 @@ pub enum CoreError {
     CapacityExceeded,
     ReplayDetected,
     StaleFrame,
-    /// An emergency frame dated more than `MAX_EMERGENCY_FUTURE_SKEW_MS` ahead of the verifier.
+    /// A proximity frame dated more than `MAX_PROXIMITY_FUTURE_SKEW_MS` ahead of the verifier.
     FutureFrame,
     InvalidTtl,
     InvalidStatusBadge,
+    /// A sender handle outside the `vectors/proximity-handle-v1.txt` grammar, or an origin slug
+    /// other than `dedicated` / `generated`.
+    InvalidProximityHandle,
     PayloadTooLarge,
     MalformedFrame,
     UnauthorizedSender,
@@ -1804,7 +1838,7 @@ mod tests {
     }
 
     #[test]
-    fn emergency_frame_roundtrips_survives_hop_decrement_and_rejects_tampering() {
+    fn proximity_frame_roundtrips_survives_hop_decrement_and_rejects_tampering() {
         let signer = TestKeyedMacSigner {
             secret: [7u8; 32],
             pk: [9u8; 32],
@@ -1814,7 +1848,7 @@ mod tests {
         roster.insert([9u8; 32]);
 
         let id = UuidV7::from_parts(1_762_520_000_500, [3; 10]);
-        let frame = EmergencyFrame::new_signed(
+        let frame = ProximityFrame::new_signed(
             id,
             4,
             SafetyStatus::Safe,
@@ -1824,9 +1858,9 @@ mod tests {
         .expect("valid signed frame");
 
         let wire = frame.encode().expect("fits <= 256 bytes");
-        assert!(wire.len() <= MAX_EMERGENCY_FRAME_BYTES);
+        assert!(wire.len() <= MAX_PROXIMITY_FRAME_BYTES);
 
-        let decoded = EmergencyFrame::decode(&wire).expect("valid wire frame");
+        let decoded = ProximityFrame::decode(&wire).expect("valid wire frame");
         assert_eq!(decoded, frame);
         assert_eq!(decoded.verify_sender(&roster, &verifier), Ok(()));
 
@@ -1853,7 +1887,7 @@ mod tests {
 
     #[test]
     fn replay_guard_deduplicates_epidemic_broadcasts() {
-        let mut guard = EmergencyReplayGuard::new(64);
+        let mut guard = ProximityReplayGuard::new(64);
         let id = UuidV7::from_parts(1_762_520_000_000, [5; 10]);
         assert!(guard.accept_once(id));
         assert!(!guard.accept_once(id));
@@ -1873,12 +1907,12 @@ mod tests {
         assert_eq!(CryptoAlgorithm::from_u8(99), Err(CoreError::CryptoFailure));
     }
 
-    fn checked_frame(ts: u64, status: SafetyStatus, key: u8) -> VerifiedEmergencyFrame {
+    fn checked_frame(ts: u64, status: SafetyStatus, key: u8) -> VerifiedProximityFrame {
         let signer = TestKeyedMacSigner {
             secret: [7; 32],
             pk: [key; 32],
         };
-        let frame = EmergencyFrame::new_signed(
+        let frame = ProximityFrame::new_signed(
             UuidV7::from_parts(ts, [3; 10]),
             3,
             status,
@@ -1901,7 +1935,7 @@ mod tests {
         let wire_hex = "4b4501019a5e626ca073038303030303030303d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a03010bc380206ce2809961627269de751167ed246633a763a7ea63c555078167ddf5960d86437c64e3bf3a50e27e8d2f15a871c011221283833943f8a5a1a5b9bb758a6b9f31d60aa771cb89c005";
         let transcript_hex = "6b6f646572612d656d657267656e63792d76313a019a5e626ca073038303030303030303d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a010bc380206ce2809961627269";
         let wire = decode_hex(wire_hex).unwrap();
-        let frame = EmergencyFrame::decode(&wire).unwrap();
+        let frame = ProximityFrame::decode(&wire).unwrap();
         assert_eq!(wire.len(), 129);
         assert_eq!(frame.message_id.timestamp_ms(), 1_762_520_100_000);
         assert_eq!(
@@ -1914,7 +1948,7 @@ mod tests {
         assert_eq!(frame.text.len(), 11);
         assert_eq!(encode_hex(&frame.encode().unwrap()), wire_hex);
         assert_eq!(
-            encode_hex(&EmergencyFrame::signing_transcript(
+            encode_hex(&ProximityFrame::signing_transcript(
                 &frame.message_id,
                 &frame.sender_public_key,
                 frame.status,
@@ -1925,7 +1959,7 @@ mod tests {
         let relayed = frame.decrement_hop().unwrap();
         assert_eq!(relayed.signature, frame.signature);
         assert_eq!(
-            EmergencyFrame::signing_transcript(
+            ProximityFrame::signing_transcript(
                 &relayed.message_id,
                 &relayed.sender_public_key,
                 relayed.status,
@@ -1973,7 +2007,7 @@ mod tests {
 
     #[test]
     fn queue_drains_priority_then_newest_and_honours_hop_exhaustion() {
-        let mut queue = EmergencyMeshQueue::new(8).unwrap();
+        let mut queue = ProximityMeshQueue::new(8).unwrap();
         for (ts, status) in [
             (9, SafetyStatus::MessageOnly),
             (8, SafetyStatus::Safe),
@@ -2010,14 +2044,14 @@ mod tests {
     #[test]
     fn queue_rejects_overflow_without_poisoning_retry_and_preserves_pending_dedup() {
         assert!(matches!(
-            EmergencyMeshQueue::new(0),
+            ProximityMeshQueue::new(0),
             Err(CoreError::InvalidCapacity)
         ));
         assert!(matches!(
-            EmergencyMeshQueue::new(129),
+            ProximityMeshQueue::new(129),
             Err(CoreError::InvalidCapacity)
         ));
-        let mut queue = EmergencyMeshQueue::new(2).unwrap();
+        let mut queue = ProximityMeshQueue::new(2).unwrap();
         let pending = checked_frame(1, SafetyStatus::MessageOnly, 9);
         assert!(queue.enqueue_local(&pending));
         for ts in 2..30 {
@@ -2028,7 +2062,7 @@ mod tests {
         assert!(!queue.replay.contains(&pending.frame().message_id));
         assert!(!queue.enqueue_local(&pending));
         assert_eq!(queue.len(), 1);
-        let mut bounded = EmergencyMeshQueue::new(1).unwrap();
+        let mut bounded = ProximityMeshQueue::new(1).unwrap();
         let urgent = checked_frame(100, SafetyStatus::NeedAssistance, 9);
         let lower = checked_frame(101, SafetyStatus::Safe, 9);
         assert!(bounded.enqueue_local(&urgent));
@@ -2043,7 +2077,7 @@ mod tests {
 
     #[test]
     fn roster_ignores_older_status_and_is_bounded() {
-        let mut tracker = EmergencyRosterTracker::new(1).unwrap();
+        let mut tracker = ProximityRosterTracker::new(1).unwrap();
         assert!(tracker
             .observe(&checked_frame(20, SafetyStatus::Safe, 9))
             .unwrap());
@@ -2061,10 +2095,10 @@ mod tests {
             Err(CoreError::CapacityExceeded)
         );
         assert!(matches!(
-            EmergencyRosterTracker::new(4097),
+            ProximityRosterTracker::new(4097),
             Err(CoreError::InvalidCapacity)
         ));
-        let mut empty = EmergencyRosterTracker::new(0).unwrap();
+        let mut empty = ProximityRosterTracker::new(0).unwrap();
         assert_eq!(
             empty.observe(&checked_frame(1, SafetyStatus::Safe, 9)),
             Err(CoreError::CapacityExceeded)
@@ -2080,7 +2114,7 @@ mod tests {
         for byte in 0..=255 {
             assert!((25..=275).contains(&compute_relay_backoff_ms(&id, &[byte; 32])));
         }
-        let mut default_guard = EmergencyReplayGuard::default();
+        let mut default_guard = ProximityReplayGuard::default();
         assert!(default_guard.accept_once(id));
         assert!(!default_guard.accept_once(id));
     }
@@ -2164,15 +2198,15 @@ mod tests {
             BTreeMap::from([
                 (
                     "queue_capacity".to_owned(),
-                    MAX_EMERGENCY_QUEUE_CAPACITY as u64
+                    MAX_PROXIMITY_QUEUE_CAPACITY as u64
                 ),
                 (
                     "replay_entries".to_owned(),
-                    MAX_EMERGENCY_REPLAY_ENTRIES as u64
+                    MAX_PROXIMITY_REPLAY_ENTRIES as u64
                 ),
                 (
                     "roster_members".to_owned(),
-                    MAX_EMERGENCY_ROSTER_MEMBERS as u64
+                    MAX_PROXIMITY_ROSTER_MEMBERS as u64
                 ),
             ])
         );
@@ -2180,27 +2214,27 @@ mod tests {
             rules.rules,
             BTreeMap::from([(
                 "max_future_skew_ms".to_owned(),
-                MAX_EMERGENCY_FUTURE_SKEW_MS
+                MAX_PROXIMITY_FUTURE_SKEW_MS
             )])
         );
-        assert_eq!(MAX_EMERGENCY_FUTURE_SKEW_MS, 300_000);
+        assert_eq!(MAX_PROXIMITY_FUTURE_SKEW_MS, 300_000);
     }
 
     #[test]
-    fn emergency_bounds_are_enforced_at_their_named_value() {
-        assert!(EmergencyMeshQueue::new(MAX_EMERGENCY_QUEUE_CAPACITY).is_ok());
+    fn proximity_bounds_are_enforced_at_their_named_value() {
+        assert!(ProximityMeshQueue::new(MAX_PROXIMITY_QUEUE_CAPACITY).is_ok());
         assert!(matches!(
-            EmergencyMeshQueue::new(MAX_EMERGENCY_QUEUE_CAPACITY + 1),
+            ProximityMeshQueue::new(MAX_PROXIMITY_QUEUE_CAPACITY + 1),
             Err(CoreError::InvalidCapacity)
         ));
-        assert!(EmergencyRosterTracker::new(MAX_EMERGENCY_ROSTER_MEMBERS).is_ok());
+        assert!(ProximityRosterTracker::new(MAX_PROXIMITY_ROSTER_MEMBERS).is_ok());
         assert!(matches!(
-            EmergencyRosterTracker::new(MAX_EMERGENCY_ROSTER_MEMBERS + 1),
+            ProximityRosterTracker::new(MAX_PROXIMITY_ROSTER_MEMBERS + 1),
             Err(CoreError::InvalidCapacity)
         ));
         // A caller asking for more replay history gets the bound: one ID past it evicts the oldest.
-        let mut guard = EmergencyReplayGuard::new(usize::MAX);
-        let ids: Vec<UuidV7> = (0..=MAX_EMERGENCY_REPLAY_ENTRIES as u64)
+        let mut guard = ProximityReplayGuard::new(usize::MAX);
+        let ids: Vec<UuidV7> = (0..=MAX_PROXIMITY_REPLAY_ENTRIES as u64)
             .map(|ms| UuidV7::from_parts(1_762_520_000_000 + ms, [1; 10]))
             .collect();
         for id in &ids {
@@ -2210,12 +2244,12 @@ mod tests {
         assert!(ids[1..].iter().all(|id| guard.contains(id)));
     }
 
-    fn frame_at(timestamp_ms: u64) -> EmergencyFrame {
+    fn frame_at(timestamp_ms: u64) -> ProximityFrame {
         let signer = TestKeyedMacSigner {
             secret: [7; 32],
             pk: [9; 32],
         };
-        EmergencyFrame::new_signed(
+        ProximityFrame::new_signed(
             UuidV7::from_parts(timestamp_ms, [3; 10]),
             3,
             SafetyStatus::Safe,
@@ -2268,7 +2302,7 @@ mod tests {
             ahead.verified_at(&roster, &verifier, now).map(|_| ()),
             Err(CoreError::FutureFrame)
         );
-        let mut tracker = EmergencyRosterTracker::new(1).unwrap();
+        let mut tracker = ProximityRosterTracker::new(1).unwrap();
         let real = frame_at(now).verified_at(&roster, &verifier, now).unwrap();
         assert!(tracker.observe(&real).unwrap());
         assert_eq!(tracker.statuses()[0].timestamp_ms, now);
@@ -2280,7 +2314,7 @@ mod tests {
     }
 
     #[test]
-    fn emergency_frame_default_system_clock_accepts_present_and_rejects_far_future() {
+    fn proximity_frame_default_system_clock_accepts_present_and_rejects_far_future() {
         let roster = HashSet::from([[9; 32]]);
         let verifier = TestKeyedMacVerifier { secret: [7; 32] };
         let now_ms = system_unix_ms();
@@ -2288,7 +2322,7 @@ mod tests {
         assert!(current.check_not_future_now().is_ok());
         assert!(current.verified_now(&roster, &verifier).is_ok());
 
-        let future = frame_at(now_ms + MAX_EMERGENCY_FUTURE_SKEW_MS + 60_000);
+        let future = frame_at(now_ms + MAX_PROXIMITY_FUTURE_SKEW_MS + 60_000);
         assert_eq!(future.check_not_future_now(), Err(CoreError::FutureFrame));
         assert_eq!(
             future.verified_now(&roster, &verifier).map(|_| ()),
@@ -2297,7 +2331,7 @@ mod tests {
     }
 
     #[test]
-    fn organisation_bound_emergency_frames_and_key_guard_prevent_cross_org_beacon_retagging() {
+    fn organisation_bound_proximity_frames_and_key_guard_prevent_cross_org_beacon_retagging() {
         let org_a = OrganisationId::parse("11111111-1111-4111-8111-111111111111").unwrap();
         let org_b = OrganisationId::parse("22222222-2222-4222-8222-222222222222").unwrap();
         let beacon_a = compute_proximity_beacon(&[0x42; 32], 1_762_520_100);
@@ -2311,7 +2345,7 @@ mod tests {
         let now_ms = 1_762_520_100_000;
 
         // 1. Domain-separated sign_for_organisation / verify_for_organisation binds (org_id, beacon)
-        let frame_a = EmergencyFrame::sign_for_organisation(
+        let frame_a = ProximityFrame::sign_for_organisation(
             &org_a,
             beacon_a,
             UuidV7::from_parts(now_ms, [3; 10]),
@@ -2349,8 +2383,8 @@ mod tests {
             Err(CoreError::InvalidSignature)
         );
 
-        // 2. EmergencyOrganisationKeyGuard rejects registering the same Ed25519 key across orgs/beacons
-        let mut key_guard = EmergencyOrganisationKeyGuard::new();
+        // 2. ProximityOrganisationKeyGuard rejects registering the same Ed25519 key across orgs/beacons
+        let mut key_guard = ProximityOrganisationKeyGuard::new();
         key_guard
             .register_roster(org_a.clone(), beacon_a, roster.clone())
             .unwrap();

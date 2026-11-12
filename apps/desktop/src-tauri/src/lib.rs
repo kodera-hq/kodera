@@ -1,8 +1,9 @@
 //! Kodera Desktop (`apps/desktop/src-tauri`)
 //!
 //! Native Rust runtime backing the Tauri v2 desktop application:
-//! 1. Links [`kodera_rs`] for unified device identity, MLS session envelopes, and `#urgence`
-//!    offline BLE/Wi-Fi proximity frame validation.
+//! 1. Links [`kodera_rs`] for unified device identity, MLS session envelopes, and `#proximity`
+//!    offline BLE/Wi-Fi frame validation. The channel was first named `#urgence`; its frozen v1
+//!    wire bytes and its legacy JSON route names are unchanged.
 //! 2. Implements the **local-only 1-Click Self-Host Deployer** specification validator for
 //!    European and global cloud providers (Scaleway, Hetzner, Hostinger, OVHcloud).
 //!
@@ -15,7 +16,7 @@
 
 mod commands;
 pub use commands::{
-    DesktopCommandError, DesktopCommandRequest, DesktopCommandResponse, EmergencyMemberStatus,
+    DesktopCommandError, DesktopCommandRequest, DesktopCommandResponse, ProximityMemberStatus,
     MAX_IPC_COMMAND_BYTES,
 };
 
@@ -29,13 +30,13 @@ use kodera_rs::{
     validate_connector_post_url, validate_docs_host, validate_docs_pad_url, validate_user_profile,
     ChannelAccessDecision, ChannelPermissionPolicy, ChannelPoll, ChannelPollSnapshot, CoreError,
     CoreThemeMode, DeviceIdentitySigner, DocsPadDocument, DocsPadUrl, Ed25519PublicKey,
-    EmergencyFrame, EmergencyMeshQueue, EmergencyReplayGuard, EmergencyRosterTracker,
-    ExtensionWebhookVerifier, OrganisationId, SafetyStatus, ShareableThemePayload,
-    SignatureVerifier, SoundPackId, UserProfile, UuidV7, VerifiedEmergencyFrame,
-    MAX_EMERGENCY_STATE_ENTRIES, MAX_EMERGENCY_TTL_HOPS,
+    ExtensionWebhookVerifier, OrganisationId, ProximityFrame, ProximityMeshQueue,
+    ProximityReplayGuard, ProximityRosterTracker, SafetyStatus, ShareableThemePayload,
+    SignatureVerifier, SoundPackId, UserProfile, UuidV7, VerifiedProximityFrame,
+    MAX_PROXIMITY_STATE_ENTRIES, MAX_PROXIMITY_TTL_HOPS,
 };
 pub use kodera_rs::{
-    derive_extension_webhook_secret, EmergencyOrganisationKeyGuard, ScopedWebhookVerifierRegistry,
+    derive_extension_webhook_secret, ProximityOrganisationKeyGuard, ScopedWebhookVerifierRegistry,
 };
 use std::collections::{BTreeMap, HashSet};
 
@@ -281,20 +282,20 @@ fn constant_time_eq_8(a: &[u8; 8], b: &[u8; 8]) -> bool {
         == 0
 }
 
-/// Bridges `#urgence` BLE/Wi-Fi proximity frame verification from `kodera-rs` to the Desktop IPC layer.
+/// Bridges `#proximity` BLE/Wi-Fi frame verification from `kodera-rs` to the Desktop IPC layer.
 ///
 /// Accepts the current 5-minute beacon bucket as well as ±1 adjacent bucket (`±300s`) so offline
-/// workstations/phones without NTP during a building blackout do not drop emergency check-ins at window edges.
-pub fn verify_incoming_emergency_packet(
+/// workstations/phones without NTP do not drop proximity check-ins at window edges.
+pub fn verify_incoming_proximity_packet(
     observed_beacon: [u8; 8],
     org_beacon_salt: &[u8; 32],
     now_unix_secs: u64,
     raw_frame: &[u8],
     allowed_roster: &HashSet<Ed25519PublicKey>,
     verifier: &dyn SignatureVerifier,
-    replay_guard: &mut EmergencyReplayGuard,
-) -> Result<Option<EmergencyFrame>, CoreError> {
-    let verified = verified_incoming_emergency_packet(
+    replay_guard: &mut ProximityReplayGuard,
+) -> Result<Option<ProximityFrame>, CoreError> {
+    let verified = verified_incoming_proximity_packet(
         observed_beacon,
         org_beacon_salt,
         now_unix_secs,
@@ -308,16 +309,16 @@ pub fn verify_incoming_emergency_packet(
     Ok(Some(verified.frame().clone()))
 }
 
-/// Verifies an incoming emergency packet against the local system wall-clock (`SystemTime::now()`).
-pub fn verify_incoming_emergency_packet_now(
+/// Verifies an incoming proximity packet against the local system wall-clock (`SystemTime::now()`).
+pub fn verify_incoming_proximity_packet_now(
     observed_beacon: [u8; 8],
     org_beacon_salt: &[u8; 32],
     raw_frame: &[u8],
     allowed_roster: &HashSet<Ed25519PublicKey>,
     verifier: &dyn SignatureVerifier,
-    replay_guard: &mut EmergencyReplayGuard,
-) -> Result<Option<EmergencyFrame>, CoreError> {
-    verify_incoming_emergency_packet(
+    replay_guard: &mut ProximityReplayGuard,
+) -> Result<Option<ProximityFrame>, CoreError> {
+    verify_incoming_proximity_packet(
         observed_beacon,
         org_beacon_salt,
         kodera_rs::system_unix_secs(),
@@ -328,14 +329,14 @@ pub fn verify_incoming_emergency_packet_now(
     )
 }
 
-fn verified_incoming_emergency_packet(
+fn verified_incoming_proximity_packet(
     observed_beacon: [u8; 8],
     org_beacon_salt: &[u8; 32],
     now_unix_secs: u64,
     raw_frame: &[u8],
     allowed_roster: &HashSet<Ed25519PublicKey>,
     verifier: &dyn SignatureVerifier,
-) -> Result<VerifiedEmergencyFrame, CoreError> {
+) -> Result<VerifiedProximityFrame, CoreError> {
     let candidates = [
         now_unix_secs.saturating_sub(300),
         now_unix_secs,
@@ -350,7 +351,7 @@ fn verified_incoming_emergency_packet(
     }
     // The receive path reads the verifier's clock: a frame dated past the shared skew bound
     // would otherwise outrank every real check-in from its sender until the clock caught up.
-    EmergencyFrame::decode(raw_frame)?.verified_at(
+    ProximityFrame::decode(raw_frame)?.verified_at(
         allowed_roster,
         verifier,
         now_unix_secs.saturating_mul(1000),
@@ -360,15 +361,15 @@ fn verified_incoming_emergency_packet(
 /// Stateful backend seam for a future desktop IPC/radio adapter. It performs no radio,
 /// network, key storage or provisioning operation. Only a trusted native signature provider
 /// may supply `signer`/`verifier`; these are not caller-selectable IPC payloads.
-pub struct DesktopEmergencyNode {
+pub struct DesktopProximityNode {
     org_beacon_salt: [u8; 32],
     allowed_roster: HashSet<Ed25519PublicKey>,
-    replay_guard: EmergencyReplayGuard,
-    mesh_queue: EmergencyMeshQueue,
-    roster: EmergencyRosterTracker,
+    replay_guard: ProximityReplayGuard,
+    mesh_queue: ProximityMeshQueue,
+    roster: ProximityRosterTracker,
 }
 
-impl DesktopEmergencyNode {
+impl DesktopProximityNode {
     /// Logical teardown plus overwriting the salt. Rust allocations/allocator copies are not
     /// guaranteed to be physically zeroised; this is not a secure-memory implementation.
     fn clear(&mut self) {
@@ -384,15 +385,15 @@ impl DesktopEmergencyNode {
         allowed_roster: HashSet<Ed25519PublicKey>,
         max_queue_capacity: usize,
     ) -> Result<Self, CoreError> {
-        if allowed_roster.len() > MAX_EMERGENCY_STATE_ENTRIES {
+        if allowed_roster.len() > MAX_PROXIMITY_STATE_ENTRIES {
             return Err(CoreError::InvalidCapacity);
         }
         Ok(Self {
             org_beacon_salt,
-            roster: EmergencyRosterTracker::new(allowed_roster.len())?,
+            roster: ProximityRosterTracker::new(allowed_roster.len())?,
             allowed_roster,
-            replay_guard: EmergencyReplayGuard::new(MAX_EMERGENCY_STATE_ENTRIES),
-            mesh_queue: EmergencyMeshQueue::new(max_queue_capacity)?,
+            replay_guard: ProximityReplayGuard::new(MAX_PROXIMITY_STATE_ENTRIES),
+            mesh_queue: ProximityMeshQueue::new(max_queue_capacity)?,
         })
     }
 
@@ -413,7 +414,7 @@ impl DesktopEmergencyNode {
         verifier: &dyn SignatureVerifier,
     ) -> Result<Vec<u8>, CoreError> {
         let frame =
-            EmergencyFrame::new_signed(message_id, MAX_EMERGENCY_TTL_HOPS, status, text, signer)?;
+            ProximityFrame::new_signed(message_id, MAX_PROXIMITY_TTL_HOPS, status, text, signer)?;
         let verified = frame.verified(&self.allowed_roster, verifier)?;
         let wire = frame.encode()?;
         if self.replay_guard.contains(&message_id) || self.mesh_queue.contains(&message_id) {
@@ -437,8 +438,8 @@ impl DesktopEmergencyNode {
         now_unix_secs: u64,
         raw_frame: &[u8],
         verifier: &dyn SignatureVerifier,
-    ) -> Result<Option<EmergencyFrame>, CoreError> {
-        let verified = verified_incoming_emergency_packet(
+    ) -> Result<Option<ProximityFrame>, CoreError> {
+        let verified = verified_incoming_proximity_packet(
             observed_beacon,
             &self.org_beacon_salt,
             now_unix_secs,
@@ -463,7 +464,7 @@ impl DesktopEmergencyNode {
         observed_beacon: [u8; 8],
         raw_frame: &[u8],
         verifier: &dyn SignatureVerifier,
-    ) -> Result<Option<EmergencyFrame>, CoreError> {
+    ) -> Result<Option<ProximityFrame>, CoreError> {
         self.ingest_peer_frame(
             observed_beacon,
             kodera_rs::system_unix_secs(),
@@ -484,11 +485,11 @@ impl DesktopEmergencyNode {
         verifier: &dyn SignatureVerifier,
     ) -> Result<Vec<u8>, CoreError> {
         let beacon = self.current_beacon(now_unix_secs);
-        let frame = EmergencyFrame::sign_for_organisation(
+        let frame = ProximityFrame::sign_for_organisation(
             organisation_id,
             beacon,
             message_id,
-            MAX_EMERGENCY_TTL_HOPS,
+            MAX_PROXIMITY_TTL_HOPS,
             status,
             text,
             signer,
@@ -521,7 +522,7 @@ impl DesktopEmergencyNode {
         now_unix_secs: u64,
         raw_frame: &[u8],
         verifier: &dyn SignatureVerifier,
-    ) -> Result<Option<EmergencyFrame>, CoreError> {
+    ) -> Result<Option<ProximityFrame>, CoreError> {
         let candidates = [
             now_unix_secs.saturating_sub(300),
             now_unix_secs,
@@ -534,7 +535,7 @@ impl DesktopEmergencyNode {
         if !beacon_matches {
             return Err(CoreError::UnauthorizedSender);
         }
-        let verified = EmergencyFrame::decode(raw_frame)?.verified_for_organisation_at(
+        let verified = ProximityFrame::decode(raw_frame)?.verified_for_organisation_at(
             organisation_id,
             observed_beacon,
             &self.allowed_roster,
@@ -585,7 +586,7 @@ impl DesktopEmergencyNode {
 /// The node is private so callers cannot retain a mutable reference across an organisation switch.
 pub struct DesktopWorkspaceSession {
     organisation_id: Option<OrganisationId>,
-    emergency: Option<DesktopEmergencyNode>,
+    proximity: Option<DesktopProximityNode>,
     allowed_docs_host: Option<String>,
     extension_webhooks: Option<ExtensionWebhookVerifier>,
     sound_pack: Option<SoundPackId>,
@@ -604,13 +605,13 @@ impl DesktopWorkspaceSession {
         max_queue_capacity: usize,
     ) -> Result<Self, CoreError> {
         let organisation_id = OrganisationId::parse(organisation_id)?;
-        let emergency =
-            DesktopEmergencyNode::new(org_beacon_salt, allowed_roster, max_queue_capacity)?;
+        let proximity =
+            DesktopProximityNode::new(org_beacon_salt, allowed_roster, max_queue_capacity)?;
         let extension_webhooks =
-            ExtensionWebhookVerifier::new(organisation_id.clone(), MAX_EMERGENCY_STATE_ENTRIES)?;
+            ExtensionWebhookVerifier::new(organisation_id.clone(), MAX_PROXIMITY_STATE_ENTRIES)?;
         Ok(Self {
             organisation_id: Some(organisation_id),
-            emergency: Some(emergency),
+            proximity: Some(proximity),
             allowed_docs_host: None,
             extension_webhooks: Some(extension_webhooks),
             sound_pack: Some(SoundPackId::Givre),
@@ -657,7 +658,7 @@ impl DesktopWorkspaceSession {
         now_unix_secs: u64,
     ) -> Result<[u8; 8], CoreError> {
         self.check_organisation(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_ref()
             .map(|node| node.current_beacon(now_unix_secs))
             .ok_or(CoreError::TransportUnavailable)
@@ -677,7 +678,7 @@ impl DesktopWorkspaceSession {
         verifier: &dyn SignatureVerifier,
     ) -> Result<Vec<u8>, CoreError> {
         self.check_organisation(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_mut()
             .ok_or(CoreError::TransportUnavailable)?
             .create_local_checkin(message_id, status, text, signer, verifier)
@@ -690,9 +691,9 @@ impl DesktopWorkspaceSession {
         now_unix_secs: u64,
         raw_frame: &[u8],
         verifier: &dyn SignatureVerifier,
-    ) -> Result<Option<EmergencyFrame>, CoreError> {
+    ) -> Result<Option<ProximityFrame>, CoreError> {
         self.check_organisation(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_mut()
             .ok_or(CoreError::TransportUnavailable)?
             .ingest_peer_frame(observed_beacon, now_unix_secs, raw_frame, verifier)
@@ -704,7 +705,7 @@ impl DesktopWorkspaceSession {
         observed_beacon: [u8; 8],
         raw_frame: &[u8],
         verifier: &dyn SignatureVerifier,
-    ) -> Result<Option<EmergencyFrame>, CoreError> {
+    ) -> Result<Option<ProximityFrame>, CoreError> {
         self.ingest_peer_frame(
             organisation_id,
             observed_beacon,
@@ -727,7 +728,7 @@ impl DesktopWorkspaceSession {
     ) -> Result<Vec<u8>, CoreError> {
         self.check_organisation(organisation_id)?;
         let org = OrganisationId::parse(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_mut()
             .ok_or(CoreError::TransportUnavailable)?
             .create_org_bound_checkin(
@@ -748,10 +749,10 @@ impl DesktopWorkspaceSession {
         now_unix_secs: u64,
         raw_frame: &[u8],
         verifier: &dyn SignatureVerifier,
-    ) -> Result<Option<EmergencyFrame>, CoreError> {
+    ) -> Result<Option<ProximityFrame>, CoreError> {
         self.check_organisation(organisation_id)?;
         let org = OrganisationId::parse(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_mut()
             .ok_or(CoreError::TransportUnavailable)?
             .ingest_org_bound_peer_frame(&org, observed_beacon, now_unix_secs, raw_frame, verifier)
@@ -762,9 +763,9 @@ impl DesktopWorkspaceSession {
         organisation_id: &str,
     ) -> Result<Vec<(Ed25519PublicKey, SafetyStatus, String, u64)>, CoreError> {
         self.check_organisation(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_ref()
-            .map(DesktopEmergencyNode::member_statuses)
+            .map(DesktopProximityNode::member_statuses)
             .ok_or(CoreError::TransportUnavailable)
     }
 
@@ -774,7 +775,7 @@ impl DesktopWorkspaceSession {
         max_frames: usize,
     ) -> Result<Vec<Vec<u8>>, CoreError> {
         self.check_organisation(organisation_id)?;
-        self.emergency
+        self.proximity
             .as_mut()
             .map(|node| node.next_relay_batch(max_frames))
             .ok_or(CoreError::TransportUnavailable)
@@ -1092,10 +1093,10 @@ impl DesktopWorkspaceSession {
     }
 
     pub fn clear_session(&mut self) {
-        if let Some(node) = &mut self.emergency {
+        if let Some(node) = &mut self.proximity {
             node.clear();
         }
-        self.emergency = None;
+        self.proximity = None;
         self.allowed_docs_host = None;
         if let Some(verifier) = &mut self.extension_webhooks {
             verifier.clear();
@@ -1136,8 +1137,8 @@ impl Drop for DesktopWorkspaceSession {
 }
 
 /// Rust-callable command seam; not registered with a running Tauri shell yet.
-pub fn emit_emergency_checkin(
-    node: &mut DesktopEmergencyNode,
+pub fn emit_proximity_checkin(
+    node: &mut DesktopProximityNode,
     message_id: UuidV7,
     status: SafetyStatus,
     text: &str,
@@ -1148,17 +1149,17 @@ pub fn emit_emergency_checkin(
 }
 
 pub fn ingest_ble_frame(
-    node: &mut DesktopEmergencyNode,
+    node: &mut DesktopProximityNode,
     observed_beacon: [u8; 8],
     now_unix_secs: u64,
     raw_frame: &[u8],
     verifier: &dyn SignatureVerifier,
-) -> Result<Option<EmergencyFrame>, CoreError> {
+) -> Result<Option<ProximityFrame>, CoreError> {
     node.ingest_peer_frame(observed_beacon, now_unix_secs, raw_frame, verifier)
 }
 
-pub fn get_emergency_roster_status(
-    node: &DesktopEmergencyNode,
+pub fn get_proximity_roster_status(
+    node: &DesktopProximityNode,
 ) -> Vec<(Ed25519PublicKey, SafetyStatus, String, u64)> {
     node.member_statuses()
 }
@@ -1344,7 +1345,7 @@ mod tests {
     }
 
     #[test]
-    fn bridges_kodera_rs_emergency_frame_validation() {
+    fn bridges_kodera_rs_proximity_frame_validation() {
         let salt = [0x55u8; 32];
         let now = 1_762_520_000;
         let beacon = compute_proximity_beacon(&salt, now);
@@ -1354,15 +1355,15 @@ mod tests {
         };
         let msg_id = UuidV7::from_parts(now * 1000, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         let frame =
-            EmergencyFrame::new_signed(msg_id, 3, SafetyStatus::Safe, "Floor 3 clear", &signer)
+            ProximityFrame::new_signed(msg_id, 3, SafetyStatus::Safe, "Floor 3 clear", &signer)
                 .expect("sign");
         let wire = frame.encode().expect("encode");
 
         let mut roster = HashSet::new();
         roster.insert(signer.pk);
-        let mut guard = EmergencyReplayGuard::new(64);
+        let mut guard = ProximityReplayGuard::new(64);
 
-        let accepted = verify_incoming_emergency_packet(
+        let accepted = verify_incoming_proximity_packet(
             beacon, &salt, now, &wire, &roster, &signer, &mut guard,
         )
         .expect("valid")
@@ -1370,7 +1371,7 @@ mod tests {
         assert_eq!(accepted.text, "Floor 3 clear");
 
         // Duplicate delivery is suppressed by replay guard
-        let duplicate = verify_incoming_emergency_packet(
+        let duplicate = verify_incoming_proximity_packet(
             beacon, &salt, now, &wire, &roster, &signer, &mut guard,
         )
         .expect("valid");
@@ -1384,8 +1385,8 @@ mod tests {
         }
     }
 
-    fn frame(signer: &TestSigner, timestamp: u64, ttl: u8, status: SafetyStatus) -> EmergencyFrame {
-        EmergencyFrame::new_signed(
+    fn frame(signer: &TestSigner, timestamp: u64, ttl: u8, status: SafetyStatus) -> ProximityFrame {
+        ProximityFrame::new_signed(
             UuidV7::from_parts(timestamp, [3; 10]),
             ttl,
             status,
@@ -1395,8 +1396,8 @@ mod tests {
         .unwrap()
     }
 
-    fn node(signers: &[&TestSigner], capacity: usize) -> DesktopEmergencyNode {
-        DesktopEmergencyNode::new([0x42; 32], signers.iter().map(|s| s.pk).collect(), capacity)
+    fn node(signers: &[&TestSigner], capacity: usize) -> DesktopProximityNode {
+        DesktopProximityNode::new([0x42; 32], signers.iter().map(|s| s.pk).collect(), capacity)
             .unwrap()
     }
 
@@ -1435,17 +1436,17 @@ mod tests {
             3
         );
         let wire2 = first.next_relay_batch(8).remove(0);
-        assert_eq!(EmergencyFrame::decode(&wire2).unwrap().ttl_hops, 2);
+        assert_eq!(ProximityFrame::decode(&wire2).unwrap().ttl_hops, 2);
         second
             .ingest_peer_frame(beacon, now, &wire2, &signer)
             .unwrap();
         let wire1 = second.next_relay_batch(8).remove(0);
-        assert_eq!(EmergencyFrame::decode(&wire1).unwrap().ttl_hops, 1);
+        assert_eq!(ProximityFrame::decode(&wire1).unwrap().ttl_hops, 1);
         third
             .ingest_peer_frame(beacon, now, &wire1, &signer)
             .unwrap();
         assert!(third.next_relay_batch(8).is_empty());
-        assert_eq!(get_emergency_roster_status(&third)[0].1, SafetyStatus::Safe);
+        assert_eq!(get_proximity_roster_status(&third)[0].1, SafetyStatus::Safe);
         assert!(first
             .ingest_peer_frame(beacon, now, &wire1, &signer)
             .unwrap()
@@ -1454,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn emergency_node_prioritizes_help_and_does_not_roll_status_back() {
+    fn proximity_node_prioritizes_help_and_does_not_roll_status_back() {
         let safe = test_signer(9);
         let help = test_signer(10);
         let verifier = PairVerifier(&safe, &help);
@@ -1479,11 +1480,11 @@ mod tests {
         .unwrap();
         let batch = node.next_relay_batch(9);
         assert_eq!(
-            EmergencyFrame::decode(&batch[0]).unwrap().status,
+            ProximityFrame::decode(&batch[0]).unwrap().status,
             SafetyStatus::NeedAssistance
         );
         assert_eq!(
-            EmergencyFrame::decode(&batch[1]).unwrap().status,
+            ProximityFrame::decode(&batch[1]).unwrap().status,
             SafetyStatus::Safe
         );
         let old = frame(&safe, 18, 3, SafetyStatus::NeedAssistance)
@@ -1505,11 +1506,11 @@ mod tests {
         let now = 1_762_520_100;
         let id = UuidV7::from_parts(now * 1000, [3; 10]);
         let wire =
-            emit_emergency_checkin(&mut node, id, SafetyStatus::Safe, "Here", &signer, &signer)
+            emit_proximity_checkin(&mut node, id, SafetyStatus::Safe, "Here", &signer, &signer)
                 .unwrap();
         assert_eq!(
-            EmergencyFrame::decode(&wire).unwrap().ttl_hops,
-            MAX_EMERGENCY_TTL_HOPS
+            ProximityFrame::decode(&wire).unwrap().ttl_hops,
+            MAX_PROXIMITY_TTL_HOPS
         );
         assert_eq!(node.next_relay_batch(1), vec![wire.clone()]);
         assert!(node
@@ -1573,7 +1574,7 @@ mod tests {
         let beacon = node.current_beacon(now);
         let ahead = frame(
             &signer,
-            now * 1000 + kodera_rs::MAX_EMERGENCY_FUTURE_SKEW_MS + 1,
+            now * 1000 + kodera_rs::MAX_PROXIMITY_FUTURE_SKEW_MS + 1,
             3,
             SafetyStatus::Safe,
         )
@@ -1594,7 +1595,7 @@ mod tests {
             .is_some());
         let at_bound = frame(
             &signer,
-            now * 1000 + kodera_rs::MAX_EMERGENCY_FUTURE_SKEW_MS,
+            now * 1000 + kodera_rs::MAX_PROXIMITY_FUTURE_SKEW_MS,
             3,
             SafetyStatus::Safe,
         )
@@ -1663,7 +1664,7 @@ mod tests {
                 .is_some());
         }
         let mut isolated =
-            DesktopEmergencyNode::new([0x43; 32], HashSet::from([signer.pk]), 4).unwrap();
+            DesktopProximityNode::new([0x43; 32], HashSet::from([signer.pk]), 4).unwrap();
         let wrong_org_beacon = compute_proximity_beacon(&[0x42; 32], now);
         assert_eq!(
             isolated.ingest_peer_frame(wrong_org_beacon, now, &wire, &signer),
@@ -1724,7 +1725,7 @@ mod tests {
         assert_eq!(receiver.member_statuses(org_b).unwrap().len(), 1);
         let relayed = receiver.next_relay_batch(org_b, 1).unwrap();
         assert_eq!(relayed.len(), 1);
-        let relay = EmergencyFrame::decode(&relayed[0]).unwrap();
+        let relay = ProximityFrame::decode(&relayed[0]).unwrap();
         assert_eq!(relay.signature, accepted.signature);
         assert_eq!(relay.ttl_hops + 1, accepted.ttl_hops);
 
@@ -1741,14 +1742,14 @@ mod tests {
     }
 
     #[test]
-    fn org_bound_emergency_and_scoped_webhooks_reject_cross_org_retagging_and_secret_reuse() {
+    fn org_bound_proximity_and_scoped_webhooks_reject_cross_org_retagging_and_secret_reuse() {
         let org_a = "11111111-1111-4111-8111-111111111111";
         let org_b = "22222222-2222-4222-8222-222222222222";
         let shared_signer = test_signer(9);
         let now = 1_762_520_100;
 
-        // 1. EmergencyOrganisationKeyGuard rejects registering the same Ed25519 key across orgs
-        let mut key_guard = EmergencyOrganisationKeyGuard::new();
+        // 1. ProximityOrganisationKeyGuard rejects registering the same Ed25519 key across orgs
+        let mut key_guard = ProximityOrganisationKeyGuard::new();
         let beacon_a = compute_proximity_beacon(&[0x42; 32], now);
         let beacon_b = compute_proximity_beacon(&[0x43; 32], now);
         key_guard
@@ -1869,7 +1870,7 @@ mod tests {
         assert_eq!(node.member_statuses().len(), 1);
         assert_eq!(node.member_statuses()[0].0, help.pk);
         assert!(matches!(
-            DesktopEmergencyNode::new([0x42; 32], HashSet::new(), 0),
+            DesktopProximityNode::new([0x42; 32], HashSet::new(), 0),
             Err(CoreError::InvalidCapacity)
         ));
         let roster = (0..4097u32)
@@ -1880,7 +1881,7 @@ mod tests {
             })
             .collect();
         assert!(matches!(
-            DesktopEmergencyNode::new([0x42; 32], roster, 1),
+            DesktopProximityNode::new([0x42; 32], roster, 1),
             Err(CoreError::InvalidCapacity)
         ));
     }
@@ -2028,9 +2029,9 @@ mod tests {
             .create_local_checkin(ORG, id, SafetyStatus::Safe, "Here", &signer, &signer)
             .unwrap();
         assert_eq!(session.member_statuses(ORG).unwrap().len(), 1);
-        assert_eq!(session.emergency.as_ref().unwrap().mesh_queue.len(), 1);
+        assert_eq!(session.proximity.as_ref().unwrap().mesh_queue.len(), 1);
         assert!(session
-            .emergency
+            .proximity
             .as_ref()
             .unwrap()
             .replay_guard
@@ -2077,7 +2078,7 @@ mod tests {
             .unwrap();
         session.clear_session();
         assert_eq!(session.organisation_id(), None);
-        assert!(session.emergency.is_none());
+        assert!(session.proximity.is_none());
         assert_eq!(
             session.current_beacon(OTHER_ORG, now),
             Err(CoreError::TransportUnavailable)
@@ -2127,7 +2128,7 @@ mod tests {
             session.switch_organisation(OTHER_ORG, [0x43; 32], HashSet::from([signer.pk]), 0),
             Err(CoreError::InvalidCapacity)
         );
-        assert!(session.emergency.is_none());
+        assert!(session.proximity.is_none());
         assert_eq!(session.organisation_id(), None);
         assert_eq!(
             session.member_statuses(ORG),
@@ -2279,13 +2280,13 @@ mod tests {
     }
 
     #[test]
-    fn desktop_emergency_session_system_clock_helpers_verify_present_and_reject_future() {
+    fn desktop_proximity_session_system_clock_helpers_verify_present_and_reject_future() {
         let signer = test_signer(11);
         let mut session =
             DesktopWorkspaceSession::new(ORG, [0x42; 32], HashSet::from([signer.pk]), 4).unwrap();
         let beacon = session.current_beacon_now(ORG).unwrap();
         let now_ms = kodera_rs::system_unix_ms();
-        let valid_wire = EmergencyFrame::new_signed(
+        let valid_wire = ProximityFrame::new_signed(
             UuidV7::from_parts(now_ms, [0x01; 10]),
             3,
             SafetyStatus::Safe,
@@ -2300,7 +2301,7 @@ mod tests {
             .unwrap();
         assert!(accepted.is_some());
 
-        let future_wire = EmergencyFrame::new_signed(
+        let future_wire = ProximityFrame::new_signed(
             UuidV7::from_parts(now_ms + 360_000, [0x02; 10]),
             3,
             SafetyStatus::Safe,

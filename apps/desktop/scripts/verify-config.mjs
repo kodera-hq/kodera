@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const tauriDir = join(import.meta.dirname, '..', 'src-tauri');
@@ -15,6 +15,51 @@ const files = new Set(requiredFiles.filter((path) => existsSync(join(tauriDir, p
 const capability = files.has('capabilities/default.json')
   ? JSON.parse(readFileSync(join(tauriDir, 'capabilities/default.json'), 'utf8'))
   : null;
+
+// The desktop preview is a companion surface: it sells nothing. No pricing, plan, upgrade or
+// checkout wording, no billing SDK and no address that can reach a payment page may appear in its
+// sources or configuration. `plan` alone is not listed: here it names the self-host deployment plan.
+// Stems that mean commerce wherever they stand, inside an identifier included (`open_checkout`,
+// `showPaywall`), then whole words that are only commercial on their own.
+const COMMERCIAL_WORDING = new RegExp([
+  'pricing|upgrad(?:e|es|ed|ing)|upsell|checkout|billing|invoic(?:e|es|ed|ing)|payment|purchas(?:e|es|ed|ing)',
+  'paywall|subscri(?:be|bes|bed|ber|bers|ption|ptions)|premium|tarification|abonnement|facturation|paiement',
+  String.raw`(?<!\p{L})(?:priced?|prices|billed|pay\s+now|free\s+trial|trial\s+period|(?:paid|pro|business|enterprise)\s+plan`
+    + String.raw`|buy(?:\s+now)?|credit\s+card|per\s+(?:seat|user|month)|tarifs?|prix|mise\s+à\s+niveau|s['’]abonner`
+    + String.raw`|factures?|achats?|acheter|essai\s+gratuit|carte\s+bancaire|par\s+mois)(?!\p{L})`,
+].join('|'), 'iu');
+const PRICE_AMOUNT = /[€$£]\s?\d|\d\s?(?:€|EUR\b|USD\b|GBP\b)/u;
+const BILLING_SDK = /\b(?:stripe|paypal|revenuecat|paddle|storekit|skpaymentqueue|skproduct|billingclient)\b|com\.android\.billingclient|com\.android\.vending\.BILLING/iu;
+const BILLING_PATHS = 'billing|checkout|pricing|upgrade|invoices?|orders?|subscriptions?|payments?|plans?';
+const BILLING_DESTINATION = new RegExp(
+  '(?:https?:)?//[^\\s"\'<>)]*\\b(?:' + BILLING_PATHS + ')\\b'
+  + '|["\'`]/(?:' + BILLING_PATHS + ')(?:[/?#"\'`]|$)',
+  'iu');
+const COMPANION_RULES = [
+  [COMMERCIAL_WORDING, 'carries commercial wording'],
+  [PRICE_AMOUNT, 'states a price'],
+  [BILLING_SDK, 'names a billing provider or store purchase API'],
+  [BILLING_DESTINATION, 'names a billing destination'],
+];
+
+function companionSurface() {
+  const surface = new Map();
+  const add = (path) => surface.set(path, readFileSync(join(tauriDir, path), 'utf8'));
+  for (const name of readdirSync(join(tauriDir, 'src')).sort()) if (name.endsWith('.rs')) add(`src/${name}`);
+  for (const name of readdirSync(join(tauriDir, 'capabilities')).sort()) add(`capabilities/${name}`);
+  for (const path of ['tauri.conf.json', 'Cargo.toml', 'build.rs', '../package.json']) add(path);
+  return surface;
+}
+
+function verifyCompanionSurface(surface) {
+  assert.ok(surface.size >= 7 && surface.has('src/commands.rs'), 'companion surface must include the desktop sources');
+  for (const [path, text] of surface) {
+    for (const [pattern, finding] of COMPANION_RULES) {
+      const match = pattern.exec(text);
+      assert.equal(match, null, `${path} ${finding}: ${JSON.stringify(match?.[0])}; the desktop preview sells nothing`);
+    }
+  }
+}
 
 function verifyConfiguration(config, availableFiles, defaultCapability) {
   assert.equal(config.identifier, 'io.kodera.desktop', 'identifier must match the desktop app');
@@ -160,10 +205,45 @@ function selftest() {
     }).reverse().join('; ');
   verifyConfiguration(reordered, files, capability);
   console.log(`OK — ${mutations.length} in-memory desktop configuration mutations refused.`);
+
+  // The same discipline for the companion rule: each reintroduction is refused for its own reason.
+  const surface = companionSurface();
+  verifyCompanionSurface(surface);
+  const commercial = [
+    ['an upgrade prompt', /src\/commands\.rs carries commercial wording: "Upgrade"/u, 'src/commands.rs', '\n// Upgrade to unlock more seats\n'],
+    ['a pricing label', /src\/lib\.rs carries commercial wording: "pricing"/u, 'src/lib.rs', '\nconst LABEL: &str = "See pricing";\n'],
+    ['a checkout route', /src\/commands\.rs carries commercial wording: "checkout"/u, 'src/commands.rs', '\n"open_checkout" => todo!(),\n'],
+    ['a subscription notice', /tauri\.conf\.json carries commercial wording: "subscription"/u, 'tauri.conf.json', '\n"note": "Your subscription ends soon"\n'],
+    ['a paid plan', /src\/lib\.rs carries commercial wording: "Pro plan"/u, 'src/lib.rs', '\n// Pro plan only\n'],
+    ['French commercial wording', /src\/lib\.rs carries commercial wording: "abonnement"/u, 'src/lib.rs', '\n// abonnement requis\n'],
+    ['French upgrade wording', /src\/lib\.rs carries commercial wording: "mise à niveau"/u, 'src/lib.rs', '\n// mise à niveau\n'],
+    ['a price', /src\/lib\.rs states a price: "9 €"/u, 'src/lib.rs', '\n// 9 € each\n'],
+    ['a dollar price', /Cargo\.toml states a price: "\$4"/u, 'Cargo.toml', '\n# $49 once\n'],
+    ['a billing provider', /src\/lib\.rs names a billing provider or store purchase API: "Stripe"/u, 'src/lib.rs', '\n// Stripe session\n'],
+    ['a store purchase API', /src\/main\.rs names a billing provider or store purchase API: "StoreKit"/u, 'src/main.rs', '\n// StoreKit\n'],
+    ['a console orders address', /capabilities\/default\.json names a billing destination: "https:\/\/console\.example\.org\/acme\/order"/u,
+      'capabilities/default.json', '\n"https://console.example.org/acme/order"\n'],
+    ['a relative plans path', /src\/commands\.rs names a billing destination: "\\"\/plans\\""/u, 'src/commands.rs', '\nconst PATH: &str = "/plans";\n'],
+  ];
+  for (const [name, diagnostic, path, addition] of commercial) {
+    const mutated = new Map(surface);
+    assert.ok(mutated.has(path), `selftest names a file outside the companion surface: ${path}`);
+    mutated.set(path, mutated.get(path) + addition);
+    assert.throws(() => verifyCompanionSurface(mutated), diagnostic,
+      `selftest failed to reject ${name} for its own diagnostic`);
+  }
+  // The self-host deployment plan and its wording stay admitted.
+  const admitted = new Map(surface);
+  admitted.set('src/lib.rs', admitted.get('src/lib.rs') + '\n// plan_self_host derives a deployment plan; planning is local.\n');
+  verifyCompanionSurface(admitted);
+  assert.throws(() => verifyCompanionSurface(new Map([['src/lib.rs', '']])), /companion surface must include/u,
+    'selftest failed to reject an emptied companion surface');
+  console.log(`OK — ${commercial.length + 1} in-memory commercial-surface mutations refused.`);
 }
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--selftest'), 'usage: verify-config.mjs [--selftest]');
 if (args[0] === '--selftest') selftest();
 verifyConfiguration(conf, files, capability);
-console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified.');
+verifyCompanionSurface(companionSurface());
+console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified; no commercial wording or billing destination.');
