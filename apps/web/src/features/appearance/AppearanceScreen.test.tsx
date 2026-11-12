@@ -20,12 +20,14 @@ function cards() {
 }
 
 describe('AppearanceScreen', () => {
-  it('offers the four themes in order, « Automatique » chosen when nothing is stored', () => {
+  it('offers the six themes in order, « Automatique » chosen when nothing is stored', () => {
     render(<AppearanceScreen />)
 
     expect(screen.getByRole('heading', { level: 1, name: 'Apparence' })).toBeInTheDocument()
     expect(cards()).toEqual(
-      ['Automatique', 'Clair', 'Sombre', 'Noir'].map((name) => screen.getByRole('radio', { name }))
+      ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir'].map((name) =>
+        screen.getByRole('radio', { name })
+      )
     )
     expect(screen.getByRole('radio', { name: 'Automatique' })).toHaveAttribute(
       'aria-checked',
@@ -139,7 +141,7 @@ describe('AppearanceScreen', () => {
     expect(screen.getByRole('radio', { name: 'Sombre' })).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('previews each theme with its own roles, « Automatique » half light and half dark', () => {
+  it('previews each theme with its own roles, « Automatique » half Ciel and half Ciel nuit', () => {
     render(<AppearanceScreen />)
 
     const previews = cards().map((card) =>
@@ -147,7 +149,14 @@ describe('AppearanceScreen', () => {
         node.getAttribute('data-theme')
       )
     )
-    expect(previews).toEqual([['light', 'dark'], ['light'], ['dark'], ['black']])
+    expect(previews).toEqual([
+      ['ciel', 'ciel-nuit'],
+      ['ciel'],
+      ['ciel-nuit'],
+      ['light'],
+      ['dark'],
+      ['black'],
+    ])
   })
 })
 
@@ -189,7 +198,7 @@ describe('AppearanceScreen with the boot script', () => {
 
     // And « Automatique » is a choice again, not the checked card that does nothing.
     await user.click(screen.getByRole('radio', { name: 'Automatique' }))
-    expect(html()).toBe('light')
+    expect(html()).toBe('ciel')
     expect(screen.getByRole('radio', { name: 'Automatique' })).toHaveAttribute(
       'aria-checked',
       'true'

@@ -314,6 +314,24 @@ export default tseslint.config(
     },
   },
   {
+    // The static server sends `style-src-attr 'none'` (server/static.mjs):
+    // a `style` attribute is markup the browser refuses wherever the component is rendered to
+    // HTML. A value known only at run time goes through the CSSOM (`src/ui/cssom.ts`), which the
+    // policy does not govern; anything else is a class.
+    files: ['src/**/*.tsx'],
+    ignores: ['src/**/*.test.tsx', 'src/**/*.stories.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXAttribute[name.name='style']",
+          message:
+            "No `style` prop: the CSP is style-src-attr 'none'. Use a class, or cssProperty() from src/ui/cssom.ts for a computed value.",
+        },
+      ],
+    },
+  },
+  {
     // The one other backend (messaging-pilot design §2.7): the workspace's homeserver, called with
     // the member's own Matrix token, by Espace's sign-in and by its store over matrix-js-sdk, and
     // the room-access call on the homeserver's origin (`/_kodera/rooms/token`, ADR-0012), which

@@ -45,10 +45,10 @@ const SCHEME_OF = { light: 'light', dark: 'dark', black: 'dark' };
  */
 export const THEME_REGISTRY = Object.freeze(
   [
-    { id: 'light', family: 'givre', mode: 'light', default: true },
+    { id: 'light', family: 'givre', mode: 'light' },
     { id: 'dark', family: 'givre', mode: 'dark' },
     { id: 'black', family: 'givre', mode: 'black' },
-    { id: 'ciel', family: 'ciel', mode: 'light' },
+    { id: 'ciel', family: 'ciel', mode: 'light', default: true },
     { id: 'ciel-nuit', family: 'ciel', mode: 'dark' },
   ].map((theme) => Object.freeze({ default: false, ...theme, scheme: SCHEME_OF[theme.mode] })),
 );
@@ -124,10 +124,23 @@ export function themeOfPath(ref) {
   return id;
 }
 
-/** The selector a theme's block is declared under. The default theme also owns `:root`. */
+/**
+ * The selector the default theme claims the document root with: the root,
+ * unless another registered theme claims it. A bare `:root` would tie with
+ * `[data-theme="<other>"]` on the same element, and the block declared later
+ * would win: with a default declared after another theme, a root that names
+ * that other theme would paint the default. `:where()` keeps the specificity of
+ * `:root` alone, one attribute selector, so the theme blocks still override
+ * each other by order and by nothing else.
+ */
+export const DEFAULT_ROOT_SELECTOR = `:root:where(:not(${THEMES.filter((id) => id !== DEFAULT_THEME)
+  .map((id) => `[data-theme="${id}"]`)
+  .join(', ')}))`;
+
+/** The selector a theme's block is declared under. The default theme also owns the unclaimed root. */
 export function themeSelector(id) {
   const attribute = `[data-theme="${themeInfo(id).id}"]`;
-  return id === DEFAULT_THEME ? `:root, ${attribute}` : attribute;
+  return id === DEFAULT_THEME ? `${DEFAULT_ROOT_SELECTOR}, ${attribute}` : attribute;
 }
 
 /**

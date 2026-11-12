@@ -7,6 +7,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // As in vite.config.ts: the suite runs the scroll lock the browser runs.
+      'react-style-singleton': fileURLToPath(
+        new URL('./src/ui/csp/styleSingleton.ts', import.meta.url)
+      ),
     },
   },
   test: {

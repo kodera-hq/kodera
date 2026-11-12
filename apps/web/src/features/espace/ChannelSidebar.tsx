@@ -34,6 +34,7 @@ import {
 import type { RoomSummary } from './matrix/store'
 import type { MentionCandidate } from './mentions'
 import { useStoreSlice } from './useStoreSlice'
+import { cssProperty } from '../../ui/cssom'
 
 /** What a right-click on a channel's row tells the view's owner. */
 export type ChannelContextMenu = (info: {
@@ -476,7 +477,7 @@ function ChannelSidebarView({
   return (
     <nav
       aria-labelledby={headingId}
-      style={narrow ? undefined : { width: `${width}px` }}
+      ref={cssProperty('width', narrow ? undefined : `${width}px`)}
       className="order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft bg-c-sunken p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0"
     >
       <div className="flex min-h-0 flex-1 flex-col">

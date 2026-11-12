@@ -494,10 +494,10 @@ public object KoderaTokens {
     public enum class ThemeFamily(public val id: String) { Givre("givre"), Ciel("ciel") }
     public enum class ThemeMode(public val id: String) { Light("light"), Dark("dark"), Black("black") }
     public enum class Theme(public val id: String, public val family: ThemeFamily, public val mode: ThemeMode, public val isDark: Boolean, public val isDefault: Boolean) {
-        Light("light", ThemeFamily.Givre, ThemeMode.Light, false, true),
+        Light("light", ThemeFamily.Givre, ThemeMode.Light, false, false),
         Dark("dark", ThemeFamily.Givre, ThemeMode.Dark, true, false),
         Black("black", ThemeFamily.Givre, ThemeMode.Black, true, false),
-        Ciel("ciel", ThemeFamily.Ciel, ThemeMode.Light, false, false),
+        Ciel("ciel", ThemeFamily.Ciel, ThemeMode.Light, false, true),
         CielNuit("ciel-nuit", ThemeFamily.Ciel, ThemeMode.Dark, true, false);
         public val palette: Palette
             get() = when (this) {

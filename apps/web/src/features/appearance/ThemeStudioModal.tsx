@@ -5,6 +5,7 @@ import { Button } from '../../ui/Button/Button'
 import { StatusPill } from '../../ui/StatusPill/StatusPill'
 import { cx } from '../../ui/cx'
 import { WorkspaceDialog, WorkspaceDialogTitle } from '../../ui/WorkspaceDialog'
+import { THEME_PREFERENCES, themeMode, type AppliedTheme } from '../../theme/theme'
 import { applyCustomTokensToDocument } from './themeOverrides'
 import { themeStudioMessages } from './themeStudioMessages'
 export { applyCustomTokensToDocument } from './themeOverrides'
@@ -16,7 +17,6 @@ import {
   parseStoredThemes,
   themeIdFromName,
   type CommunityThemeDefinition,
-  type CoreThemeMode,
   type CustomThemeTokens,
   type ThemeRefusal,
 } from './themeCodec'
@@ -81,11 +81,15 @@ export const CURATED_COMMUNITY_PRESETS: readonly CommunityThemeDefinition[] = [
   },
 ] as const
 
-export function applyCoreThemeToDocument(mode: CoreThemeMode): void {
+/** The official themes, in the order the Apparence page lists them: Ciel first, then Givre. */
+const OFFICIAL_THEMES = THEME_PREFERENCES.filter(
+  (preference): preference is AppliedTheme => preference !== 'system'
+)
+
+export function applyCoreThemeToDocument(theme: AppliedTheme): void {
   if (typeof document === 'undefined') return
-  const isDarkOrBlack = mode === 'dark' || mode === 'black'
-  document.documentElement.classList.toggle('dark', isDarkOrBlack)
-  document.documentElement.dataset.theme = mode
+  document.documentElement.classList.toggle('dark', themeMode(theme) !== 'light')
+  document.documentElement.dataset.theme = theme
 }
 
 function loadSavedCommunityThemes(): readonly CommunityThemeDefinition[] {
@@ -117,8 +121,9 @@ const REFUSAL_MESSAGE: Readonly<Record<ThemeRefusal, MessageKey>> = {
 
 export interface ThemeStudioModalProps {
   readonly open: boolean
-  readonly currentThemeMode: CoreThemeMode
-  readonly onSelectCoreTheme: (mode: CoreThemeMode) => void
+  /** The theme on the page: a share code records only its mode (`themeMode`). */
+  readonly currentThemeMode: AppliedTheme
+  readonly onSelectCoreTheme: (theme: AppliedTheme) => void
   readonly onShareToChannel?: ((themeName: string, shareCode: string) => Promise<void>) | undefined
   readonly returnFocusTo?: RefObject<HTMLElement | null> | undefined
   readonly onClose: () => void
@@ -157,7 +162,7 @@ export function ThemeStudioModal({
       id: importedId ?? themeIdFromName(customName),
       name: customName.trim() || copy.fallbackName,
       author: 'Kodera Community',
-      baseMode: currentThemeMode,
+      baseMode: themeMode(currentThemeMode),
       tokens,
     }),
     [customName, currentThemeMode, tokens, importedId, copy.fallbackName]
@@ -171,7 +176,7 @@ export function ThemeStudioModal({
     setStatusMessageText(t(REFUSAL_MESSAGE[reason]))
   }
 
-  const handleChooseCoreMode = (mode: CoreThemeMode) => {
+  const handleChooseCoreMode = (mode: AppliedTheme) => {
     applyCustomTokensToDocument(null)
     onSelectCoreTheme(mode)
     setStatusMessage(copy.modes[mode].done)
@@ -309,7 +314,7 @@ export function ThemeStudioModal({
       <section aria-label={copy.official} className="flex flex-col gap-2">
         <span className="text-xs font-semibold text-c-ink-2">{copy.officialTitle}</span>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {(['light', 'dark', 'black'] as const).map((mode) => {
+          {OFFICIAL_THEMES.map((mode) => {
             const item = { mode, ...copy.modes[mode] }
             const isSelected = currentThemeMode === item.mode
             return (

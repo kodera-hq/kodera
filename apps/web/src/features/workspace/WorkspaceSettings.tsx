@@ -9,6 +9,7 @@ import { Button } from '../../ui/Button/Button'
 import { TextField } from '../../ui/TextField/TextField'
 import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { CopyableField } from '../../ui/CopyableField/CopyableField'
+import { appliedTheme } from '../../theme/theme'
 import { useThemePreference } from '../../theme/useThemePreference'
 import { ThemeStudioModal } from '../appearance/ThemeStudioModal'
 import { applyCustomTokensToDocument } from '../appearance/themeOverrides'
@@ -460,7 +461,7 @@ export default function WorkspaceSettings({
           </Tabs.Root>
           <ThemeStudioModal
             open={studio}
-            currentThemeMode={preference === 'system' ? 'light' : preference}
+            currentThemeMode={appliedTheme(preference)}
             onSelectCoreTheme={choose}
             onShareToChannel={shareTheme}
             returnFocusTo={studioTrigger}

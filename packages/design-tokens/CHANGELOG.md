@@ -7,6 +7,7 @@ One section per tag, newest first, no dates: the tag and the commit it points at
 ## Unreleased
 
 - Relicensed from MIT to Apache-2.0 (`LICENSE`, `package.json`) for open-core monorepo unification.
+- **`ciel` is the default theme** (owner decision B2, `feat/w3-ciel-default-theme-and-strict-style-csp`): the two gates `docs/specs/ethereal-sky-glass.md` set before a default both stand. The unthemed root now takes `ciel`; `themes.js` `defaultTheme`, the manifest's `default` flags, Swift `Theme.defaultTheme` and Compose's `isDefault` follow. No token name or value changes. The root claim is `:root:where(:not(<every other theme>))` rather than a bare `:root`, which tied with `[data-theme="<other>"]` and lost to whichever block came later: with the default declared after Givre, a bare `:root` would have painted Ciel on a page that chose Givre. `test/theme-registry.selftest.mjs` holds the claim, with a mutation for the bare form.
 
 "Ethereal Sky Glass", the engine and its foundation tokens (`docs/specs/ethereal-sky-glass.md`). Additive: every token name, CSS variable, preset key and native member a consumer uses today still resolves to the same value, so this is a minor (`RELEASE.md`, step 5). The family, its theme ids, the opaque fallback and the two gates before it can be a default were decided by zôÖma, through the lead session; the values the new themes carry are initial and are not decided.
 

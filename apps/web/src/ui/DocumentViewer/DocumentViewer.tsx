@@ -5,6 +5,7 @@ import { cx } from '../cx'
 import { InlineAlert } from '../InlineAlert/InlineAlert'
 import { LINK_TEXT } from '../linkText'
 import { Skeleton } from '../Skeleton/Skeleton'
+import { cssProperty } from '../cssom'
 
 export interface DocumentViewerSection {
   id: string
@@ -257,8 +258,8 @@ export const DocumentViewer = forwardRef<HTMLDivElement, DocumentViewerProps>(
               className="h-1 w-full overflow-hidden rounded-full bg-c-muted-2"
             >
               <div
+                ref={cssProperty('width', `${progressPercent}%`)}
                 className="h-full rounded-full bg-c-action"
-                style={{ width: `${progressPercent}%` }}
               />
             </div>
           </CardBody>

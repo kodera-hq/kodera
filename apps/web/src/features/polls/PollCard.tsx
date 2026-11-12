@@ -2,11 +2,8 @@ import { useId, useState } from 'react'
 import { Button } from '../../ui/Button/Button'
 import { StatusPill } from '../../ui/StatusPill/StatusPill'
 import { cx } from '../../ui/cx'
-import {
-  computePollSummary,
-  formatPollMarkdownForDocs,
-  type ChannelPoll,
-} from './pollState'
+import { computePollSummary, formatPollMarkdownForDocs, type ChannelPoll } from './pollState'
+import { cssProperty } from '../../ui/cssom'
 
 export interface PollCardProps {
   readonly poll: ChannelPoll
@@ -102,7 +99,7 @@ export function PollCard({
                   disabled={poll.closed}
                   onClick={() => onVote(poll.id, opt.id)}
                   className={cx(
-                    'flex w-full flex-col gap-2 rounded-md border p-3 text-left transition-colors focus-visible:outline-hidden focus-visible:ring',
+                    'flex w-full flex-col gap-2 rounded-md border p-3 text-left transition-colors focus-visible:ring focus-visible:outline-hidden',
                     hasVoted
                       ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
                       : 'border-c-border-soft bg-c-sunken text-c-ink hover:bg-c-muted'
@@ -120,10 +117,8 @@ export function PollCard({
                   >
                     <div
                       data-testid={`poll-progress-${idx + 1}`}
+                      ref={cssProperty('width', `${opt.percentage}%`)}
                       className="h-full rounded-full bg-c-action transition-all"
-                      style={{
-                        width: `${opt.percentage}%`,
-                      }}
                     />
                   </div>
                 </button>

@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, indexTokens, resolve, resolveValue } from '../scripts/lib/tokens.mjs';
-import { THEMES as REGISTERED } from '../scripts/lib/themes.mjs';
+import { THEMES as REGISTERED, DEFAULT_THEME, themeSelector } from '../scripts/lib/themes.mjs';
 import preset from '../dist/tailwind.preset.js';
 
 const tree = JSON.parse(readFileSync(join(ROOT, 'tokens.json'), 'utf8'));
@@ -43,7 +43,8 @@ const rem = (v) => {
 };
 
 function themeBlock(styles, theme) {
-  const selector = theme === 'light' ? ':root, \\[data-theme="light"\\]' : `\\[data-theme="${theme}"\\]`;
+  // The block's own selector, the default theme's root claim included.
+  const selector = themeSelector(theme).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return styles.match(new RegExp(`(?:^|\\n)${selector} \\{([^}]+)\\}`))?.[1];
 }
 
@@ -265,8 +266,8 @@ test('the build refuses an incomplete, empty, colliding or uncoloured elevation 
       /expected elevation for the complete theme set: light, dark, black/,
     );
     refused(
-      mutated((t) => (t.semantic.elevation.light = { $description: 'none' })),
-      /light: no elevation level/,
+      mutated((t) => (t.semantic.elevation[DEFAULT_THEME] = { $description: 'none' })),
+      new RegExp(`${DEFAULT_THEME}: no elevation level`),
     );
     refused(
       mutated((t) => delete t.semantic.elevation.black.dialog),

@@ -80,7 +80,7 @@ test('every theme declares both rings, an opaque core inside a translucent halo'
   // returning under a new name: the one declaration would win under every
   // attribute, and the theme that reads it is not the theme that painted it.
   const rings = {
-    ':root, [data-theme="light"]': [
+    '[data-theme="light"]': [
       '--focus-ring: 0 0 0 2px #2340C4, 0 0 0 5px rgba(35, 64, 196, 0.35);',
       '--focus-ring-color: #2340C4;',
       '--focus-ring-on-inverse: 0 0 0 2px #FFFFFF, 0 0 0 5px rgba(255, 255, 255, 0.35);',
@@ -122,7 +122,7 @@ test('every theme declares both rings, an opaque core inside a translucent halo'
   }
 
   // ...and nowhere else. A copy on `:root` outside the theme blocks would be
-  // shadowed here by the light block and would win nothing, but it would still
+  // shadowed here by the default theme's block and would win nothing, but it would still
   // be a second place the ring is written down.
   assert.equal(Object.keys(rings).length, THEMES.length, 'every registered theme is listed above');
   assert.equal((css.match(/--focus-ring:/g) ?? []).length, THEMES.length, 'one ring declaration per theme, no more');

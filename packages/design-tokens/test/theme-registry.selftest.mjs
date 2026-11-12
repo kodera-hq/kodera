@@ -29,6 +29,7 @@ import {
   familyRules,
   assertThemeGroups,
   themeOfPath,
+  DEFAULT_ROOT_SELECTOR,
 } from '../scripts/lib/themes.mjs';
 import * as published from '../dist/themes.js';
 
@@ -37,10 +38,10 @@ const tree = JSON.parse(read('tokens.json'));
 
 /** The registry, restated. Changing the themes means changing this too. */
 const EXPECTED = [
-  { id: 'light', family: 'givre', mode: 'light', scheme: 'light', default: true },
+  { id: 'light', family: 'givre', mode: 'light', scheme: 'light', default: false },
   { id: 'dark', family: 'givre', mode: 'dark', scheme: 'dark', default: false },
   { id: 'black', family: 'givre', mode: 'black', scheme: 'dark', default: false },
-  { id: 'ciel', family: 'ciel', mode: 'light', scheme: 'light', default: false },
+  { id: 'ciel', family: 'ciel', mode: 'light', scheme: 'light', default: true },
   { id: 'ciel-nuit', family: 'ciel', mode: 'dark', scheme: 'dark', default: false },
 ];
 const EXPECTED_FAMILIES = {
@@ -56,14 +57,18 @@ test('the registry lists every theme once, as a family in a mode', () => {
   assert.deepEqual(THEME_REGISTRY.map((theme) => ({ ...theme })), EXPECTED);
   assert.deepEqual(JSON.parse(JSON.stringify(THEME_FAMILIES)), EXPECTED_FAMILIES);
   assert.deepEqual([...THEMES], EXPECTED.map((theme) => theme.id));
-  assert.equal(DEFAULT_THEME, 'light');
+  assert.equal(DEFAULT_THEME, 'ciel');
   assert.deepEqual(themesOfFamily('givre'), ['light', 'dark', 'black']);
   assert.deepEqual(themesOfFamily('ciel'), ['ciel', 'ciel-nuit']);
   assert.equal(themeSelector('ciel-nuit'), '[data-theme="ciel-nuit"]');
   assert.deepEqual(familyRules('ciel-nuit'), EXPECTED_FAMILIES.ciel);
   assert.equal(published.themeFor('ciel', 'dark').id, 'ciel-nuit');
   assert.equal(published.themeFor('ciel', 'black'), undefined, 'a family has no theme in a mode it does not declare');
-  assert.equal(themeSelector('light'), ':root, [data-theme="light"]');
+  assert.equal(themeSelector('light'), '[data-theme="light"]');
+  assert.equal(
+    themeSelector('ciel'),
+    ':root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"]',
+  );
   assert.equal(themeSelector('dark'), '[data-theme="dark"]');
   assert.deepEqual(familyRules('black'), EXPECTED_FAMILIES.givre);
   assert.ok(Object.isFrozen(THEME_REGISTRY) && Object.isFrozen(THEME_REGISTRY[0]), 'the registry is not mutable at run time');
@@ -119,10 +124,18 @@ test('the theme a reference belongs to is read from where it lives, and never gu
 function checkCensus(artefacts, registry = THEME_REGISTRY) {
   const ids = registry.map((theme) => theme.id);
 
-  const blocks = [...artefacts.css.matchAll(/^((?::root, )?)\[data-theme="([^"]+)"\] \{$/gm)];
+  const blocks = [...artefacts.css.matchAll(/^(\S.*, )?\[data-theme="([^"]+)"\] \{$/gm)];
   assert.deepEqual(blocks.map((m) => m[2]), ids, 'tokens.css: one [data-theme] block per registered theme, in registry order');
-  for (const [, root, id] of blocks) {
+  for (const [, root = '', id] of blocks) {
     assert.equal(root !== '', registry.find((theme) => theme.id === id).default, `tokens.css: only the default theme's block carries :root (${id})`);
+  }
+  // The default claims the root only where no other theme does. A bare `:root`
+  // ties with `[data-theme="<other>"]` on <html>, and whichever block comes
+  // later wins: a default declared after another theme would repaint a page
+  // that chose that theme.
+  const claim = `:root:where(:not(${ids.filter((id) => !registry.find((theme) => theme.id === id).default).map((id) => `[data-theme="${id}"]`).join(', ')})), `;
+  for (const [, root = ''] of blocks.filter(([, root]) => root !== undefined)) {
+    assert.equal(root, claim, 'tokens.css: the default theme claims the root unless another theme does');
   }
 
   assert.deepEqual(artefacts.published.themes.map((theme) => ({ ...theme })), registry.map((theme) => ({ ...theme })), 'themes.js: the registry, entry for entry');
@@ -256,8 +269,20 @@ test('a theme one generator emits and the registry does not hold is refused, art
   );
   // The default moved to a block that is not the registry's default.
   assert.throws(
-    () => checkCensus(mutated((a) => ({ css: a.css.replace(':root, [data-theme="light"] {', '[data-theme="light"] {') }))),
+    () =>
+      checkCensus(
+        mutated((a) => ({
+          css: a.css
+            .replace(`${DEFAULT_ROOT_SELECTOR}, [data-theme="${DEFAULT_THEME}"] {`, `[data-theme="${DEFAULT_THEME}"] {`)
+            .replace('\n[data-theme="light"] {', `\n${DEFAULT_ROOT_SELECTOR}, [data-theme="light"] {`),
+        })),
+      ),
     /only the default theme's block carries :root \(light\)/,
+  );
+  // The default claims a bare `:root`, which a later block ties with and beats.
+  assert.throws(
+    () => checkCensus(mutated((a) => ({ css: a.css.replace(`${DEFAULT_ROOT_SELECTOR}, [data-theme="${DEFAULT_THEME}"] {`, `:root, [data-theme="${DEFAULT_THEME}"] {`) }))),
+    /the default theme claims the root unless another theme does/,
   );
 
   checkCensus(base);

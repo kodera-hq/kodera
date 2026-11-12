@@ -494,7 +494,7 @@ public enum KoderaTokens {
         case black = "black"
         case ciel = "ciel"
         case cielNuit = "ciel-nuit"
-        public static let defaultTheme: Theme = .light
+        public static let defaultTheme: Theme = .ciel
         public var family: ThemeFamily {
             switch self {
             case .light: return .givre

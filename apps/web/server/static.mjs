@@ -205,7 +205,7 @@ function headers(config, path) {
     "script-src 'self'",
     "script-src-attr 'none'",
     "style-src 'self'",
-    "style-src-attr 'unsafe-inline'",
+    "style-src-attr 'none'",
     "img-src 'self'",
     "font-src 'self'",
     "object-src 'none'",

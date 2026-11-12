@@ -5,6 +5,7 @@ import { fileURLToPath, URL } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
+import { radixSelectViewportStylePlugin } from './scripts/vite/radixSelectViewportStyle'
 import { SUPPORT_EMAIL } from './src/app/supportContact'
 import { ENTRY_NAMESPACES, ORGANISATION_NAMESPACES } from './src/i18n/namespaces'
 
@@ -405,6 +406,8 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     react(),
+    // No inline `<style>` under `style-src 'self'`: Radix Select's viewport rule ships static.
+    radixSelectViewportStylePlugin(),
     mockServiceWorkerPlugin(),
     entryBootstrapPlugin(),
     application.plugin,
@@ -415,6 +418,11 @@ export default defineConfig({
     // fails only at bundle time.
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Radix's scroll lock adopts its stylesheet instead of injecting a `<style>` element the
+      // CSP refuses (src/ui/csp/styleSingleton.ts).
+      'react-style-singleton': fileURLToPath(
+        new URL('./src/ui/csp/styleSingleton.ts', import.meta.url)
+      ),
     },
   },
   server: {

@@ -1380,7 +1380,11 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.shell.appearance.hint-choice` | Le thème s’applique immédiatement à toute la console. Il est enregistré dans ce navigateur seulement : sur un autre appareil ou un autre navigateur, choisissez-le à nouveau. |
 | `console.shell.appearance.label-theme` | Thème |
 | `console.shell.appearance.label-system` | Automatique |
-| `console.shell.appearance.hint-system` | suit le réglage clair ou sombre de votre appareil |
+| `console.shell.appearance.hint-system` | le ciel clair ou le ciel de nuit, selon le réglage de votre appareil |
+| `console.shell.appearance.label-ciel` | Ciel |
+| `console.shell.appearance.hint-ciel` | le thème officiel, du verre sur un ciel clair |
+| `console.shell.appearance.label-ciel-nuit` | Ciel nuit |
+| `console.shell.appearance.hint-ciel-nuit` | le ciel de nuit, faible luminosité |
 | `console.shell.appearance.label-light` | Clair |
 | `console.shell.appearance.hint-light` | bureau, plein jour |
 | `console.shell.appearance.label-dark` | Sombre |

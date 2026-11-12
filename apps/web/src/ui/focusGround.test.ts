@@ -14,7 +14,7 @@ describe('FOCUS_GROUND_ELEVATED', () => {
     expect(match, 'the class must set --focus-ring-ground from one var()').not.toBeNull()
     const property = match?.[1] ?? ''
     for (const theme of ['light', 'dark', 'black']) {
-      const selector = theme === 'light' ? ':root, [data-theme="light"]' : `[data-theme="${theme}"]`
+      const selector = `[data-theme="${theme}"]`
       const block = css.slice(css.indexOf(`${selector} {`))
       const body = block.slice(0, block.indexOf('}'))
       expect(body, `${property} is declared in the ${theme} theme block`).toContain(
