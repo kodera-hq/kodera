@@ -20,8 +20,9 @@ archived channel whose state was not yet applied has its policy and power levels
 call is ended: ending the call first would let a member back in until the policy reached the room. The
 second phase does the rest, channel by channel: it finds or creates each room, converges its
 state, joins whoever is missing and posts the notices. It reuses the membership the first phase
-read, less the members kicked: no one but the agent can invite, so a room gains no member in
-between, and one who leaves on their own is joined back by the next application.
+read, less the members kicked. Canonical community rooms with audience `all` and no deny
+exceptions use native public joins, restricted by the policy module to local users, and skip
+per-user joining. Other rooms remain invitation-only and restore missing members.
 
 The room state last applied whole to a channel's room is fingerprinted in the agent's state: the
 digest of the policy, power levels, name and topic the channel asks for, which are all its state
@@ -69,6 +70,21 @@ AGENT_LEVEL, MODERATION_LEVEL, POST_LEVEL, OCCUPANCY_LEVEL = 100, 50, 20, 10
 # serves different rooms at once. Small, so a pass never floods the tenant's homeserver.
 REMOVAL_WORKERS = 4
 POWER_LEVELS = "m.room.power_levels"
+JOIN_RULES = "m.room.join_rules"
+
+
+def native_public(channel: dict[str, Any], synapse: Synapse) -> bool:
+    """Only the canonical community namespace permits local native joins.
+
+    A deny override, restricted audience or archive always restores invitation-only access.
+    Customer homeservers retain their existing membership convergence.
+    """
+    return (
+        synapse.server_name.startswith("community.")
+        and channel["audience"] == "all"
+        and not channel["denied"]
+        and not channel["archived"]
+    )
 
 
 @dataclass(frozen=True)
@@ -407,11 +423,16 @@ class Channels:
             u for s in room_members(channel, all_members) if (u := synapse.user_id(s)) is not None
         )
         exempt = sorted(u for s in channel["exempt"] if (u := synapse.user_id(s)) in users)
+        public = native_public(channel, synapse)
+        governance = policy(channel, exempt, users)
+        if public:
+            governance["local_only"] = True
         state = (
-            (POLICY, policy(channel, exempt, users)),
+            (POLICY, governance),
             (POWER_LEVELS, power_levels(channel, synapse, exempt)),
             ("m.room.name", {"name": channel["name"]}),
             ("m.room.topic", {"topic": channel["topic"]}),
+            (JOIN_RULES, {"join_rule": "public" if public else "invite"}),
         )
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
         return _Wanted(users, state, digest)
@@ -552,7 +573,11 @@ class Channels:
                     channel_id,
                     channel["name"],
                     channel["topic"],
-                    [{"type": POLICY, "state_key": "", "content": wanted.state[0][1]}],
+                    [
+                        {"type": kind, "state_key": "", "content": content}
+                        for kind, content in wanted.state
+                        if kind in (POLICY, JOIN_RULES)
+                    ],
                     wanted.state[1][1],
                 )
             else:
@@ -580,8 +605,9 @@ class Channels:
                     room_id, self._admitted(channel, wanted), result
                 )
                 owed.rooms.discard(room_id)
-        for user in sorted(wanted.users - present):
-            self._join(room_id, user, result.waiting)
+        if not native_public(channel, synapse):
+            for user in sorted(wanted.users - present):
+                self._join(room_id, user, result.waiting)
         access = synapse.room_access_user
         # Joined at once, as members are: invited only, room-access would refuse every token for
         # a new audio room until its next pass accepted the invite. Invited when its account does
@@ -642,6 +668,7 @@ class Channels:
         synapse = self._synapse
         current = synapse.state(room_id, POLICY) or {}
         synapse.put_state(room_id, POLICY, {**current, "archived": True})
+        synapse.put_state(room_id, JOIN_RULES, {"join_rule": "invite"})
         for user, membership in synapse.members(room_id).items():
             if membership in ("join", "invite") and user not in keep:
                 synapse.kick(room_id, user)

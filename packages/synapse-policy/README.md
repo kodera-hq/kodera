@@ -88,3 +88,10 @@ AGPL-3.0-or-later, like Synapse ([LICENSE](LICENSE)).
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Report a vulnerability privately to support@kodera.io ([SECURITY.md](SECURITY.md)).
+
+### Local native joins
+
+An agent-authored governed policy may include `local_only: true` for public community
+channels. Both the native join callback and membership event rules refuse remote users,
+even if invited. A non-boolean flag fails closed. This complements Matrix's native join
+rule; it does not publish rooms, relax private listed membership or announcement posting.

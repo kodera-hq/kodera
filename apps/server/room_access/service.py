@@ -73,6 +73,24 @@ def _active_audio_policy(policy: dict[str, Any] | None) -> TypeGuard[dict[str, A
     )
 
 
+def _audience_allows(policy: dict[str, Any], user: str, agent: str) -> bool:
+    """Additional private-room authority, independent of accidental Matrix membership."""
+    audience = policy.get("audience")
+    if audience is not None:
+        if audience not in ("all", "listed"):
+            return False
+        if audience == "listed":
+            members = policy.get("members")
+            if not isinstance(members, list) or not all(isinstance(u, str) for u in members):
+                return False
+            if user not in members:
+                return False
+    local_only = policy.get("local_only", False)
+    if type(local_only) is not bool:
+        return False
+    return not local_only or user.partition(":")[2] == agent.partition(":")[2]
+
+
 @dataclass
 class Stats:
     passes: int = 0
@@ -129,7 +147,11 @@ class Service:
             admit(user_id)
         policy = self._policy(room_id)
         # One answer for "no such room", "not an audio room", "archived" and "not a member".
-        if not _active_audio_policy(policy) or self.matrix.membership(room_id, user_id) != "join":
+        if (
+            not _active_audio_policy(policy)
+            or not _audience_allows(policy, user_id, self.agent)
+            or self.matrix.membership(room_id, user_id) != "join"
+        ):
             raise RefusedError(403)
         name = livekit_room(room_id)
         # Idempotent, and needed each time: LiveKit closes an empty room after its timeout.
@@ -172,7 +194,11 @@ class Service:
             for participant in participants:
                 who = str(participant.get("identity", ""))
                 user = user_of(who)
-                if not active_audio or user not in joined:
+                if (
+                    not active_audio
+                    or user not in joined
+                    or not _audience_allows(policy, user, self.agent)
+                ):
                     self.livekit.remove(name, who)
                     removed += 1
                     continue

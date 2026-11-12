@@ -62,12 +62,20 @@ APPROVED_SUBJECTS = [
 ]
 # The set-up paragraph, approved by the product owner on 2026-11-04, word for word, just before
 # the link of both onboarding mails: the realm's set-up mail comes first.
-APPROVED_SET_UP_PARAGRAPH = (
-    "Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour "
-    "choisir votre mot de passe et activer le code à usage unique. Munissez-vous de votre "
-    "téléphone, avec une application d'authentification (par exemple FreeOTP ou Google "
-    "Authenticator). Revenez ensuite à ce lien :"
-)
+APPROVED_SET_UP_PARAGRAPH = {
+    "owner_claim": (
+        "Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour "
+        "vérifier votre adresse e-mail et choisir votre mot de passe. Avant de devenir propriétaire, "
+        "vous devez activer un code à usage unique dans les paramètres de sécurité de votre compte, "
+        "puis vous reconnecter avec ce code. Revenez ensuite à ce lien :"
+    ),
+    "invitation": (
+        "Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour "
+        "vérifier votre adresse e-mail et choisir votre mot de passe. Vous pourrez aussi activer, "
+        "si vous le souhaitez, un code à usage unique dans les paramètres de sécurité de votre "
+        "compte. Revenez ensuite à ce lien :"
+    ),
+}
 # What to do once the set-up link has lapsed (72 h), approved on 2026-11-04, just after the link.
 APPROVED_SET_UP_VALIDITY = {
     "invitation": (
@@ -853,7 +861,7 @@ def check_catalogue_carries_the_approved_copy() -> None:
     ] == APPROVED_SUBJECTS, "a subject differs from the approved copy"
     for template_id in ("owner_claim", "invitation"):
         body = loaded[template_id].copies["fr"].body
-        assert APPROVED_SET_UP_PARAGRAPH + "\n\n${link}\n" in body, (
+        assert APPROVED_SET_UP_PARAGRAPH[template_id] + "\n\n${link}\n" in body, (
             "the approved set-up paragraph is not just before the link"
         )
         assert "${link}\n\n" + APPROVED_SET_UP_VALIDITY[template_id] + "\n\n" in body, (

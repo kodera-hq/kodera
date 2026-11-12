@@ -958,3 +958,30 @@ def test_upstream_refuses_redirects_closes_error_streams_and_catches_http_except
             5.0,
             (200,),
         )
+
+
+@pytest.mark.parametrize("audience,members", [("listed", [BOB]), ("listed", "*"), ("unknown", [])])
+def test_private_audio_policy_refuses_even_an_accidentally_joined_nonmember(
+    world, audience, members
+):
+    matrix, livekit, service = world
+    matrix.policy(AUDIO, audience=audience, members=members)
+    with pytest.raises(RefusedError) as caught:
+        service.grant("tok-alice", AUDIO)
+    assert caught.value.status == 403, "private audio membership must be explicitly authorized"
+    assert livekit.calls == {}
+    livekit.join(AUDIO, f"{ALICE}|DEV1", tracks=["MICROPHONE"])
+    service.refresh(livekit_room(AUDIO), AUDIO)
+    assert livekit.removed == [f"{ALICE}|DEV1"], (
+        "private audio policy must evict unauthorized callers"
+    )
+
+
+def test_private_audio_refusal_guard_detects_its_own_omission(world, monkeypatch):
+    from room_access import service as module
+
+    check = test_private_audio_policy_refuses_even_an_accidentally_joined_nonmember
+    check(world, "listed", [BOB])
+    monkeypatch.setattr(module, "_audience_allows", lambda policy, user, agent: True)
+    with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
+        check(world, "listed", [BOB])

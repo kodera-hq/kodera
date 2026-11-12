@@ -24,7 +24,7 @@ Bonjour,
 
 L'espace de travail de ${organisation_name} est prêt sur Kodera. Pour en devenir le propriétaire, ouvrez ce lien et connectez-vous :
 
-Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour choisir votre mot de passe et activer le code à usage unique. Munissez-vous de votre téléphone, avec une application d'authentification (par exemple FreeOTP ou Google Authenticator). Revenez ensuite à ce lien :
+Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour vérifier votre adresse e-mail et choisir votre mot de passe. Avant de devenir propriétaire, vous devez activer un code à usage unique dans les paramètres de sécurité de votre compte, puis vous reconnecter avec ce code. Revenez ensuite à ce lien :
 
 ${link}
 
@@ -42,7 +42,7 @@ Hello,
 
 The ${organisation_name} workspace is ready on Kodera. To become its owner, open this link and sign in:
 
-You will also receive an email “Configurer votre compte Kodera” (Set up your Kodera account): open it first to choose your password and turn on the one-time code. Have your phone ready, with an authenticator app (for example FreeOTP or Google Authenticator). Then come back to this link:
+You will also receive an email “Configurer votre compte Kodera” (Set up your Kodera account): open it first to verify your email address and choose your password. Before becoming the owner, you must enable a one-time code in your account security settings, then sign in again with that code. Then come back to this link:
 
 ${link}
 
@@ -65,7 +65,7 @@ Bonjour,
 
 Vous avez reçu une invitation à rejoindre l'espace de travail de ${organisation_name} sur Kodera, avec le rôle ${role}. Pour l'accepter, ouvrez ce lien et connectez-vous :
 
-Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour choisir votre mot de passe et activer le code à usage unique. Munissez-vous de votre téléphone, avec une application d'authentification (par exemple FreeOTP ou Google Authenticator). Revenez ensuite à ce lien :
+Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour vérifier votre adresse e-mail et choisir votre mot de passe. Vous pourrez aussi activer, si vous le souhaitez, un code à usage unique dans les paramètres de sécurité de votre compte. Revenez ensuite à ce lien :
 
 ${link}
 
@@ -83,7 +83,7 @@ Hello,
 
 You have been invited to join the ${organisation_name} workspace on Kodera, with the role ${role}. To accept, open this link and sign in:
 
-You will also receive an email “Configurer votre compte Kodera” (Set up your Kodera account): open it first to choose your password and turn on the one-time code. Have your phone ready, with an authenticator app (for example FreeOTP or Google Authenticator). Then come back to this link:
+You will also receive an email “Configurer votre compte Kodera” (Set up your Kodera account): open it first to verify your email address and choose your password. You can also enable an optional one-time code in your account security settings. Then come back to this link:
 
 ${link}
 

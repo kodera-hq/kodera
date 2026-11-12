@@ -14,6 +14,11 @@ SOURCE = ROOT / "src" / "kodera_synapse_policy" / "__init__.py"
 
 # (description, original text, mutated text, test that must fail)
 MUTANTS = [
+    ("archived native join open", 'if content.get("archived", False) is not False:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
+    ("archived event posting open", 'if content.get("archived") is True:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
+    ("public native remote join open", 'if content.get("local_only") is True and not self._api.is_mine(user):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
+    ("public federated member event open", 'if not _is_valid_user_id(target) or not self._api.is_mine(target):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
+    ("malformed local-only flag open", 'if type(content.get("local_only", False)) is not bool:', 'if False:', "test_public_local_only_flag_must_be_boolean"),
     ("agent may not create", "if user_id == self._agent:\n            return NOT_SPAM", "if False:\n            return NOT_SPAM", "test_agent_creates_any_room"),
     ("any is_direct accepted", 'config.get("is_direct") is not True', "False", "test_member_cannot_create_anything_but_a_direct_message"),
     ("two invitees accepted", "len(invite) != 1", "len(invite) < 1", "test_member_cannot_create_anything_but_a_direct_message"),
