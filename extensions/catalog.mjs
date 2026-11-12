@@ -7,11 +7,17 @@
 // Every extension in this directory is a reference implementation: it runs against the SDK's
 // in-memory harness with synthetic fixtures, and nothing in the repository installs it, hosts it
 // or connects it to a provider account. The check keeps the catalogue and the wording honest.
-import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { lstat, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateManifest } from '../packages/extension-sdk/src/index.mjs'
 
-const ROOT = new URL('../', import.meta.url)
+// File-system paths throughout, joined with `path.join`. A name is never spliced into a URL:
+// there `#` and `?` cut the path short and `%41` decodes to another name, so the check would
+// read a different file from the one it lists, or none.
+const ROOT = fileURLToPath(new URL('../', import.meta.url))
+const SCANNED_DIRECTORIES = ['extensions', 'packages/extension-sdk']
+const asPath = (root) => (root instanceof URL ? fileURLToPath(root) : String(root))
 export const LABEL = 'Reference implementation'
 export const CATALOG_PATH = 'extensions/catalog.json'
 export const README_PATH = 'extensions/README.md'
@@ -186,22 +192,33 @@ export function problemsIn(tree) {
 
 /**
  * Every file of `extensions/` and `packages/extension-sdk/`, by repository path: its text, or a
- * `NotRead` for a symbolic link, a special file or a file that is not UTF-8. Nothing is skipped
- * for its name or its type, and no link is followed.
+ * `NotRead` with the reason. Nothing is skipped for its name or its type.
+ *
+ * A file is read only when its real path is the root's real path joined with its own: no
+ * symbolic link is followed, in the file's name or in any directory above it, the two scanned
+ * directories and their parents included. Each entry is read from exactly the path it is
+ * listed under, whatever characters its name holds.
  */
 export async function collect(root = ROOT) {
+  const base = asPath(root)
+  const realBase = await realpath(base)
   const files = new Map()
   const decoder = new TextDecoder('utf-8', { fatal: true })
-  async function walk(relative) {
-    for (const entry of await readdir(new URL(relative, root), { withFileTypes: true })) {
+  const local = (path) => join(base, ...path.split('/'))
+  const contained = async (path) => (await realpath(local(path))) === join(realBase, ...path.split('/'))
+  async function walk(directory) {
+    for (const entry of await readdir(local(directory), { withFileTypes: true })) {
       if (entry.name === 'node_modules' && entry.isDirectory()) continue
-      const path = `${relative}${entry.name}`
-      if (entry.isSymbolicLink()) files.set(path, new NotRead('symbolic link'))
-      else if (entry.isDirectory()) await walk(`${path}/`)
+      const path = `${directory}/${entry.name}`
+      // A name that cannot be printed on one line cannot be named in a refusal either.
+      if (/[\p{Cc}\\]/u.test(entry.name)) files.set(JSON.stringify(path), new NotRead('entry with an unprintable name'))
+      else if (entry.isSymbolicLink()) files.set(path, new NotRead('symbolic link'))
+      else if (entry.isDirectory()) await walk(path)
       else if (!entry.isFile()) files.set(path, new NotRead('special file'))
+      else if (!(await contained(path))) files.set(path, new NotRead('file reached through a symbolic link'))
       else {
         try {
-          files.set(path, decoder.decode(await readFile(new URL(path, root))))
+          files.set(path, decoder.decode(await readFile(local(path))))
         } catch (error) {
           if (!(error instanceof TypeError)) throw error
           files.set(path, new NotRead('file that is not UTF-8 text'))
@@ -209,8 +226,20 @@ export async function collect(root = ROOT) {
       }
     }
   }
-  await walk('extensions/')
-  await walk('packages/extension-sdk/')
+  for (const directory of SCANNED_DIRECTORIES) {
+    let entry
+    try {
+      entry = await lstat(local(directory))
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') throw error
+      files.set(directory, new NotRead('missing directory'))
+      continue
+    }
+    if (entry.isSymbolicLink()) files.set(directory, new NotRead('symbolic link'))
+    else if (!entry.isDirectory()) files.set(directory, new NotRead('entry that is not a directory'))
+    else if (!(await contained(directory))) files.set(directory, new NotRead('directory reached through a symbolic link'))
+    else await walk(directory)
+  }
   return files
 }
 
@@ -224,10 +253,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`OK: extensions catalogue matches ${build(files).catalog.extensions.length} manifests; no forbidden claim`)
   } else {
     const { catalog } = build(files)
-    await writeFile(new URL(CATALOG_PATH, ROOT), serialise(catalog))
+    // Nothing is written through a link, and nothing is generated from a tree that was not fully read.
+    const unread = [...tree].filter(([, text]) => text instanceof NotRead).map(([path]) => path)
+    if (unread.length) throw new Error(`refusing to generate: not read: ${unread.join(', ')}`)
     const readme = withTable(files.get(README_PATH) ?? '', catalog)
     if (readme === null) throw new Error(`${README_PATH} has no catalogue markers`)
-    await writeFile(new URL(README_PATH, ROOT), readme)
+    for (const [path, text] of [[CATALOG_PATH, serialise(catalog)], [README_PATH, readme]]) {
+      const target = join(ROOT, ...path.split('/'))
+      const entry = await lstat(target).catch(() => null)
+      if (entry !== null && !entry.isFile()) throw new Error(`refusing to write ${path}: not a regular file`)
+      await writeFile(target, text)
+    }
     console.log(`Wrote ${CATALOG_PATH} and the ${README_PATH} table from ${catalog.extensions.length} manifests`)
   }
 }

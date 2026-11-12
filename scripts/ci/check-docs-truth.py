@@ -34,6 +34,7 @@ import sys
 import tempfile
 import unicodedata
 from dataclasses import dataclass, field
+from urllib.parse import unquote
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,9 +123,11 @@ class Tree:
     def read(self, path: str) -> str | None:
         """The text of a regular in-tree file, or None when it is not UTF-8. Never follows a
         link: the descriptor is opened with O_NOFOLLOW and checked to be a regular file."""
-        if path not in self.files:
+        full = os.path.join(self.root, path)
+        # Checked again at the moment of reading: the whole path, not only its last component.
+        if path not in self.files or os.path.realpath(full) != full:
             raise CouldNotLook(f"{path} is not a regular file of the repository")
-        descriptor = os.open(self.root / path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         with os.fdopen(descriptor, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise CouldNotLook(f"{path} is not a regular file of the repository")
@@ -183,11 +186,13 @@ def selected(paths: set[str] | dict[str, str], sources: tuple[str, ...]) -> list
 
 
 def check_readable(tree: Tree, sources: tuple[str, ...] = LINK_SOURCES) -> list[str]:
-    """Name every checked path that is not a regular file. The path is all that is reported:
-    where a link points, and what is there, is never read."""
+    """Name every checked path that is not a regular file, and every refused path that stands
+    above a checked one: a linked directory hides whatever it leads to. The path is all that is
+    reported: where a link points, and what is there, is never read."""
+    above = [path for path in tree.refused if any(source.startswith(path + "/") for source in sources)]
     return [
         f"{path}: {tree.refused[path]} refused: the check reads regular files inside the repository only"
-        for path in selected(tree.refused, sources)
+        for path in sorted({*selected(tree.refused, sources), *above})
     ]
 
 
@@ -298,8 +303,12 @@ def check_links(tree: Tree, sources: tuple[str, ...] = LINK_SOURCES) -> list[str
         for number, target in link_targets(text):
             if SCHEME_RE.match(target) or target.startswith("//"):
                 continue
+            # Read as a browser reads it: `#` starts the anchor, `?` a query, and a percent
+            # escape names the decoded character. `./%41.md` is a link to `A.md`, whatever file
+            # happens to be called `%41.md`.
             path_part, _, fragment = target.partition("#")
-            path_part = path_part.split("?", 1)[0]
+            path_part = unquote(path_part.split("?", 1)[0])
+            fragment = unquote(fragment)
             where = f"{source}:{number}"
             if not path_part:
                 destination: str | None = source
@@ -502,7 +511,13 @@ def selftest() -> None:
             outside.write_text(f"# Outside\n\n[{marker}](./{marker}.md) {organisation}\n", encoding="utf-8")
             root = Path(tmp) / "repository"
             root.mkdir()
-            build(root, {**base, **{path: (("link", str(outside)) if content == "LINK-OUTSIDE" else content) for path, content in changes.items()}})
+            elsewhere = Path(tmp) / "elsewhere"
+            build(elsewhere, {
+                "guide.md": f"# Guide\n\n## Getting started\n\n{marker}\n",
+                "adr/0001-console.md": "# ADR-0001: Console\n",
+            })
+            links = {"LINK-OUTSIDE": str(outside), "LINK-OUTSIDE-DIRECTORY": str(elsewhere)}
+            build(root, {**base, **{path: (("link", links[content]) if isinstance(content, str) and content in links else content) for path, content in changes.items()}})
             if regenerate:
                 regenerated(root)
             return check(root)
@@ -538,6 +553,12 @@ def selftest() -> None:
         ("an anchor on a directory",
          {"README.md": readme.replace("(./deploy/community/)", "(./deploy/community/#setup)")},
          "README.md:4: broken anchor './deploy/community/#setup': an anchor is verified in a Markdown file"),
+        ("a percent escape that names another file than the one on disk",
+         {"docs/%41.md": "# Escaped\n", "README.md": readme + "\n[escaped](./docs/%41.md)\n"},
+         "README.md:13: broken link './docs/%41.md': no tracked file or directory 'docs/A.md'"),
+        ("a query that cuts a file name short",
+         {"docs/what?.md": "# Query\n", "README.md": readme + "\n[query](./docs/what?.md)\n"},
+         "README.md:13: broken link './docs/what?.md': no tracked file or directory 'docs/what'"),
         ("a reference definition that leads nowhere",
          {"ARCHITECTURE.md": architecture.replace("[ref]: ./README.md", "[ref]: ./READ.md")},
          "ARCHITECTURE.md:5: broken link './READ.md': no tracked file or directory 'READ.md'"),
@@ -553,6 +574,19 @@ def selftest() -> None:
         ("a link whose target is a symbolic link",
          {"docs/linked.md": "LINK-OUTSIDE", "README.md": readme + "\n[linked](./docs/linked.md#outside)\n"},
          "README.md:13: broken link './docs/linked.md#outside': 'docs/linked.md' is a symbolic link, which is not followed"),
+        ("a directory of documents that is a symbolic link",
+         {"docs/linked": "LINK-OUTSIDE-DIRECTORY"},
+         "docs/linked: symbolic link refused: the check reads regular files inside the repository only"),
+        ("a link into a directory that is a symbolic link",
+         {"docs/linked": "LINK-OUTSIDE-DIRECTORY", "README.md": readme + "\n[linked](./docs/linked/guide.md#getting-started)\n"},
+         "README.md:13: broken link './docs/linked/guide.md#getting-started': no tracked file or directory 'docs/linked/guide.md'"),
+        ("a checked directory that is itself a symbolic link",
+         {"docs/guide.md": None, "docs/screenshot.png": None, ADR_INDEX: None, "docs": "LINK-OUTSIDE-DIRECTORY",
+          "README.md": readme.replace(", [the index](docs/adr/README.md)", "")},
+         "docs: symbolic link refused: the check reads regular files inside the repository only"),
+        ("the directory above the ADRs is a symbolic link to records with the same names",
+         {"apps/web/docs/adr/0001-console.md": None, "apps/web/docs": "LINK-OUTSIDE-DIRECTORY"},
+         "apps/web/docs: symbolic link refused: the check reads regular files inside the repository only"),
         ("an ADR that is a symbolic link",
          {"apps/web/docs/adr/0002-linked.md": "LINK-OUTSIDE"},
          "unexpected entry in an ADR directory: apps/web/docs/adr/0002-linked.md"),
@@ -626,6 +660,12 @@ def selftest() -> None:
     accepted = run({"packages/design-tokens/docs/adr/0002-second.md": "# ADR-0002: Second\n"}, regenerate=True)
     if accepted:
         failures.append(f"a regenerated index must accept a new ADR (got {accepted})")
+    escaped = run({
+        "docs/%41 b#c.md": "# Escaped\n\n## Part one\n",
+        "README.md": readme + "\n[escaped](./docs/%2541%20b%23c.md#part-one) and [decoded](./docs/%67uide.md#getting-started)\n",
+    })
+    if escaped:
+        failures.append(f"a correctly escaped link to an oddly named file must be accepted (got {escaped})")
 
     # A checkout whose files git cannot list is a failure, not an empty repository.
     with tempfile.TemporaryDirectory(prefix="docs-truth-selftest-") as tmp:
@@ -639,7 +679,7 @@ def selftest() -> None:
             failures.append("a checkout git cannot list must be refused")
     if failures:
         sys.exit("check-docs-truth selftest FAILED:\n  " + "\n  ".join(failures))
-    print(f"OK: check-docs-truth selftest, {len(cases) + 1} refusals named and 2 accepted cases")
+    print(f"OK: check-docs-truth selftest, {len(cases) + 1} refusals named and 3 accepted cases")
 
 
 def main() -> None:

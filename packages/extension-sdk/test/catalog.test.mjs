@@ -196,3 +196,95 @@ test('catalogue refusal: a symbolic link is named, never followed, and nothing i
     'forbidden claim in extensions/hello-webhook/NOTES.txt: an extension presented with an endorsement it does not have',
   ]);
 });
+
+test('catalogue refusal: a name with #, ? or %41 is read from its own path, not from the one a URL would name', async () => {
+  // The wording is assembled here so that this file never contains what it refuses.
+  const claim = `${['Official', 'Kodera extension.'].join(' ')}\n`;
+  const temporary = await mkdtemp(join(tmpdir(), 'kodera-catalog-names-'));
+  try {
+    const root = join(temporary, 'repository');
+    await mkdir(join(root, 'extensions/demo'), { recursive: true });
+    await mkdir(join(root, 'extensions/evil#x'), { recursive: true });
+    await mkdir(join(root, 'extensions/evil'), { recursive: true });
+    await mkdir(join(root, 'extensions/%64emo'), { recursive: true });
+    await mkdir(join(root, 'packages/extension-sdk'), { recursive: true });
+    // Each clean decoy is the file a spliced URL would have opened instead.
+    const entries = [
+      ['extensions/demo/A.md', 'clean\n'],
+      ['extensions/demo/%41.md', claim],
+      ['extensions/demo/notes', 'clean\n'],
+      ['extensions/demo/notes#1.md', claim],
+      ['extensions/demo/what', 'clean\n'],
+      ['extensions/demo/what?.md', claim],
+      ['extensions/evil/README.md', 'clean\n'],
+      ['extensions/evil#x/README.md', claim],
+      ['extensions/%64emo/README.md', claim],
+    ];
+    for (const [path, text] of entries) await writeFile(join(root, ...path.split('/')), text);
+    const collected = await collect(pathToFileURL(`${root}/`));
+    // Every entry is listed under its own name and holds its own content.
+    assert.deepEqual(
+      [...collected].sort(([a], [b]) => a.localeCompare(b)),
+      [...entries].sort(([a], [b]) => a.localeCompare(b)),
+    );
+    const problems = problemsIn(collected);
+    for (const path of [
+      'extensions/demo/%41.md',
+      'extensions/demo/notes#1.md',
+      'extensions/demo/what?.md',
+      'extensions/evil#x/README.md',
+      'extensions/%64emo/README.md',
+    ])
+      assert.ok(problems.includes(`forbidden claim in ${path}: an extension presented as official`), path);
+    // And a directory so named is not an extension the catalogue can list.
+    assert.ok(problems.includes('extensions/evil#x: exactly one manifest is the source (found 0)'));
+    assert.ok(problems.includes('extensions/%64emo: exactly one manifest is the source (found 0)'));
+    // The same holds when the root is given as a plain path.
+    assert.deepEqual([...(await collect(root)).keys()].sort(), [...collected.keys()].sort());
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('catalogue refusal: a scanned directory behind a symbolic link, at any level, is named and not entered', async () => {
+  const marker = 'OUTSIDE-FILE-CONTENT-MUST-NOT-BE-READ';
+  const temporary = await mkdtemp(join(tmpdir(), 'kodera-catalog-parents-'));
+  try {
+    const elsewhere = join(temporary, 'elsewhere');
+    await mkdir(join(elsewhere, 'extensions/demo'), { recursive: true });
+    await mkdir(join(elsewhere, 'packages/extension-sdk'), { recursive: true });
+    await writeFile(join(elsewhere, 'extensions/demo/README.md'), `${marker}\n`);
+    await writeFile(join(elsewhere, 'packages/extension-sdk/README.md'), `${marker}\n`);
+    const cases = [
+      // [what is linked, what the check must name]
+      ['extensions', 'extensions: symbolic link refused'],
+      ['packages', 'packages/extension-sdk: directory reached through a symbolic link refused'],
+      ['packages/extension-sdk', 'packages/extension-sdk: symbolic link refused'],
+      ['extensions/demo', 'extensions/demo: symbolic link refused'],
+    ];
+    for (const [linked, expected] of cases) {
+      const root = join(temporary, `repository-${linked.replaceAll('/', '_')}`);
+      for (const directory of ['extensions/demo', 'packages/extension-sdk']) {
+        if (directory === linked || directory.startsWith(`${linked}/`)) continue;
+        await mkdir(join(root, directory), { recursive: true });
+      }
+      await mkdir(join(root, linked, '..'), { recursive: true });
+      await symlink(join(elsewhere, linked), join(root, linked), 'dir');
+      const collected = await collect(root);
+      const problems = problemsIn(collected);
+      assert.ok(problems.some((problem) => problem.startsWith(expected)), `${linked}: ${JSON.stringify(problems)}`);
+      assert.ok(![...collected.values()].some((value) => typeof value === 'string' && value.includes(marker)), linked);
+      assert.ok(!problems.join('\n').includes(marker), linked);
+    }
+    // A missing scanned directory is a refusal too, not an empty catalogue.
+    const empty = join(temporary, 'repository-empty');
+    await mkdir(join(empty, 'extensions'), { recursive: true });
+    assert.ok(
+      problemsIn(await collect(empty)).includes(
+        'packages/extension-sdk: missing directory refused: the check reads regular UTF-8 files inside the repository only',
+      ),
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
