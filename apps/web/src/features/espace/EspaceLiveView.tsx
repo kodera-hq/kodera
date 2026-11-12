@@ -1356,7 +1356,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 unavailable={navigationUnsettled || signedOut}
               />
             ) : null}
-            {activeRoomId === null || focusedDocs ? null : (
+            {activeRoomId === null || focusedDocs || activeCanvasMode === 'docs' ? null : (
               <>
                 <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
                 <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
