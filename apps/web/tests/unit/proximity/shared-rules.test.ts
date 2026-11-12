@@ -96,7 +96,7 @@ describe('ProximityRoomController clock and roster bounds', () => {
   const pkPeer = new Uint8Array(32).fill(0x0b)
   const clockMs = 1_762_520_100_000
 
-  function controller(members = [{ publicKey: pkPeer, displayName: 'Marina Loiseau' }]) {
+  function controller(members = [{ publicKey: pkPeer }]) {
     return new ProximityRoomController({
       orgBeaconSalt: salt,
       localSigner: createKeyedMacSigner(secret, pkLocal),
@@ -160,7 +160,7 @@ describe('ProximityRoomController clock and roster bounds', () => {
       key[0] = index & 0xff
       key[1] = index >> 8
       key[31] = 0xee
-      return { publicKey: key, displayName: `member ${index}` }
+      return { publicKey: key }
     })
     expect(() => controller(members.slice(0, PROXIMITY_ROSTER_MEMBERS - 1)).close()).not.toThrow()
     expect(() => controller(members)).toThrow(ProximityCodecError)

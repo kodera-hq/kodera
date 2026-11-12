@@ -7,6 +7,7 @@ import {
   formatBeaconPreview,
   hexToBytes,
 } from './codec'
+import { isProximityHandle } from './handle'
 import {
   BEACON_ROTATION_WINDOW_SECS,
   type BleGattTransportAdapter,
@@ -65,8 +66,8 @@ export interface ProximityRoomControllerOptions {
   readonly orgBeaconSalt: Uint8Array
   readonly localSigner: DeviceIdentitySigner
   readonly verifier: SignatureVerifier
+  /** The organisation's provisioned roster. The local device is part of it, listed or not. */
   readonly members: readonly ProximityMemberDirectoryEntry[]
-  readonly localDisplayName?: string | undefined
   readonly nowMs?: (() => number) | undefined
   readonly randomBytes?: ((length: number) => Uint8Array) | undefined
   readonly bleAdapter?: BleGattTransportAdapter | undefined
@@ -228,7 +229,6 @@ export class ProximityRoomController {
   private readonly unsubscribeBle: (() => void) | undefined
   private readonly defaultTtlHops: number
   private readonly localPublicKeyHex: string
-  private readonly localDisplayName: string
   private enqueueSeq = 0
 
   constructor(options: ProximityRoomControllerOptions) {
@@ -252,20 +252,25 @@ export class ProximityRoomController {
 
     const localPk = this.localSigner.publicKey()
     this.localPublicKeyHex = bytesToHex(localPk)
-    this.localDisplayName = options.localDisplayName ?? 'Vous (cet appareil)'
 
-    this.memberDirectory.set(this.localPublicKeyHex, {
-      publicKey: localPk,
-      displayName: this.localDisplayName,
-    })
+    // The local device, with no pseudonym of its own unless the roster below gives it one.
+    this.memberDirectory.set(this.localPublicKeyHex, { publicKey: localPk })
 
     if (options.members.length + 1 > PROXIMITY_ROSTER_MEMBERS) {
       throw new ProximityCodecError(
         'InvalidConfiguration',
-        `an proximity roster tracks at most ${PROXIMITY_ROSTER_MEMBERS} device keys`
+        `a proximity roster tracks at most ${PROXIMITY_ROSTER_MEMBERS} device keys`
       )
     }
     for (const member of options.members) {
+      // A pseudonym outside the grammar is refused here, not repaired and never shown: a name or
+      // an address typed in its place must not reach a roster.
+      if (member.dedicatedHandle !== undefined && !isProximityHandle(member.dedicatedHandle)) {
+        throw new ProximityCodecError(
+          'InvalidConfiguration',
+          'a dedicated proximity handle is outside the handle grammar'
+        )
+      }
       const hex = bytesToHex(member.publicKey)
       this.memberDirectory.set(hex, member)
     }
@@ -312,27 +317,22 @@ export class ProximityRoomController {
     status: SafetyStatus,
     text: string = '',
     ttlHops: number = this.defaultTtlHops
-  ): { readonly checkIn: ProximityRosterCheckIn; readonly frame: ProximityFrame; readonly wireBytes: Uint8Array } {
+  ): {
+    readonly checkIn: ProximityRosterCheckIn
+    readonly frame: ProximityFrame
+    readonly wireBytes: Uint8Array
+  } {
     const tsMs = this.nowMs()
     const messageId = UuidV7.fromParts(tsMs, this.randomBytes(10))
-    const frame = ProximityFrame.newSigned(
-      messageId,
-      ttlHops,
-      status,
-      text,
-      this.localSigner
-    )
+    const frame = ProximityFrame.newSigned(messageId, ttlHops, status, text, this.localSigner)
     const wireBytes = frame.encode()
     if (!this.containsMessageId(frame.messageId)) {
       this.replayGuard.acceptOnce(frame.messageId)
     }
 
-    const member = this.memberDirectory.get(this.localPublicKeyHex)
     const checkIn: ProximityRosterCheckIn = {
       messageId: frame.messageId.toString(),
       senderPublicKeyHex: this.localPublicKeyHex,
-      displayName: member?.displayName ?? this.localDisplayName,
-      ...(member?.roleLabel !== undefined ? { roleLabel: member.roleLabel } : {}),
       status: frame.status,
       text: frame.text,
       ttlHops: frame.ttlHops,
@@ -398,13 +398,10 @@ export class ProximityRoomController {
 
     this.replayGuard.acceptOnce(frame.messageId)
 
-    const member = this.memberDirectory.get(senderHex)
     const timestampMs = frame.messageId.timestampMs()
     const checkIn: ProximityRosterCheckIn = {
       messageId: messageIdStr,
       senderPublicKeyHex: senderHex,
-      displayName: member?.displayName ?? `Appareil ${senderHex.slice(0, 8)}`,
-      ...(member?.roleLabel !== undefined ? { roleLabel: member.roleLabel } : {}),
       status: frame.status,
       text: frame.text,
       ttlHops: frame.ttlHops,
@@ -479,6 +476,15 @@ export class ProximityRoomController {
       this.publishOverTransports(beacon, item.wireBytes)
     }
     return drained
+  }
+
+  /**
+   * The whole provisioned roster, the local device included: what a view labels its check-ins
+   * from. Every member is in it whether or not they have checked in, so that equal handles are
+   * told apart before the second of them appears (`handle.ts`).
+   */
+  provisionedMembers(): readonly ProximityMemberDirectoryEntry[] {
+    return [...this.memberDirectory.values()]
   }
 
   getRoster(): readonly ProximityRosterCheckIn[] {

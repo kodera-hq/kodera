@@ -51,3 +51,26 @@ export {
   type IngestPeerFrameResult,
   type QueuedRelayFrame,
 } from './transport'
+
+export {
+  MAX_PROXIMITY_HANDLE_CHARS,
+  MIN_PROXIMITY_FINGERPRINT_HEX_CHARS,
+  MIN_PROXIMITY_HANDLE_CHARS,
+  ProximityHandleError,
+  dedicatedProximityHandle,
+  disambiguateProximityHandles,
+  generatedProximityHandle,
+  isProximityHandle,
+  labelObservedProximitySenders,
+  proximityHandleFromParts,
+  proximityKeyFingerprint,
+  proximityRosterDisplays,
+  resolveProximityHandle,
+  resolveProvisionedProximityRoster,
+  type ProvisionedProximitySender,
+  type ProximityCheckInHandle,
+  type ProximityHandle,
+  type ProximityHandleErrorCode,
+  type ProximityHandleOrigin,
+  type ProximityRosterLabel,
+} from './handle'

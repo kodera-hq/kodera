@@ -1,12 +1,14 @@
-import { useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { StatusPill, type StatusPillState } from '@/ui/StatusPill/StatusPill'
 import { ModuleGlyph } from '@/ui/icons/ModuleGlyph'
 import { ProximityFrame, UuidV7, bytesToHex, truncateUtf8Bytes } from './codec'
+import { proximityRosterDisplays, type ProximityRosterLabel } from './handle'
 import { safetyStatusPriority } from './transport'
 import {
   type DeviceIdentitySigner,
+  type ProximityMemberDirectoryEntry,
   type ProximityRosterCheckIn,
   MAX_PROXIMITY_TEXT_BYTES,
   MAX_PROXIMITY_TTL_HOPS,
@@ -15,15 +17,22 @@ import {
 
 /**
  * What a connected panel needs from the device: the organisation's beacon salt, a clock, the
- * device's own signing identity and the check-ins already heard. There is no default for any of
- * them. Without a transport the panel draws one line, « Non connecté », and offers nothing to
- * send: the proximity relay is in development, and a check-in must never look sent when it
- * went nowhere.
+ * device's own signing identity, the organisation's provisioned roster and the check-ins already
+ * heard. There is no default for any of them. Without a transport the panel draws one line,
+ * « Non connecté », and offers nothing to send: the proximity relay is in development, and a
+ * check-in must never look sent when it went nowhere.
+ *
+ * Who checked in is shown as a pseudonymous handle (`handle.ts`), never as a name: the panel
+ * takes no name, and the roster it is given holds none. `provisionedMembers` is the whole
+ * provisioned roster, absent members included, because two members showing the same handle are
+ * told apart from the first check-in, not from the second.
  */
 export interface ProximityPanelTransport {
   readonly orgBeaconSalt: Uint8Array
   readonly unixSecs: number
   readonly localSigner: DeviceIdentitySigner
+  /** Every provisioned sender of the organisation. The local device is one, listed or not. */
+  readonly provisionedMembers: readonly ProximityMemberDirectoryEntry[]
   readonly initialRoster: readonly ProximityRosterCheckIn[]
   readonly defaultTtlHops?: number | undefined
 }
@@ -31,7 +40,6 @@ export interface ProximityPanelTransport {
 export interface ProximityRoomPanelProps {
   readonly channelName: string
   readonly transport?: ProximityPanelTransport | undefined
-  readonly localDisplayName?: string | undefined
   readonly defaultRosterCollapsed?: boolean | undefined
   readonly onCheckIn?:
     ((checkIn: ProximityRosterCheckIn, wireBytes: Uint8Array) => void) | undefined
@@ -96,10 +104,62 @@ function DisconnectedBar({ channelName }: { readonly channelName: string }) {
   )
 }
 
+/** A roster that could not be labelled shows no one: a label is never guessed, nor a name used. */
+const NO_LABELS: ReadonlyMap<string, ProximityRosterLabel> = new Map()
+
+interface LabelledRoster {
+  readonly salt: Uint8Array
+  readonly members: readonly ProximityMemberDirectoryEntry[]
+  readonly signer: DeviceIdentitySigner
+  readonly labels: ReadonlyMap<string, ProximityRosterLabel>
+}
+
+/**
+ * The label of every provisioned sender, by the hex of its public half; `null` until computed.
+ * Computed once for the roster, not per check-in: no label depends on who has checked in. A
+ * roster the handle rules refuse (a pseudonym outside the grammar, a malformed public half) is
+ * labelled for no one.
+ */
+function useRosterLabels(
+  orgBeaconSalt: Uint8Array,
+  provisionedMembers: readonly ProximityMemberDirectoryEntry[],
+  localSigner: DeviceIdentitySigner
+): ReadonlyMap<string, ProximityRosterLabel> | null {
+  const [computed, setComputed] = useState<LabelledRoster | null>(null)
+  useEffect(() => {
+    let current = true
+    const settle = (labels: ReadonlyMap<string, ProximityRosterLabel>) => {
+      if (current)
+        setComputed({
+          salt: orgBeaconSalt,
+          members: provisionedMembers,
+          signer: localSigner,
+          labels,
+        })
+    }
+    const local = localSigner.publicKey()
+    const localHex = bytesToHex(local)
+    // The local device is a provisioned sender too: listed with its pseudonym, or added bare.
+    const members = provisionedMembers.some((member) => bytesToHex(member.publicKey) === localHex)
+      ? provisionedMembers
+      : [...provisionedMembers, { publicKey: local }]
+    proximityRosterDisplays(orgBeaconSalt, members).then(settle, () => settle(NO_LABELS))
+    return () => {
+      current = false
+    }
+  }, [orgBeaconSalt, provisionedMembers, localSigner])
+  // Labels computed for another roster are not this roster's.
+  return computed !== null &&
+    computed.salt === orgBeaconSalt &&
+    computed.members === provisionedMembers &&
+    computed.signer === localSigner
+    ? computed.labels
+    : null
+}
+
 function ConnectedPanel({
   channelName,
   transport,
-  localDisplayName,
   defaultRosterCollapsed = false,
   onCheckIn,
 }: ProximityRoomPanelProps & { readonly transport: ProximityPanelTransport }) {
@@ -111,7 +171,7 @@ function ConnectedPanel({
     1,
     Math.min(MAX_PROXIMITY_TTL_HOPS, transport.defaultTtlHops ?? MAX_PROXIMITY_TTL_HOPS)
   )
-  const localName = localDisplayName ?? t('console.workspace.emergency.local-name')
+  const labels = useRosterLabels(transport.orgBeaconSalt, transport.provisionedMembers, localSigner)
 
   const [peerRoster, setPeerRoster] = useState<readonly ProximityRosterCheckIn[]>(
     transport.initialRoster
@@ -130,6 +190,11 @@ function ConnectedPanel({
       ),
     [peerRoster]
   )
+  // Only labelled senders are listed: nothing is shown for one the provisioned roster does not
+  // hold, and no one is listed until the labels are known.
+  const listed =
+    labels === null ? [] : sortedRoster.filter((entry) => labels.has(entry.senderPublicKeyHex))
+  const listedCount = labels === null ? sortedRoster.length : listed.length
 
   function emit(status: SafetyStatus) {
     const text = truncateUtf8Bytes(draftMessage.trim(), MAX_PROXIMITY_TEXT_BYTES)
@@ -149,7 +214,6 @@ function ConnectedPanel({
     const checkIn: ProximityRosterCheckIn = {
       messageId: frame.messageId.toString(),
       senderPublicKeyHex,
-      displayName: localName,
       status: frame.status,
       text: frame.text,
       ttlHops: frame.ttlHops,
@@ -235,9 +299,7 @@ function ConnectedPanel({
               onClick={() => setIsRosterCollapsed((prev) => !prev)}
               className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 text-left text-xs font-semibold text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
             >
-              <span>
-                {t('console.workspace.emergency.roster-count', { count: sortedRoster.length })}
-              </span>
+              <span>{t('console.workspace.emergency.roster-count', { count: listedCount })}</span>
               <span className="text-xs text-c-ink-3">
                 {t(
                   isRosterCollapsed
@@ -249,21 +311,24 @@ function ConnectedPanel({
             {isRosterCollapsed ? null : (
               <ul
                 aria-label={t('console.workspace.emergency.roster-label')}
+                aria-busy={labels === null ? true : undefined}
                 className="flex flex-col gap-2"
               >
-                {sortedRoster.map((entry) => (
+                {listed.map((entry) => (
                   <li
                     key={entry.messageId}
                     className="flex flex-col gap-1 rounded-md border border-c-border-soft bg-c-surface px-3 py-2"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-sm font-semibold text-c-ink">
-                        {entry.displayName}
-                        {entry.roleLabel === undefined ? null : (
+                        {/* The sender's pseudonymous handle, with a fingerprint of its signing
+                            half when another member shows the same one. Never a name. */}
+                        {labels?.get(entry.senderPublicKeyHex)?.display}
+                        {entry.isLocal ? (
                           <span className="ml-2 text-xs font-regular text-c-ink-3">
-                            {entry.roleLabel}
+                            {t('console.workspace.emergency.local-name')}
                           </span>
-                        )}
+                        ) : null}
                       </span>
                       <StatusPill state={STATUS_PILLS[entry.status]}>
                         {t(STATUS_KEYS[entry.status])}

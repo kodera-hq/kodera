@@ -75,17 +75,24 @@ export interface SignatureVerifier {
   verify(publicKey: Uint8Array, message: Uint8Array, signature: Uint8Array): boolean | void
 }
 
+/**
+ * One provisioned sender of an organisation's proximity roster: its device's public half, and the
+ * pseudonym its member picked for check-ins, if any. It holds no name, no role and no account:
+ * a check-in never requires one, and this feature has nowhere to keep one.
+ */
 export interface ProximityMemberDirectoryEntry {
   readonly publicKey: Uint8Array
-  readonly displayName: string
-  readonly roleLabel?: string | undefined
+  /** A handle of the contract's `ProximityCheckInHandle` grammar; with none, one is generated. */
+  readonly dedicatedHandle?: string | undefined
 }
 
+/**
+ * One check-in as heard: who sent it is the sender's public half, nothing else. What is shown in
+ * its place is a pseudonymous handle, computed for the whole roster (`handle.ts`).
+ */
 export interface ProximityRosterCheckIn {
   readonly messageId: string
   readonly senderPublicKeyHex: string
-  readonly displayName: string
-  readonly roleLabel?: string | undefined
   readonly status: SafetyStatus
   readonly text: string
   readonly ttlHops: number

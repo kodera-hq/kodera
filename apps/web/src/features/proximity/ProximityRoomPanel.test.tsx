@@ -1,10 +1,11 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
 import { ProximityRoomPanel } from './ProximityRoomPanel'
 import { ProximityFrame } from './codec'
-import { demoProximityTransport } from './demoFixture'
+import { DEMO_ORG_BEACON_SALT, demoProximityTransport } from './demoFixture'
+import { generatedProximityHandle } from './handle'
 import { MAX_PROXIMITY_FRAME_BYTES, MAX_PROXIMITY_TEXT_BYTES, SafetyStatus } from './types'
 
 describe('ProximityRoomPanel', () => {
@@ -31,14 +32,22 @@ describe('ProximityRoomPanel', () => {
     }
   })
 
-  it('with a transport, lists the people nearby by priority and names', () => {
+  it('with a transport, lists the people nearby by priority, each under a pseudonymous handle', async () => {
     render(<ProximityRoomPanel channelName="around-me" transport={demoProximityTransport()} />)
     expect(screen.getByText('Connecté')).toBeInTheDocument()
     const roster = screen.getByRole('list', { name: 'Personnes à proximité' })
+    await waitFor(() => expect(within(roster).getAllByRole('listitem')).toHaveLength(2))
     const items = within(roster).getAllByRole('listitem')
-    expect(items[0]).toHaveTextContent('Sylvain Ellenstein')
+    // The first peer picked no pseudonym: the handle this organisation derives for its device.
+    const generated = await generatedProximityHandle(
+      DEMO_ORG_BEACON_SALT,
+      new Uint8Array(32).fill(0x11)
+    )
+    expect(items[0]).toHaveTextContent(generated.handle)
     expect(items[0]).toHaveTextContent('Au point de rassemblement')
-    expect(items[1]).toHaveTextContent('Marina Loiseau')
+    // The second picked one.
+    expect(items[1]).toHaveTextContent('north-wing-3')
+    expect(roster).not.toHaveTextContent(/Sylvain|Ellenstein|Marina|Loiseau|SRE|Ingénierie/)
   })
 
   it('emits a signed frame on one tap and puts « Besoin d’assistance » at the top', async () => {
@@ -48,7 +57,6 @@ describe('ProximityRoomPanel', () => {
       <ProximityRoomPanel
         channelName="around-me"
         transport={demoProximityTransport()}
-        localDisplayName="Henri Duflot"
         onCheckIn={onCheckIn}
       />
     )
@@ -70,7 +78,13 @@ describe('ProximityRoomPanel', () => {
     const decoded = ProximityFrame.decode(wireBytes)
     expect(decoded.status).toBe(SafetyStatus.NeedAssistance)
     expect(decoded.text).toBe('Porte bloquée aile ouest')
-    expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('Henri Duflot')
+    // The member's own check-in is listed under their own handle, the one the vectors give this
+    // device in this organisation, marked as theirs; never under a name.
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(3))
+    const own = screen.getAllByRole('listitem')[0]
+    expect(own).toHaveTextContent('steady-brook-ah3fccbgh')
+    expect(own).toHaveTextContent('Vous (cet appareil)')
+    expect(checkIn).not.toHaveProperty('displayName')
   })
 
   it('bounds the message so a frame never exceeds its maximum size', async () => {

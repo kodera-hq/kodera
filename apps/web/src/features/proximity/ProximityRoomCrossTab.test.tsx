@@ -1,6 +1,6 @@
 import { createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto'
 import { useEffect, useState } from 'react'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import '../../i18n'
@@ -135,7 +135,6 @@ interface ConnectedProximityTabProps {
   readonly controller: ProximityRoomController
   readonly orgBeaconSalt: Uint8Array
   readonly unixSecs: number
-  readonly localDisplayName: string
   readonly localSigner: DeviceIdentitySigner
 }
 
@@ -144,10 +143,11 @@ function ConnectedProximityTab({
   controller,
   orgBeaconSalt,
   unixSecs,
-  localDisplayName,
   localSigner,
 }: ConnectedProximityTabProps) {
   const [roster, setRoster] = useState(() => controller.getRoster())
+  // The provisioned roster does not change while a controller lives: one array, labelled once.
+  const [provisionedMembers] = useState(() => controller.provisionedMembers())
 
   useEffect(() => {
     return controller.subscribe(() => {
@@ -165,14 +165,31 @@ function ConnectedProximityTab({
       <ProximityRoomPanel
         key={remoteRevisionKey}
         channelName="#proximity"
-        transport={{ orgBeaconSalt, unixSecs, localSigner, initialRoster: roster }}
-        localDisplayName={localDisplayName}
+        transport={{
+          orgBeaconSalt,
+          unixSecs,
+          localSigner,
+          provisionedMembers,
+          initialRoster: roster,
+        }}
         onCheckIn={(checkIn) => {
           controller.emitCheckIn(checkIn.status, checkIn.text, checkIn.ttlHops)
         }}
       />
     </div>
   )
+}
+
+/**
+ * The check-ins a tab lists, once its roster is labelled: handles are computed asynchronously
+ * (Web Crypto), and the list is marked busy until they are. Waits for exactly `count` of them.
+ */
+async function listed(tab: HTMLElement, count: number): Promise<HTMLElement[]> {
+  await waitFor(() => {
+    expect(within(tab).getByRole('list')).not.toHaveAttribute('aria-busy')
+    expect(within(tab).queryAllByRole('listitem')).toHaveLength(count)
+  })
+  return within(tab).queryAllByRole('listitem')
 }
 
 describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integration', () => {
@@ -189,13 +206,11 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     const directory: readonly ProximityMemberDirectoryEntry[] = [
       {
         publicKey: aliceIdentity.publicKeyBytes,
-        displayName: 'Poste Alice',
-        roleLabel: 'Secours Étage 3',
+        dedicatedHandle: 'poste-alice',
       },
       {
         publicKey: karimIdentity.publicKeyBytes,
-        displayName: 'Poste Karim',
-        roleLabel: 'Coordinateur Rez-de-chaussée',
+        dedicatedHandle: 'poste-karim',
       },
     ]
 
@@ -210,7 +225,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: aliceIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: directory,
-      localDisplayName: 'Poste Alice',
       nowMs: nextClockMs,
       broadcastChannelFactory: hub.createChannel,
     })
@@ -220,7 +234,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: karimIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: directory,
-      localDisplayName: 'Poste Karim',
       nowMs: nextClockMs,
       broadcastChannelFactory: hub.createChannel,
     })
@@ -232,7 +245,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
           controller={aliceController}
           orgBeaconSalt={ORG_SALT}
           unixSecs={FIXED_UNIX_SECS}
-          localDisplayName="Poste Alice"
           localSigner={aliceIdentity.signer}
         />
         <ConnectedProximityTab
@@ -240,7 +252,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
           controller={karimController}
           orgBeaconSalt={ORG_SALT}
           unixSecs={FIXED_UNIX_SECS}
-          localDisplayName="Poste Karim"
           localSigner={karimIdentity.signer}
         />
       </div>
@@ -249,7 +260,7 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     const tabAlice = screen.getByTestId('tab-alice')
     const tabKarim = screen.getByTestId('tab-karim')
 
-    // 1. Alice types an proximity note and clicks "Besoin d’assistance" in Tab A
+    // 1. Alice types a proximity note and clicks "Besoin d’assistance" in Tab A
     const aliceInput = within(tabAlice).getByLabelText('Message court (facultatif)')
     await user.type(aliceInput, 'Ascenseur bloqué palier nord')
 
@@ -283,9 +294,8 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     expect(karimRelayQueue[0]!.priority).toBe(3)
 
     // Verify Tab B's roster UI immediately renders Alice's NeedAssistance check-in at the top
-    const karimRosterAfterAlice = within(tabKarim).getAllByRole('listitem')
-    expect(karimRosterAfterAlice).toHaveLength(1)
-    expect(karimRosterAfterAlice[0]).toHaveTextContent('Poste Alice')
+    const karimRosterAfterAlice = await listed(tabKarim, 1)
+    expect(karimRosterAfterAlice[0]).toHaveTextContent('poste-alice')
     expect(karimRosterAfterAlice[0]).toHaveTextContent('Besoin d’assistance')
     expect(karimRosterAfterAlice[0]).toHaveTextContent('Ascenseur bloqué palier nord')
 
@@ -301,35 +311,32 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     expect(hub.wireEnvelopes).toHaveLength(2)
 
     // Both Tab A and Tab B must converge on the exact same 2-member roster with NeedAssistance (Alice) ordered above Safe (Karim)
-    const aliceRosterItems = within(tabAlice).getAllByRole('listitem')
-    const karimRosterItems = within(tabKarim).getAllByRole('listitem')
+    const aliceRosterItems = await listed(tabAlice, 2)
+    const karimRosterItems = await listed(tabKarim, 2)
 
-    expect(aliceRosterItems).toHaveLength(2)
-    expect(karimRosterItems).toHaveLength(2)
-
-    expect(aliceRosterItems[0]).toHaveTextContent('Poste Alice')
+    expect(aliceRosterItems[0]).toHaveTextContent('poste-alice')
     expect(aliceRosterItems[0]).toHaveTextContent('Besoin d’assistance')
-    expect(aliceRosterItems[1]).toHaveTextContent('Poste Karim')
+    expect(aliceRosterItems[1]).toHaveTextContent('poste-karim')
     expect(aliceRosterItems[1]).toHaveTextContent('En sécurité')
 
-    expect(karimRosterItems[0]).toHaveTextContent('Poste Alice')
+    expect(karimRosterItems[0]).toHaveTextContent('poste-alice')
     expect(karimRosterItems[0]).toHaveTextContent('Besoin d’assistance')
-    expect(karimRosterItems[1]).toHaveTextContent('Poste Karim')
+    expect(karimRosterItems[1]).toHaveTextContent('poste-karim')
     expect(karimRosterItems[1]).toHaveTextContent('En sécurité')
 
     aliceController.close()
     karimController.close()
   })
 
-  it('enforces cross-organization isolation and rejects forged or unauthorized packets on the shared BroadcastChannel', () => {
+  it('enforces cross-organization isolation and rejects forged or unauthorized packets on the shared BroadcastChannel', async () => {
     const hub = new InMemoryBroadcastHub()
     const aliceIdentity = createRuntimeEd25519Identity()
     const karimIdentity = createRuntimeEd25519Identity()
     const outsiderIdentity = createRuntimeEd25519Identity()
 
     const directory: readonly ProximityMemberDirectoryEntry[] = [
-      { publicKey: aliceIdentity.publicKeyBytes, displayName: 'Poste Alice' },
-      { publicKey: karimIdentity.publicKeyBytes, displayName: 'Poste Karim' },
+      { publicKey: aliceIdentity.publicKeyBytes, dedicatedHandle: 'poste-alice' },
+      { publicKey: karimIdentity.publicKeyBytes, dedicatedHandle: 'poste-karim' },
     ]
 
     const fixedNow = () => FIXED_UNIX_SECS * 1000
@@ -339,7 +346,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: aliceIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: directory,
-      localDisplayName: 'Poste Alice',
       nowMs: fixedNow,
       broadcastChannelFactory: hub.createChannel,
     })
@@ -349,7 +355,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: karimIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: directory,
-      localDisplayName: 'Poste Karim',
       nowMs: fixedNow,
       broadcastChannelFactory: hub.createChannel,
     })
@@ -361,7 +366,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
           controller={aliceController}
           orgBeaconSalt={ORG_SALT}
           unixSecs={FIXED_UNIX_SECS}
-          localDisplayName="Poste Alice"
           localSigner={aliceIdentity.signer}
         />
         <ConnectedProximityTab
@@ -369,7 +373,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
           controller={karimController}
           orgBeaconSalt={ORG_SALT}
           unixSecs={FIXED_UNIX_SECS}
-          localDisplayName="Poste Karim"
           localSigner={karimIdentity.signer}
         />
       </div>
@@ -382,9 +385,8 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: outsiderIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: [
-        { publicKey: outsiderIdentity.publicKeyBytes, displayName: 'Organisation Externe' },
+        { publicKey: outsiderIdentity.publicKeyBytes, dedicatedHandle: 'organisation-externe' },
       ],
-      localDisplayName: 'Organisation Externe',
       nowMs: fixedNow,
       broadcastChannelFactory: hub.createChannel,
     })
@@ -455,8 +457,9 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     expect(aliceController.peekRelayQueue()).toHaveLength(0)
     expect(karimController.peekRelayQueue()).toHaveLength(0)
 
-    expect(within(screen.getByTestId('tab-alice')).queryAllByRole('listitem')).toHaveLength(0)
-    expect(within(screen.getByTestId('tab-karim')).queryAllByRole('listitem')).toHaveLength(0)
+    // Once each roster is labelled, so that an empty list is a refusal and not a wait.
+    expect(await listed(screen.getByTestId('tab-alice'), 0)).toHaveLength(0)
+    expect(await listed(screen.getByTestId('tab-karim'), 0)).toHaveLength(0)
 
     rawInjector.close()
     externalController.close()
@@ -473,9 +476,9 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     const sylvainIdentity = createRuntimeEd25519Identity()
 
     const directory: readonly ProximityMemberDirectoryEntry[] = [
-      { publicKey: aliceIdentity.publicKeyBytes, displayName: 'Poste Alice' },
-      { publicKey: karimIdentity.publicKeyBytes, displayName: 'Poste Karim' },
-      { publicKey: sylvainIdentity.publicKeyBytes, displayName: 'Poste Sylvain' },
+      { publicKey: aliceIdentity.publicKeyBytes, dedicatedHandle: 'poste-alice' },
+      { publicKey: karimIdentity.publicKeyBytes, dedicatedHandle: 'poste-karim' },
+      { publicKey: sylvainIdentity.publicKeyBytes, dedicatedHandle: 'poste-sylvain' },
     ]
 
     const clockMs = FIXED_UNIX_SECS * 1000 + 5_000
@@ -484,7 +487,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: aliceIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: directory,
-      localDisplayName: 'Poste Alice',
       nowMs: () => clockMs,
       broadcastChannelFactory: hub.createChannel,
       maxQueueCapacity: 2,
@@ -495,7 +497,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       localSigner: karimIdentity.signer,
       verifier: NODE_CRYPTO_ED25519_VERIFIER,
       members: directory,
-      localDisplayName: 'Poste Karim',
       nowMs: () => clockMs,
       broadcastChannelFactory: hub.createChannel,
       maxQueueCapacity: 2,
@@ -508,7 +509,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
           controller={aliceController}
           orgBeaconSalt={ORG_SALT}
           unixSecs={FIXED_UNIX_SECS}
-          localDisplayName="Poste Alice"
           localSigner={aliceIdentity.signer}
         />
         <ConnectedProximityTab
@@ -516,7 +516,6 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
           controller={karimController}
           orgBeaconSalt={ORG_SALT}
           unixSecs={FIXED_UNIX_SECS}
-          localDisplayName="Poste Karim"
           localSigner={karimIdentity.signer}
         />
       </div>
@@ -531,7 +530,7 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     })
     await user.click(within(aliceActionGroup).getByRole('button', { name: /Besoin d’assistance/i }))
 
-    expect(within(tabKarim).getAllByRole('listitem')[0]).toHaveTextContent('Besoin d’assistance')
+    expect((await listed(tabKarim, 1))[0]).toHaveTextContent('Besoin d’assistance')
 
     // Craft an older signed frame from Alice (Safe at t = +1000ms, earlier UuidV7 timestamp)
     const olderMessageId = UuidV7.fromParts(
@@ -568,9 +567,9 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
       })
     })
 
-    const karimItems = within(tabKarim).getAllByRole('listitem')
+    const karimItems = await listed(tabKarim, 1)
     expect(karimItems).toHaveLength(1)
-    expect(karimItems[0]).toHaveTextContent('Poste Alice')
+    expect(karimItems[0]).toHaveTextContent('poste-alice')
     expect(karimItems[0]).toHaveTextContent('Besoin d’assistance')
     expect(karimItems[0]).not.toHaveTextContent('Ancien pointage en sécurité')
 

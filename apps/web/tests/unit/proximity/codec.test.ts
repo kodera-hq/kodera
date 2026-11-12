@@ -340,11 +340,7 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
       const signerC = createKeyedMacSigner(secret, pkNodeC)
       const verifier = createKeyedMacVerifier(secret)
 
-      const members = [
-        { publicKey: pkNodeA, displayName: 'Alice' },
-        { publicKey: pkNodeB, displayName: 'Bruno' },
-        { publicKey: pkNodeC, displayName: 'Chloé' },
-      ]
+      const members = [{ publicKey: pkNodeA }, { publicKey: pkNodeB }, { publicKey: pkNodeC }]
 
       let clockMs = 1_762_520_100_000
       const controllerA = new ProximityRoomController({
@@ -352,7 +348,6 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
         localSigner: signerA,
         verifier,
         members,
-        localDisplayName: 'Alice',
         nowMs: () => clockMs,
         broadcastChannelFactory: createMockChannel,
       })
@@ -362,7 +357,6 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
         localSigner: signerB,
         verifier,
         members,
-        localDisplayName: 'Bruno',
         nowMs: () => clockMs,
         broadcastChannelFactory: createMockChannel,
       })
@@ -372,7 +366,9 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
       // Alice emits a Safe check-in -> Bruno receives it over BroadcastChannel
       controllerA.emitCheckIn(SafetyStatus.Safe, 'Alice au RDC', 4)
       expect(controllerB.getRoster()).toHaveLength(1)
-      expect(controllerB.getRoster()[0]?.displayName).toBe('Alice')
+      // Who checked in is the sender's public half: a check-in carries no name.
+      expect(controllerB.getRoster()[0]?.senderPublicKeyHex).toBe(bytesToHex(pkNodeA))
+      expect(controllerB.getRoster()[0]).not.toHaveProperty('displayName')
       expect(controllerB.getRoster()[0]?.ttlHops).toBe(4)
 
       // Chloé injects a MusterPoint frame and a NeedAssistance frame into Bruno
@@ -432,7 +428,7 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
         orgBeaconSalt: salt,
         localSigner,
         verifier,
-        members: [{ publicKey: pkPeer, displayName: 'Bruno' }],
+        members: [{ publicKey: pkPeer }],
         nowMs: () => clockMs,
         broadcastChannelFactory: () => null,
       })
@@ -497,10 +493,10 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
         localSigner,
         verifier,
         members: [
-          { publicKey: pkPeerB, displayName: 'Bruno' },
-          { publicKey: pkPeerC, displayName: 'Chloé' },
-          { publicKey: pkPeerD, displayName: 'David' },
-          { publicKey: pkPeerE, displayName: 'Emma' },
+          { publicKey: pkPeerB },
+          { publicKey: pkPeerC },
+          { publicKey: pkPeerD },
+          { publicKey: pkPeerE },
         ],
         nowMs: () => clockMs,
         maxQueueCapacity: 2,
@@ -542,10 +538,12 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
       expect(refusedRelayRes.accepted).toBe(true)
       if (refusedRelayRes.accepted) {
         expect(refusedRelayRes.relayedFrame).toBeNull()
-        expect(refusedRelayRes.checkIn.displayName).toBe('David')
+        expect(refusedRelayRes.checkIn.senderPublicKeyHex).toBe(bytesToHex(pkPeerD))
         expect(refusedRelayRes.checkIn.status).toBe(SafetyStatus.MessageOnly)
       }
-      expect(controller.getRoster().some((entry) => entry.displayName === 'David')).toBe(true)
+      expect(
+        controller.getRoster().some((entry) => entry.senderPublicKeyHex === bytesToHex(pkPeerD))
+      ).toBe(true)
       expect(controller.peekRelayQueue().map((q) => q.frame.status)).toEqual([
         SafetyStatus.MusterPoint,
         SafetyStatus.Safe,
@@ -588,7 +586,7 @@ describe('proximity BLE wire codec & cryptographic parity (packages/kodera-rs)',
         orgBeaconSalt: salt,
         localSigner,
         verifier,
-        members: [{ publicKey: pkPeer, displayName: 'Bruno' }],
+        members: [{ publicKey: pkPeer }],
         nowMs: () => clockMs,
         maxReplayEntries: 1,
         maxQueueCapacity: 4,
