@@ -4,6 +4,7 @@
 // Received text is never reinterpreted: a « :wave: » someone else sent stays as they sent it.
 
 import { linkSegments } from './MessageText'
+import { GUARD_AFTER, GUARD_BEFORE } from './shortcodeGrammar'
 
 /** One emoji and the shortcodes that write it, the first being the one the lists show. */
 export interface EmojiShortcode {
@@ -193,15 +194,6 @@ export function insertEmoji(
     caret: shortcode.start + inserted.length,
   }
 }
-
-/**
- * What a code may not touch before it: a letter or a digit (« 10:100:20 », « a:wave:b »), a slash
- * (a path, as SharePoint's « /:x:/ » links), or a backslash, which is how a code is written as
- * text: a backslash then « :wave: » stays as typed, backslash and all.
- */
-const GUARD_BEFORE = '(?<![\\p{L}\\p{N}/\\\\])'
-/** What a code may not touch after it: a letter, a digit or a slash. */
-const GUARD_AFTER = '(?![\\p{L}\\p{N}/])'
 
 /** A known « :name: » standing alone. */
 const CLOSED = new RegExp(`${GUARD_BEFORE}:(${NAME}{1,32}):${GUARD_AFTER}`, 'gu')

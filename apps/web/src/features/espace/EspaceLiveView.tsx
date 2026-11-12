@@ -91,7 +91,9 @@ import {
 } from './liveViewModel'
 import { inRoom, MessageComposer, ThreadComposer } from './MessageComposer'
 import { MessageRow, type MessageRowActions } from './MessageRow'
-import { MessageTimeline } from './MessageTimeline'
+import { MessageSearch } from './MessageSearch'
+import { MessageTimeline, type MessageTimelineHandle } from './MessageTimeline'
+import { PinnedMessages } from './PinnedMessages'
 import { useStableHandler, useStoreSlice } from './useStoreSlice'
 import { VoiceCallDock } from './VoiceCallDock'
 import { cssProperty } from '../../ui/cssom'
@@ -1022,6 +1024,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       })
   })
 
+  // The log's handle: pinned messages and search results bring a message into sight through it.
+  const timelineHandle = useRef<MessageTimelineHandle>(null)
+  const showMessage = useStableHandler(
+    (eventId: string): boolean => timelineHandle.current?.showMessage(eventId) ?? false
+  )
   const rowActions = useMemo<MessageRowActions>(
     () => ({
       onRetry: retryMessage,
@@ -1349,6 +1356,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 unavailable={navigationUnsettled || signedOut}
               />
             ) : null}
+            {activeRoomId === null || focusedDocs || activeCanvasMode === 'docs' ? null : (
+              <>
+                <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
+                <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
+              </>
+            )}
             {activeRoomId === null || focusedDocs ? null : (
               <Button
                 variant="tertiary"
@@ -1430,6 +1443,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 inserts={timelineInserts ?? NO_INSERTS}
                 onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
                 actions={rowActions}
+                handleRef={timelineHandle}
                 logRef={logRef}
                 onScroll={onLogScroll}
                 onLoadOlder={showOlder}

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import '../../i18n'
 import { MessageText, linkSegments } from './MessageText'
@@ -95,5 +95,31 @@ describe('a message with a web address', () => {
     )
     expect(container.textContent).toBe('Rien à ouvrir ici.')
     expect(screen.queryByRole('link')).toBeNull()
+  })
+})
+
+describe("Kodera's own emoji in a message", () => {
+  it('draws a known code as its glyph, named by its code, and leaves the rest as sent', async () => {
+    render(<MessageText body="Merci :kodera_heart: et :kodera_nope: **fort** :wave:" />)
+    const glyph = await screen.findByRole('img', { name: ':kodera_heart:' })
+    await waitFor(() => expect(glyph.querySelector('svg')).not.toBeNull())
+    // No colour of its own: the glyph takes the text's.
+    expect(glyph.innerHTML).not.toMatch(/#[0-9a-f]{3,8}|rgb\(/iu)
+    expect(screen.getByText(/:kodera_nope:/u)).toBeInTheDocument()
+    expect(screen.getByText(/:wave:/u)).toBeInTheDocument()
+    expect(screen.getByText('fort').tagName).toBe('STRONG')
+  })
+
+  it('never draws a code inside inline code, and keeps emphasis around a glyph', async () => {
+    const { container } = render(
+      <MessageText body={'`:kodera_heart:` puis **bravo :kodera_spark:** et \\:kodera_sun:'} />
+    )
+    await screen.findByRole('img', { name: ':kodera_spark:' })
+    expect(container.querySelector('code')?.textContent).toBe(':kodera_heart:')
+    expect(screen.queryByRole('img', { name: ':kodera_heart:' })).toBeNull()
+    expect(screen.queryByRole('img', { name: ':kodera_sun:' })).toBeNull()
+    const strong = container.querySelector('strong')!
+    expect(strong.textContent).toContain('bravo')
+    expect(strong.querySelector('[data-kodera-emoji="kodera_spark"]')).not.toBeNull()
   })
 })

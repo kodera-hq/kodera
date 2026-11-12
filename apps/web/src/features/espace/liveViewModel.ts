@@ -118,6 +118,12 @@ export interface EspaceStoreLike {
   getTyping?: (roomId: string) => readonly MemberView[]
   /** Tells the room the member is typing, or no longer is. */
   setTyping?: (roomId: string, typing: boolean) => void
+  /** The room's pinned events (`m.room.pinned_events`), oldest pin first. */
+  getPinned?: (roomId: string) => readonly string[]
+  /** Whether the member may change the room's pins. */
+  canPin?: (roomId: string) => boolean
+  /** Pins or unpins one of the room's events. */
+  setPinned?: (roomId: string, eventId: string, pinned: boolean) => Promise<void>
 }
 
 /** The audio call, as the view reads and drives it (`audio/call.ts`). */
