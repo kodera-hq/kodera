@@ -144,7 +144,15 @@ def test_a_reader_gets_the_row_its_tag_and_honest_flags(m):
     assert (admin_on_owner["can_change_role"], admin_on_owner["can_remove"]) == (False, False)
     member_view = get(m, m.member, m.admin.member).json()
     assert (member_view["can_change_role"], member_view["blocked_reason"]) == (False, None)
-    assert seen.headers["ETag"] == get(m, m.member, m.admin.member).headers["ETag"]
+    # Directory privacy (§2.1): a member reads a colleague's row without the private member facts,
+    # a different representation with a strong tag of its own; their own row is the full one.
+    withheld = get(m, m.member, m.admin.member)
+    assert "email" not in withheld.json() and "identity_id" not in withheld.json()
+    assert seen.headers["ETag"] != withheld.headers["ETag"]
+    assert (
+        get(m, m.owner, m.member.member).headers["ETag"]
+        == get(m, m.member, m.member.member).headers["ETag"]
+    )
 
 
 def test_a_read_outside_the_rows_reach_is_refused(m):

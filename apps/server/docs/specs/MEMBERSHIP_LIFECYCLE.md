@@ -62,6 +62,45 @@ Checks run in this order, after authentication, the issuer binding and the targe
   row again, whatever `If-Match` it carries, so a retry whose first answer was lost succeeds. Nothing
   is written. Rule 6 still applies, so an admin cannot read a removed owner's row this way.
 
+### 2.1 Directory privacy
+
+One rule governs the two reads of a membership, `listMemberships` and `getMembership`, row by row
+(contract 0.42.0, `Membership` schema). The code is `apps/orgs/membership_selectors.py`, and neither
+read decides it anywhere else.
+
+Five members are the person's **private member facts**: `email`, `identity_id`, `account_kind`,
+`mfa_enrolled` and `last_seen_at`. Core discloses them on a row only to a caller who, in that
+organisation,
+
+- is the person the row describes (the caller reads their own membership), or
+- holds `org_owner` or `org_admin`.
+
+| Caller | Own row | A colleague's row |
+|---|---|---|
+| `org_owner`, `org_admin` | disclosed | disclosed |
+| `org_member` | disclosed | **withheld** |
+
+- **Withheld means absent.** The members are omitted from the answer: never `null`, a placeholder, a
+  masked value or a partial one. The answer is still `200`; `id`, `organisation_id`, `person_id`
+  (where the read carries it), `display_name`, `role`, `state` and the timestamps stay.
+- **A withheld fact never leaves the service layer.** `read_directory` builds a row with no contact
+  and `read_membership` a view with no contact and no identity before either leaves its snapshot, so
+  a serializer cannot emit what it was never given.
+- **No input reads a withheld fact.** `listMemberships` accepts `cursor`, `limit`, `role` and `state`
+  and refuses every other query key `400`, so no filter, search or ordering runs on an address, an
+  identity or a sign-in fact; rows are ordered by membership id. `countMemberships` refuses its
+  `account_kind` filter for every caller (Core does not store the fact), so no count narrows on one.
+  A cursor binds the person, the organisation, the filters and two membership ids, nothing else.
+- **The validator is not an oracle and never crosses callers.** The strong `ETag` of `getMembership`
+  hashes `id`, `organisation_id`, `role`, `state` and `updated_at` only, never a private fact, so a
+  guess cannot be confirmed against it. The representation without the private facts is a different
+  representation and carries a different tag (the same fields and the constant
+  `private-facts-withheld`); the tag an administrator round-trips as `If-Match` is unchanged. Every
+  answer of both reads is `Cache-Control: no-store`, and the list carries no `ETag`.
+- **The writes withhold nothing.** `changeMembershipRole` answers an administrator, and
+  `acceptInvitation` and `consumeOwnerClaim` the caller's own membership. `removeMembership` carries
+  no contact for anyone (§5).
+
 ## 3. Concurrency
 
 The write runs in one transaction with `lock_timeout = 2s`. It first resolves the caller, then touches
@@ -705,6 +744,10 @@ delete one, nor write an attempt or a decision.
 - **GET:**
   - each reading role gets the row, its `ETag` and honest flags, including on an invited row and in
     a suspended organisation;
+  - directory privacy (§2.1), in `tests/test_directory_privacy.py`: an owner, an admin and the
+    person themselves read the private member facts; a member reading a colleague gets `200`
+    without them, on the detail and in the list; the withheld tag differs from the full one and
+    does not move with the address; each mask has a mutation that a named test catches;
   - billing and staff get `403`; only the staff read is recorded;
   - another organisation's membership and a removed one get `404`.
 - **PATCH:**

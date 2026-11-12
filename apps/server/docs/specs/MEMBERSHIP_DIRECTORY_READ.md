@@ -11,7 +11,7 @@ The operation owns one outer PostgreSQL READ ONLY REPEATABLE READ transaction an
 
 ## Population and projection
 
-Only non-deleted invited, active or suspended memberships with a non-deleted person are listed. Removed and deleted relationships are excluded, including when filtered; `state=removed` is an empty successful page. Disabled people remain descriptive stored relationships, not evidence of provider access. Rows contain exactly id, organisation_id, email, display_name, role, state, created_at and updated_at. Public timestamps use UTC milliseconds. Unavailable person/identity IDs, source, account kind, MFA and last-seen facts are omitted. Email uses Django EmailValidator with an empty domain allowlist, maximum 320 characters, and no CR/LF; valid bytes are preserved. Invalid stored contact data causes a safe 500 rather than a fabricated value. Display names retain the nullable 200-character contract.
+Only non-deleted invited, active or suspended memberships with a non-deleted person are listed. Removed and deleted relationships are excluded, including when filtered; `state=removed` is an empty successful page. Disabled people remain descriptive stored relationships, not evidence of provider access. Rows contain exactly id, organisation_id, email, display_name, role, state, created_at and updated_at, except that directory privacy ([`MEMBERSHIP_LIFECYCLE.md`](MEMBERSHIP_LIFECYCLE.md) §2.1) omits `email` from every row that is neither the caller's own nor read by an `org_owner` or `org_admin`: an `org_member` reads their own row in full and each colleague's row without an address, never a null, masked or partial one. Public timestamps use UTC milliseconds. Unavailable person/identity IDs, source, account kind, MFA and last-seen facts are omitted. Email uses Django EmailValidator with an empty domain allowlist, maximum 320 characters, and no CR/LF; valid bytes are preserved. Invalid stored contact data causes a safe 500 rather than a fabricated value. Display names retain the nullable 200-character contract.
 
 ## Finite input and pagination
 
@@ -39,3 +39,4 @@ Acceptance includes independently seeded complete expected row sets; omissions; 
 ## Changelog
 
 - Specify the current stored membership read, bounded continuation and local acceptance.
+- Apply directory privacy row by row: a member no longer reads a colleague's address.

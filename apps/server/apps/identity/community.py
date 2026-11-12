@@ -66,7 +66,10 @@ def community_identity(verified: VerifiedAccessToken) -> CommunityPrincipal | No
 def materialize_community_identity(
     *, verified: VerifiedAccessToken, organisation_id: UUID, issuer: str, realm: str
 ) -> CommunityPrincipal | None:
-    """Called under the canonical organisation lock; never match an existing account by email."""
+    """Never match an existing account by email. Called in the first visit's transaction with no
+    lock held: of two concurrent first visits of one subject, `identity_issuer_subject_unique`
+    refuses the second, whose transaction rolls back with the person it created
+    (apps.orgs.community.ensure_community_membership)."""
     if Identity.objects.filter(issuer=verified.issuer, subject=verified.subject).exists():
         return None
     if verified.issuer != issuer or not verified.email_verified or not verified.email:
