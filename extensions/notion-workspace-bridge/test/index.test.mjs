@@ -35,7 +35,7 @@ test('notion-workspace-bridge manifest validates against kodera.extension.v1 and
   );
 });
 
-test('shares and tracks Notion workspace pages and database entries alongside DINUM Docs and blocks SSRF URLs', async () => {
+test('shares and tracks Notion workspace pages and database entries alongside Docs and blocks SSRF URLs', async () => {
   const handler = createNotionWorkspaceWebhookHandler({
     secret: SECRET,
     defaultChannelId: 'chan_produit',

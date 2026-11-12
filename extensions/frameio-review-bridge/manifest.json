@@ -19,7 +19,7 @@
       "description": "Share a production review"
     }
   ],
-  "webhookUrl": "https://extensions.example.kodera.io/hooks/frameio-review-bridge",
+  "webhookUrl": "https://extensions.example.org/hooks/frameio-review-bridge",
   "providerEvents": [
     "asset.ready",
     "comment.created",

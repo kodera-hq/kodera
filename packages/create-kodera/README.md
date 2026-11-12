@@ -22,7 +22,42 @@ and a template intent manifest. Secrets never appear in stdout. Existing directo
 are refused. The source checkout is needed to build the actual Community runtime
 images; this generator neither publishes images nor runs Docker. An operator starts
 Compose explicitly from the generated directory. The template manifest is a
-provisioning intent; it does not assert that remote channels already exist.
+provisioning intent; it does not assert that remote channels already exist, and
+the extensions it names are reference implementations that nothing installs.
+
+## One stack, one source
+
+The Compose assets in `assets/` are copies of `deploy/community`, never a second
+configuration: `docker-compose.yml`, `Caddyfile`, `livekit.yaml`,
+`configure_synapse.py` and `.env.example`. `assets.manifest.json` lists them and the
+single rewrite a generated directory needs: build contexts point at
+`KODERA_SOURCE_DIR`, because the directory sits outside the checkout. So a generated
+stack has the same hardening as `deploy/community`: Synapse on PostgreSQL,
+federation closed, rate limits, no public route to the agent API.
+
+```sh
+npm --workspace create-kodera run sync-assets    # after changing deploy/community
+npm --workspace create-kodera run check-assets   # refuses a copy that differs
+```
+
+`npm --workspace create-kodera test` and `scripts/ci/check-community-deploy.py`
+both refuse a drifted, missing or unlisted asset, and a manifest that admits
+another difference.
+
+The generator fills only the secrets it may draw at random. Credentials that
+someone issues (the tenant agent's token, the identity provider's `synapse`
+client secret) are left empty, as are the canonical Community settings: a
+generated directory is an isolated self-host. Matrix sign-in therefore stays off
+until you set `KODERA_SYNAPSE_OIDC_ISSUER` and `KODERA_SYNAPSE_OIDC_CLIENT_SECRET`
+(see `deploy/community/README.md`, "Matrix sign-in").
+
+## Templates
+
+`audiovisual-production`, `tech-studio`, `b2b-advisory`, `public-sector`,
+`proximity` and `community`, the definitions of
+`deploy/community/workspace-templates.json`. `crisis-cell` is a permanent alias of
+`proximity`: it stays accepted and selects the same template, and the intent
+manifest and the Cloud request then carry `proximity`.
 
 `--cloud --org Cinema --template audiovisual-production --dry-run` prints a stable
 request plan without allocating a tenant. A real allocation requires an explicit

@@ -26,5 +26,5 @@
       "description": "Partager un fichier ou dossier Google Drive avec badge de permission (lecture, commentaire, édition)"
     }
   ],
-  "webhookUrl": "https://extensions.example.kodera.io/hooks/gdrive-document-share"
+  "webhookUrl": "https://extensions.example.org/hooks/gdrive-document-share"
 }

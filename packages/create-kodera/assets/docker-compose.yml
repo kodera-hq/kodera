@@ -3,7 +3,10 @@
 # KODERA_OIDC_PROVIDER_ORIGIN (web) and KODERA_AUTH_TRUST (server); see README.md, "Sign-in".
 # Every pulled image is pinned by digest and every service has a memory limit; the limits are
 # ceilings, not a measured footprint. Respects ADR-0003 (`ADMITTED_SECRET_NAMES` on `server`;
-# LiveKit credentials isolated in `room-access`). `scripts/ci/check-community-deploy.py` checks it.
+# LiveKit credentials isolated in `room-access`). Synapse runs on its own PostgreSQL, with
+# federation closed unless KODERA_MATRIX_FEDERATION_ALLOWLIST opens it (README.md, "Federation").
+# The agent API (`/agent/*`) is reached on the internal network only, never through Caddy.
+# `scripts/ci/check-community-deploy.py` checks it.
 
 services:
   caddy:
@@ -70,10 +73,18 @@ services:
       - -c
       - |
         python manage.py migrate --noinput --settings config.settings.deploy &&
-        python manage.py migrate --noinput --settings config.settings.deploy_operator
+        python manage.py migrate --noinput --settings config.settings.deploy_operator &&
+        if [ -n "$$KODERA_DEFAULT_COMMUNITY_ORG_SLUG" ]; then
+          python manage.py bootstrap_community_workspace --settings config.settings.deploy
+        fi
     restart: "no"
     environment:
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}
+      KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
+      KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
+      KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID: ${KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID:-}
+      KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in operator configuration}
+      KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
       KODERA_BILLING_ENABLED: "false"
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
@@ -95,6 +106,9 @@ services:
       KODERA_EDITION: community
       KODERA_BILLING_ENABLED: "false"
       KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in .env (README.md, Sign-in)}
+      KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
+      KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
+      KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
@@ -113,6 +127,51 @@ services:
       timeout: 5s
       retries: 10
 
+  agent-state-init:
+    profiles: [community-governance]
+    mem_limit: 64m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile
+    user: "0:0"
+    command: ["python", "-c", "import os; os.chown('/state', 10001, 10001); os.chmod('/state', 0o700)"]
+    restart: "no"
+    volumes:
+      - agent_state:/state
+
+  tenant-agent:
+    profiles: [community-governance]
+    mem_limit: 256m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile
+    command: ["python", "-m", "tenant_agent", "run"]
+    restart: unless-stopped
+    environment:
+      KODERA_APPS: matrix
+      KODERA_CORE_URL: http://server:8000
+      KODERA_AGENT_TOKEN: ${KODERA_AGENT_TOKEN:-}
+      KODERA_AGENT_STATE_DIR: /state
+      KODERA_COMPOSE_PROJECT: community
+      KODERA_SYNAPSE_URL: http://synapse:8008
+      KODERA_SYNAPSE_TOKEN: ${KODERA_SYNAPSE_TOKEN:-}
+      KODERA_MATRIX_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
+      KODERA_ROOM_ACCESS_USER: "@kodera-rooms:${KODERA_DOMAIN:-chat.example.org}"
+      LIVEKIT_URL: http://livekit:7880
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?Set LIVEKIT_API_KEY in operator configuration}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set LIVEKIT_API_SECRET in operator configuration}
+    volumes:
+      - agent_state:/state
+    depends_on:
+      agent-state-init:
+        condition: service_completed_successfully
+      server:
+        condition: service_healthy
+      synapse:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+
   web:
     mem_limit: 128m
     build:
@@ -122,8 +181,8 @@ services:
         VITE_CORE_API_URL: https://${KODERA_DOMAIN:-chat.example.org}/api/v1
         VITE_OIDC_CLIENT_ID: ${KODERA_OIDC_CLIENT_ID:-console}
         VITE_KEYCLOAK_URL: ${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}
-        VITE_MATRIX_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
-        VITE_TENANT_DOMAIN: ${KODERA_DOMAIN:-chat.example.org}
+        VITE_MATRIX_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
+        VITE_TENANT_DOMAIN: ${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}
     command:
       - "--port"
       - "8080"
@@ -136,7 +195,7 @@ services:
       - "--provider-origin"
       - "${KODERA_OIDC_PROVIDER_ORIGIN:?Set KODERA_OIDC_PROVIDER_ORIGIN in .env}"
       - "--matrix-domain"
-      - "${KODERA_DOMAIN:-chat.example.org}"
+      - "${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}"
     restart: unless-stopped
 
   room-access:
@@ -164,6 +223,23 @@ services:
       synapse:
         condition: service_healthy
 
+  synapse-db:
+    mem_limit: 512m
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD: ${SYNAPSE_POSTGRES_PASSWORD:?Set SYNAPSE_POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - synapse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   synapse:
     mem_limit: 1g
     image: matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
@@ -172,16 +248,32 @@ services:
       - /bin/sh
       - -c
       - |
+        set -eu
+        rm -rf /tmp/kodera-policy-src /tmp/kodera-policy
+        cp -R /opt/kodera-policy /tmp/kodera-policy-src
+        python -m pip install --no-index --no-deps --no-build-isolation --target /tmp/kodera-policy /tmp/kodera-policy-src
         if [ ! -f /data/homeserver.yaml ]; then
           /start.py generate
-          printf '\npresence:\n  enabled: true\n' >> /data/homeserver.yaml
         fi
+        python /opt/community/configure_synapse.py /data/homeserver.yaml
         exec /start.py
     environment:
       SYNAPSE_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
       SYNAPSE_REPORT_STATS: "no"
+      PYTHONPATH: /tmp/kodera-policy
+      PGPASSWORD: ${SYNAPSE_POSTGRES_PASSWORD:?Set SYNAPSE_POSTGRES_PASSWORD in .env}
+      KODERA_MATRIX_FEDERATION_ALLOWLIST: ${KODERA_MATRIX_FEDERATION_ALLOWLIST:-}
+      KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
+      KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
+      KODERA_SYNAPSE_OIDC_ISSUER: ${KODERA_SYNAPSE_OIDC_ISSUER:-}
+      KODERA_SYNAPSE_OIDC_CLIENT_SECRET: ${KODERA_SYNAPSE_OIDC_CLIENT_SECRET:-}
     volumes:
       - synapse_data:/data
+      - ${KODERA_SOURCE_DIR:?Set the Community source checkout}/packages/synapse-policy:/opt/kodera-policy:ro
+      - ./configure_synapse.py:/opt/community/configure_synapse.py:ro
+    depends_on:
+      synapse-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/health || exit 1"]
       interval: 10s
@@ -202,8 +294,10 @@ services:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
 volumes:
+  agent_state:
   caddy_data:
   caddy_config:
   postgres_data:
   valkey_data:
   synapse_data:
+  synapse_postgres_data:

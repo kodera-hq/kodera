@@ -11,7 +11,7 @@
   "events": [
     "command.invoked"
   ],
-  "webhookUrl": "https://extensions.kodera.io/hello-webhook/webhook",
+  "webhookUrl": "https://extensions.example.org/hooks/hello-webhook",
   "commands": [
     {
       "name": "/hello",

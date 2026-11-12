@@ -48,6 +48,15 @@ export const webhookHandler = createWebhookHandler({
 });
 ```
 
+## Reference implementations
+
+[`extensions/`](../../extensions/README.md) holds worked examples built on this SDK, each labelled
+*Reference implementation*. They are exercised with the test harness and synthetic fixtures;
+Kodera's server does not yet register a manifest, install an extension or deliver a webhook
+(Status: Planned), so the SDK is what you can build and test against today. The catalogue of
+those examples, [`extensions/catalog.json`](../../extensions/catalog.json), is generated from
+their manifests and checked by this package's test suite (`test/catalog.test.mjs`).
+
 ## Replay and transport boundaries
 
 The v1 signing transcript remains `timestamp.rawBody`; delivery and event headers are not signed. A handler records both the authenticated signature and any delivery ID before awaiting side effects. Changing or removing an ID, changing event headers on a replay, or adding timestamp padding cannot redispatch the same authenticated transcript. The default replay capacity is `4096` entries and `maxReplayEntries` may lower it to any positive integer. At capacity, new deliveries refuse without evicting still-valid records. Expired records can be pruned; process restarts do not preserve replay history. A handler records the highest authenticated, metadata-valid clock before pruning, including refused replay/capacity attempts; it rejects clock rollback rather than reopening expired history. Side effects still need their own durable idempotency keys.
