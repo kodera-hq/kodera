@@ -215,10 +215,12 @@ LITERALS+=("${DEMO_LITERALS[@]}")
 # exactly the build that legitimately ships this preview.
 #
 # What this does NOT cover, said plainly so nobody reads more into it than
-# it proves: the surface's own LABELS live in the message catalogues, which
-# `src/i18n/index.ts` imports statically, so all 32 `console.messaging.demo.*`
-# keys ship in every build — exactly as the two `console.mockidp` keys
-# already do. Those are unreachable strings in a JSON blob. The route, the
+# it proves: the surface's own LABELS live in the message catalogues, and
+# every namespace catalogue is emitted with every build
+# (`src/i18n/index.ts` lists them all as deferred files), so the
+# `console.messaging.demo.*` keys ship in every build as a file of their own
+# — exactly as the `console.mockidp` key does. Those are strings in a file
+# only the route this script proves absent would ever fetch. The route, the
 # surface and the fixture are what must not ship, and they are what the
 # three literals below actually check.
 MESSAGING_DEMO_LITERALS=(
