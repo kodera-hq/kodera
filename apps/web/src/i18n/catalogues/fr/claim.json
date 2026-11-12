@@ -1,0 +1,23 @@
+{
+  "console.claim.landing.action-cancel": "Annuler",
+  "console.claim.landing.action-confirm": "Devenir propriétaire",
+  "console.claim.landing.action-continue": "Continuer",
+  "console.claim.landing.action-sign-in": "Se connecter",
+  "console.claim.landing.busy": "Un instant…",
+  "console.claim.landing.confirmed": "Votre invitation est confirmée. Continuez pour choisir votre offre.",
+  "console.claim.landing.consumed": "Cette invitation a déjà été utilisée. Connectez-vous normalement.",
+  "console.claim.landing.contact": "Vérifiez votre adresse e-mail, puis rouvrez le lien de votre invitation",
+  "console.claim.landing.expired": "Cette invitation a expiré. Demandez-nous un nouveau lien.",
+  "console.claim.landing.eyebrow": "Invitation Kodera",
+  "console.claim.landing.failed": "Nous n’avons pas pu confirmer votre invitation. Rouvrez le lien ou écrivez-nous à {{email}}.",
+  "console.claim.landing.mfa": "Activez la double authentification, puis rouvrez le lien de votre invitation",
+  "console.claim.landing.mismatch": "Connectez-vous avec le compte qui a reçu l’invitation",
+  "console.claim.landing.missing": "Rouvrez le lien de votre invitation pour continuer",
+  "console.claim.landing.not-ready": "Votre organisation est encore en préparation. Rouvrez le lien un peu plus tard.",
+  "console.claim.landing.ready": "Confirmez que vous devenez propriétaire de votre organisation",
+  "console.claim.landing.retry": "La confirmation n’a pas abouti. Réessayez dans un instant.",
+  "console.claim.landing.revoked": "Cette invitation a été annulée. Demandez-nous un nouveau lien.",
+  "console.claim.landing.sign-in": "Connectez-vous avec le compte invité pour devenir propriétaire de votre organisation",
+  "console.claim.landing.signing-in": "Une fenêtre de connexion est ouverte. Terminez la connexion dans cette fenêtre.",
+  "console.claim.landing.unknown": "Ce lien d’invitation n’est pas valide. Vérifiez-le, ou écrivez-nous à {{email}}."
+}

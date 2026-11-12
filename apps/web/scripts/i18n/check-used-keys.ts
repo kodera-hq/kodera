@@ -1,17 +1,32 @@
-// Scans src/**/*.{ts,tsx} for `t('console....')` / `t("console....")` string
-// literals and fails when a referenced key is absent from either generated
-// catalogue. Unlike scripts/check-copy-keys.py (which checks the markdown
-// catalogues against docs/specs/), this checks the *product code* against the
-// generated JSON — the thing that would actually break i18next's
-// missingKeyHandler at runtime.
+// `npm run i18n:check`: the product code against the catalogues a browser actually loads.
 //
-// Usage: node scripts/i18n/check-used-keys.ts [--src <dir>] [--fr <path>] [--en <path>]
-// There is no product code under src/ yet (see docs/dev/BASELINE.md), so this
-// is exercised against fixtures — see check-used-keys.selftest.sh.
+// Three checks, all of which must pass:
+//
+// 1. **The namespace catalogues are sound** (`catalogues.ts`): both locales have the same
+//    namespaces and, namespace by namespace, the same keys; every key sits in the namespace its
+//    name says; the namespaces add up to the whole catalogue (`src/i18n/{fr,en}.json`) and to the
+//    list the runtime knows (`src/i18n/namespaces.ts`).
+// 2. **Every key the code names exists**: scans src/**/*.{ts,tsx} for `t('console....')` /
+//    `t("console....")` string literals and fails when a referenced key is in no namespace
+//    catalogue of either locale. Unlike scripts/check-copy-keys.py (which checks the markdown
+//    catalogues against docs/specs/), this checks the *product code* against the generated JSON —
+//    the thing that would actually break i18next's missingKeyHandler at runtime. It reads the
+//    namespace catalogues, not the whole one: a key the whole catalogue has and no namespace
+//    carries is a key no browser would ever be sent.
+// 3. **Every route has its namespaces** (`route-namespaces.ts`): no module reads a namespace that
+//    is not loaded where the module is reachable.
+//
+// Usage: node scripts/i18n/check-used-keys.ts [--src <dir>]
+//          [--catalogues <dir>] [--fr <path>] [--en <path>] [--namespaces <path>] [--entry <path>]
+// Every path defaults to its place under `--src` (`src`); the overrides exist so the self-test
+// (check-used-keys.selftest.sh) can point each check at a fixture.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { checkNamespaceCatalogues, readNamespaceCatalogues, unionOf } from './catalogues.ts'
+import { checkRouteNamespaces } from './route-namespaces.ts'
 
 export class UsageCheckError extends Error {}
 
@@ -95,8 +110,11 @@ export function check(
 
 interface CliArgs {
   src: string
+  catalogues: string
   fr: string
   en: string
+  namespaces: string
+  entry: string
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -113,38 +131,100 @@ function parseArgs(argv: string[]): CliArgs {
       i++
     }
   }
+  const src = args.src ?? 'src'
   return {
-    src: args.src ?? 'src',
-    fr: args.fr ?? 'src/i18n/fr.json',
-    en: args.en ?? 'src/i18n/en.json',
+    src,
+    catalogues: args.catalogues ?? join(src, 'i18n', 'catalogues'),
+    fr: args.fr ?? join(src, 'i18n', 'fr.json'),
+    en: args.en ?? join(src, 'i18n', 'en.json'),
+    namespaces: args.namespaces ?? join(src, 'i18n', 'namespaces.ts'),
+    entry: args.entry ?? join(src, 'main.tsx'),
   }
 }
 
-function main(): void {
+interface NamespaceLists {
+  MESSAGE_NAMESPACES: readonly string[]
+  ENTRY_NAMESPACES: readonly string[]
+  /** Every list the module exports, by name: a route boundary may name one. */
+  named: Record<string, readonly string[]>
+}
+
+async function readNamespaceLists(path: string): Promise<NamespaceLists> {
+  const lists = (await import(pathToFileURL(resolve(path)).href)) as Record<string, unknown>
+  const named: Record<string, readonly string[]> = {}
+  for (const [name, value] of Object.entries(lists)) {
+    if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+      named[name] = value as string[]
+    }
+  }
+  const { MESSAGE_NAMESPACES, ENTRY_NAMESPACES } = named
+  if (MESSAGE_NAMESPACES === undefined || ENTRY_NAMESPACES === undefined) {
+    throw new UsageCheckError(`${path} must export MESSAGE_NAMESPACES and ENTRY_NAMESPACES`)
+  }
+  return { MESSAGE_NAMESPACES, ENTRY_NAMESPACES, named }
+}
+
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
-  const fr = JSON.parse(readFileSync(args.fr, 'utf8')) as Record<string, string>
-  const en = JSON.parse(readFileSync(args.en, 'utf8')) as Record<string, string>
+  const lists = await readNamespaceLists(args.namespaces)
+  const catalogues = readNamespaceCatalogues(args.catalogues)
+  const problems: string[] = []
 
-  const result = check(args.src, fr, en)
+  const catalogueProblems = checkNamespaceCatalogues({
+    catalogues,
+    declared: lists.MESSAGE_NAMESPACES,
+    whole: {
+      fr: JSON.parse(readFileSync(args.fr, 'utf8')) as Record<string, string>,
+      en: JSON.parse(readFileSync(args.en, 'utf8')) as Record<string, string>,
+    },
+  })
+  console.log(
+    `checked ${Object.keys(catalogues.fr).length} namespace catalogue(s) per locale under ${args.catalogues}`
+  )
+  problems.push(...catalogueProblems.map((problem) => `namespace catalogues: ${problem}`))
 
+  const result = check(args.src, unionOf(catalogues.fr), unionOf(catalogues.en))
   console.log(
     `checked ${result.checked} key usage(s) across ${result.filesScanned} file(s) under ${args.src}`
   )
+  problems.push(
+    ...result.missing.map((usage) => `${usage.file}: unknown message-catalogue key: ${usage.key}`)
+  )
 
-  if (result.missing.length > 0) {
-    for (const usage of result.missing) {
-      console.error(`${usage.file}: unknown message-catalogue key: ${usage.key}`)
+  const routes = checkRouteNamespaces({
+    srcDir: resolve(args.src),
+    entry: resolve(args.entry),
+    namespaces: lists.MESSAGE_NAMESPACES,
+    entryNamespaces: lists.ENTRY_NAMESPACES,
+    namedLists: lists.named,
+  })
+  console.log(
+    `checked the namespaces of ${routes.contexts.length - 1} lazy route(s) and of the entry (${lists.ENTRY_NAMESPACES.join(', ')})`
+  )
+  for (const context of routes.contexts) {
+    if (context.unused.length > 0) {
+      console.log(
+        `note: ${context.name} names ${context.unused.join(', ')} and nothing behind it reads ${context.unused.length === 1 ? 'it' : 'them'}`
+      )
     }
-    console.error(`\n${result.missing.length} unknown key(s).`)
+  }
+  problems.push(...routes.problems.map((problem) => `route namespaces: ${problem}`))
+
+  if (problems.length > 0) {
+    for (const problem of problems) console.error(problem)
+    console.error(`\n${problems.length} problem(s).`)
     process.exit(1)
   }
+  console.log(
+    'OK — the namespace catalogues are sound, every key used exists, and every route has its namespaces.'
+  )
 }
 
 const isMain =
   process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])
 if (isMain) {
   try {
-    main()
+    await main()
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)

@@ -1,0 +1,17 @@
+{
+  "console.appearance.theme.error-author": "Theme refused: the author is 1 to 64 bytes, with no outer space and no control character.",
+  "console.appearance.theme.error-base-mode": "Theme refused: the base mode is light, dark or black.",
+  "console.appearance.theme.error-base64": "Code refused: its base64 encoding is not canonical.",
+  "console.appearance.theme.error-colour": "Theme refused: each colour is written rgb(r, g, b), with whole numbers from 0 to 255.",
+  "console.appearance.theme.error-duplicate-field": "Code refused: a field appears twice.",
+  "console.appearance.theme.error-field-type": "Code refused: a field does not have the expected type.",
+  "console.appearance.theme.error-id": "Theme refused: the id is 1 to 64 characters among a-z, 0-9 and hyphen.",
+  "console.appearance.theme.error-json": "Code refused: its content is not valid JSON.",
+  "console.appearance.theme.error-missing-field": "Code refused: a required field is missing.",
+  "console.appearance.theme.error-name": "Theme refused: the name is 1 to 64 bytes, with no outer space and no control character.",
+  "console.appearance.theme.error-prefix": "Code refused: it must start with kodera-theme:v1:",
+  "console.appearance.theme.error-too-long": "Code refused: a theme code is at most 2048 bytes.",
+  "console.appearance.theme.error-unknown-field": "Code refused: it contains an unknown field.",
+  "console.appearance.theme.error-utf8": "Code refused: its content is not valid UTF-8.",
+  "console.appearance.theme.error-version": "Code refused: only version v=1 is supported."
+}

@@ -73,6 +73,18 @@ jobs:
         run: |
           bash scripts/check-production-bundle.selftest.sh
           npm run build:check
+      - name: Bundle budget — entry vendors, deferred chunk size and entry catalogues (with self-test)
+        working-directory: apps/web
+        # The entry is not yet under its 180 kB ceiling (status note at the top of the script), so
+        # that one rule is measured and printed as NOT MET on every run and does not fail it.
+        # Every other rule fails the job, the entry's regression limit among them: it is not the
+        # target, only what keeps the entry from growing meanwhile, and the script refuses to
+        # report it only. Remove `--report-only entry-size` when the entry fits; the ceiling
+        # itself is not to be moved.
+        run: |
+          node scripts/check-bundle-budget.selftest.mjs
+          node scripts/check-bundle-budget.mjs --report-only entry-size
+          node scripts/check-bundle-budget.mjs --profile staging --report-only entry-size
 
   web-e2e:
     name: Web End-to-End Suite

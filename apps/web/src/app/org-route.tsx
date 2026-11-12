@@ -36,6 +36,7 @@ import { RouteError } from './RouteError'
 import { RouteFocus } from './RouteFocus'
 import { loadCurrentUser } from './currentUser'
 import { isPublicCommunityMember, sessionCoversOrganisation } from './communityAccess'
+import { useShownPathname } from './lazyRouteWait'
 import { SessionLoading } from './SessionLoading'
 import { rootRoute } from './root-route'
 import { surfaceOf } from './railModules'
@@ -258,9 +259,15 @@ function OrgLayoutContent() {
   const router = useRouter()
   const invalidatedAuthority = useRef<string | undefined>(undefined)
   const pathname = useRouterState({ select: (state) => state.location.pathname })
+  // What is drawn around the page — the header's title, the surface's layout — describes the
+  // page that is on screen. That is the address the router is going to, except while the
+  // navigation waits for the next area's file to be fetched, when the page on screen is still
+  // the one being left (`./lazyRouteWait.ts`): title and content then change together.
+  const shownPathname = useShownPathname()
   // The title the content header shows, and the one a route change announces
-  // (§10, `RouteFocus`): the same, except in the order flow.
-  const titleKey = contentTitleKey(pathname, membership.role)
+  // (§10, `RouteFocus`): the same, except in the order flow. The announcement is made once the
+  // router has settled, when the address and the page on screen are one again.
+  const titleKey = contentTitleKey(shownPathname, membership.role)
   const announcedTitle = t(announcedTitleKey(pathname, membership.role))
   const authorityMismatch =
     auth.generation !== meGeneration || auth.credentialGeneration !== meCredentialGeneration
@@ -421,7 +428,7 @@ function OrgLayoutContent() {
           onSwitchOrganisation={switchOrganisation}
           role={membership.role}
           contentTitleKey={titleKey}
-          surface={surfaceOf(pathname)}
+          surface={surfaceOf(shownPathname)}
           user={{
             displayName: me.display_name ?? me.email,
             // The catalogue only names two roles in the customer's own words

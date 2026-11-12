@@ -1,7 +1,17 @@
-// Generates the runtime i18next catalogues (src/i18n/fr.json, src/i18n/en.json)
-// from the message-catalogue markdown tables (docs/specs/copy/fr.md,
-// docs/specs/copy/en.md). The markdown is the source of truth; the JSON is
-// generated and must never be hand-edited (see docs/dev/I18N.md).
+// Generates the runtime i18next catalogues from the message-catalogue markdown
+// tables (docs/specs/copy/fr.md, docs/specs/copy/en.md). The markdown is the
+// source of truth; the JSON is generated and must never be hand-edited (see
+// docs/dev/I18N.md).
+//
+// Two shapes of the same keys are written:
+//
+// - `src/i18n/{fr,en}.json`: the whole catalogue. It types `MessageKey`, feeds
+//   the unit suite and the build-time recovery markup, and is never part of
+//   what a browser downloads.
+// - `src/i18n/catalogues/{fr,en}/<namespace>.json`: the same keys, one file
+//   per namespace. A key's namespace is its `<area>` segment
+//   (`console.people.list.title` -> `people`). These are what the browser
+//   loads, a namespace at a time (`src/i18n/index.ts`).
 //
 // Usage: node scripts/i18n/generate.ts [--fr <path>] [--en <path>] [--out <dir>]
 // All paths default to the real catalogues/output and are resolved against
@@ -9,7 +19,7 @@
 // selftest (generate.selftest.sh) and the regen-clean unit test can point the
 // generator at fixtures without touching the committed files.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -255,6 +265,57 @@ export function serialize(entries: Record<string, string>): string {
   return `${JSON.stringify(entries, null, 2)}\n`
 }
 
+/** The directory, under the output directory, that holds one catalogue per namespace and locale. */
+export const NAMESPACE_DIRECTORY = 'catalogues'
+
+/**
+ * The namespace a generated entry belongs to: the `<area>` segment of its key. Read from the key
+ * itself, so a plural entry (`console.people.invite.action-send_one`) follows its row.
+ */
+export function namespaceOf(entryKey: string): string {
+  const namespace = /^console\.([a-z]+)\./.exec(entryKey)?.[1]
+  if (namespace === undefined) {
+    throw new CatalogueError(`key has no namespace segment: ${entryKey}`)
+  }
+  return namespace
+}
+
+/** One catalogue per namespace, namespaces and keys both sorted, every entry in exactly one. */
+export function partitionByNamespace(
+  entries: Record<string, string>
+): Record<string, Record<string, string>> {
+  const grouped = new Map<string, Record<string, string>>()
+  for (const key of Object.keys(entries).sort()) {
+    const namespace = namespaceOf(key)
+    const catalogue = grouped.get(namespace) ?? {}
+    catalogue[key] = entries[key] ?? ''
+    grouped.set(namespace, catalogue)
+  }
+  const partition: Record<string, Record<string, string>> = {}
+  for (const namespace of [...grouped.keys()].sort()) {
+    partition[namespace] = grouped.get(namespace) ?? {}
+  }
+  return partition
+}
+
+/**
+ * Writes one locale's namespace catalogues and removes any left from an earlier run, so a
+ * namespace that lost its last key does not stay behind as a file the runtime could still load.
+ */
+function writeNamespaceCatalogues(directory: string, entries: Record<string, string>): number {
+  const partition = partitionByNamespace(entries)
+  mkdirSync(directory, { recursive: true })
+  for (const name of readdirSync(directory)) {
+    if (name.endsWith('.json') && !Object.hasOwn(partition, name.slice(0, -'.json'.length))) {
+      rmSync(join(directory, name))
+    }
+  }
+  for (const [namespace, catalogue] of Object.entries(partition)) {
+    writeFileSync(join(directory, `${namespace}.json`), serialize(catalogue))
+  }
+  return Object.keys(partition).length
+}
+
 interface CliArgs {
   fr: string
   en: string
@@ -292,8 +353,16 @@ function main(): void {
   mkdirSync(args.out, { recursive: true })
   writeFileSync(join(args.out, 'fr.json'), serialize(result.fr))
   writeFileSync(join(args.out, 'en.json'), serialize(result.en))
+  const namespaceCount = writeNamespaceCatalogues(
+    join(args.out, NAMESPACE_DIRECTORY, 'fr'),
+    result.fr
+  )
+  writeNamespaceCatalogues(join(args.out, NAMESPACE_DIRECTORY, 'en'), result.en)
 
   console.log(`generated ${result.keyCount} keys per catalogue -> ${args.out}/{fr,en}.json`)
+  console.log(
+    `split into ${namespaceCount} namespaces -> ${args.out}/${NAMESPACE_DIRECTORY}/{fr,en}/<namespace>.json`
+  )
   console.log(`${result.pluralKeyCount} plural rows found`)
   if (result.nonCountPluralKeys.length > 0) {
     console.log(

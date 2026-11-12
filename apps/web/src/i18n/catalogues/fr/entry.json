@@ -1,0 +1,6 @@
+{
+  "console.entry.recovery.body": "Nous ne pouvons pas poursuivre votre demande sur cette page.",
+  "console.entry.recovery.restart": "Si vous avez reçu une invitation, rouvrez le lien d’origine.",
+  "console.entry.recovery.support": "Si vous avez besoin d’aide, écrivez-nous à {{email}}.",
+  "console.entry.recovery.title": "La suite de votre demande est indisponible"
+}

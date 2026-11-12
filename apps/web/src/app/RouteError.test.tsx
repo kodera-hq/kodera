@@ -15,14 +15,14 @@ import {
 } from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MockInstance } from 'vitest'
 import '@/i18n'
 import { ApiProblem } from '../api/client'
 import { authAdapter } from '../auth/oidc'
 import type * as Analytics from './analytics'
 import { AppProviders, createQueryClient } from './providers'
-import { createAppRouter } from './routeTree'
+import { ROUTE_UNITS, createAppRouter } from './routeTree'
 
 const { loadCurrentUser, trackSessionExpiryDialogShown } = vi.hoisted(() => ({
   loadCurrentUser: vi.fn(),
@@ -59,6 +59,20 @@ const FORBIDDEN = new ApiProblem({
   title: 'Forbidden',
 })
 
+// The first visit to an area fetches its unit and the layout's (`./routeTree.ts`). In a browser
+// that is a file; here it is every module of the layout being transformed, which on a busy
+// machine outlasts the second a query waits for a screen. These tests are about what the layout
+// shows once it is there, so the units are in hand before the first of them, as they are for
+// someone who has been to the console before. What a person sees while a unit is on its way is
+// `./lazyRouteTree.test.tsx`'s subject.
+beforeAll(async () => {
+  await Promise.all([
+    ROUTE_UNITS.organisation.fetch(),
+    ROUTE_UNITS.home.fetch(),
+    ROUTE_UNITS.invoices.fetch(),
+  ])
+}, 60_000)
+
 beforeEach(() => {
   // jsdom has no scrolling; the router restores scroll on every navigation.
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
@@ -94,10 +108,7 @@ async function openConsoleAt(path: string) {
   // The browser's own address too: signing in again remembers
   // `window.location`, which a memory history alone would leave at `/`.
   window.history.replaceState(null, '', path)
-  const app = await createAppRouter()
-  const router = createRouter({
-    ...app.options,
-    routeTree: app.routeTree,
+  const router = await createAppRouter({
     history: createMemoryHistory({ initialEntries: [path] }),
   })
   invalidate = vi.spyOn(router, 'invalidate')

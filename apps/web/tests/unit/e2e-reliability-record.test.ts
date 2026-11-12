@@ -78,10 +78,10 @@ function expectReceipt(
     )
     if (index === parts) {
       expect(line, 'RECEIPT_END').toBe(
-        `E2E_RELIABILITY_V2_END ${identityFields} parts=${parts} bytes=${body.length} sha256=${digest} attachment=${attachment}`
+        `E2E_RELIABILITY_V3_END ${identityFields} parts=${parts} bytes=${body.length} sha256=${digest} attachment=${attachment}`
       )
     } else {
-      const header = `E2E_RELIABILITY_V2_PART ${identityFields} part=${index + 1}/${parts} bytes=${body.length} sha256=${digest} data=`
+      const header = `E2E_RELIABILITY_V3_PART ${identityFields} part=${index + 1}/${parts} bytes=${body.length} sha256=${digest} data=`
       expect(Buffer.byteLength(header) + 1, 'RECEIPT_HEADER_BOUND').toBeLessThanOrEqual(256)
       expect(line.startsWith(header), 'RECEIPT_HEADER').toBe(true)
       const payload = line.slice(header.length)
@@ -255,6 +255,7 @@ describe('bounded passive reliability records', () => {
       'order',
       'order',
       'limit',
+      'limit',
       'bytes',
     ])
   })
@@ -271,7 +272,7 @@ describe('bounded passive reliability records', () => {
     for (let index = 0; index < 7; index += 1) active.page.emit('framenavigated', request())
     const result = active.recorder.finish('passed')
     const starts = result.events.filter((event) => event.kind === 'request')
-    expect(result.version).toBe(2)
+    expect(result.version).toBe(3)
     expect(result.representation).toBe('response-inline')
     expect(result.events).toHaveLength(256)
     expect(starts).toHaveLength(120)
@@ -564,6 +565,142 @@ describe('bounded passive reliability records', () => {
     ).toEqual(['bootstrap-script', 'main-script', 'mock-runtime-script', 'unknown-local-script'])
     expect(result.assetMapping).toBe('pattern-only')
     expect(reliabilityRecordReason(result)).toBeUndefined()
+  })
+
+  describe('files the console fetches on demand', () => {
+    const deferredChunk = (name: string) => request(`http://localhost:4173/assets/${name}`)
+    const fetchWhole = (
+      active: ReturnType<typeof fixture>,
+      observed: ReturnType<typeof request>
+    ) => {
+      active.page.emit('request', observed)
+      active.page.emit('response', { request: () => observed, status: () => 200 })
+      active.page.emit('requestfinished', observed)
+    }
+
+    it('counts a lazy route, its layout, a library and a catalogue without a row each', () => {
+      const active = fixture()
+      for (const name of [
+        'route-people-fixture.js',
+        'console-fixture.js',
+        'vendor-matrix-fixture.js',
+        'i18n-fr-people-fixture.js',
+        'i18n-en-console-fixture.js',
+      ])
+        fetchWhole(active, deferredChunk(name))
+      fetchWhole(active, request())
+      const result = active.recorder.finish('passed')
+      expect(result.deferredChunks).toBe(5)
+      expect(result.excludedRequests).toBe(0)
+      // The call to Core is the first request with a row, and the only one: no ordinal was spent
+      // on a chunk, and none of the three boundaries of a chunk is reported as unobserved.
+      expect(result.events.filter((event) => event.kind === 'request')).toEqual([
+        expect.objectContaining({ category: 'me', request: 1, seq: 0, order: 0 }),
+      ])
+      expect(result.events.some((event) => event.kind === 'unobserved-boundary')).toBe(false)
+      expect(result.pending).toEqual([])
+      expect(result.disposition).toBe('complete')
+      expect(reliabilityRecordReason(result)).toBeUndefined()
+    })
+
+    it('still gives a row to the application, and to a script it has no name for', () => {
+      const active = fixture()
+      for (const name of [
+        'app-fixture.js',
+        // Not one of the four names `vite.config.ts` gives a deferred chunk: a near miss is a
+        // script nobody has a name for, and that is exactly what a row is for.
+        'routes-fixture.js',
+        'vendor.js',
+        'i18n-fixture.css.js.map',
+        'nested/route-people-fixture.js',
+        'rolldown-runtime-fixture.js',
+      ])
+        fetchWhole(active, deferredChunk(name))
+      const result = active.recorder.finish('passed')
+      expect(result.deferredChunks).toBe(0)
+      expect(
+        result.events.filter((event) => event.kind === 'request').map((event) => event.category)
+      ).toEqual([
+        'application-script',
+        'unknown-local-script',
+        'unknown-local-script',
+        'unknown-local-script',
+        'unknown-local-script',
+      ])
+      // The source map is no script at all: it is excluded as any other local resource is.
+      expect(result.excludedRequests).toBe(1)
+      expect(reliabilityRecordReason(result)).toBeUndefined()
+    })
+
+    it('still trips the event cap on calls to Core, however many chunks came first', () => {
+      const active = fixture()
+      for (let index = 0; index < 200; index += 1)
+        fetchWhole(active, deferredChunk(`route-area${index}-fixture.js`))
+      // 127 complete calls are 254 rows; the 128th starts on row 255 and cannot finish.
+      for (let index = 0; index < 128; index += 1) fetchWhole(active, request())
+      const result = active.recorder.finish('passed')
+      expect(result.reason).toBe('events')
+      expect(result.disposition).toBe('incomplete')
+      expect(result.events).toHaveLength(255)
+      expect(result.events.some((event) => event.kind === 'end')).toBe(false)
+      expect(result.deferredChunks).toBe(200)
+      expect(result.pending).toEqual([128])
+      expect(reliabilityRecordReason(result)).toBeUndefined()
+      expect(reliabilityRecordReason({ ...result, disposition: 'complete', reason: 'none' })).toBe(
+        'order'
+      )
+    })
+
+    it('still trips the event cap on scripts it has no name for', () => {
+      const active = fixture()
+      for (let index = 0; index < 128; index += 1)
+        fetchWhole(active, deferredChunk(`unnamed${index}-fixture.js`))
+      const result = active.recorder.finish('passed')
+      expect(result.reason).toBe('events')
+      expect(result.events).toHaveLength(255)
+      expect(result.deferredChunks).toBe(0)
+      expect(reliabilityRecordReason(result)).toBeUndefined()
+    })
+
+    it('stops at the 257th chunk: counted is not the same as without limit', () => {
+      const active = fixture()
+      for (let index = 0; index < 256; index += 1)
+        fetchWhole(active, deferredChunk(`i18n-fr-area${index}-fixture.js`))
+      const within = fixture()
+      for (let index = 0; index < 256; index += 1)
+        fetchWhole(within, deferredChunk(`i18n-fr-area${index}-fixture.js`))
+      expect(within.recorder.finish('passed')).toMatchObject({
+        deferredChunks: 256,
+        disposition: 'complete',
+        reason: 'none',
+      })
+
+      fetchWhole(active, deferredChunk('vendor-livekit-fixture.js'))
+      const result = active.recorder.finish('passed')
+      expect(result.reason).toBe('events')
+      expect(result.disposition).toBe('incomplete')
+      expect(result.deferredChunks).toBe(256)
+      expect(result.events).toEqual([])
+      expect(reliabilityRecordReason(result)).toBeUndefined()
+      // Observation stopped with the refusal: nothing after it is counted or given a row.
+      expect(active.page.eventNames()).toEqual([])
+      fetchWhole(active, request())
+      expect(active.recorder.finish('passed').events).toEqual([])
+    })
+
+    it('refuses a record whose chunk count is missing, malformed or over its bound', () => {
+      const result = completed()
+      expect(result.deferredChunks).toBe(0)
+      expect(reliabilityRecordReason({ ...result, deferredChunks: 256 })).toBeUndefined()
+      expect(reliabilityRecordReason({ ...result, deferredChunks: 257 })).toBe('limit')
+      for (const deferredChunks of [-1, 1.5, '3', null, Number.MAX_SAFE_INTEGER + 1])
+        expect(reliabilityRecordReason({ ...result, deferredChunks })).toBe('schema')
+      const { deferredChunks: _absent, ...without } = result
+      expect(reliabilityRecordReason(without)).toBe('schema')
+      // The record that came before had no such field and said so by its version.
+      expect(reliabilityRecordReason({ ...without, version: 2 })).toBe('schema')
+      expect(reliabilityRecordReason({ ...result, version: 2 })).toBe('schema')
+    })
   })
 
   it('distinguishes native unobserved starts from corrupt observed completion ordinals', () => {
@@ -903,7 +1040,7 @@ describe('bounded passive reliability records', () => {
             if (site === 'middle' && index === 1) return Promise.reject(new Error('NO_LOG'))
             if (
               (site === 'first' && index === 0) ||
-              (site === 'end' && line.startsWith('E2E_RELIABILITY_V2_END'))
+              (site === 'end' && line.startsWith('E2E_RELIABILITY_V3_END'))
             )
               throw new Error('NO_LOG')
             lines.push(line)
@@ -919,7 +1056,7 @@ describe('bounded passive reliability records', () => {
           expect(attachments).toBe(1)
           expect(writes).toBe(failureIndex + 1)
           expect(codes).toEqual(['publication'])
-          expect(lines.some((line) => line.startsWith('E2E_RELIABILITY_V2_END'))).toBe(false)
+          expect(lines.some((line) => line.startsWith('E2E_RELIABILITY_V3_END'))).toBe(false)
           expect(lines.join('')).not.toContain('NO_LOG')
           expect(errors[0]).toBe(original)
         } finally {
