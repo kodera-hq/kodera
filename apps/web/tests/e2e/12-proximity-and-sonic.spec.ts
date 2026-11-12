@@ -187,7 +187,7 @@ test('workspace/proximity: opens #proximity from the quick-switcher search dialo
   await page.keyboard.press((await pageIsMac(page)) ? 'Meta+k' : 'Control+k')
   const dialog = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
   await expect(dialog).toBeVisible()
-  await page.keyboard.type('urg')
+  await page.keyboard.type('prox')
   await expect(dialog.getByRole('option')).toHaveText([/proximity/])
   await expectAxeClean(page)
   await page.keyboard.press('Enter')
