@@ -1,5 +1,5 @@
 import { webcrypto } from 'node:crypto'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -13,7 +13,8 @@ it('actually signs and verifies locally, then clears the result and refuses chan
   const header = screen.getByRole('textbox', {
     name: 'En-tête de signature à vérifier',
   }) as HTMLInputElement
-  expect(header.value).toMatch(/^v1=[a-f0-9]{64}$/u)
+  // Signing is asynchronous: the header is filled once the digest resolves, not within the click.
+  await waitFor(() => expect(header.value).toMatch(/^v1=[a-f0-9]{64}$/u))
   await user.click(screen.getByRole('button', { name: 'Vérifier la signature' }))
   expect(await screen.findByText('Signature valide localement')).toBeInTheDocument()
   await user.type(screen.getByRole('textbox', { name: 'Payload JSON exact' }), ' ')
