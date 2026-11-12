@@ -6,7 +6,7 @@
 
 From a checkout of kodera-hq/kodera, run the dependency-free Node CLI. This dry run validates public domain, external HTTPS issuer and template without creating files or services.
 
-The five templates are audiovisual-production, tech-studio, b2b-advisory, public-sector and crisis-cell. The audiovisual template includes a Frame.io connector intent.
+The five templates are audiovisual-production, tech-studio, b2b-advisory, public-sector and proximity; crisis-cell is a permanent alias of proximity. The audiovisual template includes a Frame.io connector intent.
 
 > The CLI is a local pre-release. Registry publication is not confirmed; use the checked-out executable now.
 

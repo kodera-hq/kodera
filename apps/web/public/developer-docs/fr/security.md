@@ -12,7 +12,7 @@ synapse-policy 0.1.5 applique la politique de salon configurée avec le service 
 
 ## Codecs Rust, audio et proximité
 
-kodera-rs fournit identifiants, métadonnées natives bornées et codecs EmergencyFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.
+kodera-rs fournit identifiants, métadonnées natives bornées et codecs ProximityFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.
 
 La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les interfaces MLS et matérielles ne doivent pas être présentées comme des intégrations achevées.
 
