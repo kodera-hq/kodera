@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -15,6 +15,7 @@ import {
   check,
   derive,
   parityProblems,
+  pathProblem,
   readManifest,
 } from '../sync-assets.mjs'
 import { ASSET_FILES, TEMPLATES, TEMPLATE_ALIASES, generate, plan } from '../src/cli.ts'
@@ -242,6 +243,43 @@ test('refusal: an asset or a source that is a symbolic link is named and never f
       'deploy/community file is a symbolic link, which the check does not follow: livekit.yaml',
       'deploy/community/livekit.yaml is missing',
     ])
+    await unlink(source)
+    await writeFile(source, sources['livekit.yaml'])
+    assert.deepEqual(await check(rootUrl), [])
+
+    // A linked directory anywhere above a file is refused too. The tree it leads to is valid on
+    // its own (and carries the marker): a check that followed the link would pass.
+    const elsewhere = join(temporary, 'elsewhere')
+    await mkdir(join(elsewhere, 'deploy/community'), { recursive: true })
+    await mkdir(join(elsewhere, 'packages/create-kodera/assets'), { recursive: true })
+    await writeFile(join(elsewhere, 'packages/create-kodera/assets.manifest.json'), JSON.stringify(EXPECTED_MANIFEST))
+    for (const name of EXPECTED_MANIFEST.files) {
+      const poisoned = `${sources[name]}\n# ${marker}\n`
+      await writeFile(join(elsewhere, 'deploy/community', name), poisoned)
+      await writeFile(join(elsewhere, 'packages/create-kodera/assets', name), derive(name, poisoned, EXPECTED_MANIFEST))
+    }
+    assert.deepEqual(await check(pathToFileURL(`${elsewhere}/`)), [])
+    const cases = [
+      ['deploy/community', 'deploy/community file is reached through a symbolic link, which the check does not follow: Caddyfile'],
+      ['deploy', 'deploy/community file is reached through a symbolic link, which the check does not follow: docker-compose.yml'],
+      ['packages/create-kodera/assets', 'create-kodera assets directory is a symbolic link, which the check does not follow'],
+      ['packages/create-kodera', 'create-kodera assets directory is reached through a symbolic link, which the check does not follow'],
+      ['packages', 'create-kodera manifest is reached through a symbolic link, which the check does not follow: assets.manifest.json'],
+    ]
+    for (const [relative, expected] of cases) {
+      const directory = join(root, relative)
+      const aside = join(temporary, `aside-${relative.replaceAll('/', '_')}`)
+      await rename(directory, aside)
+      await symlink(join(elsewhere, relative), directory, 'dir')
+      const problems = await check(rootUrl)
+      await unlink(directory)
+      await rename(aside, directory)
+      assert.ok(problems.includes(expected), `${relative}: ${JSON.stringify(problems)}`)
+      assert.ok(!problems.join('\n').includes(marker), relative)
+    }
+    assert.deepEqual(await check(rootUrl), [])
+    assert.equal(await pathProblem(root, 'deploy/community/Caddyfile'), null)
+    assert.equal(await pathProblem(root, 'deploy/community/absent'), 'missing')
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }

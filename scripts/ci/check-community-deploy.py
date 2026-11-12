@@ -534,11 +534,22 @@ REVIEWED_BUILD_LINES = frozenset({
     "args:",
 })
 # livekit.yaml holds no credential (the keys arrive in LIVEKIT_KEYS) and opens no room on demand.
-REVIEWED_LIVEKIT_LINES = (
-    r"port: 7880", r"rtc:", r"  tcp_port: 7881", r"  port_range_start: 50000", r"  port_range_end: 50060",
-    r"  use_external_ip: true", r"room:", r"  auto_create: false", r"  empty_timeout: [1-9][0-9]{0,3}",
-    r"logging:", r"  level: (?:info|warn|error)",
-)
+# It is a static file, so the gate holds its reviewed text and compares byte for byte: a setting
+# cannot move under another parent, change indentation, repeat or gain a neighbour unseen.
+# Changing the file means changing this text in the same commit.
+REVIEWED_LIVEKIT_YAML = """\
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50060
+  use_external_ip: true
+room:
+  auto_create: false
+  empty_timeout: 30
+logging:
+  level: info
+"""
 YAML_INDIRECTION_RE = re.compile(r"(?:^|[\s\[{,])[&*][A-Za-z_][\w.-]*(?=$|[\s,\]}])|(?:^|[\s{,-])[\"']?<<[\"']?\s*:")
 YAML_BLOCK_SCALAR_RE = re.compile(r"(?::|-)\s*[|>][+-]?\d?$")
 
@@ -651,25 +662,27 @@ def compose_structure_errors(compose_text: str) -> list[str]:
 
 
 def check_livekit_config(livekit_text: str) -> list[str]:
-    """livekit.yaml is exactly its reviewed settings: an inline key, a webhook or a room created
-    on demand is refused, like any setting the gate was not shown."""
-    errors: list[str] = []
-    seen: set[str] = set()
-    for number, raw in enumerate(livekit_text.splitlines(), start=1):
-        line = raw.split("#", 1)[0].rstrip()
-        if not line.strip():
-            continue
-        pattern = next((p for p in REVIEWED_LIVEKIT_LINES if re.fullmatch(p, line)), None)
-        if pattern is None:
-            errors.append(f"livekit.yaml line {number}: unreviewed setting '{line.strip().split(':', 1)[0]}'")
-        elif pattern in seen:
-            errors.append(f"livekit.yaml line {number}: setting given twice")
-        else:
-            seen.add(pattern)
-    for pattern in REVIEWED_LIVEKIT_LINES:
-        if pattern not in seen:
-            errors.append(f"livekit.yaml misses the reviewed setting '{pattern.strip().split(':', 1)[0]}'")
-    return errors
+    """livekit.yaml is exactly its reviewed text. Any difference is refused, and named by the
+    first line that differs: the setting found there and the one the reviewed file holds."""
+    if livekit_text == REVIEWED_LIVEKIT_YAML:
+        return []
+
+    def setting(line: str | None) -> str:
+        if line is None:
+            return "nothing"
+        return "'" + line.split(":", 1)[0].strip() + "' indented by " + str(len(line) - len(line.lstrip(" ")))
+
+    found, reviewed = livekit_text.split("\n"), REVIEWED_LIVEKIT_YAML.split("\n")
+    for number in range(max(len(found), len(reviewed))):
+        here = found[number] if number < len(found) else None
+        there = reviewed[number] if number < len(reviewed) else None
+        if here != there:
+            return [
+                f"livekit.yaml differs from its reviewed text at line {number + 1}: "
+                f"found {setting(here)}, the reviewed file holds {setting(there)}"
+                + (" (same setting, another value or spacing)" if here is not None and there is not None and setting(here) == setting(there) else "")
+            ]
+    return ["livekit.yaml differs from its reviewed text"]
 
 
 @dataclass
@@ -1138,49 +1151,89 @@ def check_scaffolder_parity(manifest: object, sources: dict[str, str], assets: d
     return errors
 
 
-def read_regular_file(path: Path) -> str | None:
-    """The text of a regular file, or None. A symbolic link is never followed: a link could
-    make the gate read, and quote in its messages, a file outside the repository."""
+def path_problem(path: Path, root: Path = ROOT) -> str | None:
+    """Why a path may not be read, or None. A file is read only when it is a regular file whose
+    real path is the root's real path joined with its relative path: no component of the path,
+    the last one or any directory above it, may be a symbolic link. A path outside `root` is
+    the caller's own (an operator checking a copy); its directory is then taken as the root.
+    """
+    absolute = Path(os.path.abspath(path))
+    base = Path(os.path.abspath(root))
     try:
-        if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
-            return None
+        relative = absolute.relative_to(base)
+    except ValueError:
+        base, relative = absolute.parent, Path(absolute.name)
+    try:
+        mode = os.lstat(absolute).st_mode
+    except OSError:
+        return "missing"
+    if stat.S_ISLNK(mode):
+        return "a symbolic link"
+    if os.path.realpath(absolute) != os.path.join(os.path.realpath(base), relative):
+        return "reached through a symbolic link"
+    if not stat.S_ISREG(mode) and not stat.S_ISDIR(mode):
+        return "not a regular file"
+    return None
+
+
+def read_regular_file(path: Path, root: Path = ROOT) -> str | None:
+    """The text of a regular file inside `root`, or None. No symbolic link is followed, in the
+    file's own name or in any directory leading to it: a link could make the gate read, and
+    quote in its messages, a file outside the repository."""
+    if path_problem(path, root) is not None:
+        return None
+    try:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         return None
-    with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        return None
+    with os.fdopen(descriptor, "rb") as stream:
         try:
-            return stream.read()
+            return stream.read().decode("utf-8")
         except UnicodeDecodeError:
             return None
 
 
 def read_scaffolder_state(root: Path = ROOT) -> tuple[object, dict[str, str], dict[str, str], list[str]]:
-    """The manifest, the sources, the assets, and every entry that is not a regular file."""
+    """The manifest, the sources, the assets, and every entry that is not a regular file reached
+    without a symbolic link."""
     refused: list[str] = []
 
     def texts(paths: list[Path], label: str) -> dict[str, str]:
         found: dict[str, str] = {}
         for path in paths:
-            if path.is_symlink():
-                refused.append(f"{label} is a symbolic link, which the gate does not follow: {path.name}")
-            elif path.exists():
-                text = read_regular_file(path)
-                if text is None:
-                    refused.append(f"{label} is not a regular UTF-8 file: {path.name}")
-                else:
-                    found[path.name] = text
+            problem = path_problem(path, root)
+            if problem == "missing":
+                continue
+            if problem is not None:
+                refused.append(f"{label} is {problem}, which the gate does not follow: {path.name}")
+                continue
+            text = read_regular_file(path, root)
+            if text is None:
+                refused.append(f"{label} is not a regular UTF-8 file: {path.name}")
+            else:
+                found[path.name] = text
         return found
 
     scaffolder = root / "packages" / "create-kodera"
-    manifest_text = read_regular_file(scaffolder / "assets.manifest.json")
-    try:
-        manifest: object = json.loads(manifest_text) if manifest_text is not None else None
-    except ValueError:
-        manifest = None
+    manifest = None
+    manifest_problem = path_problem(scaffolder / "assets.manifest.json", root)
+    if manifest_problem not in (None, "missing"):
+        refused.append(f"create-kodera manifest is {manifest_problem}, which the gate does not follow: assets.manifest.json")
+    else:
+        manifest_text = read_regular_file(scaffolder / "assets.manifest.json", root)
+        try:
+            manifest = json.loads(manifest_text) if manifest_text is not None else None
+        except ValueError:
+            manifest = None
     sources = texts([root / "deploy" / "community" / name for name in SCAFFOLDER_MANIFEST["files"]], "deploy/community file")
     assets_dir = scaffolder / "assets"
-    if assets_dir.is_symlink():
-        refused.append("create-kodera assets directory is a symbolic link, which the gate does not follow")
+    directory_problem = path_problem(assets_dir, root)
+    if directory_problem is not None:
+        # The directory is not listed at all: a listing through a link names files elsewhere.
+        refused.append(f"create-kodera assets directory is {directory_problem}, which the gate does not follow")
         return manifest, sources, {}, refused
     assets = texts(sorted(assets_dir.iterdir()) if assets_dir.is_dir() else [], "create-kodera asset")
     return manifest, sources, assets, refused
@@ -1224,46 +1277,80 @@ def run_scaffolder_selftest() -> int:
         if expected not in check_scaffolder_parity(case_manifest, sources, case_assets):
             print(f"[FAIL] scaffolder mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
             return 1
-    # A symbolic link is refused by name, and nothing it points to is read or quoted.
+    # A symbolic link is refused by name, wherever it sits on the path, and nothing it leads to
+    # is read or quoted: not the last component, and not a directory above it.
     marker = "OUTSIDE-FILE-CONTENT-MUST-NOT-BE-READ"
+    link_cases = 0
     with tempfile.TemporaryDirectory(prefix="community-deploy-selftest-") as tmp:
         outside = Path(tmp) / "outside.txt"
         outside.write_text(f"@api path /agent/* {marker}\n", encoding="utf-8")
+
+        def populate(base: Path, poisoned: bool) -> None:
+            """A valid tree, or the same tree outside the repository carrying the marker."""
+            (base / "deploy" / "community").mkdir(parents=True)
+            (base / "packages" / "create-kodera" / "assets").mkdir(parents=True)
+            (base / "packages" / "create-kodera" / "assets.manifest.json").write_text(json.dumps(SCAFFOLDER_MANIFEST), encoding="utf-8")
+            for name, text in sources.items():
+                text = text + (f"\n# {marker}\n" if poisoned else "")
+                (base / "deploy" / "community" / name).write_text(text, encoding="utf-8")
+                (base / "packages" / "create-kodera" / "assets" / name).write_text(derive_scaffolder_asset(name, text), encoding="utf-8")
+
+        elsewhere = Path(tmp) / "elsewhere"
+        populate(elsewhere, poisoned=True)
+
+        def judged(fixture: Path) -> tuple[list[str], str]:
+            state = read_scaffolder_state(fixture)
+            return state[3] + check_scaffolder_parity(*state[:3]), json.dumps(state[0]) + "".join(state[1].values()) + "".join(state[2].values())
+
         fixture = Path(tmp) / "repository"
-        (fixture / "deploy" / "community").mkdir(parents=True)
-        (fixture / "packages" / "create-kodera" / "assets").mkdir(parents=True)
-        (fixture / "packages" / "create-kodera" / "assets.manifest.json").write_text(json.dumps(SCAFFOLDER_MANIFEST), encoding="utf-8")
-        for name, text in sources.items():
-            (fixture / "deploy" / "community" / name).write_text(text, encoding="utf-8")
-            (fixture / "packages" / "create-kodera" / "assets" / name).write_text(derive_scaffolder_asset(name, text), encoding="utf-8")
-        state = read_scaffolder_state(fixture)
-        if state[3] or check_scaffolder_parity(*state[:3]):
+        populate(fixture, poisoned=False)
+        if judged(fixture)[0]:
             print("[FAIL] scaffolder fixture must pass before a link is planted", file=sys.stderr)
             return 1
-        planted = (
-            (fixture / "packages" / "create-kodera" / "assets" / "Caddyfile", "create-kodera asset is a symbolic link, which the gate does not follow: Caddyfile"),
-            (fixture / "deploy" / "community" / "Caddyfile", "deploy/community file is a symbolic link, which the gate does not follow: Caddyfile"),
+        # The elsewhere tree is self-consistent: a gate that followed a linked directory into it
+        # would find matching assets and pass. It must refuse the link instead.
+        if judged(elsewhere)[0]:
+            print("[FAIL] the outside tree must be valid on its own, or the link cases prove nothing", file=sys.stderr)
+            return 1
+        planted: tuple[tuple[str, str, str], ...] = (
+            ("packages/create-kodera/assets/Caddyfile", "file", "create-kodera asset is a symbolic link, which the gate does not follow: Caddyfile"),
+            ("deploy/community/Caddyfile", "file", "deploy/community file is a symbolic link, which the gate does not follow: Caddyfile"),
+            ("packages/create-kodera/assets.manifest.json", "file", "create-kodera manifest is a symbolic link, which the gate does not follow: assets.manifest.json"),
+            ("packages/create-kodera/assets", "directory", "create-kodera assets directory is a symbolic link, which the gate does not follow"),
+            ("deploy/community", "directory", "deploy/community file is reached through a symbolic link, which the gate does not follow: Caddyfile"),
+            ("deploy", "directory", "deploy/community file is reached through a symbolic link, which the gate does not follow: docker-compose.yml"),
+            ("packages/create-kodera", "directory", "create-kodera assets directory is reached through a symbolic link, which the gate does not follow"),
+            ("packages", "directory", "create-kodera manifest is reached through a symbolic link, which the gate does not follow: assets.manifest.json"),
         )
-        for link, expected in planted:
-            original = link.read_text(encoding="utf-8")
+        for relative, kind, expected in planted:
+            link = fixture / relative
+            aside = fixture / (relative.replace("/", "_") + ".aside")
+            link.rename(aside)
+            link.symlink_to(outside if kind == "file" else elsewhere / relative, target_is_directory=kind == "directory")
+            got, loaded = judged(fixture)
             link.unlink()
-            link.symlink_to(outside)
-            state = read_scaffolder_state(fixture)
-            got = state[3] + check_scaffolder_parity(*state[:3])
-            if expected not in got or any(marker in error for error in got) or marker in "".join(state[1].values()) + "".join(state[2].values()):
-                print(f"[FAIL] a symbolic link was followed or not refused by name: {expected}", file=sys.stderr)
+            aside.rename(link)
+            if expected not in got or any(marker in error for error in got) or marker in loaded:
+                print(f"[FAIL] a symbolic link at {relative} was followed or not refused by name: {expected} (got {got})", file=sys.stderr)
                 return 1
-            link.unlink()
-            link.write_text(original, encoding="utf-8")
-        if read_regular_file(outside) is None or read_regular_file(fixture / "deploy") is not None:
+            link_cases += 1
+        if judged(fixture)[0]:
+            print("[FAIL] scaffolder fixture must pass again once every link is removed", file=sys.stderr)
+            return 1
+        if read_regular_file(outside) is None or read_regular_file(fixture / "deploy", fixture) is not None:
             print("[FAIL] read_regular_file must read a regular file and nothing else", file=sys.stderr)
             return 1
-        link = fixture / "link-to-outside"
-        link.symlink_to(outside)
-        if read_regular_file(link) is not None:
-            print("[FAIL] read_regular_file followed a symbolic link", file=sys.stderr)
-            return 1
-    print(f"OK: create-kodera assets match deploy/community, {len(cases)} drift mutations and 3 symbolic links refused by name.")
+        direct = (
+            ("link-to-outside", "link-to-outside", outside, False),
+            ("linked-directory", "linked-directory/deploy/community/Caddyfile", elsewhere, True),
+        )
+        for name, read_as, target, is_directory in direct:
+            (fixture / name).symlink_to(target, target_is_directory=is_directory)
+            if read_regular_file(fixture / read_as, fixture) is not None or path_problem(fixture / read_as, fixture) is None:
+                print(f"[FAIL] read_regular_file followed a symbolic link: {read_as}", file=sys.stderr)
+                return 1
+            link_cases += 1
+    print(f"OK: create-kodera assets match deploy/community, {len(cases)} drift mutations and {link_cases} symbolic links refused by name.")
     return 0
 
 
@@ -2131,9 +2218,10 @@ def main() -> int:
         (ROOT / "deploy/community/configure_synapse.py", "configure_synapse.py"),
         (ROOT / "deploy/community/livekit.yaml", "livekit.yaml"),
     ):
-        text = read_regular_file(path)
+        problem = path_problem(path)
+        text = read_regular_file(path) if problem is None else None
         if text is None:
-            reason = "is a symbolic link, which the gate does not follow" if path.is_symlink() else "is not a readable regular file"
+            reason = f"is {problem}, which the gate does not follow" if problem not in (None, "missing") else "is not a readable regular UTF-8 file"
             print(f"[FAIL] {label} {reason}: {path}", file=sys.stderr)
             return 1
         texts[label] = text
@@ -2154,18 +2242,38 @@ def main() -> int:
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1
         livekit_mutations = (
-            ("an API key written into the file", "port: 7880\n", "port: 7880\nkeys:\n  devkey: devsecret\n", "livekit.yaml line 2: unreviewed setting 'keys'"),
-            ("rooms created on demand", "auto_create: false", "auto_create: true", "unreviewed setting 'auto_create'"),
-            ("a webhook to an unreviewed receiver", "logging:\n", "webhook:\n  urls: [https://example.org/hook]\nlogging:\n", "unreviewed setting 'webhook'"),
-            ("the media port range widened", "port_range_end: 50060", "port_range_end: 65535", "unreviewed setting 'port_range_end'"),
-            ("a reviewed setting removed", "  use_external_ip: true\n", "", "livekit.yaml misses the reviewed setting 'use_external_ip'"),
-            ("a setting overridden further down", "logging:\n", "port: 7880\nlogging:\n", "setting given twice"),
+            ("an API key written into the file", "port: 7880\n", "port: 7880\nkeys:\n  devkey: devsecret\n",
+             "livekit.yaml differs from its reviewed text at line 2: found 'keys' indented by 0, the reviewed file holds 'rtc' indented by 0"),
+            ("rooms created on demand", "auto_create: false", "auto_create: true",
+             "at line 8: found 'auto_create' indented by 2, the reviewed file holds 'auto_create' indented by 2 (same setting, another value or spacing)"),
+            ("a webhook to an unreviewed receiver", "logging:\n", "webhook:\n  urls: [https://example.org/hook]\nlogging:\n",
+             "at line 10: found 'webhook' indented by 0"),
+            ("the media port range widened", "port_range_end: 50060", "port_range_end: 65535",
+             "at line 5: found 'port_range_end' indented by 2, the reviewed file holds 'port_range_end' indented by 2 (same setting"),
+            ("a reviewed setting removed", "  use_external_ip: true\n", "",
+             "at line 6: found 'room' indented by 0, the reviewed file holds 'use_external_ip' indented by 2"),
+            ("a setting repeated further down", "logging:\n", "port: 7880\nlogging:\n",
+             "at line 10: found 'port' indented by 0, the reviewed file holds 'logging' indented by 0"),
+            ("a reviewed setting moved under another parent", "  use_external_ip: true\nroom:\n  auto_create: false\n", "  use_external_ip: true\n  auto_create: false\nroom:\n",
+             "at line 7: found 'auto_create' indented by 2, the reviewed file holds 'room' indented by 0"),
+            ("a reviewed child placed under the wrong parent", "logging:\n  level: info\n", "logging:\n  level: info\n  tcp_port: 7881\n",
+             "at line 12: found 'tcp_port' indented by 2, the reviewed file holds '' indented by 0"),
+            ("a reviewed key duplicated in place", "  auto_create: false\n", "  auto_create: false\n  auto_create: false\n",
+             "at line 9: found 'auto_create' indented by 2, the reviewed file holds 'empty_timeout' indented by 2"),
+            ("a reviewed line at the wrong indentation", "  auto_create: false\n", "auto_create: false\n",
+             "at line 8: found 'auto_create' indented by 0, the reviewed file holds 'auto_create' indented by 2"),
+            ("a reviewed line nested one level deeper", "  level: info\n", "    level: info\n",
+             "at line 11: found 'level' indented by 4, the reviewed file holds 'level' indented by 2"),
+            ("a comment that hides a setting from a casual reader", "room:\n", "room: # keys: {devkey: devsecret}\n",
+             "at line 7: found 'room' indented by 0, the reviewed file holds 'room' indented by 0 (same setting"),
+            ("a trailing document", "  level: info\n", "  level: info\n---\nkeys:\n  devkey: devsecret\n",
+             "at line 12: found '---' indented by 0"),
         )
         for label, old, new, expected in livekit_mutations:
             if old not in livekit_text or not any(expected in error for error in check_livekit_config(livekit_text.replace(old, new, 1))):
                 print(f"[FAIL] livekit.yaml mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
                 return 1
-        print(f"OK: livekit.yaml is its reviewed settings, {len(livekit_mutations)} mutations refused by name.")
+        print(f"OK: livekit.yaml is its reviewed text byte for byte, {len(livekit_mutations)} mutations refused by name.")
         return (
             run_synapse_config_selftest(policy_source)
             or run_scaffolder_selftest()
