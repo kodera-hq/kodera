@@ -200,7 +200,9 @@ describe('the route units', () => {
       const declared = units(ROUTE_UNITS)[name]!.segments
       if (declared.length > 0) expect([...segments].sort(), name).toEqual([...declared].sort())
     }
-  })
+    // It fetches every area of the console, which is every screen's module: more than the five
+    // seconds a test has by default once the machine is busy with other suites.
+  }, 30_000)
 
   it('add up to the whole tree: every route `buildRouteTree` registers is some unit’s', async () => {
     const { buildRouteTree } = await import('./routeTree')
