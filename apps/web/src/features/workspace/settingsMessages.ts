@@ -8,6 +8,9 @@ const messages = {
     appearance: 'Appearance & themes',
     audio: 'Voice & audio',
     members: 'Members, roles & invitations',
+    moderation: 'Invite links & moderation',
+    moderationRestricted:
+      'Only the workspace’s owners and administrators manage invite links and moderation.',
     extensions: 'Connectors & extensions',
     hosting: 'Hosting & administration',
     profileHint: 'Your profile follows you through conversations on this browser.',
@@ -65,6 +68,9 @@ const messages = {
     appearance: 'Apparence & thèmes',
     audio: 'Voix & audio',
     members: 'Membres, rôles & invitations',
+    moderation: 'Liens d’invitation et modération',
+    moderationRestricted:
+      'Seuls les propriétaires et administrateurs de l’espace gèrent les liens d’invitation et la modération.',
     extensions: 'Connecteurs & extensions',
     hosting: 'Hébergement & administration',
     profileHint: 'Votre profil vous accompagne dans les conversations sur ce navigateur.',

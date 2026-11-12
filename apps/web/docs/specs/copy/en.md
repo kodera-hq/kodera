@@ -1843,3 +1843,98 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.channel-invite.copy` | Copy: {label} |
 | `console.workspace.channel-invite.copied` | Copied |
 | `console.workspace.channel-invite.copy-error` | Copy failed. Select the link to copy it manually. |
+
+## Messaging media and notifications
+
+| Key | Text |
+|---|---|
+| `console.workspace.attachments.label-list` | Message attachments |
+| `console.workspace.attachments.action-open` | Open {name} in a new tab |
+| `console.workspace.attachments.problem-open` | This file could not be opened. It may have been removed; try again in a moment. |
+| `console.workspace.unfurl.label-link` | Link preview: {title} (new tab) |
+| `console.workspace.notifications.title` | Notifications |
+| `console.workspace.notifications.action-open` | Notifications |
+| `console.workspace.notifications.action-open-unread` | Notifications, {count} unread |
+| `console.workspace.notifications.action-mark-read` | Mark all as read |
+| `console.workspace.notifications.empty` | No notifications yet. |
+| `console.workspace.notifications.problem-unavailable` | Notifications cannot be reached right now. They will update within a minute. |
+| `console.workspace.notifications.label-unread` | (unread) |
+| `console.workspace.notifications.kind-mention` | Someone mentioned you |
+| `console.workspace.notifications.kind-invitation` | You received an invitation |
+| `console.workspace.notifications.kind-moderation` | A moderation decision concerns you |
+| `console.workspace.notifications.kind-document` | A document was shared with you |
+| `console.workspace.notifications.push-label` | Notifications on this device |
+| `console.workspace.notifications.push-hint` | Your messages never pass through your browser’s notification service: only the fact that something arrived is signalled. |
+| `console.workspace.notifications.push-unsupported` | This browser does not receive background notifications. |
+| `console.workspace.notifications.push-problem` | Notifications could not be changed. Check the browser’s permissions, then try again. |
+| `console.workspace.notifications.push-title` | Kodera |
+| `console.workspace.notifications.push-body` | Something new in your workspace. |
+| `console.workspace.directs.title` | Direct messages |
+| `console.workspace.directs.action-new` | New |
+| `console.workspace.directs.field-people` | With whom? |
+| `console.workspace.directs.help-people` | One to eight Matrix identifiers, separated by commas: @first.last:example.org |
+| `console.workspace.directs.action-open` | Open the conversation |
+| `console.workspace.directs.empty` | No direct conversations. |
+| `console.workspace.directs.label-unread` | {count} unread |
+| `console.workspace.directs.problem-id` | Enter full Matrix identifiers in the form @user:domain.tld. |
+| `console.workspace.directs.problem-open` | The conversation could not be opened. Check the identifiers, then try again. |
+| `console.workspace.invite-links.title` | Invite links |
+| `console.workspace.invite-links.hint` | A link lets people join the workspace until it expires or reaches its number of uses. Revoke it as soon as it is no longer needed. |
+| `console.workspace.invite-links.field-days` | Valid for (days) |
+| `console.workspace.invite-links.field-uses` | Maximum uses |
+| `console.workspace.invite-links.field-role` | Role on arrival |
+| `console.workspace.invite-links.role-member` | Member |
+| `console.workspace.invite-links.role-moderator` | Moderator |
+| `console.workspace.invite-links.action-create` | Create a link |
+| `console.workspace.invite-links.label-new` | New invite link |
+| `console.workspace.invite-links.action-copy` | Copy the link |
+| `console.workspace.invite-links.label-copied` | Copied |
+| `console.workspace.invite-links.hint-once` | This link is shown only once: copy it now. |
+| `console.workspace.invite-links.label-row` | {uses} of {max} uses, until {date} |
+| `console.workspace.invite-links.action-revoke` | Revoke |
+| `console.workspace.invite-links.empty` | No active invite links. |
+| `console.workspace.invite-links.problem-list` | Invite links cannot be reached right now. |
+| `console.workspace.invite-links.problem-create` | The link could not be created. Check the duration (1 to 30 days) and the number of uses (1 to 10,000). |
+| `console.workspace.invite-links.problem-revoke` | The link could not be revoked. Try again. |
+| `console.workspace.invite-links.problem-copy` | Copy failed. Select the link and copy it manually. |
+| `console.workspace.reports.title` | Reports |
+| `console.workspace.reports.empty` | No reports waiting. |
+| `console.workspace.reports.field-resolution` | Decision, in a few words |
+| `console.workspace.reports.action-resolve` | Resolve |
+| `console.workspace.reports.action-dismiss` | Dismiss |
+| `console.workspace.reports.label-decided` | Decision saved. |
+| `console.workspace.reports.problem-resolution` | Write the decision before resolving or dismissing the report. |
+| `console.workspace.reports.problem-decided` | Another moderator has already decided this report. |
+| `console.workspace.reports.problem-resolve` | The decision could not be saved. Try again. |
+| `console.workspace.reports.problem-list` | Reports cannot be reached right now. |
+| `console.workspace.moderation.title` | Moderate a member |
+| `console.workspace.moderation.hint` | Every decision is recorded with its reason in the workspace’s log. |
+| `console.workspace.moderation.field-membership` | Membership ID |
+| `console.workspace.moderation.problem-membership` | Enter the member’s membership identifier, as their profile shows it. |
+| `console.workspace.moderation.field-action` | Measure |
+| `console.workspace.moderation.action-mute` | Mute |
+| `console.workspace.moderation.action-kick` | Remove |
+| `console.workspace.moderation.action-ban` | Ban |
+| `console.workspace.moderation.action-unban` | Lift the ban |
+| `console.workspace.moderation.field-days` | Duration (days) |
+| `console.workspace.moderation.field-reason` | Reason |
+| `console.workspace.moderation.action-apply` | Apply |
+| `console.workspace.moderation.label-done` | Measure applied. |
+| `console.workspace.moderation.problem-apply` | The measure could not be applied. Check your rights, then try again. |
+
+## Workspace invite links
+
+| Key | Text |
+|---|---|
+| `console.invitation.join.title` | Join a workspace |
+| `console.invitation.join.checking` | Checking the link… |
+| `console.invitation.join.ready` | This link invites you to join {name}. It is valid until {date}. |
+| `console.invitation.join.role-member` | You will join as a member. |
+| `console.invitation.join.role-moderator` | You will join as a moderator. |
+| `console.invitation.join.action-join` | Join {name} |
+| `console.invitation.join.joined` | You have joined {name}. |
+| `console.invitation.join.action-home` | Go to home |
+| `console.invitation.join.missing` | This link is incomplete. Open the invite link again exactly as you received it. |
+| `console.invitation.join.sign-in` | Sign in to Kodera, then open the invite link again. |
+| `console.invitation.join.gone` | This invite link has expired, was revoked or has been used as many times as allowed. Ask for a new one. |
+| `console.invitation.join.failed` | The link could not be checked. Try again in a moment. |

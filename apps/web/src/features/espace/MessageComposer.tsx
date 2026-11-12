@@ -3,7 +3,7 @@
 // (`draftChannel.ts`), so a keystroke draws the field it was typed in and nothing else: not the
 // message log, not the sidebar, not the view that holds them.
 
-import { memo, useCallback, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { FormEvent, KeyboardEvent, RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { Trans, useTranslation } from 'react-i18next'
@@ -13,7 +13,9 @@ import { cx } from '../../ui/cx'
 import { MentionIcon, SendIcon } from '../../ui/icons/Composer'
 import { Tooltip } from '../../ui/Tooltip/Tooltip'
 import { TOUCH_TARGET, TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
+import { AttachmentQueue, type QueuedFile } from '../messaging/attachments/attachmentQueue'
 import { transformOutsideCode } from '../messaging/formatting'
+import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { RichComposerInput } from '../messaging/RichComposerInput'
 import { useDraftSlice, type DraftChannel } from './draftChannel'
 import { replaceShortcodes } from './emoji'
@@ -29,6 +31,32 @@ import { newestEditable } from './shortcuts'
 import { useStoreSlice } from './useStoreSlice'
 
 const NO_TYPING: readonly MemberView[] = []
+const NO_FILES: readonly QueuedFile[] = []
+const noSubscription = () => () => {}
+
+/**
+ * The composer's uploads, for as long as it is mounted in a live workspace: none in the demo, where
+ * there is no organisation to store a file in, and the files are only shown on the device.
+ */
+function useAttachmentQueue(): AttachmentQueue | null {
+  const organisationId = useMessagingOrganisation()
+  const [queue, setQueue] = useState<{
+    organisationId: string | null
+    queue: AttachmentQueue | null
+  }>(() => ({
+    organisationId,
+    queue: organisationId === null ? null : new AttachmentQueue(organisationId),
+  }))
+  if (queue.organisationId !== organisationId) {
+    setQueue({
+      organisationId,
+      queue: organisationId === null ? null : new AttachmentQueue(organisationId),
+    })
+  }
+  const current = queue.queue
+  useEffect(() => () => current?.close(), [current])
+  return current
+}
 
 /**
  * Who is typing, in words (gap report G9): one or two by name, as their messages are signed, and
@@ -151,6 +179,13 @@ function MessageComposerView({
     [store, roomId, replyToEventId]
   )
   const replyBannerTarget = useStoreSlice(store.subscribe, store.getSnapshot, replyTargetIn)
+  const uploads = useAttachmentQueue()
+  const queued = useSyncExternalStore(
+    uploads?.subscribe ?? noSubscription,
+    () => uploads?.files(roomId) ?? NO_FILES
+  )
+  // Files still sending, or refused and not yet removed, hold the message back.
+  const filesReady = uploads === null ? [] : uploads.readyRefs(roomId)
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -158,9 +193,10 @@ function MessageComposerView({
     // from the text as typed, so a member whose name holds a code is still named.
     const typed = composerText.trim()
     const trimmed = transformOutsideCode(typed, replaceShortcodes)
-    if (trimmed === '' || navigationUnsettled || attachmentStaged) return
-    store.setTyping?.(roomId, false)
+    if (navigationUnsettled || attachmentStaged) return
     if (editing !== null) {
+      if (trimmed === '') return
+      store.setTyping?.(roomId, false)
       // An edit started in another room is dropped, never sent here, as an edit or as a message.
       draft.command(
         () => {
@@ -170,7 +206,14 @@ function MessageComposerView({
       )
       return
     }
+    if (filesReady === null) return
+    if (trimmed === '' && filesReady.length === 0) return
+    store.setTyping?.(roomId, false)
     const options: SendOptions = mentioning(typed, members)
+    if (filesReady.length > 0) {
+      options.attachments = filesReady
+      uploads?.clear(roomId)
+    }
     // Otherwise the text goes to this room on its own.
     if (replyBannerTarget !== undefined) {
       options.replyTo = replyBannerTarget.eventId
@@ -256,6 +299,7 @@ function MessageComposerView({
             scope={roomId}
             onInvite={onInvite}
             onStagingChange={onStagingChange}
+            uploads={editingEventId === null ? uploads : null}
             id={inputId}
             aria-describedby={simulation ? guidanceId : undefined}
             value={composerText}
@@ -338,7 +382,11 @@ function MessageComposerView({
                   ? 'console.workspace.composer.action-save'
                   : 'console.workspace.composer.action-send'
               )}
-              disabled={navigationUnsettled || attachmentStaged}
+              disabled={
+                navigationUnsettled ||
+                attachmentStaged ||
+                (editingEventId === null && queued.length > 0 && filesReady === null)
+              }
               className="ml-auto"
             />
           </div>

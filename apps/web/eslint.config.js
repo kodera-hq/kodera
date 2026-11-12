@@ -348,6 +348,13 @@ export default tseslint.config(
     rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
   },
   {
+    // An attachment's bytes, sent to the presigned object-storage address Core's upload ticket
+    // names, without any Kodera credential (docs/specs/messaging-media-and-notifications.md). The
+    // CSP allows it under the deployment's `--attachment-base` only.
+    files: ['src/features/messaging/attachments/storageTransport.ts'],
+    rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
+  },
+  {
     // matrix-js-sdk stays behind Espace's store (messaging-pilot design §2.3), and livekit-client
     // behind its call (`src/features/espace/audio/`): screens read their snapshots and call their
     // actions, so an SDK upgrade or a token rule changes one directory. Flat config replaces a

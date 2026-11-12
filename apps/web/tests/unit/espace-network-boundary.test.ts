@@ -45,6 +45,8 @@ describe('fetch in the browser bundle', () => {
       // Beside the resolver, not the resolver: the exemption names one file.
       'src/features/espace/homeserver-probe.ts',
       'src/features/workspace/OpenEspace.tsx',
+      // Beside the storage transport, not the transport: the upload itself goes through it.
+      'src/features/messaging/attachments/uploadAttachment.ts',
     ]) {
       expect(await rulesFired(network, path), path).toEqual([
         'no-restricted-globals',
@@ -61,6 +63,8 @@ describe('fetch in the browser bundle', () => {
       'src/features/espace/matrix/probe.ts',
       'src/features/espace/audio/roomAccess.ts',
       'src/features/espace/homeserver.ts',
+      // An attachment's bytes, to the presigned storage address Core's ticket names.
+      'src/features/messaging/attachments/storageTransport.ts',
     ]) {
       expect(await rulesFired(network, path), path).toEqual([])
     }

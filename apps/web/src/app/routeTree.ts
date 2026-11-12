@@ -18,7 +18,7 @@ import { createRouter } from '@tanstack/react-router'
 import type { RouterHistory } from '@tanstack/react-router'
 import { callbackRoute } from './callback-route'
 import { espaceCallbackRoute } from './espace-callback-route'
-import { invitationRoute } from '../features/invitation/route'
+import { invitationRoute, joinRoute } from '../features/invitation/route'
 import { loginRoute } from '../features/login/routes'
 import { entryCataloguesReady, withNamespaces } from '../i18n'
 import { ORGANISATION_NAMESPACES } from '../i18n/namespaces'
@@ -238,6 +238,8 @@ async function entryRoutes() {
     ...(await firstOwnerRoutes()),
     // An invitation's acceptance, in every build (docs/specs/12-invitation-accept.md).
     invitationRoute,
+    // A workspace invite link, `/join#code` (docs/specs/messaging-media-and-notifications.md).
+    joinRoute,
   ] as const
 }
 
