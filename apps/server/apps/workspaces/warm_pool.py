@@ -10,7 +10,12 @@ from apps.orgs.intake_services import RESERVED_SLUGS as RESERVED_ORGANISATION_SL
 from apps.tenancy.selectors import RESERVED_SLUGS as RESERVED_TENANT_SLUGS
 
 from .models import Channel
-from .templates import TEMPLATES, resolve_template
+from .templates import (
+    DEFAULT_THEME_ID,
+    canonical_template_id,
+    canonical_theme_id,
+    resolve_template,
+)
 
 MAX_REQUEST_BYTES = 16 * 1024
 ORG_NAME_LENGTH = (1, 80)
@@ -20,7 +25,6 @@ RESERVED_SLUGS = (
     frozenset(RESERVED_ORGANISATION_SLUGS) | frozenset(RESERVED_TENANT_SLUGS) | {"login"}
 )
 HOSTING_MODES = frozenset({"cloud", "self-host"})
-THEME_IDS = frozenset({"givre", "ardoise", "real-black"})
 SOUND_PACK_IDS = frozenset(
     {
         "cristal-48k",
@@ -150,22 +154,24 @@ def parse_instant_claim_request(
     ):
         errors.append(("/hostingMode", "invalid"))
 
-    template_id = body.get("templateId")
+    # The identifier the request names, or its deprecated alias (`crisis-cell`): one template
+    # either way, kept under its canonical identifier from here on.
+    template_id = canonical_template_id(body.get("templateId"))
     template = None
     if "templateId" in body:
-        if not isinstance(template_id, str) or template_id not in TEMPLATES:
+        if template_id is None:
             errors.append(("/templateId", "invalid"))
         else:
-            template = TEMPLATES[template_id]
+            template = resolve_template(template_id)
 
-    raw_theme = body.get("themeId")
+    # A `ThemeId`, or one of the three aliases it took before 0.42.0: kept as the ThemeId it names,
+    # by the same reader a stored plan is read with (templates.canonical_plan).
+    theme_id = canonical_theme_id(body.get("themeId"))
     if "themeId" not in body:
-        theme_id = template.default_theme_id if template is not None else "givre"
-    elif not isinstance(raw_theme, str) or raw_theme not in THEME_IDS:
+        theme_id = template.default_theme_id if template is not None else DEFAULT_THEME_ID
+    elif theme_id is None:
         errors.append(("/themeId", "invalid"))
         theme_id = ""
-    else:
-        theme_id = raw_theme
 
     raw_sound = body.get("soundPackId")
     if "soundPackId" not in body:
@@ -250,7 +256,8 @@ def build_instant_claim_plan(request: InstantClaimRequest) -> dict[str, Any]:
         "hosting_mode": request.hosting_mode,
         "template_id": template.id,
         "template_label_fr": template.label_fr,
-        "theme_id": request.theme_id,
+        # Canonical whatever built the request: a plan never holds an alias.
+        "theme_id": canonical_theme_id(request.theme_id) or request.theme_id,
         "sound_pack_id": request.sound_pack_id,
         "categories": categories,
         "channels": channels,

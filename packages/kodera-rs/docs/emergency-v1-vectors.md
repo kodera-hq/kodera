@@ -1,6 +1,36 @@
-# Emergency v1 interoperability and activation boundary
+# Proximity frame v1 interoperability and activation boundary
 
 Status: Local codec and coordinator verification; production radio activation requires security review.
+
+## Naming
+
+The channel is `#proximity` (the French catalogues carry its translated label): an everyday presence channel inside one organisation, with a voluntary, pseudonymous check-in. It is not an emergency service and must not be presented as one. It was first named `#urgence`, and its frame "emergency frame v1". The name changed; the wire did not. This document and `vectors/emergency-v1-rules.txt` keep their paths because other checks read them.
+
+The v1 wire format is frozen. Every byte a deployed peer puts on the wire or signs keeps its historical value, old word included:
+
+- the two magic bytes `4b 45` (ASCII `KE`) and the version byte `01`;
+- the signed label `kodera-emergency-v1:`;
+- the organisation-bound signed label `kodera-emergency-org-v1:` used by `ProximityFrame::sign_for_organisation`;
+- the field layout, the status values 0 to 3 and the hop bound.
+
+Renaming any of them is a new protocol version, never a vocabulary change. [`vectors/proximity-frame-v1.txt`](../vectors/proximity-frame-v1.txt) pins the constants, five signed frames and seventeen refused frames; the Rust, Swift and Kotlin codecs read it and must agree byte for byte. The TypeScript codec (`apps/web/src/features/emergency/codec.ts`) is held to the first frame by its own tests.
+
+## Sender labels
+
+A frame carries its sender's device public half and no name. The label shown next to a check-in is a handle: one the member picked for this purpose (`dedicated`) or one every device of the organisation derives for the sender (`generated`, `ProximityHandle::generated`). A handle is 3 to 24 characters matching `^[a-z0-9]+(?:-[a-z0-9]+)*$`. It is display metadata held beside the frame, never inside it.
+
+A handle is a display label, never an identity and never an authorisation input. Identity stays the signing half of the device pair; the roster and the signature decide what is admitted, and nothing is granted, refused, deduplicated or looked up by handle.
+
+- A generated handle is `<adjective>-<noun>-<9 characters>` from `HMAC-SHA256(organisation beacon salt, "kodera-proximity-handle-v1:" || sender bytes)`: five bits per word and 45 in the suffix, 55 in all. The 24-character bound and the longest word pair leave room for exactly nine suffix characters.
+- The organisation's beacon salt keys the derivation. The same sender shows another handle in another organisation, so handles are not linkable across organisations, and a handle searched for in one organisation is worth nothing in another.
+- Fifty-five bits make an accidental meeting inside a 4096-member roster negligible. They do not stop someone who can try device pairs until one matches and then have it provisioned. A matching handle gives its holder a label and nothing else.
+- A roster view runs `label_observed_proximity_senders` with the whole provisioned roster. When distinct provisioned senders show the same handle, whatever its origin, each is shown as `handle [fingerprint]`, the fingerprint being a prefix of `HMAC-SHA256(organisation beacon salt, "kodera-proximity-fingerprint-v1:" || sender bytes)`: 8 hex characters, lengthened two at a time until the prefixes of that group differ.
+- The fingerprint is keyed with the organisation's beacon salt, like the handle and for the same reason: the same sender shows another fingerprint in another organisation, so the fingerprint beside a handle does not link a member across organisations. No unkeyed fingerprint of the sender bytes is computed for display.
+- The groups are computed over every provisioned sender, never over those seen so far. A sender whose handle equals that of a member who has not checked in already shows its fingerprint, so it cannot pass for the absent member, and no label changes when that member appears.
+
+[`vectors/proximity-handle-v1.txt`](../vectors/proximity-handle-v1.txt) states the grammar, the word lists, accepted and refused handles, each sender's handle and fingerprint in two organisations and six roster cases, two of them with an absent member, for the three native implementations.
+
+## Boundary
 
 The v1 frame authenticates the sender and text. It does not encrypt text. Its signing transcript has no organisation identifier or organisation-key binding. The rotating beacon is discovery metadata, not proof that a frame belongs to an organisation: anyone who observes a beacon can repeat it. A device key shared by two organisation rosters can therefore produce a frame that both accept. Keep state in a separate node per provisioned organisation, discard that node when switching sessions or replacing the roster, and do not enable production transport until this cross-organisation case has a reviewed policy or a coordinated future protocol change. No v1 wire bytes are changed here.
 
@@ -8,7 +38,7 @@ The desktop adversarial regression `v1_public_beacon_retagging_exposes_shared_si
 
 The author signs `kodera-emergency-v1:` followed by UUID (16 bytes), public key (32 bytes), status (1 byte), UTF-8 length (1 byte), and UTF-8 text. Hop TTL is deliberately unsigned. It cannot prove distance or proximity and must not be treated as safety authority. Status timestamps describe historical check-ins, not current safety guarantees.
 
-`VerifiedEmergencyFrame` is created only after structural, roster and injected signature-provider verification. Queue and roster APIs consume its immutable view. The production verifier must implement Ed25519; test keyed-MAC signers exercise the trait boundary only. The crate does not supply hardware key storage, a native verifier or a BLE driver.
+`VerifiedProximityFrame` is created only after structural, roster and injected signature-provider verification. Queue and roster APIs consume its immutable view. The production verifier must implement Ed25519; test keyed-MAC signers exercise the trait boundary only. The crate does not supply hardware key storage, a native verifier or a BLE driver.
 
 ## Shared signed vector
 
@@ -42,6 +72,6 @@ Replay history is bounded (at most 4096 IDs), and roster tracking is bounded (at
 
 These bounds, the outbox's 128 and the clock rule below are stated once in [`vectors/emergency-v1-rules.txt`](../vectors/emergency-v1-rules.txt). The Rust, Swift (`apps/ios/packages/KoderaDomain`) and Kotlin (`apps/android/domain`) tests read it and agree with every line, and so do the Web tests (`apps/web/tests/unit/emergency/shared-rules.test.ts`).
 
-A frame whose UUIDv7 time is more than 5 minutes ahead of the verifier's clock is refused (`EmergencyFrame::verified_at`, `CoreError::FutureFrame`); one exactly 5 minutes ahead is accepted. Kept, a frame from a device whose clock runs ahead would outrank that member's later real check-ins in the roster. `EmergencyFrame::verified` reads no clock: a path receiving frames from other devices uses `verified_at`.
+A frame whose UUIDv7 time is more than 5 minutes ahead of the verifier's clock is refused (`ProximityFrame::verified_at`, `CoreError::FutureFrame`); one exactly 5 minutes ahead is accepted. Kept, a frame from a device whose clock runs ahead would outrank that member's later real check-ins in the roster. `ProximityFrame::verified` reads no clock: a path receiving frames from other devices uses `verified_at`.
 
 `compute_relay_backoff_ms` hashes `kodera-relay-v1`, message UUID and relaying device key, producing 25–275 ms. The future transport adapter must schedule that delay and apply platform permissions and rate controls; this library never accesses a radio itself.

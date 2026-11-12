@@ -2,6 +2,15 @@
 	email {$KODERA_ACME_EMAIL}
 }
 
+# Caddy is the only proxy of this profile, so the client address an upstream reads is the peer
+# Caddy accepted, never a value the client sent. No `trusted_proxies` is declared: nothing sits
+# in front of Caddy. Every upstream imports this.
+(client_address) {
+	header_up X-Forwarded-For {remote_host}
+	header_up -X-Real-IP
+	header_up -Forwarded
+}
+
 {$KODERA_DOMAIN} {
 	encode zstd gzip
 
@@ -12,28 +21,50 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 
-	@api path /api/* /health/* /agent/*
+	# The agent API is for the tenant agent on the internal network only.
+	@internal path /agent /agent/*
+	handle @internal {
+		respond 404
+	}
+
+	@api path /api/* /health/*
 	handle @api {
-		reverse_proxy server:8000
+		reverse_proxy server:8000 {
+			import client_address
+		}
 	}
 
 	@room_access path /_kodera/rooms/token
 	handle @room_access {
 		rewrite * /token
-		reverse_proxy room-access:8095
+		reverse_proxy room-access:8095 {
+			import client_address
+		}
 	}
 
-	@matrix path /_matrix/* /_synapse/client/*
+	# Client API only. Federation and key routes stay closed (README.md, "Federation").
+	@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*
 	handle @matrix {
-		reverse_proxy synapse:8008
+		reverse_proxy synapse:8008 {
+			import client_address
+		}
+	}
+
+	@matrix_closed path /_matrix /_matrix/* /_synapse /_synapse/*
+	handle @matrix_closed {
+		respond 404
 	}
 
 	@livekit path /rtc /rtc/*
 	handle @livekit {
-		reverse_proxy livekit:7880
+		reverse_proxy livekit:7880 {
+			import client_address
+		}
 	}
 
 	handle {
-		reverse_proxy web:8080
+		reverse_proxy web:8080 {
+			import client_address
+		}
 	}
 }

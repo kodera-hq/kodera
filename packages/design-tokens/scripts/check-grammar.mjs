@@ -18,10 +18,16 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, RESERVED, loadTokens, walkTokens, aliasTarget, indexTokens, resolve } from './lib/tokens.mjs';
+import { isMaterialToken, materialProblems } from './lib/material.mjs';
+import { isSpringToken, springProblems } from './lib/spring.mjs';
+import { gradientProblems } from './lib/gradient.mjs';
 
 // Closed list, per DESIGN_HANDOFF A3. `component` is the third tier (ADR-0004).
 // It was empty until the shell geometry aliases landed; it is declared here so
-// a component token does not arrive as a grammar failure.
+// a component token does not arrive as a grammar failure. `material` is the
+// primitive root of the material tier (docs/specs/ethereal-sky-glass.md): it is
+// listed here, and every token under it is held to the material composite by
+// scripts/lib/material.mjs, so the name admits one shape and nothing else.
 const ROOT_GROUPS = new Set([
   'color',
   'semantic',
@@ -32,6 +38,7 @@ const ROOT_GROUPS = new Set([
   'motion',
   'breakpoint',
   'component',
+  'material',
 ]);
 
 const TIER_OF = {
@@ -42,6 +49,7 @@ const TIER_OF = {
   shadow: 'primitive',
   motion: 'primitive',
   breakpoint: 'primitive',
+  material: 'primitive',
   semantic: 'semantic',
   component: 'component',
 };
@@ -135,7 +143,11 @@ for (const token of tokens) {
   // place; a reference anywhere else, or one that lands on something that is
   // not a colour, would reach the CSS as a literal "{…}" string or a length
   // where a colour belongs, which a browser drops silently.
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+  //
+  // A material is the one composite with references of its own — a tint, a
+  // border, a shadow, a canvas — and scripts/lib/material.mjs holds each of them
+  // to its type below, field by field, instead of this rule.
+  if (!isMaterialToken(token) && value !== null && typeof value === 'object' && !Array.isArray(value)) {
     for (const [field, inner] of Object.entries(value)) {
       const innerTarget = aliasTarget(inner);
       if (innerTarget === null) continue;
@@ -155,6 +167,15 @@ for (const token of tokens) {
       }
     }
   }
+
+  // The closed composites. A token that is a material or a spring, or that sits
+  // where one lives, is that composite completely or it is refused: a field the
+  // build does not read is a field a designer believes is doing something.
+  if (isMaterialToken(token)) for (const detail of materialProblems(token, index)) fail(path, 'material', detail);
+  if (isSpringToken(token)) for (const detail of springProblems(token)) fail(path, 'spring', detail);
+  // A gradient is held to its family: one colour everywhere, except under the
+  // controlled grammar of a glass family (scripts/lib/gradient.mjs).
+  if (type === 'gradient' && value !== undefined) for (const detail of gradientProblems(token, index)) fail(path, 'gradient', detail);
 
   // A2: literals live in the primitive tier only.
   const tier = TIER_OF[segments[0]];

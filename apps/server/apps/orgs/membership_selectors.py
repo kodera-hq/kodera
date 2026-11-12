@@ -1,4 +1,14 @@
-"""Issuer-authorized, current stored relationship pages with no lazy model escape."""
+"""Issuer-authorized, current stored relationship pages with no lazy model escape.
+
+Directory privacy (docs/specs/MEMBERSHIP_LIFECYCLE.md §2.1) is decided here too, by one rule for
+`listMemberships` and `getMembership`, the contract's `Membership` schema: the five private member
+facts are disclosed on a row only to the person the row describes, or to a caller who holds
+`org_owner` or `org_admin` in that organisation. To every other caller the reads admit they are
+withheld: absent from the answer, never a placeholder, a masked value or a partial one. Both reads
+decide through `discloses_private_facts` and nowhere else, so that neither can drift from the
+other, and a withheld fact never leaves the service layer: the row a serializer receives does not
+carry it.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,6 +23,25 @@ from .models import Membership
 DIRECTORY_STATES = ("invited", "active", "suspended")
 # The roles that read the People directory (contract listMemberships and countMemberships).
 DIRECTORY_ROLES = frozenset({"org_owner", "org_admin", "org_member"})
+
+
+# The contract's five private member facts. Core stores two of them today (`email`, `identity_id`);
+# the other three are never emitted, and are named so that a read that starts emitting one is held
+# to the same rule (tests/test_directory_privacy.py).
+PRIVATE_MEMBER_FACTS = ("email", "identity_id", "account_kind", "mfa_enrolled", "last_seen_at")
+# The roles that administer the directory, and so read every row in full.
+DISCLOSING_ROLES = frozenset({"org_owner", "org_admin"})
+
+
+def discloses_private_facts(*, caller_role: str, own_row: bool) -> bool:
+    """Whether a row's private member facts are disclosed to this caller: their own row
+    (`own_row`), or any row when they hold `org_owner` or `org_admin` in the row's organisation."""
+    return own_row or caller_role in DISCLOSING_ROLES
+
+
+def withhold_private_facts(row: dict[str, object]) -> dict[str, object]:
+    """The row without its private member facts: each is omitted, never replaced."""
+    return {name: value for name, value in row.items() if name not in PRIVATE_MEMBER_FACTS}
 
 
 @dataclass(frozen=True, slots=True, repr=False)

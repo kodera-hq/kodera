@@ -17,10 +17,13 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { buildNative } from './lib/native.mjs';
-import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, aliasTarget } from './lib/tokens.mjs';
+import { ROOT, loadTokens, walkTokens, indexTokens, resolve, resolveValue, parseColor, toHex } from './lib/tokens.mjs';
+import { MATERIAL_LEVELS, resolveMaterial } from './lib/material.mjs';
+import { resolveGradient } from './lib/gradient.mjs';
+import { springProfile } from './lib/spring.mjs';
+import { THEMES, THEME_REGISTRY, THEME_FAMILIES, DEFAULT_THEME, themeSelector, assertThemeGroups } from './lib/themes.mjs';
 import {
   SPEC,
-  THEMES,
   focusRingLayers,
   focusRingIndicatorWidth,
   focusRingProperty,
@@ -35,32 +38,55 @@ const tokens = walkTokens(tree);
 const index = indexTokens(tree);
 const byPath = new Map(tokens.map((t) => [t.path, t]));
 
+// The themes come from the registry (scripts/lib/themes.mjs) and from nowhere
+// else. Every per-theme group below is held to it: the same ids, in the same
+// order, so a theme cannot be declared in tokens.json and missing from the
+// registry, or the other way round.
+const own = (node) => Object.keys(node ?? {}).filter((k) => !k.startsWith('$'));
+
 const themeGroups = tree.semantic?.theme;
-if (!themeGroups || Object.keys(themeGroups).join(',') !== THEMES.join(',')) {
-  throw new Error('expected complete theme set: light, dark, black');
-}
-const themeRoles = Object.keys(themeGroups.light);
+assertThemeGroups('expected complete theme set', own(themeGroups));
+const themeRoles = Object.keys(themeGroups[DEFAULT_THEME]);
 
 // Elevation is themed like the roles above, in a group of its own: a shadow is
 // not a colour, and the `--c-*` roles are the colour contract
-// (docs/specs/shell-themes.md). Same three themes, same levels in each.
+// (docs/specs/shell-themes.md). Same themes, same levels in each.
 const elevationGroups = tree.semantic?.elevation;
-if (!elevationGroups || Object.keys(elevationGroups).filter((k) => !k.startsWith('$')).join(',') !== THEMES.join(',')) {
-  throw new Error('expected elevation for the complete theme set: light, dark, black');
-}
-const elevationLevels = Object.keys(elevationGroups.light).filter((k) => !k.startsWith('$'));
-if (!elevationLevels.length) throw new Error('light: no elevation level');
+assertThemeGroups('expected elevation for the complete theme set', own(elevationGroups));
+const elevationLevels = own(elevationGroups[DEFAULT_THEME]);
+if (!elevationLevels.length) throw new Error(`${DEFAULT_THEME}: no elevation level`);
 for (const name of THEMES) {
-  if (Object.keys(elevationGroups[name]).filter((k) => !k.startsWith('$')).join(',') !== elevationLevels.join(',')) {
+  if (own(elevationGroups[name]).join(',') !== elevationLevels.join(',')) {
     throw new Error(`${name}: incomplete elevation level set`);
   }
 }
-if (!themeRoles.length) throw new Error('light: incomplete theme role set');
+if (!themeRoles.length) throw new Error(`${DEFAULT_THEME}: incomplete theme role set`);
 for (const name of THEMES) {
   if (Object.keys(themeGroups[name]).join(',') !== themeRoles.join(',')) {
     throw new Error(`${name}: incomplete theme role set`);
   }
 }
+
+// Materials are themed like elevation, in a tier of their own: a material is a
+// composite, not a colour (docs/specs/ethereal-sky-glass.md). Every theme
+// declares the same four levels — a flat family declares them opaque — so a
+// component can ask for a level without knowing which family is on screen.
+const materialGroups = tree.semantic?.material;
+assertThemeGroups('expected materials for the complete theme set', own(materialGroups));
+if (own(tree.material).join(',') !== THEMES.map((name) => `theme-${name}`).join(',')) {
+  throw new Error(`expected material primitives for the complete theme set: ${THEMES.map((name) => `material.theme-${name}`).join(', ')}`);
+}
+for (const name of THEMES) {
+  for (const [what, group] of [[name, materialGroups[name]], [`material.theme-${name}`, tree.material[`theme-${name}`]]]) {
+    if (own(group).join(',') !== MATERIAL_LEVELS.join(',')) {
+      throw new Error(`${what}: incomplete material level set; the levels are ${MATERIAL_LEVELS.join(', ')}`);
+    }
+  }
+}
+/** Every theme's four materials, resolved to what they paint. */
+const materials = Object.fromEntries(THEMES.map((name) => [name, MATERIAL_LEVELS.map((level) => resolveMaterial(name, level, index))]));
+/** The themes in which at least one level shows or filters what is behind it. */
+const glassThemes = THEMES.filter((name) => materials[name].some((material) => material.glass));
 
 const flat = (path) => {
   if (!byPath.has(path)) throw new Error(`build expects the token "${path}" and tokens.json does not define it`);
@@ -79,8 +105,8 @@ const flat = (path) => {
 // a token rename fails the build rather than the browser. ADR-0002.
 //
 // The ring's core is a theme role, so it is emitted inside each theme block
-// below rather than once on `:root`. The light block's selector carries `:root`
-// with it, which is how the unthemed default keeps working.
+// below rather than once on `:root`. The default theme's selector carries
+// `:root` with it, which is how the unthemed default keeps working.
 
 // --- Path → CSS custom property --------------------------------------------
 const kebab = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
@@ -107,6 +133,7 @@ const CSS_PREFIX = {
   shadow: 'shadow',
   'motion.duration': 'dur',
   'motion.easing': 'ease',
+  'motion.spring': 'spring',
   breakpoint: 'breakpoint',
 };
 
@@ -168,23 +195,13 @@ function cssValue(token) {
       return `${offsetX} ${offsetY} ${blur} ${spread} ${color}`;
     }
     case 'gradient': {
-      // Stop lists use the package's existing hex-color token dialect.
-      // Direction is CSS-specific metadata on the primitive, not a stop.
-      let source = token;
-      while (aliasTarget(source.value)) source = index.get(aliasTarget(source.value));
-      const angle = source.node.$extensions?.['io.kodera.css-gradient']?.angle;
-      if (typeof angle !== 'string' || !/^-?\d+(?:\.\d+)?deg$/.test(angle)) {
-        throw new Error(`${token.path}: missing or invalid gradient angle metadata`);
-      }
-      if (!Array.isArray(value) || value.length < 2) throw new Error(`${token.path}: invalid gradient stop list`);
-      const stops = value.map((stop) => {
-        if (!stop || !Number.isFinite(stop.position) || stop.position < 0 || stop.position > 1) {
-          throw new Error(`${token.path}: invalid gradient stop position`);
-        }
-        parseColor(stop.color);
-        return `${stop.color} ${stop.position * 100}%`;
-      });
-      return `linear-gradient(${angle},${stops.join(',')})`;
+      // Direction is CSS-specific metadata on the primitive, not a stop. A stop
+      // is a literal colour or a reference to one (scripts/lib/gradient.mjs);
+      // either way the value painted is emitted, in the package's hex dialect.
+      const { angle, stops } = resolveGradient(token, index);
+      // Rounded to four decimals: 0.55 * 100 is 55.00000000000001 in binary floating point.
+      const percent = (position) => Number((position * 100).toFixed(4));
+      return `linear-gradient(${angle},${stops.map((stop) => `${stop.color} ${percent(stop.position)}%`).join(',')})`;
     }
     default:
       return String(value);
@@ -231,6 +248,127 @@ function focusRingDeclarations(theme) {
   });
 }
 
+// --- Springs ----------------------------------------------------------------
+// A spring is emitted as the pair CSS can animate with: `--spring-<name>`, an
+// easing, and `--spring-<name>-duration`. Like a material, it STARTS as the
+// value every client can draw — the plain ease-out, which never overshoots —
+// and the spring itself is switched on afterwards, where `linear()` exists,
+// and switched back off for a reader who asked for reduced motion.
+const springs = pick('motion.spring').map((token) => ({
+  name: token.path.slice('motion.spring.'.length),
+  easingProperty: `--${cssName(token.path)}`,
+  durationProperty: `--${cssName(token.path)}-duration`,
+  ...springProfile(resolveValue(token.value, index)),
+}));
+/** The easing a spring falls back to. A token, so a rename fails here rather than in the browser. */
+const SPRING_FALLBACK = 'motion.easing.out';
+const springFallback = () => {
+  flat(SPRING_FALLBACK);
+  return `var(--${cssName(SPRING_FALLBACK)})`;
+};
+/** Every custom property the springs declare beyond the token's own name. */
+const SPRING_VARIABLES = springs.map((spring) => spring.durationProperty);
+/** A client that can draw a sampled easing at all. */
+const SPRING_SUPPORT = '(transition-timing-function: linear(0, 1))';
+
+function springDeclarations() {
+  return springs.flatMap((spring) => [
+    `  ${spring.easingProperty}: ${springFallback()};`,
+    `  ${spring.durationProperty}: ${spring.durationMs}ms;`,
+  ]);
+}
+
+function buildSpringCss() {
+  if (!springs.length) return '';
+  const on = springs.map((spring) => `    ${spring.easingProperty}: ${spring.easing};`).join('\n');
+  const off = springs.map((spring) => `    ${spring.easingProperty}: ${springFallback()};`).join('\n');
+  return [
+    `/* Springs. \`--spring-<name>\` is declared above as the plain ease-out, which
+   every client can draw and which never overshoots. The sampled spring is
+   enabled here, only where \`linear()\` exists, and disabled again for a reader
+   who asked for reduced motion. Animate \`transform\` and \`opacity\` with it. */`,
+    `@supports ${SPRING_SUPPORT} {\n  :root {\n${on}\n  }\n}`,
+    `@media (prefers-reduced-motion: reduce) {\n  :root {\n${off}\n  }\n}`,
+  ].join('\n\n');
+}
+
+// --- Materials --------------------------------------------------------------
+// A level is emitted as its parts, inside each theme block, plus the two
+// properties a surface actually paints with: `-bg` and `-backdrop`. Those two
+// START as the opaque fallback and no filter, in every theme. The glass is
+// switched on afterwards, under `@supports`, and switched back off for a reader
+// who asked for less transparency or more contrast, or whose platform forces
+// its colours — so the default is the surface that always reads, and
+// translucency is something a capable, willing client opts into.
+const MATERIAL_PARTS = ['tint', 'fallback', 'blur', 'saturate', 'border', 'shadow', 'bg', 'backdrop'];
+const materialProperty = (level, part) => `--material-${level}-${part}`;
+/** Every custom property the materials declare, in the order a theme block emits them. */
+const MATERIAL_VARIABLES = MATERIAL_LEVELS.flatMap((level) => MATERIAL_PARTS.map((part) => materialProperty(level, part)));
+
+function materialDeclarations(theme) {
+  return materials[theme].flatMap((material) => {
+    const { level, tint, alpha } = material;
+    const paint = alpha === 1 ? toHex(tint) : `rgba(${tint.r}, ${tint.g}, ${tint.b}, ${alpha})`;
+    const value = {
+      tint: paint,
+      fallback: toHex(material.fallback),
+      blur: `${material.blur}px`,
+      saturate: String(material.saturation),
+      border: material.border,
+      shadow: cssValue(byPath.get(material.shadow.path)),
+      bg: `var(${materialProperty(level, 'fallback')})`,
+      backdrop: 'none',
+    };
+    return MATERIAL_PARTS.map((part) => `  ${materialProperty(level, part)}: ${value[part]};`);
+  });
+}
+
+/** The two switching properties of every level, set to `on` (the glass) or off (the fallback). */
+function materialSwitch(on, indent) {
+  return MATERIAL_LEVELS.flatMap((level) => [
+    `${indent}${materialProperty(level, 'bg')}: var(${materialProperty(level, on ? 'tint' : 'fallback')});`,
+    `${indent}${materialProperty(level, 'backdrop')}: ${
+      on ? `blur(var(${materialProperty(level, 'blur')})) saturate(var(${materialProperty(level, 'saturate')}))` : 'none'
+    };`,
+  ]);
+}
+
+/** The reader preferences and platform modes under which every surface is opaque. */
+const OPAQUE_WHEN = ['(prefers-reduced-transparency: reduce)', '(prefers-contrast: more)', '(forced-colors: active)'];
+/** A client that can draw the glass at all. The prefixed form is Safari before 18. */
+const GLASS_SUPPORT = '((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px)))';
+
+function buildMaterialCss() {
+  // `:is()` keeps the specificity of one attribute selector, so these rules
+  // override a theme block by coming after it and by nothing else.
+  const selector = `:is(${glassThemes.map(themeSelector).join(', ')})`;
+  const glass = glassThemes.length
+    ? [
+        `@supports ${GLASS_SUPPORT} {\n  ${selector} {\n${materialSwitch(true, '    ').join('\n')}\n  }\n}`,
+        ...OPAQUE_WHEN.map((query) => `@media ${query} {\n  ${selector} {\n${materialSwitch(false, '    ').join('\n')}\n  }\n}`),
+      ]
+    : [];
+  const classes = MATERIAL_LEVELS.map(
+    (level) =>
+      `.material-${level} {\n` +
+      `  background-color: var(${materialProperty(level, 'bg')});\n` +
+      `  -webkit-backdrop-filter: var(${materialProperty(level, 'backdrop')});\n` +
+      `  backdrop-filter: var(${materialProperty(level, 'backdrop')});\n` +
+      `  border: 1px solid var(${materialProperty(level, 'border')});\n` +
+      `  box-shadow: var(${materialProperty(level, 'shadow')});\n` +
+      '}',
+  );
+  return [
+    `/* Materials: bar, panel, popover, dialog. Each theme block above declares every
+   level opaque: \`--material-<level>-bg\` is the fallback and \`-backdrop\` is
+   \`none\`. The glass is enabled here, only where the client can draw it, and
+   disabled again for a reader who asked for less transparency or more contrast,
+   or whose platform forces its colours. */`,
+    ...glass,
+    ...classes,
+  ].join('\n\n');
+}
+
 // --- dist/tokens.css --------------------------------------------------------
 const HEADER = `/* GENERATED FILE — DO NOT EDIT.
    Written by scripts/build.mjs from tokens.json, which is the source of truth.
@@ -269,7 +407,7 @@ function buildCss() {
     ['space (4px base)', pick('space').map(declare)],
     ['radius', pick('radius').map(declare)],
     ['elevation', pick('shadow').map(declare)],
-    ['motion', pick('motion').map(declare)],
+    ['motion', [...pick('motion').filter((t) => t.type !== 'spring').map(declare), ...springDeclarations()]],
     ['breakpoints (min-width, mobile-first; not usable inside a media query)', pick('breakpoint').map(declare)],
     ['shell geometry', [...pick('semantic.layout'), ...pick('component.shell')].map(declare)],
   ];
@@ -279,15 +417,15 @@ function buildCss() {
     .join('\n\n');
 
   const themes = THEMES.map((name) => {
-    const selector = name === 'light' ? ':root, [data-theme="light"]' : `[data-theme="${name}"]`;
+    const selector = themeSelector(name);
     const values = themeRoles.map((role) => `  --c-${role}: ${cssValue(byPath.get(`semantic.theme.${name}.${role}`))};`);
     const elevation = elevationLevels.map(
       (level) => `  --elevation-${level}: ${cssValue(byPath.get(`semantic.elevation.${name}.${level}`))};`,
     );
-    return `${selector} {\n${[...values, ...focusRingDeclarations(name), ...elevation].join('\n')}\n}`;
+    return `${selector} {\n${[...values, ...focusRingDeclarations(name), ...elevation, ...materialDeclarations(name)].join('\n')}\n}`;
   }).join('\n\n');
 
-  return `${HEADER}\n:root {\n${body}\n}\n\n/* Complete shell themes, and the focus ring, which follows them; the legacy\n   variables above retain their values. */\n${themes}\n`;
+  return `${HEADER}\n:root {\n${body}\n}\n\n/* Complete shell themes, and the focus ring, which follows them; the legacy\n   variables above retain their values. */\n${themes}\n\n${buildMaterialCss()}\n\n${buildSpringCss()}\n`;
 }
 
 // --- dist/tailwind.preset.js ------------------------------------------------
@@ -366,7 +504,14 @@ function buildPreset() {
   for (const t of flatSemantic) colors[mechanicalName(t.path)] = flat(t.path);
   for (const [nick, path] of Object.entries(PRESET_NICKNAMES)) colors[nick] = flat(path);
   for (const role of themeRoles) {
-    if (byPath.get(`semantic.theme.light.${role}`).type === 'color') colors[`c-${role}`] = `var(--c-${role})`;
+    if (byPath.get(`semantic.theme.${DEFAULT_THEME}.${role}`).type === 'color') colors[`c-${role}`] = `var(--c-${role})`;
+  }
+  // A material's ground and its edge, as colours: `bg-material-bar` paints
+  // whichever of the glass and the fallback the stylesheet has switched on.
+  // The filter is not a colour; the `.material-<level>` class carries all of it.
+  for (const level of MATERIAL_LEVELS) {
+    colors[`material-${level}`] = `var(${materialProperty(level, 'bg')})`;
+    colors[`material-${level}-border`] = `var(${materialProperty(level, 'border')})`;
   }
 
   // The themed shadow primitives are implementation values, like the theme
@@ -385,6 +530,7 @@ function buildPreset() {
     if (TAILWIND_SHADOWS.includes(level)) throw new Error(`elevation level "${level}" would replace Tailwind's own shadow-${level}`);
     shadows[level] = `var(--elevation-${level})`;
   }
+  for (const level of MATERIAL_LEVELS) shadows[`material-${level}`] = `var(${materialProperty(level, 'shadow')})`;
 
   const gradient = `linear-gradient(${SPEC.pageGradient.angle}, ${SPEC.pageGradient.stops
     .map(([path, stop]) => `${flat(path)} ${stop}`)
@@ -429,10 +575,18 @@ function buildPreset() {
       DEFAULT: focusRingIndicatorWidth(),
       'control-selection': flat('semantic.control.selection-ring-width'),
     },
-    transitionTimingFunction: Object.fromEntries(
-      pick('motion.easing').map((t) => [t.path.slice('motion.easing.'.length), cssValue(t)]),
-    ),
-    transitionDuration: withDefaults('transitionDuration', scaleObject('motion.duration')),
+    // A spring is a pair: `ease-spring-<name>` with `duration-spring-<name>`.
+    // Both are `var()`, so they follow the stylesheet's switch — the sampled
+    // spring where it can be drawn, the plain ease-out where it cannot or where
+    // the reader asked for reduced motion.
+    transitionTimingFunction: {
+      ...Object.fromEntries(pick('motion.easing').map((t) => [t.path.slice('motion.easing.'.length), cssValue(t)])),
+      ...Object.fromEntries(springs.map((spring) => [`spring-${spring.name}`, `var(${spring.easingProperty})`])),
+    },
+    transitionDuration: {
+      ...withDefaults('transitionDuration', scaleObject('motion.duration')),
+      ...Object.fromEntries(springs.map((spring) => [`spring-${spring.name}`, `var(${spring.durationProperty})`])),
+    },
     // Mobile-first min-widths, Tailwind 4's own five steps, all named here so
     // the package rather than Tailwind's defaults is the source.
     screens: scaleObject('breakpoint'),
@@ -449,7 +603,7 @@ function buildPreset() {
 // not exist emits NO CSS and NO error — for \`border-*\` the element falls back
 // to preflight's \`border: 0 solid #e5e7eb\`, a light grey line on our page.
 //
-// The c-* colors follow the complete light/dark/black CSS theme boundary.
+// The c-* colors follow the complete ${THEMES.join('/')} CSS theme boundary.
 // Legacy colors remain static. The elevation shadows (raised, overlay, drawer,
 // dialog) follow the theme too. Breakpoints are supplied; z-index is not.
 
@@ -467,7 +621,10 @@ function buildTypes() {
   const vars = [...new Set([
     '--bg-page',
     ...RING_VARIABLES,
-    ...tokens.map((t) => `--${cssName(t.path)}`),
+    ...MATERIAL_VARIABLES,
+    ...SPRING_VARIABLES,
+    // A material is emitted as its parts above, never as one property.
+    ...tokens.filter((t) => t.type !== 'material').map((t) => `--${cssName(t.path)}`),
   ])].sort();
   const paths = tokens.map((t) => t.path).sort();
 
@@ -509,11 +666,91 @@ export default preset;
 `;
 }
 
+// --- dist/themes.js and dist/themes.d.ts ------------------------------------
+// The registry as a consumer reads it: a theme switcher, a `color-scheme`
+// rule, a "follow the device" setting inside one family. Emitted from the same
+// module every generator above reads, so a consumer's list cannot disagree with
+// the blocks tokens.css declares.
+const GENERATED_FROM_REGISTRY = `// GENERATED FILE — DO NOT EDIT.
+// Written by scripts/build.mjs from the theme registry (scripts/lib/themes.mjs),
+// the one list every generator reads. Editing this file by hand is undone by
+// the next build and caught by \`npm run check:drift\`.`;
+
+function buildThemes() {
+  const entry = (theme) =>
+    `  Object.freeze({ id: ${js(theme.id)}, family: ${js(theme.family)}, mode: ${js(theme.mode)}, scheme: ${js(theme.scheme)}, default: ${theme.default} }),`;
+  const family = ([name, rules]) =>
+    `  ${js(name)}: Object.freeze({ material: ${js(rules.material)}, gradient: ${js(rules.gradient)}, themes: Object.freeze(${js(
+      THEME_REGISTRY.filter((theme) => theme.family === name).map((theme) => theme.id),
+    )}) }),`;
+  return `${GENERATED_FROM_REGISTRY}
+
+/** Every theme, in the order tokens.css declares its \`[data-theme]\` block. */
+export const themes = Object.freeze([
+${THEME_REGISTRY.map(entry).join('\n')}
+]);
+
+/** The \`[data-theme]\` attribute values, in the same order. */
+export const themeIds = Object.freeze(themes.map((theme) => theme.id));
+
+/** The theme an unthemed document renders in: its block also carries \`:root\`. */
+export const defaultTheme = ${js(DEFAULT_THEME)};
+
+/** What each family allows, and the themes it holds. */
+export const themeFamilies = Object.freeze({
+${Object.entries(THEME_FAMILIES).map(family).join('\n')}
+});
+
+/** The theme of \`family\` in \`mode\`, or undefined when that family has none. */
+export function themeFor(family, mode) {
+  return themes.find((theme) => theme.family === family && theme.mode === mode);
+}
+`;
+}
+
+function buildThemeTypes() {
+  const union = (values) => [...new Set(values)].map((v) => `'${v}'`).join(' | ');
+  return `${GENERATED_FROM_REGISTRY}
+
+/** A \`[data-theme]\` attribute value. */
+export type ThemeId = ${union(THEMES)};
+export type ThemeFamily = ${union(Object.keys(THEME_FAMILIES))};
+export type ThemeMode = ${union(THEME_REGISTRY.map((theme) => theme.mode))};
+export type ThemeScheme = ${union(THEME_REGISTRY.map((theme) => theme.scheme))};
+
+export interface ThemeInfo {
+  readonly id: ThemeId;
+  readonly family: ThemeFamily;
+  readonly mode: ThemeMode;
+  /** The \`color-scheme\` native controls render in under this theme. */
+  readonly scheme: ThemeScheme;
+  /** True for the one theme an unthemed document renders in. */
+  readonly default: boolean;
+}
+
+export interface ThemeFamilyInfo {
+  /** \`flat\`: opaque surfaces only. \`glass\`: translucent materials are allowed. */
+  readonly material: ${union(Object.values(THEME_FAMILIES).map((rules) => rules.material))};
+  /** \`none\`: every gradient is one colour. \`controlled\`: the bounded gradient grammar applies. */
+  readonly gradient: ${union(Object.values(THEME_FAMILIES).map((rules) => rules.gradient))};
+  readonly themes: readonly ThemeId[];
+}
+
+export declare const themes: readonly ThemeInfo[];
+export declare const themeIds: readonly ThemeId[];
+export declare const defaultTheme: ThemeId;
+export declare const themeFamilies: Readonly<Record<ThemeFamily, ThemeFamilyInfo>>;
+export declare function themeFor(family: ThemeFamily, mode: ThemeMode): ThemeInfo | undefined;
+`;
+}
+
 // --- Emit or diff -----------------------------------------------------------
 const artefacts = {
   'tokens.css': buildCss(),
   'tailwind.preset.js': buildPreset(),
   'tokens.d.ts': buildTypes(),
+  'themes.js': buildThemes(),
+  'themes.d.ts': buildThemeTypes(),
   ...buildNative(readFileSync(join(ROOT, 'tokens.json'))),
 };
 

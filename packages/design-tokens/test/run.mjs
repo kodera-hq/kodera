@@ -4,11 +4,15 @@
 //   grammar   tokens.json is valid DTCG and follows the naming grammar
 //   contrast  every declared pair clears its minimum or carries a reason
 //   drift     dist/ is exactly what tokens.json generates
-//   units     the token-resolution guard, CSS parity with the design drop, the
+//   units     the token-resolution guard, the grammar gate's own self-test,
+//             CSS parity with the design drop, the
 //             colour maths the contrast gate rests on, the control rings, the
+//             worst-case bound for a translucent background, the
 //             contrast gate's own self-test (each way it must fail, fails),
+//             the theme registry every generator reads,
 //             the shell themes' own contract, elevation and breakpoints, and
-//             the Givre & Nuit properties (no gradient, dark steps, rail, radii)
+//             the Givre & Nuit properties (no gradient, dark steps, rail, radii),
+//             the Sky Glass family's foundation contract, and spring motion
 //
 // Every gate runs even when an earlier one fails, so one command tells you
 // everything that is wrong rather than one thing at a time.
@@ -29,15 +33,20 @@ const gates = [
       '--test',
       '--test-reporter=spec',
       'test/token-test.selftest.mjs',
+      'test/check-grammar.selftest.mjs',
       'test/css-parity.selftest.mjs',
       'test/color-math.selftest.mjs',
       'test/control-selection-ring.selftest.mjs',
+      'test/backdrop-contrast.selftest.mjs',
       'test/check-contrast.selftest.mjs',
+      'test/theme-registry.selftest.mjs',
       'test/theme-contract.selftest.mjs',
       'test/elevation-breakpoints.selftest.mjs',
       'test/cursor-and-tag-palettes.selftest.mjs',
       'test/native-generation.selftest.mjs',
       'test/givre-nuit.selftest.mjs',
+      'test/sky-glass.selftest.mjs',
+      'test/spring-motion.selftest.mjs',
     ],
   ],
 ];

@@ -61,7 +61,7 @@ def test_bootstrap_idempotence_and_private_policies(community):
     assert announcement.read_only
     assert not {"message.react", "channel.history"} & announcement.denied
     assert resolve(Channel.objects.get(name="dev").id).visibility == "restricted"
-    assert resolve(Channel.objects.get(name="partner-dinum").id).allow_members == ()
+    assert resolve(Channel.objects.get(name="partner-onboarding").id).allow_members == ()
 
 
 def test_signup_requires_exact_issuer_verified_email(community):
@@ -133,8 +133,8 @@ def test_member_visibility_and_engine_acl(community):
         "strategy",
         "ops-oncall",
         "kodera-git-tracker",
-        "partner-dinum",
-        "partner-octo",
+        "partner-onboarding",
+        "partner-feedback",
     ):
         restricted = next(channel for channel in channels if channel["name"] == name)
         assert restricted["audience"] == "listed" and verified.subject not in restricted["members"]

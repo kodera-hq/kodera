@@ -3,7 +3,10 @@
 # KODERA_OIDC_PROVIDER_ORIGIN (web) and KODERA_AUTH_TRUST (server); see README.md, "Sign-in".
 # Every pulled image is pinned by digest and every service has a memory limit; the limits are
 # ceilings, not a measured footprint. Respects ADR-0003 (`ADMITTED_SECRET_NAMES` on `server`;
-# LiveKit credentials isolated in `room-access`). `scripts/ci/check-community-deploy.py` checks it.
+# LiveKit credentials isolated in `room-access`). Synapse runs on its own PostgreSQL, with
+# federation closed unless KODERA_MATRIX_FEDERATION_ALLOWLIST opens it (README.md, "Federation").
+# The agent API (`/agent/*`) is reached on the internal network only, never through Caddy.
+# `scripts/ci/check-community-deploy.py` checks it.
 
 services:
   caddy:
@@ -220,6 +223,23 @@ services:
       synapse:
         condition: service_healthy
 
+  synapse-db:
+    mem_limit: 512m
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD: ${SYNAPSE_POSTGRES_PASSWORD:?Set SYNAPSE_POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - synapse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   synapse:
     mem_limit: 1g
     image: matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
@@ -241,13 +261,19 @@ services:
       SYNAPSE_SERVER_NAME: ${KODERA_DOMAIN:-chat.example.org}
       SYNAPSE_REPORT_STATS: "no"
       PYTHONPATH: /tmp/kodera-policy
+      PGPASSWORD: ${SYNAPSE_POSTGRES_PASSWORD:?Set SYNAPSE_POSTGRES_PASSWORD in .env}
+      KODERA_MATRIX_FEDERATION_ALLOWLIST: ${KODERA_MATRIX_FEDERATION_ALLOWLIST:-}
       KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
       KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
+      KODERA_SYNAPSE_OIDC_ISSUER: ${KODERA_SYNAPSE_OIDC_ISSUER:-}
       KODERA_SYNAPSE_OIDC_CLIENT_SECRET: ${KODERA_SYNAPSE_OIDC_CLIENT_SECRET:-}
     volumes:
       - synapse_data:/data
       - ../../packages/synapse-policy:/opt/kodera-policy:ro
       - ./configure_synapse.py:/opt/community/configure_synapse.py:ro
+    depends_on:
+      synapse-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/health || exit 1"]
       interval: 10s
@@ -274,3 +300,4 @@ volumes:
   postgres_data:
   valkey_data:
   synapse_data:
+  synapse_postgres_data:

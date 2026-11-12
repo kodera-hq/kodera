@@ -15,12 +15,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, indexTokens, resolve, resolveValue } from '../scripts/lib/tokens.mjs';
+import { THEMES as REGISTERED } from '../scripts/lib/themes.mjs';
 import preset from '../dist/tailwind.preset.js';
 
 const tree = JSON.parse(readFileSync(join(ROOT, 'tokens.json'), 'utf8'));
 const css = readFileSync(join(ROOT, 'dist/tokens.css'), 'utf8');
 
-const THEMES = ['light', 'dark', 'black'];
+// Every registered theme: a theme without the four levels is a theme whose
+// menus and dialogs cast no shadow, in whichever family it is.
+const THEMES = [...REGISTERED];
 /** Weakest first. */
 const LEVELS = ['raised', 'overlay', 'drawer', 'dialog'];
 /** The levels that reproduce today's two shadows, field for field. */

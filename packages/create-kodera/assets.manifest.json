@@ -1,0 +1,15 @@
+{
+  "source": "deploy/community",
+  "files": [
+    ".env.example",
+    "Caddyfile",
+    "configure_synapse.py",
+    "docker-compose.yml",
+    "livekit.yaml"
+  ],
+  "rewrites": {
+    "docker-compose.yml": [
+      ["../..", "${KODERA_SOURCE_DIR:?Set the Community source checkout}"]
+    ]
+  }
+}

@@ -24,7 +24,7 @@ test('docs-collab-announcer manifest validates against kodera.extension.v1', () 
   assert.equal(manifest.schemaVersion, 'kodera.extension.v1');
   assert.equal(manifest.canonicalId, 'io.kodera.ext.docs-collab-announcer');
   assert.equal(extensionManifest.id, 'docs-collab-announcer');
-  assert.equal(manifest.name, 'DINUM Docs Collaborative Pad Announcer');
+  assert.equal(manifest.name, 'Docs Collaborative Pad Announcer');
   assert.equal(manifest.version, '0.1.0');
   assert.deepEqual(manifest.permissions, [
     'messages:write',
@@ -33,7 +33,7 @@ test('docs-collab-announcer manifest validates against kodera.extension.v1', () 
   ]);
   assert.equal(
     manifest.webhookUrl,
-    'https://extensions.example.kodera.io/hooks/docs-collab-announcer'
+    'https://extensions.example.org/hooks/docs-collab-announcer'
   );
   assert.equal(manifest.commands.length, 1);
   assert.equal(manifest.commands[0].command, '/doc-pad');

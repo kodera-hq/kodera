@@ -2,7 +2,7 @@
 public enum MemberUnavailable: Equatable, Sendable {
     /// 403. Core gives the same generic `forbidden` to an owner whose claim is not finished yet and to anyone
     /// without an active membership, so the app cannot tell them apart and does not guess: one state, which
-    /// offers the Console, Check again and sign-out. Finishing a claim in the Console changes Core's answer, so
+    /// offers Check again and sign-out, and no link out of the app. Finishing a claim on the web changes Core's answer, so
     /// `/me` is fetched again when the app returns to the foreground and on Check again
     /// (`MemberLoader.checkAgain`), never on its own.
     case noOrganisationYet

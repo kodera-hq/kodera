@@ -30,7 +30,15 @@ Gradle and AGP do not fail a build on any of these, and each ships silently:
   test source sets: only the debug DevelopmentBuild may admit plain-HTTP
   loopback, and other code asks LoopbackPolicy.admitsLoopback;
 - a default deployment (io.kodera.android.CORE_ORIGIN / ISSUER_ORIGINS) in
-  checked-in XML.
+  checked-in XML;
+- anything commercial: pricing, plan, upgrade, checkout, invoice, payment or
+  subscription wording (English or French) or a price in a string resource;
+  such wording, a billing provider, a store purchase API or a billing address
+  in shipped app Kotlin, in app XML, in the client and domain modules or in a
+  Gradle file; and any call in shipped app Kotlin that opens a page outside
+  the app (an ACTION_VIEW intent, startActivity, a Custom Tab, a web view).
+  The app is a companion: it sells nothing, and sign-in, through AppAuth, is
+  the only page it opens in a browser.
 
 With --merged, it reads the manifest AGP merged from every dependency instead,
 and refuses any permission or exported component outside an explicit
@@ -63,8 +71,8 @@ from pathlib import Path
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
 TOKEN_FORMAT = "kodera-native-tokens/1"
-TOKEN_PRODUCER_COMMIT = "32270125fc9aeb5b37be4475700ddd3f64db34f9"
-TOKEN_SOURCE_SHA256 = "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a"
+TOKEN_PRODUCER_COMMIT = "cf4e10dbd9aaab05f65deedfb50ca100fd0e3d73"
+TOKEN_SOURCE_SHA256 = "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51"
 
 # values/ is French, the default; values-en/ is English.
 CATALOGUES = ("values", "values-en")
@@ -152,6 +160,85 @@ MERGED_EXPORTED = {
         "activity", None, [({"android.intent.action.VIEW"},
                 {"android.intent.category.DEFAULT", "android.intent.category.BROWSABLE"}, REDIRECT_DATA)]),
 }
+
+
+# Sign-in is the only page the app opens, and AppAuth opens it. No shipped app code opens another:
+# a link out is how a companion app ends up one tap away from a checkout.
+EXTERNAL_OPEN = re.compile(
+    r"\bACTION_VIEW\b|\bstartActivity\s*\(|CustomTabsIntent|android\.webkit|\bWebView\s*\("
+    r"|LocalUriHandler|\bopenUri\s*\(")
+# Modules and build files beside app/: a billing dependency would be declared in one of them.
+LIBRARY_MODULES = ("client", "domain")
+GRADLE_FILES = ("build.gradle.kts", "settings.gradle.kts", "gradle.properties", "app/build.gradle.kts",
+                "client/build.gradle.kts", "domain/build.gradle.kts")
+GENERATED_KOTLIN = "main/kotlin/io/kodera/tokens/"
+
+# ── companion surface ──────────────────────────────────────────────────────
+# The app is a companion to a workspace its organisation already has: no in-app
+# purchase, no pricing screen, and no link that can reach a checkout or an
+# upgrade page. Stems mean commerce wherever they stand, inside an identifier
+# included (`openCheckout`, `show_paywall`); words only on their own.
+_LETTER = r"[^\W\d_]"
+COMMERCIAL_STEMS = (r"pricing|upgrad(?:e|es|ed|ing)|upsell|checkout|billing|invoic(?:e|es|ed|ing)|payment"
+                    r"|purchas(?:e|es|ed|ing)|paywall|premium|tarification|abonnement|facturation|paiement")
+COMMERCIAL_WORDS = (r"priced?|prices|billed|pay\s+now|free\s+trial|trial\s+period"
+                    r"|(?:paid|pro|business|enterprise)\s+plan|buy(?:\s+now)?|credit\s+card"
+                    r"|per\s+(?:seat|user|month)|tarifs?|prix|mise\s+à\s+niveau|s['’]abonner|factures?"
+                    r"|achats?|acheter|essai\s+gratuit|carte\s+bancaire|par\s+mois")
+# Copy only: in code these are ordinary identifiers (an observer `subscription`, a deployment `plan`).
+COPY_STEMS = r"subscri(?:be|bes|bed|ber|bers|ption|ptions)"
+COPY_WORDS = r"plans?|forfaits?"
+
+
+def _words(pattern):
+    return rf"(?<!{_LETTER})(?:{pattern})(?!{_LETTER})"
+
+
+COMMERCIAL_CODE = re.compile(f"{COMMERCIAL_STEMS}|{_words(COMMERCIAL_WORDS)}", re.IGNORECASE)
+COMMERCIAL_COPY = re.compile(
+    f"{COMMERCIAL_STEMS}|{COPY_STEMS}|{_words(COMMERCIAL_WORDS + '|' + COPY_WORDS)}", re.IGNORECASE)
+# Library code keeps its own vocabulary (a session "upgrade" is not a sale); only the unambiguous stems.
+COMMERCIAL_LIBRARY = re.compile(r"pricing|paywall|upsell|checkout|billing|in-app\s+purchase", re.IGNORECASE)
+# `$` is left to copy: in code it is a closure argument or a string template.
+PRICE_CODE = re.compile(r"[€£]\s?\d|\d\s?(?:€|EUR\b|USD\b|GBP\b)")
+PRICE_COPY = re.compile(r"[€$£]\s?\d|\d\s?(?:€|EUR\b|USD\b|GBP\b)")
+BILLING_SDK = re.compile(
+    r"\b(?:stripe|paypal|revenuecat|paddle|storekit|skpaymentqueue|skproduct|billingclient)\b"
+    r"|com\.android\.billingclient|com\.android\.vending\.BILLING", re.IGNORECASE)
+_BILLING_PATHS = r"billing|checkout|pricing|upgrade|invoices?|orders?|subscriptions?|payments?|plans?"
+BILLING_DESTINATION = re.compile(
+    rf"""(?:https?:)?//[^\s"'<>)]*\b(?:{_BILLING_PATHS})\b|["'`]/(?:{_BILLING_PATHS})(?:[/?#"'`]|$)""",
+    re.IGNORECASE | re.MULTILINE)
+COMPANION = "the app sells nothing and links to no billing page"
+COPY_RULES = (
+    (COMMERCIAL_COPY, "carries commercial wording"),
+    (PRICE_COPY, "states a price"),
+    (BILLING_SDK, "names a billing provider or store purchase API"),
+    (BILLING_DESTINATION, "names a billing destination"),
+)
+APP_CODE_RULES = (
+    (COMMERCIAL_CODE, "carries commercial wording"),
+    (PRICE_CODE, "states a price"),
+    (BILLING_SDK, "names a billing provider or store purchase API"),
+    (BILLING_DESTINATION, "names a billing destination"),
+    (EXTERNAL_OPEN, "opens a page outside the app"),
+)
+LIBRARY_RULES = (
+    (COMMERCIAL_LIBRARY, "carries commercial wording"),
+    (BILLING_SDK, "names a billing provider or store purchase API"),
+    (BILLING_DESTINATION, "names a billing destination"),
+)
+
+
+def companion_findings(where, text, rules, numbered=True):
+    """One finding per rule: the first match, quoted, at its line when the text is a file."""
+    errors = []
+    for pattern, reason in rules:
+        match = pattern.search(text)
+        if match:
+            location = f"{where}:{text.count(chr(10), 0, match.start()) + 1}" if numbered else where
+            errors.append(f'{location} {reason} ("{match.group(0)}"); {COMPANION}')
+    return errors
 
 
 class Unreadable(Exception):
@@ -313,6 +400,39 @@ def findings(root):
             errors.append(f"DeploymentConfiguration.kt does not read {reference}")
 
     errors += build_findings(root)
+    errors += commercial_findings(root)
+    return errors
+
+
+def commercial_findings(root):
+    src = root / "app/src"
+    errors = []
+    for folder in CATALOGUES:
+        for entry in read_xml(src / "main/res" / folder / "strings.xml").findall("string"):
+            where = f"res/{folder}/strings.xml: {entry.get('name')}"
+            errors += companion_findings(where, f"{entry.get('name')}\n{''.join(entry.itertext())}", COPY_RULES,
+                                         numbered=False)
+    for path in sorted(src.rglob("*.xml")):
+        if path.name == "strings.xml" and path.parent.name in CATALOGUES:
+            continue
+        text = read_text(path)
+        for namespace in XML_NAMESPACES:
+            text = text.replace(namespace, "")
+        errors += companion_findings(path.relative_to(src).as_posix(), text, LIBRARY_RULES)
+    for path in sorted(src.rglob("*.kt")):
+        name = path.relative_to(src).as_posix()
+        # Test source sets ship in no build; the generated tokens are checked by their own pin.
+        if TEST_SOURCE_SET.match(path.relative_to(src).parts[0]) or name.startswith(GENERATED_KOTLIN):
+            continue
+        errors += companion_findings(name, read_text(path), APP_CODE_RULES)
+    for module in LIBRARY_MODULES:
+        sources = sorted((root / module / "src/main").rglob("*.kt"))
+        if not sources:
+            raise Unreadable(f"cannot read {root / module / 'src/main'}: no Kotlin sources")
+        for path in sources:
+            errors += companion_findings(path.relative_to(root).as_posix(), read_text(path), LIBRARY_RULES)
+    for name in GRADLE_FILES:
+        errors += companion_findings(name, read_text(root / name), LIBRARY_RULES)
     return errors
 
 

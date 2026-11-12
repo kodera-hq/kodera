@@ -17,7 +17,7 @@
     "incident.resolved",
     "command.invoked"
   ],
-  "webhookUrl": "https://extensions.kodera.io/uptime-incident-bridge/webhook",
+  "webhookUrl": "https://extensions.example.org/hooks/uptime-incident-bridge",
   "commands": [
     {
       "name": "/incident-bridge",

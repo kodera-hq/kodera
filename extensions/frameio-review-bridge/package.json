@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
+  "description": "Reference implementation: signed production review events for channel-based post-production.",
   "dependencies": {
     "@kodera/extension-sdk": "0.1.0"
   },

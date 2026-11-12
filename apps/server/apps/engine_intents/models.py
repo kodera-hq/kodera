@@ -131,6 +131,11 @@ class EngineMemberSet(models.Model):
     # with no subject at all, and subjects outside the contract's shape, left out.
     unnamed_leavers = models.PositiveIntegerField(default=0, db_default=0)
     malformed_subjects = models.PositiveIntegerField(default=0, db_default=0)
+    # The organisation's authority revision this set was built at, read before its members were:
+    # a set recorded at an older revision than the organisation's is behind a membership or
+    # identity write, and is rebuilt outside the path that made the write (DEFAULT_COMMUNITY.md).
+    # Null on a set recorded before 0011, read as behind.
+    authority_revision = models.BigIntegerField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

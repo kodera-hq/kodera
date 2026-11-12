@@ -43,7 +43,7 @@ public final class MemberLoader {
     }
 
     /// Fetches `/me` again from the settled "no organisation yet" state only (Core's 403): the app came back to
-    /// the foreground (after the Console, for one) or the member tapped Check again. Finishing a claim in the Console
+    /// the foreground (after finishing on the web, for one) or the member tapped Check again. Finishing a claim there
     /// changes Core's answer. A fetch in flight is `loading`, so a call during one sends nothing; and no answer
     /// calls this, so it never loops. Returns whether it fetched.
     @discardableResult

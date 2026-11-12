@@ -40,6 +40,13 @@ fresh() {
   cp "$root/app/build.gradle.kts" "$work/app/"
   cp "$root/build.gradle.kts" "$root/settings.gradle.kts" "$root/gradle.properties" "$work/"
   cp "$root/config/local.properties.example" "$work/config/"
+  # The client and domain modules: build file and shipped sources only.
+  for module in client domain; do
+    if [ -d "$work/$module" ]; then rm -r -- "$work/$module"; fi
+    mkdir -p "$work/$module/src"
+    cp "$root/$module/build.gradle.kts" "$work/$module/"
+    cp -R "$root/$module/src/main" "$work/$module/src/main"
+  done
 }
 
 M=app/src/main
@@ -487,6 +494,113 @@ expect_refusal "an offline-access switch that is not true or false in the exampl
 fresh; replace $E 'kodera.clientId=kodera-android' '# kodera.clientId removed'
 expect_refusal "an example that drops a setting" 1 "config/local.properties.example must set exactly"
 
+# ── companion surface ──────────────────────────────────────────────────────
+# The app sells nothing: no commercial wording, no price, no billing provider,
+# no billing address, and no page opened outside sign-in. Each reintroduction
+# is refused for its own reason.
+SOLD="; the app sells nothing and links to no billing page"
+EN=$M/res/values-en/strings.xml
+FR=$M/res/values/strings.xml
+OFFER=$M/kotlin/io/kodera/android/session/Offer.kt
+lines() { wc -l < "$root/$1" | tr -d ' '; }
+
+fresh; replace $EN 'The check-in could not be prepared. Try again.' 'The check-in could not be prepared. Upgrade to try again.'
+expect_refusal "an upgrade prompt in the English copy" 1 \
+  "res/values-en/strings.xml: proximity_failed carries commercial wording (\"Upgrade\")$SOLD"
+
+fresh; replace $FR 'Le pointage n’a pas pu être préparé. Réessayez.' 'Le pointage n’a pas pu être préparé. Passez à un abonnement.'
+expect_refusal "commercial wording in the French copy" 1 \
+  "res/values/strings.xml: proximity_failed carries commercial wording (\"abonnement\")$SOLD"
+
+fresh; replace $EN 'finish on the web, then check again here.' 'see pricing on the web.'
+expect_refusal "a pricing pointer in the no-organisation copy" 1 \
+  "res/values-en/strings.xml: session_no_organisation carries commercial wording (\"pricing\")$SOLD"
+
+fresh; replace $EN 'The check-in could not be prepared. Try again.' 'Choose a plan to continue.'
+expect_refusal "plan wording in the copy" 1 \
+  "res/values-en/strings.xml: proximity_failed carries commercial wording (\"plan\")$SOLD"
+
+fresh; replace $EN 'The check-in could not be prepared. Try again.' 'Manage your subscription.'
+expect_refusal "subscription wording in the copy" 1 \
+  "res/values-en/strings.xml: proximity_failed carries commercial wording (\"subscription\")$SOLD"
+
+fresh; replace $FR 'Le pointage n’a pas pu être préparé. Réessayez.' 'Seulement 9 € par appareil.'
+expect_refusal "a price in the copy" 1 "res/values/strings.xml: proximity_failed states a price (\"9 €\")$SOLD"
+
+fresh; replace $EN 'The check-in could not be prepared. Try again.' 'Only $4 each.'
+expect_refusal "a dollar price in the copy" 1 "res/values-en/strings.xml: proximity_failed states a price (\"\$4\")$SOLD"
+
+fresh
+replace $EN '<string name="proximity_failed">' '<string name="offer_checkout">Continue</string>
+    <string name="proximity_failed">'
+replace $FR '<string name="proximity_failed">' '<string name="offer_checkout">Continuer</string>
+    <string name="proximity_failed">'
+expect_refusal "a checkout string name, in both catalogues" 2 \
+  "res/values/strings.xml: offer_checkout carries commercial wording (\"checkout\")$SOLD"
+
+fresh; printf '// Shows the paywall when the trial ends.\npackage io.kodera.android.session\n' > "$work/$OFFER"
+expect_refusal "a paywall in app code" 1 "main/kotlin/io/kodera/android/session/Offer.kt:1 carries commercial wording (\"paywall\")$SOLD"
+
+fresh; printf 'package io.kodera.android.session\nfun openCheckout() {}\n' > "$work/$OFFER"
+expect_refusal "a checkout action inside an identifier" 1 \
+  "main/kotlin/io/kodera/android/session/Offer.kt:2 carries commercial wording (\"Checkout\")$SOLD"
+
+fresh; printf 'package io.kodera.android.session\nconst val PATH = "/plans"\n' > "$work/$OFFER"
+expect_refusal "a billing path in app code" 1 \
+  "main/kotlin/io/kodera/android/session/Offer.kt:2 names a billing destination (\"\"/plans\"\")$SOLD"
+
+fresh; printf 'package io.kodera.android.session\nconst val LABEL = "9 EUR"\n' > "$work/$OFFER"
+expect_refusal "a price in app code" 1 "main/kotlin/io/kodera/android/session/Offer.kt:2 states a price (\"9 EUR\")$SOLD"
+
+# The debug source set ships in debug builds: it is held to the same rule.
+fresh; printf '\n// pricing table\n' >> "$work/app/src/debug/kotlin/io/kodera/android/DevelopmentBuild.kt"
+expect_refusal "commercial wording in the debug source set" 1 \
+  "debug/kotlin/io/kodera/android/DevelopmentBuild.kt:$(($(lines app/src/debug/kotlin/io/kodera/android/DevelopmentBuild.kt) + 2)) carries commercial wording (\"pricing\")$SOLD"
+
+# The Console action this app no longer has: any page opened from shipped app code is refused.
+open_cases=(
+  'val intent = Intent(Intent.ACTION_VIEW, target)|ACTION_VIEW'
+  'fun open(context: Context, intent: Intent) = context.startActivity(intent)|startActivity('
+  'val tab = CustomTabsIntent.Builder().build()|CustomTabsIntent'
+  'import android.webkit.WebViewClient|android.webkit'
+  'fun page(context: Context) = WebView(context)|WebView('
+  'val handler = LocalUriHandler.current|LocalUriHandler'
+  'fun go(handler: UriHandler, target: String) = handler.openUri(target)|openUri('
+)
+for entry in "${open_cases[@]}"; do
+  fresh; printf 'package io.kodera.android.session\n%s\n' "${entry%%|*}" > "$work/$OFFER"
+  expect_refusal "a page opened outside the app: ${entry#*|}" 1 \
+    "main/kotlin/io/kodera/android/session/Offer.kt:2 opens a page outside the app (\"${entry#*|}\")$SOLD"
+done
+
+fresh; printf '<offer provider="stripe" />\n' > "$work/$M/res/xml/offer.xml"
+expect_refusal "a billing provider in app XML" 1 \
+  "main/res/xml/offer.xml:1 names a billing provider or store purchase API (\"stripe\")$SOLD"
+
+fresh; printf '\n// implementation("com.revenuecat.sdk:android:8")\n' >> "$work/app/build.gradle.kts"
+expect_refusal "a billing provider in the app build file" 1 \
+  "app/build.gradle.kts:$(($(lines app/build.gradle.kts) + 2)) names a billing provider or store purchase API (\"revenuecat\")$SOLD"
+
+fresh; printf '\n// Paddle\n' >> "$work/settings.gradle.kts"
+expect_refusal "a billing provider in the settings file" 1 \
+  "settings.gradle.kts:$(($(lines settings.gradle.kts) + 2)) names a billing provider or store purchase API (\"Paddle\")$SOLD"
+
+fresh; printf '\n// StoreKit parity\n' >> "$work/client/src/main/kotlin/io/kodera/android/client/CoreMeClient.kt"
+expect_refusal "a store purchase API in the client module" 1 \
+  "client/src/main/kotlin/io/kodera/android/client/CoreMeClient.kt:$(($(lines client/src/main/kotlin/io/kodera/android/client/CoreMeClient.kt) + 2)) names a billing provider or store purchase API (\"StoreKit\")$SOLD"
+
+fresh; printf '\nconst val INVOICES = "/invoices"\n' >> "$work/domain/src/main/kotlin/io/kodera/android/domain/ConsoleOrigin.kt"
+expect_refusal "a billing path in the domain module" 1 \
+  "domain/src/main/kotlin/io/kodera/android/domain/ConsoleOrigin.kt:$(($(lines domain/src/main/kotlin/io/kodera/android/domain/ConsoleOrigin.kt) + 2)) names a billing destination (\"\"/invoices\"\")$SOLD"
+
+fresh; printf '\n// A paywall would live here.\n' >> "$work/client/build.gradle.kts"
+expect_refusal "a paywall in the client build file" 1 \
+  "client/build.gradle.kts:$(($(lines client/build.gradle.kts) + 2)) carries commercial wording (\"paywall\")$SOLD"
+
+# A test source set ships in no build: its vocabulary is its own.
+fresh; printf '\n// an upgrade of the session owner\n' >> "$work/app/src/test/kotlin/io/kodera/android/session/SessionControllerTests.kt"
+expect_clean "a test source set is outside the companion rule"
+
 # ── could not look ─────────────────────────────────────────────────────────
 fresh; rm -- "$work/$M/assets/provenance/tokens.json"
 expect_unreadable "a missing input"
@@ -512,6 +626,9 @@ expect_unreadable "a font list that is a number (TypeError)"
 
 fresh; edit_json $M/assets/provenance/tokens.json 'd = []'
 expect_unreadable "a token pin that is a list (AttributeError)"
+
+fresh; rm -r -- "$work/domain/src/main"
+expect_unreadable "a domain module without sources"
 
 fresh
 expect_clean "the copy passes again once restored"
@@ -766,6 +883,6 @@ printf '%s\n' "$_out" | grep -qF "Nothing was checked." || fail "--merged: a mal
 cases=$((cases + 1)); printf '  ok  --merged: a malformed manifest is could not look (exit 2)\n'
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=135
+expected_cases=163
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

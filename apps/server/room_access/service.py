@@ -1,5 +1,7 @@
 """What room-access decides (ADR-0018): who gets a token, who stays in a call, and who is shown in it.
 
+- **Rate.** A caller's identity is the Matrix user its own token names; the listener counts each
+  identity's token requests through `admit`, before the room or LiveKit is asked anything.
 - **Token.** Only for an audio channel's room that is not archived, only to a joined member, for
   that room only. Publishing is withheld in a listen-only room from members outside `may_publish`.
   The identity is the caller's Matrix user and device, read from their own token.
@@ -17,6 +19,7 @@
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, TypeGuard
 
@@ -38,6 +41,14 @@ class RefusedError(Exception):
     def __init__(self, status: int) -> None:
         super().__init__(status)
         self.status = status
+
+
+class RateLimitedError(Exception):
+    """The caller's identity has spent its token requests for now: `429`, after `retry_after_s`."""
+
+    def __init__(self, retry_after_s: int) -> None:
+        super().__init__(retry_after_s)
+        self.retry_after_s = retry_after_s
 
 
 def _publishes(participant: dict[str, Any]) -> bool:
@@ -96,7 +107,12 @@ class Service:
 
     # -- the token ---------------------------------------------------------------------------
 
-    def grant(self, matrix_token: str, room_id: Any) -> Grant:
+    def grant(
+        self, matrix_token: str, room_id: Any, *, admit: Callable[[str], None] | None = None
+    ) -> Grant:
+        """`admit` is called with the caller's Matrix user once Synapse has named it, before the
+        room is read and before LiveKit is asked anything; it raises to refuse (the listener's
+        per-identity rate limit)."""
         if not isinstance(room_id, str) or not room_id.startswith("!") or len(room_id) > 255:
             raise RefusedError(400)
         if (
@@ -109,6 +125,8 @@ class Service:
         if caller is None:
             raise RefusedError(401)
         user_id, device_id = caller
+        if admit is not None:
+            admit(user_id)
         policy = self._policy(room_id)
         # One answer for "no such room", "not an audio room", "archived" and "not a member".
         if not _active_audio_policy(policy) or self.matrix.membership(room_id, user_id) != "join":

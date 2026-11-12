@@ -77,7 +77,7 @@ function normalizeAndValidateExtensionManifest(raw) {
   const description =
     typeof raw.description === 'string' && raw.description.trim().length > 0
       ? raw.description.trim()
-      : `${String(raw.name ?? slug)} official Kodera extension.`;
+      : `${String(raw.name ?? slug)} reference Kodera extension.`;
 
   const validated = validateManifest({
     ...raw,
@@ -128,7 +128,7 @@ function discoverExtensions() {
   });
 }
 
-test('conformance: dynamically discovers all 11 official extensions under extensions/*', () => {
+test('conformance: dynamically discovers all 11 reference extensions under extensions/*', () => {
   const discovered = discoverExtensions();
   const dirNames = discovered.map((item) => item.dirName);
 
@@ -269,7 +269,7 @@ test('conformance: every extension index.mjs exports valid handlers and rejects 
 
     const mod = await import(pathToFileURL(item.entryPath).href);
 
-    // Resolve exported slash command object across all 11 official extensions
+    // Resolve exported slash command object across all 11 reference extensions
     const exportedCommand =
       mod.frameioReviewCommand ??
       mod.docPadCommand ??
@@ -285,7 +285,7 @@ test('conformance: every extension index.mjs exports valid handlers and rejects 
     assert.equal(exportedCommand.name, primaryCommand);
     assert.equal(typeof exportedCommand.handler, 'function');
 
-    // Resolve or instantiate webhook handler across all 11 official extensions
+    // Resolve or instantiate webhook handler across all 11 reference extensions
     const handlerFactory =
       mod.createFrameioWebhookHandler ??
       mod.createDocsCollabWebhookHandler ??

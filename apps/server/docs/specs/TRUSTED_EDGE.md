@@ -65,6 +65,11 @@ Trusting an address trusts **every process that can send from it** on that conta
 4. Verify that two `POST /api/v1/auth/discover` requests from distinct client networks each observe
    independent `RateLimit-Remaining` counters, and that IPv6 clients are bucketed per `/64`.
 
+The same module carries the two other controls answered at the edge, the Console-only CORS and the
+per-principal mutation bucket ([`ABUSE_AND_ORIGIN_CONTROLS.md`](ABUSE_AND_ORIGIN_CONTROLS.md)).
+Neither reads a client address: the bucket is keyed on the verified principal alone, so trusting an
+edge changes whose discovery quota a request spends and nothing else.
+
 ## 5. Acceptance
 
 - `tests/test_trusted_edge.py`: one case per rule above, each mutation of `core/api/edge.py` caught
