@@ -3,9 +3,14 @@
 // Each refusal below mutates an in-memory copy of the tree and must be named by the check.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   CATALOG_PATH,
   LABEL,
+  NotRead,
   README_PATH,
   build,
   collect,
@@ -142,4 +147,52 @@ test('catalogue refusal: forbidden claims are named wherever they reappear', () 
     'extensions/git-tracker/README.md': `${files.get('extensions/git-tracker/README.md')}\nNo fixture feed is presented as live. October release notes.\n`,
   });
   assert.deepEqual(problemsIn(harmless), []);
+});
+
+test('catalogue refusal: a symbolic link is named, never followed, and nothing it points to is read', async () => {
+  const marker = 'OUTSIDE-FILE-CONTENT-MUST-NOT-BE-READ';
+  const temporary = await mkdtemp(join(tmpdir(), 'kodera-catalog-'));
+  try {
+    const outside = join(temporary, 'outside.md');
+    await writeFile(outside, `# Outside\n\n${marker}\n`);
+    const root = join(temporary, 'repository');
+    await mkdir(join(root, 'extensions/demo'), { recursive: true });
+    await mkdir(join(root, 'packages/extension-sdk'), { recursive: true });
+    await writeFile(join(root, 'extensions/demo/notes.txt'), 'plain notes\n');
+    await writeFile(join(root, 'extensions/demo/blob.bin'), Buffer.from([0xff, 0xfe, 0x00]));
+    await symlink(outside, join(root, 'extensions/demo/README.md'));
+    await symlink(temporary, join(root, 'extensions/linked-directory'));
+    const collected = await collect(pathToFileURL(`${root}/`));
+    // Every entry is accounted for: read, or recorded as not read. None is skipped.
+    assert.deepEqual([...collected.keys()].sort(), [
+      'extensions/demo/README.md',
+      'extensions/demo/blob.bin',
+      'extensions/demo/notes.txt',
+      'extensions/linked-directory',
+    ]);
+    assert.ok(collected.get('extensions/demo/README.md') instanceof NotRead);
+    assert.ok(collected.get('extensions/linked-directory') instanceof NotRead);
+    assert.equal(collected.get('extensions/demo/notes.txt'), 'plain notes\n');
+    const problems = problemsIn(collected);
+    for (const expected of [
+      'extensions/demo/README.md: symbolic link refused: the check reads regular UTF-8 files inside the repository only',
+      'extensions/linked-directory: symbolic link refused: the check reads regular UTF-8 files inside the repository only',
+      'extensions/demo/blob.bin: file that is not UTF-8 text refused: the check reads regular UTF-8 files inside the repository only',
+    ])
+      assert.ok(problems.includes(expected), expected);
+    assert.ok(!JSON.stringify([...collected.values()].filter((value) => typeof value === 'string')).includes(marker));
+    assert.ok(!problems.join('\n').includes(marker));
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+  // The same refusal on the real tree, with one path recorded as a link.
+  const linked = tree({ 'extensions/hello-webhook/NOTES.md': new NotRead('symbolic link') });
+  assert.deepEqual(problemsIn(linked), [
+    'extensions/hello-webhook/NOTES.md: symbolic link refused: the check reads regular UTF-8 files inside the repository only',
+  ]);
+  // And a file type the check never listed is read like any other.
+  const unlisted = tree({ 'extensions/hello-webhook/NOTES.txt': ['A cert', 'ified integration.'].join('') + '\n' });
+  assert.deepEqual(problemsIn(unlisted), [
+    'forbidden claim in extensions/hello-webhook/NOTES.txt: an extension presented with an endorsement it does not have',
+  ]);
 });

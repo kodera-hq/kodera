@@ -6,10 +6,10 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   EXPECTED_MANIFEST,
   check,
@@ -196,6 +196,52 @@ test('a generated directory holds the deploy/community assets and passes its pre
       run('python3', [join(ROOT, 'scripts/ci/check-community-deploy.py'), '--preflight', join(output, '.env')]),
       /SYNAPSE_POSTGRES_PASSWORD is not set/u,
     )
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
+})
+
+test('refusal: an asset or a source that is a symbolic link is named and never followed', async () => {
+  const marker = 'OUTSIDE-FILE-CONTENT-MUST-NOT-BE-READ'
+  const temporary = await mkdtemp(join(tmpdir(), 'kodera-parity-link-'))
+  try {
+    const outside = join(temporary, 'outside.txt')
+    await writeFile(outside, `${marker}\n`)
+    const root = join(temporary, 'repository')
+    const scaffolder = join(root, 'packages/create-kodera')
+    await mkdir(join(root, 'deploy/community'), { recursive: true })
+    await mkdir(join(scaffolder, 'assets'), { recursive: true })
+    await writeFile(join(scaffolder, 'assets.manifest.json'), JSON.stringify(EXPECTED_MANIFEST))
+    for (const name of EXPECTED_MANIFEST.files) {
+      await writeFile(join(root, 'deploy/community', name), sources[name])
+      await writeFile(join(scaffolder, 'assets', name), derive(name, sources[name], EXPECTED_MANIFEST))
+    }
+    const rootUrl = pathToFileURL(`${root}/`)
+    assert.deepEqual(await check(rootUrl), [])
+    // A linked asset would compare equal to the file it points at: it is refused instead.
+    const asset = join(scaffolder, 'assets/Caddyfile')
+    await unlink(asset)
+    await symlink(join(root, 'deploy/community/Caddyfile'), asset)
+    assert.deepEqual(await check(rootUrl), [
+      'create-kodera asset is a symbolic link, which the check does not follow: Caddyfile',
+      'create-kodera asset is missing: Caddyfile',
+    ])
+    await unlink(asset)
+    await symlink(outside, asset)
+    const outsideProblems = await check(rootUrl)
+    assert.ok(
+      outsideProblems.includes('create-kodera asset is a symbolic link, which the check does not follow: Caddyfile'),
+    )
+    assert.ok(!outsideProblems.join('\n').includes(marker))
+    await unlink(asset)
+    await writeFile(asset, sources.Caddyfile)
+    const source = join(root, 'deploy/community/livekit.yaml')
+    await unlink(source)
+    await symlink(outside, source)
+    assert.deepEqual(await check(rootUrl), [
+      'deploy/community file is a symbolic link, which the check does not follow: livekit.yaml',
+      'deploy/community/livekit.yaml is missing',
+    ])
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }

@@ -22,7 +22,15 @@ const ID_PREFIX = 'io.kodera.ext.'
 const SLUG = /^[a-z0-9][a-z0-9-]{1,62}$/u
 // Hosts reserved for documentation (RFC 2606, RFC 6761): a manifest names no live endpoint.
 const DOCUMENTATION_HOST = /(?:^|\.)example\.(?:org|com|net)$|\.(?:example|test|invalid)$/u
-const SCANNED = /\.(?:mjs|js|ts|json|md)$/u
+/**
+ * What `collect` records for a path it did not read, with the reason. Only regular UTF-8 files
+ * are read: a symbolic link is never followed, so nothing outside the repository is opened.
+ */
+export class NotRead {
+  constructor(reason) {
+    this.reason = reason
+  }
+}
 
 // Wording that must not reappear. Each claim is a sequence of words, joined at run time, so
 // that this file and its tests never contain the wording they refuse.
@@ -156,8 +164,13 @@ export function withTable(readme, catalog) {
 }
 
 /** Every refusal, by name: drift between manifests and catalogue, labels, and forbidden claims. */
-export function problemsIn(files) {
+export function problemsIn(tree) {
+  // A path that was not read is refused by name, and nothing else is said about it.
+  const unread = [...tree].filter(([, text]) => text instanceof NotRead).sort(([a], [b]) => a.localeCompare(b))
+  const files = new Map([...tree].filter(([, text]) => typeof text === 'string'))
   const { catalog, problems } = build(files)
+  for (const [path, entry] of unread)
+    problems.unshift(`${path}: ${entry.reason} refused: the check reads regular UTF-8 files inside the repository only`)
   if (files.get(CATALOG_PATH) !== serialise(catalog))
     problems.push(`${CATALOG_PATH} drifted from the extension manifests`)
   const readme = files.get(README_PATH)
@@ -171,16 +184,29 @@ export function problemsIn(files) {
   return [...new Set(problems)]
 }
 
-/** The text files of `extensions/` and `packages/extension-sdk/`, by repository path. */
+/**
+ * Every file of `extensions/` and `packages/extension-sdk/`, by repository path: its text, or a
+ * `NotRead` for a symbolic link, a special file or a file that is not UTF-8. Nothing is skipped
+ * for its name or its type, and no link is followed.
+ */
 export async function collect(root = ROOT) {
   const files = new Map()
+  const decoder = new TextDecoder('utf-8', { fatal: true })
   async function walk(relative) {
     for (const entry of await readdir(new URL(relative, root), { withFileTypes: true })) {
-      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
+      if (entry.name === 'node_modules' && entry.isDirectory()) continue
       const path = `${relative}${entry.name}`
-      if (entry.isDirectory()) await walk(`${path}/`)
-      else if (entry.isFile() && SCANNED.test(entry.name))
-        files.set(path, await readFile(new URL(path, root), 'utf8'))
+      if (entry.isSymbolicLink()) files.set(path, new NotRead('symbolic link'))
+      else if (entry.isDirectory()) await walk(`${path}/`)
+      else if (!entry.isFile()) files.set(path, new NotRead('special file'))
+      else {
+        try {
+          files.set(path, decoder.decode(await readFile(new URL(path, root))))
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error
+          files.set(path, new NotRead('file that is not UTF-8 text'))
+        }
+      }
     }
   }
   await walk('extensions/')
@@ -189,9 +215,10 @@ export async function collect(root = ROOT) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const files = await collect()
+  const tree = await collect()
+  const files = new Map([...tree].filter(([, text]) => typeof text === 'string'))
   if (process.argv.includes('--check')) {
-    const problems = problemsIn(files)
+    const problems = problemsIn(tree)
     for (const problem of problems) console.error(`[FAIL] ${problem}`)
     if (problems.length) process.exit(1)
     console.log(`OK: extensions catalogue matches ${build(files).catalog.extensions.length} manifests; no forbidden claim`)

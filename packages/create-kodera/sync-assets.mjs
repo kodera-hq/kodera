@@ -5,11 +5,11 @@
 //
 //   node sync-assets.mjs           write assets/
 //   node sync-assets.mjs --check   refuse a committed asset that differs from deploy/community
-import { readFile, writeFile, readdir } from 'node:fs/promises'
+import { lstat, readFile, writeFile, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
-const HERE = new URL('./', import.meta.url)
 const ROOT = new URL('../../', import.meta.url)
+const HERE = new URL('packages/create-kodera/', ROOT)
 
 /** The one manifest the gate accepts. A new file or rewrite is a reviewed change to this constant. */
 export const EXPECTED_MANIFEST = Object.freeze({
@@ -51,23 +51,50 @@ export function parityProblems(manifest, sources, assets) {
   return problems
 }
 
-async function readAll(directory, names) {
+/**
+ * The text of each named regular file, and a refusal for each entry that is not one. A symbolic
+ * link is never followed: a linked asset would compare equal to whatever it points at, and a
+ * link could make the check read a file outside the repository.
+ */
+async function readAll(directory, names, label) {
   const found = {}
+  const refused = []
   for (const name of names) {
+    let entry
     try {
-      found[name] = await readFile(new URL(name, directory), 'utf8')
+      entry = await lstat(new URL(name, directory))
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
+      continue
     }
+    if (entry.isSymbolicLink())
+      refused.push(`${label} is a symbolic link, which the check does not follow: ${name}`)
+    else if (!entry.isFile()) refused.push(`${label} is not a regular file: ${name}`)
+    else found[name] = await readFile(new URL(name, directory), 'utf8')
   }
-  return found
+  return { found, refused }
 }
 
-export async function check() {
-  const manifest = await readManifest()
-  const sources = await readAll(new URL('deploy/community/', ROOT), EXPECTED_MANIFEST.files)
-  const assets = await readAll(new URL('assets/', HERE), await readdir(new URL('assets/', HERE)))
-  return parityProblems(manifest, sources, assets)
+export async function check(root = ROOT) {
+  const scaffolder = new URL('packages/create-kodera/', root)
+  const assetsDirectory = new URL('assets/', scaffolder)
+  if ((await lstat(new URL('assets', scaffolder))).isSymbolicLink())
+    return ['create-kodera assets directory is a symbolic link, which the check does not follow']
+  const manifestRead = await readAll(scaffolder, ['assets.manifest.json'], 'create-kodera manifest')
+  let manifest = null
+  try {
+    manifest = JSON.parse(manifestRead.found['assets.manifest.json'] ?? 'null')
+  } catch {
+    manifest = null
+  }
+  const sources = await readAll(new URL('deploy/community/', root), EXPECTED_MANIFEST.files, 'deploy/community file')
+  const assets = await readAll(assetsDirectory, await readdir(assetsDirectory), 'create-kodera asset')
+  return [
+    ...manifestRead.refused,
+    ...sources.refused,
+    ...assets.refused,
+    ...parityProblems(manifest, sources.found, assets.found),
+  ]
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -11,8 +11,11 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
+import stat
 import sys
+import tempfile
 import types
 import uuid
 from collections.abc import Callable
@@ -476,13 +479,7 @@ def check_community_deploy(
         initdb = synapse_db.environment.get("POSTGRES_INITDB_ARGS", "")
         if "--lc-collate=C" not in initdb or "--lc-ctype=C" not in initdb:
             errors.append("Synapse must run on PostgreSQL: service 'synapse-db' must initialise the C collation Synapse requires")
-    for svc in services.values():
-        published = any(line.strip() in ("ports:", "network_mode: host") or line.strip().startswith("ports: ") for line in svc.raw_lines)
-        if published and svc.name not in PUBLISHING_SERVICES:
-            errors.append(
-                f"service '{svc.name}' must not publish a port: it is reached through Caddy only"
-                + (", and its listener believes the address Caddy forwards" if svc.name == "synapse" else "")
-            )
+    errors.extend(compose_structure_errors(compose_text))
     if "8448" in compose_text:
         errors.append("federation must be closed by default: docker-compose.yml must not publish the federation port 8448")
 
@@ -516,6 +513,164 @@ CLIENT_ADDRESS_OVERRIDE = "header_up X-Forwarded-For {remote_host}"
 STRIPPED_CLIENT_HEADERS = ("header_up -X-Real-IP", "header_up -Forwarded")
 PUBLISHING_SERVICES = frozenset({"caddy", "livekit"})
 
+# The Compose file is read without a YAML library (this script runs with the system Python, on
+# CI and on an operator's host), so it is held to the one shape the reader understands: block
+# mappings, two-space indentation, reviewed keys. Anything else is refused, never skipped.
+REVIEWED_TOP_LEVEL_KEYS = frozenset({"services", "volumes"})
+REVIEWED_SERVICE_KEYS = frozenset({
+    "mem_limit", "image", "build", "restart", "ports", "environment", "volumes", "depends_on",
+    "healthcheck", "command", "entrypoint", "profiles", "user",
+})
+BLOCK_ONLY_SERVICE_KEYS = frozenset({"build", "environment", "volumes", "depends_on", "healthcheck", "ports"})
+REVIEWED_BIND_MOUNTS = frozenset({
+    "./Caddyfile:/etc/caddy/Caddyfile:ro",
+    "./livekit.yaml:/etc/livekit.yaml:ro",
+    "./configure_synapse.py:/opt/community/configure_synapse.py:ro",
+    "../../packages/synapse-policy:/opt/kodera-policy:ro",
+})
+REVIEWED_BUILD_LINES = frozenset({
+    "context: ../../apps/server", "context: ../..",
+    "dockerfile: Dockerfile", "dockerfile: Dockerfile.migrator", "dockerfile: apps/web/Dockerfile",
+    "args:",
+})
+# livekit.yaml holds no credential (the keys arrive in LIVEKIT_KEYS) and opens no room on demand.
+REVIEWED_LIVEKIT_LINES = (
+    r"port: 7880", r"rtc:", r"  tcp_port: 7881", r"  port_range_start: 50000", r"  port_range_end: 50060",
+    r"  use_external_ip: true", r"room:", r"  auto_create: false", r"  empty_timeout: [1-9][0-9]{0,3}",
+    r"logging:", r"  level: (?:info|warn|error)",
+)
+YAML_INDIRECTION_RE = re.compile(r"(?:^|[\s\[{,])[&*][A-Za-z_][\w.-]*(?=$|[\s,\]}])|(?:^|[\s{,-])[\"']?<<[\"']?\s*:")
+YAML_BLOCK_SCALAR_RE = re.compile(r"(?::|-)\s*[|>][+-]?\d?$")
+
+
+def compose_structure_errors(compose_text: str) -> list[str]:
+    """Refuse every Compose construct the line reader cannot follow, and every service key that
+    was not reviewed. A host port or host networking is judged on the key, whatever its quoting
+    or form; anchors, aliases and merge keys are refused outright."""
+    errors: list[str] = []
+    top: str | None = None
+    service: str | None = None
+    section: str | None = None
+    awaiting_first_key = False
+    seen_services: set[str] = set()
+    scalar_indent: int | None = None
+
+    def where(number: int) -> str:
+        return f"docker-compose.yml line {number}"
+
+    for number, raw in enumerate(compose_text.splitlines(), start=1):
+        leading = raw[: len(raw) - len(raw.lstrip())]
+        if scalar_indent is not None:
+            if not raw.strip() or len(leading) > scalar_indent:
+                continue
+            scalar_indent = None
+        code = raw.split("#", 1)[0].rstrip()
+        if not code.strip():
+            continue
+        if "\t" in leading:
+            errors.append(f"{where(number)}: tab indentation is refused")
+            continue
+        indent = len(leading)
+        stripped = code.strip()
+        if YAML_INDIRECTION_RE.search(stripped):
+            errors.append(f"{where(number)}: YAML anchors, aliases and merge keys are refused: the gate cannot follow them")
+        if indent % 2:
+            errors.append(f"{where(number)}: indentation must be a multiple of two spaces")
+            continue
+        if YAML_BLOCK_SCALAR_RE.search(stripped):
+            scalar_indent = indent
+        if indent == 0:
+            key = stripped[:-1].strip("\"'") if stripped.endswith(":") else stripped
+            if not stripped.endswith(":") or key not in REVIEWED_TOP_LEVEL_KEYS:
+                errors.append(f"{where(number)}: unreviewed top-level key '{key.split(':', 1)[0]}'")
+                top = None
+            else:
+                top = key
+            service = section = None
+            continue
+        if top == "volumes":
+            if indent != 2 or not re.fullmatch(r"[a-z][a-z0-9_]*:", stripped):
+                errors.append(f"{where(number)}: a named volume is declared as 'name:' and nothing else")
+            continue
+        if top != "services":
+            continue
+        if indent == 2:
+            found = re.fullmatch(r"([a-z0-9][a-z0-9-]*):", stripped)
+            section = None
+            if not found:
+                errors.append(f"{where(number)}: unsupported service definition: a service is declared as 'name:' with its keys below")
+                service = None
+                continue
+            service = found.group(1)
+            if service in seen_services:
+                errors.append(f"{where(number)}: service '{service}' is defined twice")
+            seen_services.add(service)
+            awaiting_first_key = True
+            continue
+        if service is None:
+            continue
+        if awaiting_first_key and indent != 4:
+            errors.append(f"{where(number)}: service '{service}' must indent its keys by four spaces")
+        awaiting_first_key = False
+        if indent == 4:
+            found = re.fullmatch(r"""(["']?)([A-Za-z_][A-Za-z0-9_.-]*)\1\s*:(?:\s+(.*))?""", stripped)
+            if not found:
+                errors.append(f"{where(number)}: unreadable key in service '{service}'")
+                section = None
+                continue
+            key, value = found.group(2), found.group(3) or ""
+            section = key
+            if key == "network_mode":
+                errors.append(f"service '{service}' must not publish a port: network_mode is refused, every service stays on the stack's own network")
+            elif key not in REVIEWED_SERVICE_KEYS:
+                errors.append(f"service '{service}' uses an unreviewed key '{key}'")
+            elif key == "ports" and service not in PUBLISHING_SERVICES:
+                errors.append(
+                    f"service '{service}' must not publish a port: it is reached through Caddy only"
+                    + (", and its listener believes the address Caddy forwards" if service == "synapse" else "")
+                )
+            if value.startswith("{") or (key in BLOCK_ONLY_SERVICE_KEYS and value and not (key == "ports" and service not in PUBLISHING_SERVICES)):
+                errors.append(f"service '{service}' must write '{key}' in block form, one entry per line")
+            continue
+        if indent == 6 and section == "build":
+            if stripped not in REVIEWED_BUILD_LINES:
+                errors.append(f"service '{service}' builds from an unreviewed context or Dockerfile")
+        elif indent == 6 and section == "environment":
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]*:(?:\s.*)?", stripped):
+                errors.append(f"{where(number)}: service '{service}' environment must be a mapping of NAME: value")
+        elif indent == 6 and section == "volumes":
+            found = re.fullmatch(r"- (\S+)", stripped)
+            if not found:
+                errors.append(f"{where(number)}: service '{service}' volumes must be short 'source:target' entries")
+            elif not re.fullmatch(r"[a-z][a-z0-9_]*:/[A-Za-z0-9._/-]+", found.group(1)) and found.group(1) not in REVIEWED_BIND_MOUNTS:
+                errors.append(f"service '{service}' has an unreviewed bind mount (only the reviewed read-only mounts are admitted)")
+        elif indent == 6 and section == "ports":
+            if not re.fullmatch(r"""- ["']?[0-9][0-9:/a-z-]*["']?""", stripped):
+                errors.append(f"{where(number)}: service '{service}' ports must be short 'host:container' entries")
+    return errors
+
+
+def check_livekit_config(livekit_text: str) -> list[str]:
+    """livekit.yaml is exactly its reviewed settings: an inline key, a webhook or a room created
+    on demand is refused, like any setting the gate was not shown."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    for number, raw in enumerate(livekit_text.splitlines(), start=1):
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        pattern = next((p for p in REVIEWED_LIVEKIT_LINES if re.fullmatch(p, line)), None)
+        if pattern is None:
+            errors.append(f"livekit.yaml line {number}: unreviewed setting '{line.strip().split(':', 1)[0]}'")
+        elif pattern in seen:
+            errors.append(f"livekit.yaml line {number}: setting given twice")
+        else:
+            seen.add(pattern)
+    for pattern in REVIEWED_LIVEKIT_LINES:
+        if pattern not in seen:
+            errors.append(f"livekit.yaml misses the reviewed setting '{pattern.strip().split(':', 1)[0]}'")
+    return errors
+
 
 @dataclass
 class CaddyBlock:
@@ -524,16 +679,19 @@ class CaddyBlock:
     blocks: list["CaddyBlock"] = field(default_factory=list)
 
 
-def parse_caddyfile(caddyfile_text: str) -> CaddyBlock:
+def parse_caddyfile(caddyfile_text: str) -> tuple[CaddyBlock, list[str]]:
     """The Caddyfile as nested blocks: a line ending in `{` opens one, a lone `}` closes it."""
     root = CaddyBlock(header="")
     stack = [root]
+    errors: list[str] = []
     for raw in caddyfile_text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         if line == "}":
-            if len(stack) > 1:
+            if len(stack) == 1:
+                errors.append("Caddyfile closes a block that was never opened")
+            else:
                 stack.pop()
             continue
         if line.endswith("{"):
@@ -542,19 +700,40 @@ def parse_caddyfile(caddyfile_text: str) -> CaddyBlock:
             stack.append(block)
         else:
             stack[-1].lines.append(line)
-    return root
+    if len(stack) != 1:
+        errors.append("Caddyfile leaves a block open")
+    return root, errors
+
+
+REVIEWED_CADDY_GLOBAL_OPTIONS = ("email {$KODERA_ACME_EMAIL}",)
+REVIEWED_CADDY_SNIPPETS = {"client_address": (CLIENT_ADDRESS_OVERRIDE, *STRIPPED_CLIENT_HEADERS)}
+REVIEWED_CADDY_SITE = "{$KODERA_DOMAIN}"
+REVIEWED_CADDY_SITE_LINES = frozenset({"encode zstd gzip"})
+REVIEWED_CADDY_RESPONSE_HEADERS = (
+    'Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"',
+    'X-Content-Type-Options "nosniff"',
+    'X-Frame-Options "DENY"',
+    'Referrer-Policy "strict-origin-when-cross-origin"',
+)
+REVIEWED_CADDY_REWRITES = {"rewrite * /token": "room-access:8095"}
+
+
+def _directive(line: str) -> str:
+    """The first word of a line: errors name the directive, never the rest of the line."""
+    return line.split()[0] if line.split() else ""
 
 
 def check_caddy_routes(caddyfile_text: str) -> list[str]:
-    """Every route Caddy proxies is on the reviewed list, and Caddy alone names the client.
+    """Hold the Caddyfile to its reviewed shape, and refuse everything else by name.
 
-    The agent API and Matrix federation, key and admin routes are refused by name. Synapse
-    believes X-Forwarded-For on the listener Caddy targets, so every upstream must receive that
-    header overwritten with the peer address, and no `trusted_proxies` may make Caddy believe a
-    client-supplied value instead.
+    One global options block, the `client_address` snippet, one site block for
+    `{$KODERA_DOMAIN}`. In it, every `handle` uses a named path matcher of that same block, and
+    proxies one reviewed upstream with X-Forwarded-For overwritten by the peer address. The
+    agent API and Matrix federation, key and admin routes are refused; so are `trusted_proxies`,
+    an `import` of anything but a snippet of this file, and any directive that was not reviewed:
+    the gate does not skip what it does not understand.
     """
-    errors: list[str] = []
-    root = parse_caddyfile(caddyfile_text)
+    root, errors = parse_caddyfile(caddyfile_text)
     code = "\n".join(line for line in caddyfile_text.splitlines() if not line.strip().startswith("#"))
     if "trusted_proxies" in code:
         errors.append(
@@ -562,79 +741,136 @@ def check_caddy_routes(caddyfile_text: str) -> list[str]:
             "so a forwarded client address is never believed"
         )
     snippets = {
-        block.header[1:-1]: block.lines
+        block.header[1:-1]: block
         for block in root.blocks
         if block.header.startswith("(") and block.header.endswith(")")
     }
 
+    def refuse_import(line: str) -> None:
+        argument = line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""
+        errors.append(
+            f"Caddyfile import '{argument}' is not a snippet defined in this file: "
+            "directives pulled from another file are never checked"
+        )
+
     def walk(block: CaddyBlock) -> list[CaddyBlock]:
         return [block] + [found for child in block.blocks for found in walk(child)]
 
-    everything = walk(root)
-    matchers: dict[str, list[str]] = {}
-    for block in everything:
+    for block in walk(root):
         for line in block.lines:
-            found = re.fullmatch(r"@([a-z_]+)[ \t]+path[ \t]+(.+)", line)
-            if found:
-                matchers[found.group(1)] = found.group(2).split()
+            if _directive(line) == "import" and line.split()[1:] not in ([name] for name in snippets):
+                refuse_import(line)
 
-    def upstreams_of(handle: CaddyBlock) -> list[tuple[str, list[str]]]:
-        """Each reverse_proxy of a handle with its directives, imports expanded."""
-        found: list[tuple[str, list[str]]] = []
-        for line in handle.lines:
-            if line.startswith("reverse_proxy"):
-                found.extend((upstream, []) for upstream in line.split()[1:])
-        for child in handle.blocks:
-            if child.header.startswith("reverse_proxy"):
-                directives: list[str] = []
-                for line in child.lines:
-                    imported = re.fullmatch(r"import[ \t]+([a-z_]+)", line)
-                    directives.extend(snippets.get(imported.group(1), []) if imported else [line])
-                found.extend((upstream, directives) for upstream in child.header.split()[1:])
-        return found
+    for line in root.lines:
+        errors.append(f"Caddyfile has an unreviewed directive outside every block: '{_directive(line)}'")
+    sites: list[CaddyBlock] = []
+    for position, block in enumerate(root.blocks):
+        if block.header == "":
+            if position != 0 or block.blocks or tuple(block.lines) != REVIEWED_CADDY_GLOBAL_OPTIONS:
+                errors.append("Caddyfile global options differ from the reviewed ones (the ACME contact only)")
+        elif block.header.startswith("("):
+            name = block.header[1:-1] if block.header.endswith(")") else block.header
+            if block.blocks or sorted(block.lines) != sorted(REVIEWED_CADDY_SNIPPETS.get(name, ("",))):
+                errors.append(f"Caddyfile snippet '{name}' differs from the reviewed one")
+        else:
+            sites.append(block)
+    if [site.header for site in sites] != [REVIEWED_CADDY_SITE]:
+        errors.append(f"Caddyfile must hold exactly one site block, for {REVIEWED_CADDY_SITE} (found {len(sites)})")
 
     proxied = 0
-    for handle in everything:
-        if handle.header != "handle" and not handle.header.startswith("handle "):
-            continue
-        matcher = handle.header.removeprefix("handle").strip().removeprefix("@")
-        for upstream, directives in upstreams_of(handle):
-            proxied += 1
-            forwarded = [line for line in directives if re.match(r"header_up[ \t]+[+-]?X-Forwarded-For\b", line, re.IGNORECASE)]
-            if forwarded != [CLIENT_ADDRESS_OVERRIDE]:
-                errors.append(
-                    f"Caddyfile must overwrite X-Forwarded-For with the peer address for '{upstream}' "
-                    f"(exactly '{CLIENT_ADDRESS_OVERRIDE}'): a client-supplied value must never reach an upstream"
-                )
-            for stripped in STRIPPED_CLIENT_HEADERS:
-                if stripped not in directives:
-                    errors.append(f"Caddyfile must drop the client-supplied header for '{upstream}': '{stripped}'")
-            if not matcher:
-                if upstream != CATCH_ALL_UPSTREAM:
-                    errors.append(f"Caddyfile catch-all must proxy to '{CATCH_ALL_UPSTREAM}' only (got '{upstream}')")
-                continue
-            allowed = ALLOWED_PUBLIC_ROUTES.get(upstream)
-            if allowed is None:
-                errors.append(f"Caddyfile proxies '@{matcher}' to an unreviewed upstream '{upstream}'")
-                continue
-            if matcher not in matchers:
-                errors.append(f"Caddyfile handle '@{matcher}' has no path matcher")
-                continue
-            for path in matchers[matcher]:
-                if path in allowed:
-                    continue
-                if upstream == "server:8000" and path.startswith("/agent"):
-                    errors.append(f"Caddyfile must not expose the agent API to the internet (got '{path}')")
-                elif upstream == "synapse:8008":
-                    errors.append(
-                        "federation must be closed by default: Caddyfile must route only the Matrix client API, "
-                        f"never federation, key or admin routes (got '{path}')"
-                    )
+    for site in sites:
+        # Matchers belong to their site block: one block never answers for another.
+        matchers: dict[str, list[str]] = {}
+        for line in site.lines:
+            if line.startswith("@"):
+                found = re.fullmatch(r"@([a-z_]+)[ \t]+path[ \t]+(\S.*)", line)
+                if not found:
+                    errors.append(f"Caddyfile matcher '{_directive(line)}' must be a single-line path matcher")
+                elif found.group(1) in matchers:
+                    errors.append(f"Caddyfile defines the matcher '@{found.group(1)}' twice in one site block")
                 else:
-                    errors.append(f"Caddyfile exposes an unreviewed route to '{upstream}': '{path}'")
+                    matchers[found.group(1)] = found.group(2).split()
+            elif _directive(line) == "import":
+                errors.append("Caddyfile imports a snippet outside a reverse_proxy block, where it was not reviewed")
+            elif line not in REVIEWED_CADDY_SITE_LINES:
+                errors.append(f"Caddyfile has an unreviewed directive in a site block: '{_directive(line)}'")
+        for block in site.blocks:
+            if block.header == "header":
+                if block.blocks or tuple(block.lines) != REVIEWED_CADDY_RESPONSE_HEADERS:
+                    errors.append("Caddyfile response headers differ from the reviewed set")
+                continue
+            if block.header.startswith("@"):
+                errors.append(f"Caddyfile matcher '{_directive(block.header)}' must be a single-line path matcher")
+                continue
+            handle = re.fullmatch(r"handle(?:[ \t]+@([a-z_]+))?", block.header)
+            if not handle:
+                errors.append(f"Caddyfile has an unreviewed block in a site block: '{_directive(block.header)}'")
+                # Still count what it proxies, so that the route is reported as unreviewed too.
+            matcher = handle.group(1) if handle else None
+            upstreams: list[tuple[str, list[str]]] = []
+            for line in block.lines:
+                if _directive(line) == "reverse_proxy":
+                    upstreams.extend((upstream, []) for upstream in line.split()[1:])
+                elif _directive(line) == "import":
+                    errors.append("Caddyfile imports a snippet outside a reverse_proxy block, where it was not reviewed")
+                elif line not in ("respond 404", *REVIEWED_CADDY_REWRITES):
+                    errors.append(f"Caddyfile has an unreviewed directive in a handle: '{_directive(line)}'")
+            for child in block.blocks:
+                words = child.header.split()
+                if words[:1] != ["reverse_proxy"] or len(words) != 2 or child.blocks:
+                    errors.append(f"Caddyfile has an unreviewed block in a handle: '{_directive(child.header)}'")
+                    upstreams.extend((upstream, []) for upstream in words[1:] if words[:1] == ["reverse_proxy"])
+                    continue
+                directives: list[str] = []
+                for line in child.lines:
+                    if _directive(line) == "import":
+                        name = line.split()[1:]
+                        directives.extend(snippets[name[0]].lines if len(name) == 1 and name[0] in snippets else [])
+                    elif line in (CLIENT_ADDRESS_OVERRIDE, *STRIPPED_CLIENT_HEADERS) or re.match(r"header_up[ \t]+[+-]?X-Forwarded-For\b", line, re.IGNORECASE):
+                        directives.append(line)
+                    else:
+                        errors.append(f"Caddyfile has an unreviewed reverse_proxy option for '{words[1]}': '{' '.join(line.split()[:2])}'")
+                upstreams.append((words[1], directives))
+            for rewrite, only_for in REVIEWED_CADDY_REWRITES.items():
+                if rewrite in block.lines and [upstream for upstream, _ in upstreams] != [only_for]:
+                    errors.append(f"Caddyfile rewrites a path in a handle that is not the reviewed one ('{rewrite}' is for {only_for} only)")
+            for upstream, directives in upstreams:
+                proxied += 1
+                forwarded = [line for line in directives if re.match(r"header_up[ \t]+[+-]?X-Forwarded-For\b", line, re.IGNORECASE)]
+                if forwarded != [CLIENT_ADDRESS_OVERRIDE]:
+                    errors.append(
+                        f"Caddyfile must overwrite X-Forwarded-For with the peer address for '{upstream}' "
+                        f"(exactly '{CLIENT_ADDRESS_OVERRIDE}'): a client-supplied value must never reach an upstream"
+                    )
+                for stripped in STRIPPED_CLIENT_HEADERS:
+                    if stripped not in directives:
+                        errors.append(f"Caddyfile must drop the client-supplied header for '{upstream}': '{stripped}'")
+                if handle and matcher is None:
+                    if upstream != CATCH_ALL_UPSTREAM:
+                        errors.append(f"Caddyfile catch-all must proxy to '{CATCH_ALL_UPSTREAM}' only (got '{upstream}')")
+                    continue
+                allowed = ALLOWED_PUBLIC_ROUTES.get(upstream)
+                if allowed is None:
+                    errors.append(f"Caddyfile proxies '{block.header}' to an unreviewed upstream '{upstream}'")
+                    continue
+                if matcher not in matchers:
+                    errors.append(f"Caddyfile handle '{block.header}' has no path matcher in its own site block")
+                    continue
+                for path in matchers[matcher]:
+                    if path in allowed:
+                        continue
+                    if upstream == "server:8000" and path.startswith("/agent"):
+                        errors.append(f"Caddyfile must not expose the agent API to the internet (got '{path}')")
+                    elif upstream == "synapse:8008":
+                        errors.append(
+                            "federation must be closed by default: Caddyfile must route only the Matrix client API, "
+                            f"never federation, key or admin routes (got '{path}')"
+                        )
+                    else:
+                        errors.append(f"Caddyfile exposes an unreviewed route to '{upstream}': '{path}'")
     if proxied != len(re.findall(r"(?m)^[ \t]*reverse_proxy[ \t]", code)):
         errors.append("Caddyfile has a reverse_proxy outside a reviewed handle block")
-    return errors
+    return list(dict.fromkeys(errors))
 
 
 def check_synapse_policy_source(source: str) -> list[str]:
@@ -902,22 +1138,57 @@ def check_scaffolder_parity(manifest: object, sources: dict[str, str], assets: d
     return errors
 
 
-def read_scaffolder_state() -> tuple[object, dict[str, str], dict[str, str]]:
-    def texts(paths: list[Path]) -> dict[str, str]:
-        return {path.name: path.read_text(encoding="utf-8") for path in paths if path.is_file()}
-
+def read_regular_file(path: Path) -> str | None:
+    """The text of a regular file, or None. A symbolic link is never followed: a link could
+    make the gate read, and quote in its messages, a file outside the repository."""
     try:
-        manifest: object = json.loads((SCAFFOLDER_DIR / "assets.manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+            return None
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+        try:
+            return stream.read()
+        except UnicodeDecodeError:
+            return None
+
+
+def read_scaffolder_state(root: Path = ROOT) -> tuple[object, dict[str, str], dict[str, str], list[str]]:
+    """The manifest, the sources, the assets, and every entry that is not a regular file."""
+    refused: list[str] = []
+
+    def texts(paths: list[Path], label: str) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for path in paths:
+            if path.is_symlink():
+                refused.append(f"{label} is a symbolic link, which the gate does not follow: {path.name}")
+            elif path.exists():
+                text = read_regular_file(path)
+                if text is None:
+                    refused.append(f"{label} is not a regular UTF-8 file: {path.name}")
+                else:
+                    found[path.name] = text
+        return found
+
+    scaffolder = root / "packages" / "create-kodera"
+    manifest_text = read_regular_file(scaffolder / "assets.manifest.json")
+    try:
+        manifest: object = json.loads(manifest_text) if manifest_text is not None else None
+    except ValueError:
         manifest = None
-    sources = texts([ROOT / "deploy" / "community" / name for name in SCAFFOLDER_MANIFEST["files"]])
-    assets_dir = SCAFFOLDER_DIR / "assets"
-    return manifest, sources, texts(sorted(assets_dir.iterdir()) if assets_dir.is_dir() else [])
+    sources = texts([root / "deploy" / "community" / name for name in SCAFFOLDER_MANIFEST["files"]], "deploy/community file")
+    assets_dir = scaffolder / "assets"
+    if assets_dir.is_symlink():
+        refused.append("create-kodera assets directory is a symbolic link, which the gate does not follow")
+        return manifest, sources, {}, refused
+    assets = texts(sorted(assets_dir.iterdir()) if assets_dir.is_dir() else [], "create-kodera asset")
+    return manifest, sources, assets, refused
 
 
 def run_scaffolder_selftest() -> int:
-    manifest, sources, assets = read_scaffolder_state()
-    baseline = check_scaffolder_parity(manifest, sources, assets)
+    manifest, sources, assets, refused = read_scaffolder_state()
+    baseline = refused + check_scaffolder_parity(manifest, sources, assets)
     if baseline:
         for error in baseline:
             print(f"[FAIL] baseline scaffolder parity invalid: {error}", file=sys.stderr)
@@ -953,7 +1224,46 @@ def run_scaffolder_selftest() -> int:
         if expected not in check_scaffolder_parity(case_manifest, sources, case_assets):
             print(f"[FAIL] scaffolder mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
             return 1
-    print(f"OK: create-kodera assets match deploy/community, {len(cases)} drift mutations refused by name.")
+    # A symbolic link is refused by name, and nothing it points to is read or quoted.
+    marker = "OUTSIDE-FILE-CONTENT-MUST-NOT-BE-READ"
+    with tempfile.TemporaryDirectory(prefix="community-deploy-selftest-") as tmp:
+        outside = Path(tmp) / "outside.txt"
+        outside.write_text(f"@api path /agent/* {marker}\n", encoding="utf-8")
+        fixture = Path(tmp) / "repository"
+        (fixture / "deploy" / "community").mkdir(parents=True)
+        (fixture / "packages" / "create-kodera" / "assets").mkdir(parents=True)
+        (fixture / "packages" / "create-kodera" / "assets.manifest.json").write_text(json.dumps(SCAFFOLDER_MANIFEST), encoding="utf-8")
+        for name, text in sources.items():
+            (fixture / "deploy" / "community" / name).write_text(text, encoding="utf-8")
+            (fixture / "packages" / "create-kodera" / "assets" / name).write_text(derive_scaffolder_asset(name, text), encoding="utf-8")
+        state = read_scaffolder_state(fixture)
+        if state[3] or check_scaffolder_parity(*state[:3]):
+            print("[FAIL] scaffolder fixture must pass before a link is planted", file=sys.stderr)
+            return 1
+        planted = (
+            (fixture / "packages" / "create-kodera" / "assets" / "Caddyfile", "create-kodera asset is a symbolic link, which the gate does not follow: Caddyfile"),
+            (fixture / "deploy" / "community" / "Caddyfile", "deploy/community file is a symbolic link, which the gate does not follow: Caddyfile"),
+        )
+        for link, expected in planted:
+            original = link.read_text(encoding="utf-8")
+            link.unlink()
+            link.symlink_to(outside)
+            state = read_scaffolder_state(fixture)
+            got = state[3] + check_scaffolder_parity(*state[:3])
+            if expected not in got or any(marker in error for error in got) or marker in "".join(state[1].values()) + "".join(state[2].values()):
+                print(f"[FAIL] a symbolic link was followed or not refused by name: {expected}", file=sys.stderr)
+                return 1
+            link.unlink()
+            link.write_text(original, encoding="utf-8")
+        if read_regular_file(outside) is None or read_regular_file(fixture / "deploy") is not None:
+            print("[FAIL] read_regular_file must read a regular file and nothing else", file=sys.stderr)
+            return 1
+        link = fixture / "link-to-outside"
+        link.symlink_to(outside)
+        if read_regular_file(link) is not None:
+            print("[FAIL] read_regular_file followed a symbolic link", file=sys.stderr)
+            return 1
+    print(f"OK: create-kodera assets match deploy/community, {len(cases)} drift mutations and 3 symbolic links refused by name.")
     return 0
 
 
@@ -1251,6 +1561,120 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             lambda c, e, cf: (c, re.sub(r"(?m)^KODERA_AUTH_TRUST=.*$", "KODERA_AUTH_TRUST=[]", e, count=1), cf),
             "KODERA_AUTH_TRUST in .env.example must be a CHANGE_ME_ placeholder",
         ),
+    ]
+
+    # The gate refuses what it cannot follow. Each construct below would otherwise get past a
+    # reader that matches lines: a different quoting, an inline form, an indirection, another file.
+    synapse_head = "  synapse:\n    mem_limit: 1g\n"
+    server_edition = "      KODERA_EDITION: community\n"
+    site_open = "{$KODERA_DOMAIN} {\n"
+    api_matcher = "\t@api path /api/* /health/*\n"
+    api_proxy = "\t\treverse_proxy server:8000 {\n\t\t\timport client_address\n\t\t}\n"
+    shadow_site = (
+        "admin.example.org {\n\t@api path /agent/*\n\thandle @api {\n"
+        "\t\treverse_proxy server:8000 {\n\t\t\timport client_address\n\t\t}\n\t}\n}\n\n"
+    )
+
+    def compose_case(label: str, old: str, new: str, expected: str) -> tuple[str, MutationFn, str]:
+        return (label, lambda c, e, cf: (c.replace(old, new, 1), e, cf), expected)
+
+    def caddy_case(label: str, old: str, new: str, expected: str) -> tuple[str, MutationFn, str]:
+        return (label, lambda c, e, cf: (c, e, cf.replace(old, new, 1)), expected)
+
+    mutations += [
+        compose_case("host networking, quoted", synapse_head, synapse_head + '    network_mode: "host"\n',
+                     "service 'synapse' must not publish a port: network_mode is refused"),
+        compose_case("host networking through another service", synapse_head, synapse_head + "    network_mode: service:caddy\n",
+                     "service 'synapse' must not publish a port: network_mode is refused"),
+        compose_case("a port published in inline form", synapse_head, synapse_head + '    ports: ["8008:8008"]\n',
+                     "service 'synapse' must not publish a port: it is reached through Caddy only, and its listener believes"),
+        compose_case("a port published under a quoted key", synapse_head, synapse_head + '    "ports":\n      - "8008:8008"\n',
+                     "service 'synapse' must not publish a port: it is reached through Caddy only, and its listener believes"),
+        (
+            "a port published through a merge key",
+            lambda c, e, cf: (
+                c.replace("services:\n", 'x-published: &published\n  ports:\n    - "8008:8008"\n\nservices:\n', 1)
+                .replace(synapse_head, synapse_head + "    <<: *published\n", 1), e, cf,
+            ),
+            "YAML anchors, aliases and merge keys are refused",
+        ),
+        compose_case("an alias without a merge key", server_edition, server_edition + "      KODERA_EXTRA: *shared\n",
+                     "YAML anchors, aliases and merge keys are refused"),
+        compose_case("an anchor on a service", "\n  server:\n    mem_limit", "\n  server: &api\n    mem_limit", "YAML anchors, aliases and merge keys are refused"),
+        compose_case("an unreviewed extension field", "services:\n", 'x-defaults:\n  restart: always\n\nservices:\n',
+                     "unreviewed top-level key 'x-defaults'"),
+        compose_case("another Compose file is included", "services:\n", "include:\n  - extra.yml\n\nservices:\n",
+                     "unreviewed top-level key 'include'"),
+        compose_case("secrets loaded from a file into the API", "  server:\n    mem_limit: 768m\n", "  server:\n    mem_limit: 768m\n    env_file: .env\n",
+                     "service 'server' uses an unreviewed key 'env_file'"),
+        compose_case("a service extends another file", synapse_head, synapse_head + "    extends:\n      file: extra.yml\n      service: synapse\n",
+                     "service 'synapse' uses an unreviewed key 'extends'"),
+        compose_case("a privileged service", synapse_head, synapse_head + "    privileged: true\n",
+                     "service 'synapse' uses an unreviewed key 'privileged'"),
+        compose_case("a service written in flow form", "\n" + synapse_head, '\n  extra: {image: "postgres:17", ports: ["5432:5432"]}\n\n' + synapse_head,
+                     "unsupported service definition"),
+        compose_case("an environment written in flow form", "    environment:\n" + server_edition, "    environment: {KODERA_EDITION: community}\n",
+                     "service 'server' must write 'environment' in block form"),
+        compose_case("an environment written as a list", server_edition, server_edition + "      - EXTRA_TOKEN=${EXTRA_TOKEN}\n",
+                     "environment must be a mapping of NAME: value"),
+        compose_case("a key hidden by odd indentation", synapse_head, synapse_head + '     ports:\n       - "8008:8008"\n',
+                     "indentation must be a multiple of two spaces"),
+        compose_case("a service whose keys sit one level too deep", "\n" + synapse_head, '\n  extra:\n      image: postgres:17\n      ports:\n        - "5432:5432"\n\n' + synapse_head,
+                     "service 'extra' must indent its keys by four spaces"),
+        compose_case("a service defined twice", "\n  livekit:\n    mem_limit", '\n  synapse:\n    image: example/other:1\n\n  livekit:\n    mem_limit',
+                     "service 'synapse' is defined twice"),
+        compose_case("the Docker socket mounted into Synapse", "      - synapse_data:/data\n", "      - synapse_data:/data\n      - /var/run/docker.sock:/var/run/docker.sock\n",
+                     "service 'synapse' has an unreviewed bind mount"),
+        compose_case("a reviewed mount made writable", "/opt/kodera-policy:ro\n", "/opt/kodera-policy\n",
+                     "service 'synapse' has an unreviewed bind mount"),
+        compose_case("a volume in long form", "      - synapse_data:/data\n", "      - type: bind\n        source: /\n        target: /host\n",
+                     "volumes must be short 'source:target' entries"),
+        compose_case("tab indentation", synapse_head, synapse_head + "\tports:\n", "tab indentation is refused"),
+        compose_case("an image built from somewhere else", "      context: ../..\n", "      context: https://example.org/other.git\n",
+                     "service 'web' builds from an unreviewed context or Dockerfile"),
+        compose_case("the API built from another Dockerfile", "      dockerfile: Dockerfile\n    restart: unless-stopped\n    environment:\n      KODERA_EDITION", "      dockerfile: Dockerfile.debug\n    restart: unless-stopped\n    environment:\n      KODERA_EDITION",
+                     "service 'server' builds from an unreviewed context or Dockerfile"),
+        caddy_case("a second site block shadows a matcher name and exposes the agent API", site_open, shadow_site + site_open,
+                   "Caddyfile must not expose the agent API to the internet (got '/agent/*')"),
+        caddy_case("a second site block", site_open, shadow_site + site_open, "Caddyfile must hold exactly one site block"),
+        caddy_case("a matcher defined twice in one site block", api_matcher, api_matcher + "\t@api path /agent/*\n",
+                   "Caddyfile defines the matcher '@api' twice in one site block"),
+        caddy_case("a matcher in block form", api_matcher, "\t@api {\n\t\tpath /api/* /health/* /agent/*\n\t}\n",
+                   "Caddyfile matcher '@api' must be a single-line path matcher"),
+        caddy_case("a matcher that is not a path matcher", api_matcher, "\t@api not path /nothing\n",
+                   "Caddyfile matcher '@api' must be a single-line path matcher"),
+        caddy_case("a handle with an inline path", "\thandle @api {\n", "\thandle /agent/* {\n",
+                   "Caddyfile has an unreviewed block in a site block: 'handle'"),
+        caddy_case("directives imported from another file", site_open, site_open + "\timport extra.caddy\n",
+                   "Caddyfile import 'extra.caddy' is not a snippet defined in this file"),
+        caddy_case("site blocks imported from a directory", site_open, "import sites/*\n\n" + site_open,
+                   "Caddyfile import 'sites/*' is not a snippet defined in this file"),
+        caddy_case("an unknown snippet imported into an upstream", api_proxy, api_proxy.replace("import client_address", "import client_address\n\t\t\timport upstream_options"),
+                   "Caddyfile import 'upstream_options' is not a snippet defined in this file"),
+        caddy_case("a file imported inside a handle", "\thandle @api {\n", "\thandle @api {\n\t\timport /etc/caddy/extra\n",
+                   "Caddyfile import '/etc/caddy/extra' is not a snippet defined in this file"),
+        caddy_case("a snippet imported where it was not reviewed", site_open, site_open + "\timport client_address\n",
+                   "Caddyfile imports a snippet outside a reverse_proxy block"),
+        caddy_case("an allowed path rewritten onto the agent API", "\thandle @api {\n", "\thandle @api {\n\t\trewrite * /agent/v1/commands\n",
+                   "Caddyfile has an unreviewed directive in a handle: 'rewrite'"),
+        caddy_case("the reviewed rewrite moved to the API", "\thandle @api {\n", "\thandle @api {\n\t\trewrite * /token\n",
+                   "Caddyfile rewrites a path in a handle that is not the reviewed one"),
+        caddy_case("a prefix-stripping handle", "\thandle @api {\n" + api_proxy + "\t}\n", "\thandle_path /internal/* {\n" + api_proxy + "\t}\n",
+                   "Caddyfile has an unreviewed block in a site block: 'handle_path'"),
+        caddy_case("an upstream option that was not reviewed", "\t\t\timport client_address\n\t\t}\n\t}\n\n\t@room_access", "\t\t\timport client_address\n\t\t\theader_up Host internal.example.org\n\t\t}\n\t}\n\n\t@room_access",
+                   "Caddyfile has an unreviewed reverse_proxy option for 'server:8000': 'header_up Host'"),
+        caddy_case("the snippet gains a directive", "\theader_up -Forwarded\n", "\theader_up -Forwarded\n\theader_up X-Internal-Token secret\n",
+                   "Caddyfile snippet 'client_address' differs from the reviewed one"),
+        caddy_case("a security response header is dropped", '\t\tX-Frame-Options "DENY"\n', "",
+                   "Caddyfile response headers differ from the reviewed set"),
+        caddy_case("Caddy's admin API is opened", "\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tadmin 0.0.0.0:2019\n",
+                   "Caddyfile global options differ from the reviewed ones"),
+        caddy_case("a directive outside every block", site_open, "debug\n\n" + site_open,
+                   "Caddyfile has an unreviewed directive outside every block: 'debug'"),
+        caddy_case("an unreviewed directive in the site block", "\tencode zstd gzip\n", "\tencode zstd gzip\n\tfile_server browse\n",
+                   "Caddyfile has an unreviewed directive in a site block: 'file_server'"),
+        caddy_case("a block left open", "\t\trespond 404\n\t}\n\n\t@api", "\t\trespond 404\n\n\t@api",
+                   "Caddyfile leaves a block open"),
     ]
 
     for guard in (
@@ -1699,21 +2123,27 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    texts: dict[str, str] = {}
     for path, label in (
         (args.compose, "docker-compose.yml"),
         (args.env_example, ".env.example"),
         (args.caddyfile, "Caddyfile"),
+        (ROOT / "deploy/community/configure_synapse.py", "configure_synapse.py"),
+        (ROOT / "deploy/community/livekit.yaml", "livekit.yaml"),
     ):
-        if not path.is_file():
-            print(f"[FAIL] {label} not found: {path}", file=sys.stderr)
+        text = read_regular_file(path)
+        if text is None:
+            reason = "is a symbolic link, which the gate does not follow" if path.is_symlink() else "is not a readable regular file"
+            print(f"[FAIL] {label} {reason}: {path}", file=sys.stderr)
             return 1
+        texts[label] = text
 
-    compose_text = args.compose.read_text(encoding="utf-8")
-    env_text = args.env_example.read_text(encoding="utf-8")
-    caddyfile_text = args.caddyfile.read_text(encoding="utf-8")
-
-    policy_source = (ROOT / "deploy/community/configure_synapse.py").read_text(encoding="utf-8")
-    source_errors = check_synapse_policy_source(policy_source) + check_synapse_config(policy_source)
+    compose_text = texts["docker-compose.yml"]
+    env_text = texts[".env.example"]
+    caddyfile_text = texts["Caddyfile"]
+    policy_source = texts["configure_synapse.py"]
+    livekit_text = texts["livekit.yaml"]
+    source_errors = check_synapse_policy_source(policy_source) + check_synapse_config(policy_source) + check_livekit_config(livekit_text)
     if source_errors:
         for error in source_errors:
             print("[FAIL] " + error, file=sys.stderr)
@@ -1723,6 +2153,19 @@ def main() -> int:
             if not check_synapse_policy_source(policy_source.replace(guard, "removed")):
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1
+        livekit_mutations = (
+            ("an API key written into the file", "port: 7880\n", "port: 7880\nkeys:\n  devkey: devsecret\n", "livekit.yaml line 2: unreviewed setting 'keys'"),
+            ("rooms created on demand", "auto_create: false", "auto_create: true", "unreviewed setting 'auto_create'"),
+            ("a webhook to an unreviewed receiver", "logging:\n", "webhook:\n  urls: [https://example.org/hook]\nlogging:\n", "unreviewed setting 'webhook'"),
+            ("the media port range widened", "port_range_end: 50060", "port_range_end: 65535", "unreviewed setting 'port_range_end'"),
+            ("a reviewed setting removed", "  use_external_ip: true\n", "", "livekit.yaml misses the reviewed setting 'use_external_ip'"),
+            ("a setting overridden further down", "logging:\n", "port: 7880\nlogging:\n", "setting given twice"),
+        )
+        for label, old, new, expected in livekit_mutations:
+            if old not in livekit_text or not any(expected in error for error in check_livekit_config(livekit_text.replace(old, new, 1))):
+                print(f"[FAIL] livekit.yaml mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
+                return 1
+        print(f"OK: livekit.yaml is its reviewed settings, {len(livekit_mutations)} mutations refused by name.")
         return (
             run_synapse_config_selftest(policy_source)
             or run_scaffolder_selftest()
@@ -1730,18 +2173,24 @@ def main() -> int:
         )
 
     errors = check_community_deploy(compose_text, env_text, caddyfile_text)
-    errors += check_scaffolder_parity(*read_scaffolder_state())
+    scaffolder_state = read_scaffolder_state()
+    errors += scaffolder_state[3] + check_scaffolder_parity(*scaffolder_state[:3])
     if args.preflight is not None:
         if not args.preflight.is_file():
             print(f"[FAIL] .env not found: {args.preflight}", file=sys.stderr)
             return 1
-        errors += [f".env: {err}" for err in preflight_env(env_text, args.preflight.read_text(encoding="utf-8"))]
+        try:
+            operator_env = args.preflight.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            print("[FAIL] .env is not UTF-8 text", file=sys.stderr)
+            return 1
+        errors += [f".env: {err}" for err in preflight_env(env_text, operator_env)]
     if errors:
         for err in errors:
             print(f"[FAIL] {err}", file=sys.stderr)
         return 1
 
-    print("OK: deploy/community passed all compose, .env.example, Caddyfile, Synapse and scaffolder parity checks.")
+    print("OK: deploy/community passed all compose, .env.example, Caddyfile, LiveKit, Synapse and scaffolder parity checks.")
     return 0
 
 
