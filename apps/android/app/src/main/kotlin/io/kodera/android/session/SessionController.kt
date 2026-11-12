@@ -51,7 +51,7 @@ sealed interface MemberState {
     /**
      * Core answered 403. Core gives the same generic `forbidden` to an owner whose claim is not finished yet
      * and to anyone without an active membership, so the app cannot tell them apart and does not guess: one
-     * state, which offers the Console, Check again and sign-out. Finishing a claim in the Console changes Core's
+     * state, which offers Check again and sign-out, and no link out of the app. Finishing a claim on the web changes Core's
      * answer, so `/me` is fetched again when the app returns to the foreground and on Check again
      * ([SessionController.checkMemberAgain]), never on its own.
      */
@@ -146,7 +146,7 @@ class SessionController internal constructor(
     val signInConfigured: Boolean get() = service != null
     val canSignIn: Boolean get() = !closed && service != null && phase == SessionPhase.SignedOut
     val developmentIssuer: String? get() = deployment.developmentIssuer
-    /** The Console origin a member with no organisation yet is offered; null when this build names none. */
+    /** The validated Console origin this build names, or null. Held only: no screen opens it. */
     val consoleOrigin: String? get() = deployment.consoleOrigin
 
     init {

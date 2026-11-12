@@ -58,12 +58,9 @@
     <string name="session_retry">Réessayer</string>
     <string name="session_sign_out">Se déconnecter</string>
     <string name="session_sign_out_hint">Vous déconnecte de l’application Kodera sur tous vos appareils Android.</string>
-    <string name="session_no_organisation">Vous n’avez pas encore accès à une organisation. Si l’on vous a demandé d’en configurer une, terminez dans la Console.</string>
-    <string name="session_open_console">Ouvrir la Console</string>
-    <string name="session_open_console_hint">Ouvre la Console Kodera dans votre navigateur.</string>
+    <string name="session_no_organisation">Vous n’avez pas encore accès à une organisation. Si l’on vous a demandé d’en configurer une, terminez sur le web, puis vérifiez à nouveau ici.</string>
     <string name="session_check_again">Vérifier à nouveau</string>
     <string name="session_check_again_hint">Vérifie si votre accès à une organisation est prêt.</string>
-    <string name="session_console_unavailable">Aucun navigateur ne peut ouvrir la Console sur cet appareil.</string>
 
     <!-- Read-only organisation channel metadata; no channel actions. -->
     <string name="workspace_title">Canaux de l’organisation</string>
@@ -87,15 +84,17 @@
     <string name="workspace_room_ready">Salle associée</string>
     <string name="workspace_room_failed">La préparation de la salle n’a pas abouti.</string>
     <string name="workspace_channel_archived">Archivé</string>
-    <string name="emergency_title">around-me — à proximité</string>
-    <string name="emergency_scope">Les pointages sont signés, mais leur contenu reste lisible. La réception par les autres appareils et l’arrivée de secours ne sont pas garanties.</string>
-    <string name="emergency_unprovisioned">Cet appareil n’est pas provisionné pour le relais de secours de votre organisation. Aucun pointage ne peut être envoyé ici.</string>
-    <string name="emergency_safe">En sécurité</string>
-    <string name="emergency_need_assistance">Besoin d’aide</string>
-    <string name="emergency_muster_point">Point de rassemblement</string>
-    <string name="emergency_queued">Pointage préparé dans la file locale. Réception non confirmée.</string>
-    <string name="emergency_failed">Le pointage n’a pas pu être préparé. Réessayez.</string>
-    <string name="emergency_crypto_unavailable">La vérification cryptographique requise n’est pas disponible sur cet appareil. Le relais reste désactivé.</string>
+    <string name="proximity_title">#proximité</string>
+    <string name="proximity_notice">#proximité n’est pas un service d’urgence. En cas d’urgence, appelez le numéro d’urgence de votre pays.</string>
+    <string name="proximity_scope">Le pointage est volontaire et s’affiche sous un pseudonyme, jamais sous votre nom. Les pointages sont signés, mais leur contenu reste lisible. La réception par les autres appareils et l’arrivée d’une aide ne sont pas garanties.</string>
+    <string name="proximity_shown_as">Vous apparaissez sous le pseudonyme %1$s.</string>
+    <string name="proximity_unprovisioned">Cet appareil n’est pas provisionné pour le relais de proximité de votre organisation. Aucun pointage ne peut être envoyé ici.</string>
+    <string name="proximity_safe">En sécurité</string>
+    <string name="proximity_need_assistance">Besoin d’aide</string>
+    <string name="proximity_muster_point">Point de rassemblement</string>
+    <string name="proximity_queued">Pointage préparé dans la file locale. Réception non confirmée.</string>
+    <string name="proximity_failed">Le pointage n’a pas pu être préparé. Réessayez.</string>
+    <string name="proximity_crypto_unavailable">La vérification cryptographique requise n’est pas disponible sur cet appareil. Le relais reste désactivé.</string>
     <string name="voice_title">Commandes audio</string>
     <string name="voice_unprovisioned">Le transport audio en direct n’est pas configuré dans cette version. Aucun microphone n’est capturé et aucun son distant n’est transmis ni lu.</string>
     <string name="voice_unavailable">Les commandes audio sont indisponibles tant qu’aucun aperçu local n’est fourni.</string>
