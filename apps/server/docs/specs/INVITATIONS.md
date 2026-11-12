@@ -14,7 +14,8 @@ the Console already calls them.
    valid for 14 days, and one *realm account delivery*.
 2. The realm worker (`run_realm_deliveries`) finds the account holding that address in the
    organisation's realm. If there is none, it creates it, with the required actions
-   `VERIFY_EMAIL`, `UPDATE_PASSWORD` and `CONFIGURE_TOTP`. While any action is pending, it has the
+   `VERIFY_EMAIL` and `UPDATE_PASSWORD`. Ordinary invitation provisioning does not force
+   `CONFIGURE_TOTP`; enrollment remains optional. While any action is pending, it has the
    realm mail the person a set-up link. It records the account's id.
 3. The invitation mail run (`send_invitations`) enqueues the `invitation` template through the
    outbox. Its expiry reads in Paris time and the mail's language (« 7 novembre 2026 à 15 h 32 »),
@@ -22,9 +23,10 @@ the Console already calls them.
    organisation's locator, like the owner claim link:
    `<KODERA_INVITATION_LINK>/<organisation id>/<slug>#<token>`. The Console discovers the realm
    from the slug before sign-in. Just above the link, it tells the person to open the realm's
-   set-up mail (« Configurer votre compte Kodera ») first, with their phone ready for the one-time
-   code; the owner claim mail says the same. `run_deliveries` sends it.
-4. The person completes the set-up mail (verify, password, one-time code), opens the invitation
+   set-up mail (« Configurer votre compte Kodera ») first to verify email and choose a password.
+   It describes TOTP as optional; the owner-claim mail separately requires enrollment and a fresh
+   OTP login before ownership consumption. `run_deliveries` sends it.
+4. The person completes the set-up mail (verify email and password), opens the invitation
    link, and signs in to the realm. The Console posts the token to `previewInvitation` to show the
    card (who invited them, to which organisation, with which role, until when), then, when the
    person accepts, to `acceptInvitation`.
@@ -210,12 +212,17 @@ representation.
 
 ## 5. Identity
 
-Every sign-in to an organisation realm passes the one-time code, whatever the account's required
-actions: the realm's browser flow has the code form `REQUIRED`, with only the session cookie as an
-alternative path. So an invitee whose account existed already, with no action pending, still signs
-in with their code. `dev/e2e/make_trust.py check_realm` refuses a realm that weakens this
-(an optional code, a conditional step, a password-only path); the production realm template lives
-in identity realm tooling.
+Account provisioning and privileged authorization are separate boundaries. Ordinary invitation
+setup requires verified email and a password without forcing TOTP enrollment. The canonical
+Community realm uses conditional OTP: enrolled users receive the challenge, while ordinary
+signup does not require enrollment. Identity realm tooling owns that browser-flow policy.
+Staff writes and owner-claim consumption retain their mandatory MFA, current-factor, recent-login
+and replay authorization checks. Tenant-administrator MFA requirements remain in the accepted
+identity ADRs; optional ordinary enrollment does not waive them.
+
+The older isolated `dev/e2e` realm fixture still has an unconditional OTP form and its
+`make_trust.py check_realm` rejects a weakened fixture. That fixture's stronger login policy is
+not the canonical Community signup policy and is not evidence that ordinary users must enroll.
 
 `apps/identity/invited.py` creates the person (`identity_user`) and their realm identity, bound to
 the organisation's issuer and realm, with the invitation's address as the contact. The orgs app
@@ -266,7 +273,7 @@ The API role gets nothing on the realm, and no outbox seal key.
 - The real-stack run: Core, Keycloak, Mailpit and the operator runs in `dev/e2e/`.
   1. The owner invites.
   2. Both mails arrive.
-  3. The invitee completes password and TOTP, then accepts.
+  3. The invitee completes password and the isolated fixture’s required TOTP, then accepts.
   4. `/me` shows the membership.
   5. A removal disables the realm user and ends their sessions.
 

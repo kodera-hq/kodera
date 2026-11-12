@@ -60,8 +60,8 @@ APPROVED_SUBJECTS = [
     "Invitation à rejoindre ${organisation_name} sur Kodera",
     "Invitation to join ${organisation_name} on Kodera",
 ]
-# The set-up paragraph, approved by the product owner on 2026-11-04, word for word, just before
-# the link of both onboarding mails: the realm's set-up mail comes first.
+# Owner-approved setup copy: ordinary enrollment is optional; owner-claim MFA stays mandatory.
+# Both paragraphs appear just before the link; the realm setup mail comes first.
 APPROVED_SET_UP_PARAGRAPH = {
     "owner_claim": (
         "Vous recevez aussi un e-mail « Configurer votre compte Kodera » : ouvrez-le d'abord pour "

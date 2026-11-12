@@ -34,8 +34,9 @@ reconcile membership. Invalid governance or a policy authored by anyone else
 fails closed. Legacy policies without these additive fields retain their existing
 behavior; deploy the matching server policy producer before opening Community
 traffic. The module handles Synapse's immutable mappings and tuples as well as
-ordinary JSON test data. Native room power levels and invite-only join rules
-remain mandatory.
+ordinary JSON test data. Native power levels remain mandatory. Restricted and customer
+rooms retain invite-only rules; governed local-only Community channels may use native public
+joins. Archived governed rooms refuse rejoining and posting while allowing members to leave.
 
 ## Configure
 
