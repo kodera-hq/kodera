@@ -4,7 +4,7 @@
 
 This is a source-oriented local pre-cutover reference for kodera-hq/kodera. Linked source URLs identify the target repository; public publication and community.kodera.io availability are not confirmed. Read the linked guides for scope and integration limits.
 
-Core API 0.41.0; Agent API 0.5.0; OpenAPI 3.1. The console calls authenticated Core only. Matrix/Synapse rooms and LiveKit grants are control-plane responsibilities, not local-preview authority.
+Core API 0.42.0; Agent API 0.5.0; OpenAPI 3.1. The console calls authenticated Core only. Matrix/Synapse rooms and LiveKit grants are control-plane responsibilities, not local-preview authority.
 
 Community uses Docker Compose and an external operator-owned HTTPS OIDC issuer/public trust registry. It brings no identity provider. No installation-time or memory-footprint claim is made.
 

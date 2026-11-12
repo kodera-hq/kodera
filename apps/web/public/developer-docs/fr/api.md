@@ -4,7 +4,7 @@
 
 ## Deux frontières API distinctes
 
-Core API 0.41.0 est le contrat de la console client. Agent API 0.5.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.
+Core API 0.42.0 est le contrat de la console client. Agent API 0.5.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.
 
 La console utilise son transport Core authentifié. Elle n’appelle pas directement les fournisseurs d’identité, d’infrastructure ou les endpoints de contrôle locataires.
 
