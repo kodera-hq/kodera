@@ -286,7 +286,7 @@ test('every clause fails on its own mutation', () => {
     /dist: tokens\.css --c-sky is a linear-gradient with 2 distinct colours \(no gradient, D-UI3\)/,
   );
   assert.throws(
-    () => checkEmittedFlat(inBlock(':root, [data-theme="light"]', `--c-sky: ${TWO};`), presetText),
+    () => checkEmittedFlat(inBlock('[data-theme="light"]', `--c-sky: ${TWO};`), presetText),
     /dist: tokens\.css --c-sky is a linear-gradient with 2 distinct colours/,
   );
   // A ciel primitive's NAME inside a Givre block is a Givre gradient.

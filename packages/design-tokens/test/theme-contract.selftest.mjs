@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, indexTokens, resolve, parseColor, composite, contrastRatio } from '../scripts/lib/tokens.mjs';
 import { SPEC, SPEC_COLORS, focusRingColorProperty } from '../scripts/lib/spec.mjs';
-import { THEMES } from '../scripts/lib/themes.mjs';
+import { THEMES, DEFAULT_THEME, themeSelector } from '../scripts/lib/themes.mjs';
 import preset from '../dist/tailwind.preset.js';
 
 const fixture = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/themes.json'), 'utf8'));
@@ -80,7 +80,7 @@ function checkContract(source, styles, config) {
       }
     }
   }
-  assert.match(styles, /:root, \[data-theme="light"\]/, 'unthemed default is light');
+  assert.ok(styles.includes(`\n${themeSelector(DEFAULT_THEME)} {\n`), 'the unthemed root takes the registry default');
   checkRingIsDynamic(styles, config);
   assert.equal(config.theme.extend.colors['c-page-grad'], undefined, 'gradients are not colors');
   assert.equal(config.theme.extend.backgroundImage['c-page-gradient'], 'var(--c-page-grad)');
@@ -120,8 +120,8 @@ function checkWhiteFoundation(source, styles) {
     { color: '#FFFFFF', position: 1 },
   ], 'WHITE_LIGHT_GRADIENT');
   assert.equal(resolve('semantic.surface.page', index), '#FFFFFF', 'WHITE_LEGACY_FALLBACK');
-  const light = styles.match(/:root, \[data-theme="light"\] \{([^}]+)\}/)?.[1];
-  assert.ok(light, 'WHITE_LIGHT_DEFAULT_SCOPE');
+  const light = styles.match(new RegExp(`(?:^|\\n)${themeSelector('light').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]+)\\}`))?.[1];
+  assert.ok(light, 'WHITE_LIGHT_SCOPE');
   for (const role of ['page', 'surface', 'sunken', 'elevated']) {
     assert.ok(light.includes(`--c-${role}: #FFFFFF;`), `WHITE_LIGHT_SCOPED_CSS:${role}`);
     assert.equal((styles.match(new RegExp(`--c-${role}:`, 'g')) ?? []).length, THEMES.length, `WHITE_THEME_BOUNDARY_COUNT:${role}`);
@@ -143,7 +143,7 @@ test('white-light page surfaces and default/scoped declarations agree with legac
   const legacy = structuredClone(tree);
   legacy.semantic.surface.page.$value = '{color.frost.100}';
   assert.throws(() => checkWhiteFoundation(legacy, css), /WHITE_LEGACY_FALLBACK/);
-  assert.throws(() => checkWhiteFoundation(tree, css.replace(':root, [data-theme="light"] {', '[data-theme="light"] {')), /WHITE_LIGHT_DEFAULT_SCOPE/);
+  assert.throws(() => checkWhiteFoundation(tree, css.replace('\n[data-theme="light"] {', '\n[data-theme="givre"] {')), /WHITE_LIGHT_SCOPE/);
   assert.throws(() => checkWhiteFoundation(tree, css.replace('--c-page: #FFFFFF;', '--c-page: #EEF3F8;')), /WHITE_LIGHT_SCOPED_CSS:page/);
   assert.throws(() => checkWhiteFoundation(tree, css + '\n:root { --c-page: #EEF3F8; }'), /WHITE_THEME_BOUNDARY_COUNT:page/);
   checkWhiteFoundation(tree, css);

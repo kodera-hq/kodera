@@ -560,7 +560,7 @@
 
 /* Complete shell themes, and the focus ring, which follows them; the legacy
    variables above retain their values. */
-:root, [data-theme="light"] {
+[data-theme="light"] {
   --c-page: #FFFFFF;
   --c-page-grad: linear-gradient(115deg,#FFFFFF 0%,#FFFFFF 45%,#FFFFFF 100%);
   --c-surface: #FFFFFF;
@@ -926,7 +926,7 @@
   --material-dialog-backdrop: none;
 }
 
-[data-theme="ciel"] {
+:root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"] {
   --c-page: #EEF5FC;
   --c-page-grad: linear-gradient(180deg,#E0ECFB 0%,#EEF5FC 55%,#F9FCFF 100%);
   --c-surface: #FFFFFF;
@@ -1177,7 +1177,7 @@
    or whose platform forces its colours. */
 
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+  :is(:root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"], [data-theme="ciel-nuit"]) {
     --material-bar-bg: var(--material-bar-tint);
     --material-bar-backdrop: blur(var(--material-bar-blur)) saturate(var(--material-bar-saturate));
     --material-panel-bg: var(--material-panel-tint);
@@ -1190,7 +1190,7 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+  :is(:root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"], [data-theme="ciel-nuit"]) {
     --material-bar-bg: var(--material-bar-fallback);
     --material-bar-backdrop: none;
     --material-panel-bg: var(--material-panel-fallback);
@@ -1203,7 +1203,7 @@
 }
 
 @media (prefers-contrast: more) {
-  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+  :is(:root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"], [data-theme="ciel-nuit"]) {
     --material-bar-bg: var(--material-bar-fallback);
     --material-bar-backdrop: none;
     --material-panel-bg: var(--material-panel-fallback);
@@ -1216,7 +1216,7 @@
 }
 
 @media (forced-colors: active) {
-  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+  :is(:root:where(:not([data-theme="light"], [data-theme="dark"], [data-theme="black"], [data-theme="ciel-nuit"])), [data-theme="ciel"], [data-theme="ciel-nuit"]) {
     --material-bar-bg: var(--material-bar-fallback);
     --material-bar-backdrop: none;
     --material-panel-bg: var(--material-panel-fallback);

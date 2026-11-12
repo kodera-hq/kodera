@@ -11,7 +11,7 @@
       "family": "givre",
       "mode": "light",
       "scheme": "light",
-      "default": true
+      "default": false
     },
     {
       "id": "dark",
@@ -35,7 +35,7 @@
       "family": "ciel",
       "mode": "light",
       "scheme": "light",
-      "default": false
+      "default": true
     },
     {
       "id": "ciel-nuit",

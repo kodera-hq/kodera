@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, indexTokens, resolve, parseColor, contrastRatio } from '../scripts/lib/tokens.mjs';
 import { THEMES, focusRingRef } from '../scripts/lib/spec.mjs';
+import { themeSelector } from '../scripts/lib/themes.mjs';
 import preset from '../dist/tailwind.preset.js';
 
 const tree = JSON.parse(readFileSync(join(ROOT, 'tokens.json'), 'utf8'));
@@ -105,7 +106,8 @@ function statusHueBand(hue) {
 }
 
 function themeBlock(styles, theme) {
-  const selector = theme === 'light' ? ':root, \\[data-theme="light"\\]' : `\\[data-theme="${theme}"\\]`;
+  // The block's own selector, the default theme's root claim included.
+  const selector = themeSelector(theme).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return styles.match(new RegExp(`(?:^|\\n)${selector} \\{([^}]+)\\}`))?.[1];
 }
 
