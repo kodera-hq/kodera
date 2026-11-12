@@ -95,8 +95,6 @@ ALLOWED_PUBLIC_ROUTES: dict[str, frozenset[str]] = {
     "livekit:7880": frozenset({"/rtc", "/rtc/*"}),
 }
 CATCH_ALL_UPSTREAM = "web:8080"
-CADDY_MATCHER_RE = re.compile(r"(?m)^[ \t]*@([a-z_]+)[ \t]+path[ \t]+(.+?)[ \t]*$")
-CADDY_HANDLE_RE = re.compile(r"(?ms)^[ \t]*handle(?:[ \t]+@([a-z_]+))?[ \t]*\{\n(.*?)^[ \t]*\}")
 COMPOSE_DEFAULT_RE = re.compile(r"(?=\$\{([A-Z][A-Z0-9_]*):-([^}$]*))")
 PUBLIC_SERVER_NAME_RE = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}")
 SECRET_LOOKING_VALUE_RES = (
@@ -478,6 +476,13 @@ def check_community_deploy(
         initdb = synapse_db.environment.get("POSTGRES_INITDB_ARGS", "")
         if "--lc-collate=C" not in initdb or "--lc-ctype=C" not in initdb:
             errors.append("Synapse must run on PostgreSQL: service 'synapse-db' must initialise the C collation Synapse requires")
+    for svc in services.values():
+        published = any(line.strip() in ("ports:", "network_mode: host") or line.strip().startswith("ports: ") for line in svc.raw_lines)
+        if published and svc.name not in PUBLISHING_SERVICES:
+            errors.append(
+                f"service '{svc.name}' must not publish a port: it is reached through Caddy only"
+                + (", and its listener believes the address Caddy forwards" if svc.name == "synapse" else "")
+            )
     if "8448" in compose_text:
         errors.append("federation must be closed by default: docker-compose.yml must not publish the federation port 8448")
 
@@ -507,17 +512,103 @@ def check_community_deploy(
     return errors
 
 
+CLIENT_ADDRESS_OVERRIDE = "header_up X-Forwarded-For {remote_host}"
+STRIPPED_CLIENT_HEADERS = ("header_up -X-Real-IP", "header_up -Forwarded")
+PUBLISHING_SERVICES = frozenset({"caddy", "livekit"})
+
+
+@dataclass
+class CaddyBlock:
+    header: str
+    lines: list[str] = field(default_factory=list)
+    blocks: list["CaddyBlock"] = field(default_factory=list)
+
+
+def parse_caddyfile(caddyfile_text: str) -> CaddyBlock:
+    """The Caddyfile as nested blocks: a line ending in `{` opens one, a lone `}` closes it."""
+    root = CaddyBlock(header="")
+    stack = [root]
+    for raw in caddyfile_text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line == "}":
+            if len(stack) > 1:
+                stack.pop()
+            continue
+        if line.endswith("{"):
+            block = CaddyBlock(header=line[:-1].strip())
+            stack[-1].blocks.append(block)
+            stack.append(block)
+        else:
+            stack[-1].lines.append(line)
+    return root
+
+
 def check_caddy_routes(caddyfile_text: str) -> list[str]:
-    """Every route Caddy proxies is on the reviewed list. The agent API and Matrix federation,
-    key and admin routes are refused by name."""
+    """Every route Caddy proxies is on the reviewed list, and Caddy alone names the client.
+
+    The agent API and Matrix federation, key and admin routes are refused by name. Synapse
+    believes X-Forwarded-For on the listener Caddy targets, so every upstream must receive that
+    header overwritten with the peer address, and no `trusted_proxies` may make Caddy believe a
+    client-supplied value instead.
+    """
     errors: list[str] = []
+    root = parse_caddyfile(caddyfile_text)
     code = "\n".join(line for line in caddyfile_text.splitlines() if not line.strip().startswith("#"))
-    matchers = {name: paths.split() for name, paths in CADDY_MATCHER_RE.findall(code)}
+    if "trusted_proxies" in code:
+        errors.append(
+            "Caddyfile must not declare trusted_proxies: no proxy sits in front of Caddy, "
+            "so a forwarded client address is never believed"
+        )
+    snippets = {
+        block.header[1:-1]: block.lines
+        for block in root.blocks
+        if block.header.startswith("(") and block.header.endswith(")")
+    }
+
+    def walk(block: CaddyBlock) -> list[CaddyBlock]:
+        return [block] + [found for child in block.blocks for found in walk(child)]
+
+    everything = walk(root)
+    matchers: dict[str, list[str]] = {}
+    for block in everything:
+        for line in block.lines:
+            found = re.fullmatch(r"@([a-z_]+)[ \t]+path[ \t]+(.+)", line)
+            if found:
+                matchers[found.group(1)] = found.group(2).split()
+
+    def upstreams_of(handle: CaddyBlock) -> list[tuple[str, list[str]]]:
+        """Each reverse_proxy of a handle with its directives, imports expanded."""
+        found: list[tuple[str, list[str]]] = []
+        for line in handle.lines:
+            if line.startswith("reverse_proxy"):
+                found.extend((upstream, []) for upstream in line.split()[1:])
+        for child in handle.blocks:
+            if child.header.startswith("reverse_proxy"):
+                directives: list[str] = []
+                for line in child.lines:
+                    imported = re.fullmatch(r"import[ \t]+([a-z_]+)", line)
+                    directives.extend(snippets.get(imported.group(1), []) if imported else [line])
+                found.extend((upstream, directives) for upstream in child.header.split()[1:])
+        return found
+
     proxied = 0
-    for matcher, body in CADDY_HANDLE_RE.findall(code):
-        upstreams = re.findall(r"reverse_proxy[ \t]+(\S+)", body)
-        proxied += len(upstreams)
-        for upstream in upstreams:
+    for handle in everything:
+        if handle.header != "handle" and not handle.header.startswith("handle "):
+            continue
+        matcher = handle.header.removeprefix("handle").strip().removeprefix("@")
+        for upstream, directives in upstreams_of(handle):
+            proxied += 1
+            forwarded = [line for line in directives if re.match(r"header_up[ \t]+[+-]?X-Forwarded-For\b", line, re.IGNORECASE)]
+            if forwarded != [CLIENT_ADDRESS_OVERRIDE]:
+                errors.append(
+                    f"Caddyfile must overwrite X-Forwarded-For with the peer address for '{upstream}' "
+                    f"(exactly '{CLIENT_ADDRESS_OVERRIDE}'): a client-supplied value must never reach an upstream"
+                )
+            for stripped in STRIPPED_CLIENT_HEADERS:
+                if stripped not in directives:
+                    errors.append(f"Caddyfile must drop the client-supplied header for '{upstream}': '{stripped}'")
             if not matcher:
                 if upstream != CATCH_ALL_UPSTREAM:
                     errors.append(f"Caddyfile catch-all must proxy to '{CATCH_ALL_UPSTREAM}' only (got '{upstream}')")
@@ -541,7 +632,7 @@ def check_caddy_routes(caddyfile_text: str) -> list[str]:
                     )
                 else:
                     errors.append(f"Caddyfile exposes an unreviewed route to '{upstream}': '{path}'")
-    if proxied != len(re.findall(r"reverse_proxy[ \t]", code)):
+    if proxied != len(re.findall(r"(?m)^[ \t]*reverse_proxy[ \t]", code)):
         errors.append("Caddyfile has a reverse_proxy outside a reviewed handle block")
     return errors
 
@@ -561,12 +652,21 @@ def check_synapse_policy_source(source: str) -> list[str]:
 
 
 SYNTHETIC_CREDENTIAL = "synthetic-issued-token-for-test-only"
-RATE_LIMIT_PATHS = (
-    ("rc_message",), ("rc_registration",),
-    ("rc_login", "address"), ("rc_login", "account"), ("rc_login", "failed_attempts"),
-    ("rc_joins", "local"), ("rc_joins", "remote"),
-    ("rc_invites", "per_room"), ("rc_invites", "per_user"), ("rc_invites", "per_issuer"),
-)
+# The loosest rate limits the profile admits: (per_second, burst_count). They are Synapse's
+# documented defaults, except rc_login.address (see deploy/community/configure_synapse.py and
+# README.md, "Images and limits"). A stricter value passes; a looser one is refused.
+RATE_LIMIT_CEILINGS: dict[tuple[str, ...], tuple[float, int]] = {
+    ("rc_message",): (0.2, 10),
+    ("rc_registration",): (0.17, 3),
+    ("rc_login", "address"): (0.17, 20),
+    ("rc_login", "account"): (0.003, 5),
+    ("rc_login", "failed_attempts"): (0.17, 3),
+    ("rc_joins", "local"): (0.1, 10),
+    ("rc_joins", "remote"): (0.01, 10),
+    ("rc_invites", "per_room"): (0.3, 10),
+    ("rc_invites", "per_user"): (0.003, 5),
+    ("rc_invites", "per_issuer"): (0.3, 10),
+}
 PILOT_SETTINGS = {
     "refreshable_access_token_lifetime": "5m",
     "refresh_token_lifetime": "24h",
@@ -583,10 +683,14 @@ def _generated_homeserver() -> dict:
     """What the Synapse image generates on a fresh volume: SQLite and an open federation listener."""
     return {
         "server_name": "chat.example.org",
-        "listeners": [{
-            "port": 8008, "tls": False, "type": "http", "x_forwarded": False,
-            "resources": [{"names": ["client", "federation"], "compress": False}],
-        }],
+        "listeners": [
+            {
+                "port": 8008, "tls": False, "type": "http", "x_forwarded": False,
+                "resources": [{"names": ["client", "federation"], "compress": False}],
+            },
+            # An operator's own listener, which Caddy does not front.
+            {"port": 9000, "tls": False, "type": "http", "x_forwarded": True, "resources": [{"names": ["client"]}]},
+        ],
         "database": {"name": "sqlite3", "args": {"database": "/data/homeserver.db"}},
         "trusted_key_servers": [{"server_name": "matrix.org"}],
         "modules": [{"module": "operator.module"}],
@@ -665,19 +769,34 @@ def check_synapse_config(source: str) -> list[str]:
 
     def rate_limits() -> list[str]:
         problems = []
-        for path in RATE_LIMIT_PATHS:
+        for path, (max_per_second, max_burst) in RATE_LIMIT_CEILINGS.items():
             limit: object = closed
             for key in path:
                 limit = limit.get(key) if isinstance(limit, dict) else None
             per_second = limit.get("per_second") if isinstance(limit, dict) else None
             burst = limit.get("burst_count") if isinstance(limit, dict) else None
             if (
-                not isinstance(per_second, (int, float)) or isinstance(per_second, bool) or not 0 < per_second <= 1
-                or not isinstance(burst, int) or isinstance(burst, bool) or not 1 <= burst <= 50
+                not isinstance(per_second, (int, float)) or isinstance(per_second, bool) or per_second <= 0
+                or not isinstance(burst, int) or isinstance(burst, bool) or burst < 1
             ):
                 problems.append("Synapse rate limits must be set: " + ".".join(path))
-        if not all(listener.get("x_forwarded") is True for listener in closed.get("listeners", [])):
-            problems.append("Synapse rate limits must see each client: the listener must set x_forwarded")
+            elif per_second > max_per_second or burst > max_burst:
+                problems.append(
+                    "Synapse rate limits must not be looser than the reviewed ceiling: "
+                    + ".".join(path) + f" (at most {max_per_second} per second, burst {max_burst})"
+                )
+        fronted_port = getattr(module, "PROXIED_LISTENER_PORT", None)
+        if f"synapse:{fronted_port}" not in ALLOWED_PUBLIC_ROUTES:
+            problems.append("Synapse must name the listener Caddy fronts (PROXIED_LISTENER_PORT is not Caddy's upstream)")
+        for listener in closed.get("listeners", []):
+            fronted = listener.get("port") == fronted_port
+            if fronted and listener.get("x_forwarded") is not True:
+                problems.append("Synapse rate limits must see each client: the listener Caddy fronts must set x_forwarded")
+            if not fronted and listener.get("x_forwarded") is not False:
+                problems.append(
+                    "Synapse must believe a forwarded address only on the listener Caddy fronts "
+                    f"(x_forwarded is set on port {listener.get('port')})"
+                )
         return problems
 
     def accounts() -> list[str]:
@@ -1248,6 +1367,61 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "Caddyfile must not expose the agent API to the internet (got '/agent')",
         ),
         (
+            "the client address override is removed from the Synapse upstream",
+            lambda c, e, cf: (c, e, cf.replace("reverse_proxy synapse:8008 {\n\t\t\timport client_address\n\t\t}", "reverse_proxy synapse:8008", 1)),
+            "Caddyfile must overwrite X-Forwarded-For with the peer address for 'synapse:8008'",
+        ),
+        (
+            "the client address override is removed from every upstream",
+            lambda c, e, cf: (c, e, cf.replace("\theader_up X-Forwarded-For {remote_host}\n", "", 1)),
+            "Caddyfile must overwrite X-Forwarded-For with the peer address for 'server:8000'",
+        ),
+        (
+            "the client's own X-Forwarded-For is passed on",
+            lambda c, e, cf: (c, e, cf.replace("header_up X-Forwarded-For {remote_host}", "header_up X-Forwarded-For {header.X-Forwarded-For}", 1)),
+            "Caddyfile must overwrite X-Forwarded-For with the peer address for 'synapse:8008'",
+        ),
+        (
+            "the client's X-Forwarded-For is appended to the override",
+            lambda c, e, cf: (c, e, cf.replace("\theader_up X-Forwarded-For {remote_host}\n", "\theader_up X-Forwarded-For {remote_host}\n\theader_up +X-Forwarded-For {header.X-Forwarded-For}\n", 1)),
+            "Caddyfile must overwrite X-Forwarded-For with the peer address for 'synapse:8008'",
+        ),
+        (
+            "a forged X-Real-IP reaches an upstream",
+            lambda c, e, cf: (c, e, cf.replace("\theader_up -X-Real-IP\n", "", 1)),
+            "Caddyfile must drop the client-supplied header for 'synapse:8008': 'header_up -X-Real-IP'",
+        ),
+        (
+            "trusted_proxies believes every address",
+            lambda c, e, cf: (c, e, cf.replace("\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tservers {\n\t\ttrusted_proxies static 0.0.0.0/0\n\t}\n", 1)),
+            "Caddyfile must not declare trusted_proxies",
+        ),
+        (
+            "trusted_proxies believes a private range",
+            lambda c, e, cf: (c, e, cf.replace("\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tservers {\n\t\ttrusted_proxies static private_ranges\n\t}\n", 1)),
+            "Caddyfile must not declare trusted_proxies",
+        ),
+        (
+            "trusted_proxies is set on one upstream",
+            lambda c, e, cf: (c, e, cf.replace("\theader_up -Forwarded\n", "\theader_up -Forwarded\n\ttrusted_proxies 10.0.0.0/8\n", 1)),
+            "Caddyfile must not declare trusted_proxies",
+        ),
+        (
+            "the Synapse port is published on the host",
+            lambda c, e, cf: (c.replace("      PYTHONPATH: /tmp/kodera-policy\n", "      PYTHONPATH: /tmp/kodera-policy\n    ports:\n      - \"8008:8008\"\n", 1), e, cf),
+            "service 'synapse' must not publish a port: it is reached through Caddy only, and its listener believes the address Caddy forwards",
+        ),
+        (
+            "Synapse joins the host network",
+            lambda c, e, cf: (c.replace("  synapse:\n    mem_limit: 1g\n", "  synapse:\n    mem_limit: 1g\n    network_mode: host\n", 1), e, cf),
+            "service 'synapse' must not publish a port",
+        ),
+        (
+            "the API port is published on the host",
+            lambda c, e, cf: (c.replace("      KODERA_EDITION: community\n", "      KODERA_EDITION: community\n    ports:\n      - \"8000:8000\"\n", 1), e, cf),
+            "service 'server' must not publish a port",
+        ),
+        (
             "an unreviewed route reaches the API",
             lambda c, e, cf: (c, e, cf.replace("@api path /api/* /health/*", "@api path /api/* /health/* /admin/*", 1)),
             "Caddyfile exposes an unreviewed route to 'server:8000': '/admin/*'",
@@ -1427,12 +1601,32 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse room-policy module is missing or misconfigured"),
     ("message rate limit removed", '    "rc_message": {"per_second": 0.2, "burst_count": 10},\n', '',
      "Synapse rate limits must be set: rc_message"),
-    ("login rate limit loosened to a test value", '"address": {"per_second": 0.5, "burst_count": 50}', '"address": {"per_second": 50, "burst_count": 100}',
-     "Synapse rate limits must be set: rc_login.address"),
+    ("login rate limit loosened to a test value", '"address": {"per_second": 0.17, "burst_count": 20}', '"address": {"per_second": 50, "burst_count": 100}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_login.address"),
+    ("per-address login limit loosened past the reviewed value", '"address": {"per_second": 0.17, "burst_count": 20}', '"address": {"per_second": 0.5, "burst_count": 50}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_login.address"),
+    ("per-account login limit loosened past Synapse's default", '"account": {"per_second": 0.003, "burst_count": 5}', '"account": {"per_second": 0.1, "burst_count": 20}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_login.account"),
+    ("failed-attempt limit loosened past Synapse's default", '"failed_attempts": {"per_second": 0.17, "burst_count": 3}', '"failed_attempts": {"per_second": 0.17, "burst_count": 4}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_login.failed_attempts"),
+    ("registration limit loosened past Synapse's default", '"rc_registration": {"per_second": 0.17, "burst_count": 3}', '"rc_registration": {"per_second": 0.18, "burst_count": 3}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_registration"),
+    ("message limit loosened past Synapse's default", '"rc_message": {"per_second": 0.2, "burst_count": 10}', '"rc_message": {"per_second": 0.2, "burst_count": 11}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_message"),
+    ("invite limit loosened past Synapse's default", '"per_user": {"per_second": 0.003, "burst_count": 5}', '"per_user": {"per_second": 0.3, "burst_count": 5}',
+     "Synapse rate limits must not be looser than the reviewed ceiling: rc_invites.per_user"),
+    ("a zero rate is not a limit", '"remote": {"per_second": 0.01, "burst_count": 10}', '"remote": {"per_second": 0, "burst_count": 10}',
+     "Synapse rate limits must be set: rc_joins.remote"),
     ("rate limits are never written", "        document[key] = copy.deepcopy(value)", "        pass",
      "Synapse rate limits must be set: rc_invites.per_user"),
-    ("rate limits see the proxy, not the client", 'listener["x_forwarded"] = True', 'listener["x_forwarded"] = False',
-     "Synapse rate limits must see each client"),
+    ("rate limits see the proxy, not the client", 'listener["x_forwarded"] = listener.get("port") == PROXIED_LISTENER_PORT', 'listener["x_forwarded"] = False',
+     "Synapse rate limits must see each client: the listener Caddy fronts must set x_forwarded"),
+    ("every listener believes a forwarded address", 'listener["x_forwarded"] = listener.get("port") == PROXIED_LISTENER_PORT', 'listener["x_forwarded"] = True',
+     "Synapse must believe a forwarded address only on the listener Caddy fronts (x_forwarded is set on port 9000)"),
+    ("an unfronted listener keeps believing a forwarded address", 'listener["x_forwarded"] = listener.get("port") == PROXIED_LISTENER_PORT', 'listener["x_forwarded"] = listener.get("x_forwarded") or listener.get("port") == PROXIED_LISTENER_PORT',
+     "Synapse must believe a forwarded address only on the listener Caddy fronts (x_forwarded is set on port 9000)"),
+    ("the trusted listener is not the one Caddy fronts", 'PROXIED_LISTENER_PORT = 8008', 'PROXIED_LISTENER_PORT = 9000',
+     "Synapse must name the listener Caddy fronts"),
     ("password sign-in stays on", 'document["password_config"] = {"enabled": False}', 'document["password_config"] = {"enabled": True}',
      "Synapse must keep open registration and password sign-in off"),
     ("open registration", 'document["enable_registration"] = False', 'document["enable_registration"] = True',

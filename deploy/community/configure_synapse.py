@@ -17,17 +17,24 @@ from pathlib import Path
 
 MODULE = "kodera_synapse_policy.KoderaPolicy"
 DATABASE_HOST = "synapse-db"
+# The one listener Caddy proxies to (`reverse_proxy synapse:8008`). Only this listener believes
+# X-Forwarded-For, and Caddy overwrites that header with the peer address it accepted.
+PROXIED_LISTENER_PORT = 8008
 PUBLIC_DOMAIN = r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}"
 PRIVATE_SUFFIXES = (".local", ".localhost", ".internal")
-# Sign-in is OIDC only, so the identity provider is the brute-force gate and a login token is
-# single-use. Synapse's default per-address login limit (5, then one per 5.5 minutes) would hold
-# back a team signing in from one office address, and the web client signs in again on reload.
+# Synapse's documented defaults, written out so that a later Synapse default cannot loosen them,
+# with one exception: `rc_login.address`. The default (5 sign-ins, then one per 5.5 minutes per
+# address) would lock out a team that shares one office address, and the web client signs in again
+# on every reload. Password sign-in is off, so the only login an address can attempt is a
+# single-use token Synapse itself issued after the identity provider authenticated the member:
+# 20 sign-ins, then one every 6 seconds, leaves nothing to guess. Failed attempts and per-account
+# sign-ins keep the default. `scripts/ci/check-community-deploy.py` refuses any looser value.
 RATE_LIMITS = {
     "rc_message": {"per_second": 0.2, "burst_count": 10},
     "rc_registration": {"per_second": 0.17, "burst_count": 3},
     "rc_login": {
-        "address": {"per_second": 0.5, "burst_count": 50},
-        "account": {"per_second": 0.1, "burst_count": 20},
+        "address": {"per_second": 0.17, "burst_count": 20},
+        "account": {"per_second": 0.003, "burst_count": 5},
         "failed_attempts": {"per_second": 0.17, "burst_count": 3},
     },
     "rc_joins": {
@@ -116,8 +123,10 @@ def configure(document, environment=None):
     for listener in document.get("listeners") or []:
         if listener.get("type", "http") != "http":
             continue
-        # Behind Caddy: per-address rate limits must see each client, not the proxy.
-        listener["x_forwarded"] = True
+        # Per-address rate limits must see each client, not the proxy, so the listener Caddy
+        # targets reads X-Forwarded-For, which Caddy overwrites. No other listener may: a
+        # listener reached without Caddy would believe whatever the caller sent.
+        listener["x_forwarded"] = listener.get("port") == PROXIED_LISTENER_PORT
         for resource in listener.get("resources") or []:
             names = [name for name in resource.get("names") or [] if name != "federation"]
             resource["names"] = names + ["federation"] if allowlist else names

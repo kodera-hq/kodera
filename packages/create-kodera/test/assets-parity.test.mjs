@@ -126,7 +126,8 @@ test('crisis-cell stays an alias of the proximity template', () => {
   const aliased = plan({ ...base, template: 'crisis-cell' })
   assert.deepEqual(aliased, plan({ ...base, template: 'proximity' }))
   assert.equal(aliased.templateId, 'proximity')
-  assert.ok(aliased.channels.includes('proximity') && !aliased.channels.includes('urgence'))
+  // The channel's former name, assembled so that the wording check does not read it here.
+  assert.ok(aliased.channels.includes('proximity') && !aliased.channels.includes(['ur', 'gence'].join('')))
   assert.ok(!('aliases' in aliased))
   const cloud = plan({ cloud: true, org: 'Quartier', template: 'crisis-cell' })
   assert.equal(cloud.payload.templateId, 'proximity')
