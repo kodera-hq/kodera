@@ -40,6 +40,45 @@ administrator. Core Kodera includes the private `kodera-git-tracker` channel for
 operator-configured verified provider activity. Core Kodera is explicitly granted to community owners/admins;
 Design Partners starts with no member grants. Assign partner access explicitly.
 
+## The layout
+
+| Category | Template key | Visibility | Channels |
+|---|---|---|---|
+| Community | `community` | organisation | `announcements`, `general`, `developers-community`, `support`, `extensions`, `self-hosting`, `show-and-tell`, `office-hours` (audio) |
+| Core Kodera | `core_kodera` | restricted, granted to owners and admins | `dev`, `strategy`, `ops-oncall`, `kodera-git-tracker` |
+| Design Partners | `design_partners` | restricted, no grant | `partner-onboarding`, `partner-feedback` |
+
+- **Rooms are named for what they are for.** The layout names no organisation outside Kodera, in a
+  category, a channel, a template key or a topic. A partner's room is granted to the partner (an
+  `allow_member` rule on the Design Partners category's policy); it is never named after them, and
+  no partnership is implied by a room's existence. `tests/test_community_layout.py` holds every
+  word of the layout to a reviewed vocabulary of purpose words, so a name nobody listed fails
+  there, not only a name somebody thought to forbid.
+- **A re-run renames in place.** An earlier layout gave the two Design Partners rooms other names.
+  When the bootstrap is re-run on a community that has them, each earlier room is renamed onto the
+  layout's present name: the same row, so the same channel id, the same Matrix room and its
+  history, the same access policy, position and room state. Only `name` and `template_key` change,
+  with `version` and `updated_at`, which is what `patchChannel` changes on a rename
+  ([`ESPACE_STRUCTURE.md`](ESPACE_STRUCTURE.md) §3); the workspace's structure revision advances
+  once, and the channel set the bootstrap records afterwards carries the new names for the same
+  channel ids, so the agent renames the rooms it already has.
+  - Nothing is created beside an earlier room and nothing is deleted. The next run finds nothing to
+    rename and advances nothing.
+  - An earlier room is recognised by what it is: a templated channel of the Design Partners
+    category whose template key the layout no longer names. Only this provisioner sets a template
+    key in the community, so no room an administrator created is ever one. Earlier rooms are paired
+    by position with the layout's channels that have no row yet.
+  - A room an administrator renamed has no template key: it is theirs and stays as it is. The
+    layout's channel it used to be is then created at the end of the category.
+  - An earlier room that is archived, of another kind or under a channel-level policy is drift, as
+    for every canonical room: the bootstrap refuses with the operator-reconciliation error, and its
+    transaction leaves every name as it was.
+  - No other category is reconciled this way. A templated room the layout does not name, elsewhere,
+    is left for the operator.
+- **What a re-run does not touch.** The agent's alias of a room is derived from the channel id
+  (`kodera-ch-<id>`), not from its name, so it does not change and still resolves to the same room.
+  Messages and files that quote an earlier name are content, and Core does not edit content.
+
 ## Account and API verification
 
 Verify a canonical-realm signup with `email_verified=true` and the email scope.
@@ -106,6 +145,11 @@ deployment goes through it on every profile read, so it is built for the steady 
 The member set itself is still one bounded list per organisation (10 000 subjects, ADR-0016), rebuilt
 whole. That bound is the community's ceiling; this section removes the lock and the per-visit
 rebuild in front of it, not the bound.
+
+Acceptance of the layout: `tests/test_community_layout.py` (a fresh bootstrap provisions only
+purpose names; a re-run on the earlier layout renames in place, idempotently; a half-migrated
+community is completed; an organisation's name back in the layout, and an unsafe reconciliation,
+each fail a named check).
 
 Acceptance: `tests/test_community_scale.py` (the statement bound, no lock, no growth with the
 community, the deferred and coalesced rebuild through a real agent poll, concurrent first visits,
