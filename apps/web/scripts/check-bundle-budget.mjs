@@ -126,7 +126,7 @@ export class BudgetError extends Error {}
 
 function packageOf(moduleId) {
   const match = /.*[\\/]node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(moduleId)
-  return match?.[1]?.replace('\\', '/')
+  return match?.[1]?.replaceAll('\\', '/')
 }
 
 /** Every chunk reachable from `start` through static imports, `start` included, in visit order. */
