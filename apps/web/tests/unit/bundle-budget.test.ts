@@ -6,10 +6,13 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  ALWAYS_ENFORCED,
   BUDGETS,
   CEILINGS,
+  ENTRY_REGRESSION_LIMITS,
   FORBIDDEN_ENTRY_VENDORS,
   RULES,
+  budgetsFor,
   measure,
   triage,
   // @ts-expect-error: a Node script with no type declarations, imported for its exports.
@@ -72,7 +75,7 @@ function build(overrides: Record<string, Partial<Chunk>> = {}): {
  * with the build, and what these fixtures weigh should not have to. */
 const run = (
   input: ReturnType<typeof build>,
-  budgets: { entryGzip: number; chunkGzip: number } = { ...CEILINGS }
+  budgets: { entryGzip: number; chunkGzip: number; entryRegressionGzip?: number } = { ...CEILINGS }
 ): Result => measure({ ...input, budgets }) as Result
 
 describe('the limits', () => {
@@ -181,6 +184,77 @@ describe('the entry', () => {
   })
 })
 
+// The entry does not meet its 180 kB target (the gate's status note says why), so a second,
+// separate number stops it getting worse. These hold the two apart: the limit is never the
+// target, never replaces it, and cannot be switched off the way the target's failure is.
+describe('the entry regression limit', () => {
+  // The fixture's entry weighs 141 000 bytes.
+  const withLimit = (limit: number, target = 100_000) => ({
+    entryGzip: target,
+    chunkGzip: CEILINGS.chunkGzip,
+    entryRegressionGzip: limit,
+  })
+
+  it('is a number per profile, a few kilobytes above what that profile measures', () => {
+    expect(ENTRY_REGRESSION_LIMITS).toEqual({ production: 228_000, staging: 230_000 })
+    expect(budgetsFor('production')).toEqual({ ...BUDGETS, entryRegressionGzip: 228_000 })
+    expect(budgetsFor('staging')).toEqual({ ...BUDGETS, entryRegressionGzip: 230_000 })
+    expect(() => budgetsFor('preview')).toThrow('unknown profile "preview"')
+  })
+
+  it('only ever goes down: raising one means changing this line, and saying why', () => {
+    expect(ENTRY_REGRESSION_LIMITS.production).toBeLessThanOrEqual(228_000)
+    expect(ENTRY_REGRESSION_LIMITS.staging).toBeLessThanOrEqual(230_000)
+  })
+
+  it('holds at the limit and is refused one byte over it, by its own name', () => {
+    const regressions = (mainGzip: number) =>
+      run(build({ 'assets/main.js': { gzip: mainGzip } }), withLimit(181_000, 180_000)).violations
+    // 181 000 bytes: over the target, which says so, and exactly at the limit, which holds.
+    expect(regressions(140_000)).toEqual([
+      'ENTRY_OVER_BUDGET: the entry JavaScript is 181000 bytes gzip, over its budget of 180000',
+    ])
+    expect(regressions(140_001)).toEqual([
+      'ENTRY_OVER_BUDGET: the entry JavaScript is 181001 bytes gzip, over its budget of 180000',
+      'ENTRY_REGRESSION: the entry JavaScript is 181001 bytes gzip, over its regression limit of 181000 (the limit is not the target: the target is 180000)',
+    ])
+  })
+
+  it('does not stand in for the target: an entry under the limit and over the target is still over the target', () => {
+    expect(run(build(), withLimit(200_000)).violations).toEqual([
+      'ENTRY_OVER_BUDGET: the entry JavaScript is 141000 bytes gzip, over its budget of 100000',
+    ])
+  })
+
+  it('is reported beside the target, not instead of it, when both are passed', () => {
+    const input = build({ 'assets/main.js': { gzip: 200_000 } })
+    expect(run(input, withLimit(190_000, 180_000)).violations).toEqual([
+      'ENTRY_OVER_BUDGET: the entry JavaScript is 241000 bytes gzip, over its budget of 180000',
+      'ENTRY_REGRESSION: the entry JavaScript is 241000 bytes gzip, over its regression limit of 190000 (the limit is not the target: the target is 180000)',
+    ])
+  })
+
+  it.each([CEILINGS.entryGzip, CEILINGS.entryGzip - 1, 0, 1.5])(
+    'refuses to measure with a limit of %s: at or below the target, the target is what is enforced',
+    (limit) => {
+      expect(() => run(build(), withLimit(limit, 180_000))).toThrow(
+        'must be a number of bytes above the entry ceiling (180000)'
+      )
+    }
+  )
+
+  it('is applied when no budgets are given, as the production profile has it', () => {
+    const input = build({
+      'assets/main.js': { gzip: 228_000 - 41_000 + 1 },
+      'assets/vendor-matrix.js': { gzip: 1 },
+    })
+    expect((measure(input) as Result).violations).toEqual([
+      'ENTRY_OVER_BUDGET: the entry JavaScript is 228001 bytes gzip, over its budget of 180000',
+      'ENTRY_REGRESSION: the entry JavaScript is 228001 bytes gzip, over its regression limit of 228000 (the limit is not the target: the target is 180000)',
+    ])
+  })
+})
+
 describe('a deferred chunk', () => {
   it('passes at its budget and is refused one byte over it, by file name', () => {
     const budgets = { entryGzip: CEILINGS.entryGzip, chunkGzip: 170_000 }
@@ -283,7 +357,24 @@ describe('reported-only rules', () => {
       'entry-vendors',
       'entry-catalogues',
       'chunk-cycles',
+      'entry-regression',
     ])
+  })
+
+  it('refuse to hold the regression limit, alone or beside the target', () => {
+    const grown = [
+      ...violations,
+      'ENTRY_REGRESSION: the entry JavaScript is 3 bytes gzip, over its regression limit of 2',
+    ]
+    expect(ALWAYS_ENFORCED).toEqual(['entry-regression'])
+    expect(() => triage(grown, ['entry-regression'])).toThrow(
+      '"entry-regression" cannot be reported only'
+    )
+    expect(() => triage(grown, ['entry-size', 'entry-regression'])).toThrow(
+      '"entry-regression" cannot be reported only'
+    )
+    // Holding the target leaves the limit failing.
+    expect(triage(grown, ['entry-size']).failing).toEqual([grown[1], grown[2]])
   })
 })
 
@@ -308,11 +399,15 @@ describe('the CI wiring', () => {
     ])
   })
 
-  it('holds the entry-size rule and no other', () => {
+  it('holds the entry-size rule and no other, the regression limit least of all', () => {
     const held = runs.flatMap((line) =>
       [...line.matchAll(/--report-only\s+(\S+)/g)].map(([, rule]) => rule)
     )
     expect(new Set(held)).toEqual(new Set(['entry-size']))
+    expect(held).not.toContain('entry-regression')
     expect(Object.keys(RULES)).toContain('entry-size')
+    // Nothing in the workflow may quieten the step either.
+    expect(workflow).not.toMatch(/check-bundle-budget[^\n]*\|\|/)
+    expect(workflow.slice(workflow.indexOf('Bundle budget'))).not.toMatch(/continue-on-error/)
   })
 })

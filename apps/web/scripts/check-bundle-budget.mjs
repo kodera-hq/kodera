@@ -17,7 +17,8 @@
 // 5. two chunks import each other, directly or through others. A browser runs the files of such
 //    a cycle in an order no one chose, and a module can then read a binding of another before it
 //    exists. The bundler never produces one on its own; a manual chunk group can
-//    (`vite.config.ts`, `deferredVendorGroups`).
+//    (`vite.config.ts`, `deferredVendorGroups`);
+// 6. the entry JavaScript has grown past its regression limit (below).
 //
 // The two ceilings are the product's and are not to be raised. The budgets below them are what
 // the build measures today plus a little room, so growth is noticed when it happens; lower them
@@ -32,6 +33,14 @@
 // and does not fail the run on it, and with nothing else relaxed. Remove that flag the day the
 // entry fits; do not move the number.
 //
+// The regression limit is a different thing, and exists only because of that status. It is not a
+// target and says nothing is met: it is the entry's measured size per profile plus about 3 kB, it
+// always fails the run, and it cannot be reported only. All it does is stop the entry getting
+// worse while the 180 kB target is out of reach. Every run prints both lines, the target as NOT
+// MET and the limit, so neither can be read as the other. Lower the limit when the entry shrinks;
+// delete it, with the `--report-only` flag, when the entry meets the target. A limit at or below
+// the target stops the script: by then it is the target that must be enforced.
+//
 // Sizes are gzip level 9 of each emitted file, in bytes; 1 kB is 1000 bytes, as Vite reports it.
 //
 // Usage:
@@ -40,11 +49,13 @@
 //     chunk-cycles.
 //     A reported-only rule is measured and printed as NOT MET, and does not fail the run. It
 //     exists for a ceiling the build does not meet yet; see the status note above.
+//     `entry-regression` is refused here: it is what holds the line while `entry-size` is held.
 //   node scripts/check-bundle-budget.mjs --mutation <name>
 //     For the self-test only (`scripts/check-bundle-budget.selftest.sh`): builds with one fault
 //     injected into the module graph, in memory, so the check can be shown to fail. Nothing in the
 //     working tree is touched. Names: `vendor-matrix`, `vendor-livekit`, `vendor-oidc`,
-//     `inflate-entry`, `inflate-chunk`, `whole-catalogue`, `area-catalogue`, `chunk-cycle`.
+//     `inflate-entry`, `inflate-entry-slightly`, `inflate-chunk`, `whole-catalogue`,
+//     `area-catalogue`, `chunk-cycle`.
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -67,6 +78,25 @@ export const CEILINGS = Object.freeze({ entryGzip: 180_000, chunkGzip: 350_000 }
  */
 export const BUDGETS = Object.freeze({ entryGzip: 180_000, chunkGzip: 160_000 })
 
+/**
+ * The entry's regression limit, per build profile: NOT the target (that is `CEILINGS.entryGzip`,
+ * which the entry does not meet), only the size the entry may not grow past meanwhile.
+ *
+ * - `production`: measured 224 967 bytes.
+ * - `staging`: measured 226 766 bytes (the first-owner journey is built in).
+ *
+ * About 3 kB of room each. These only ever go down.
+ */
+export const ENTRY_REGRESSION_LIMITS = Object.freeze({ production: 228_000, staging: 230_000 })
+
+/** The budgets a profile is measured against. */
+export function budgetsFor(profile) {
+  if (!Object.hasOwn(ENTRY_REGRESSION_LIMITS, profile)) {
+    throw new BudgetError(`unknown profile "${profile}"`)
+  }
+  return { ...BUDGETS, entryRegressionGzip: ENTRY_REGRESSION_LIMITS[profile] }
+}
+
 /** The rules, by the name `--report-only` takes. A violation starts with its rule's code. */
 export const RULES = Object.freeze({
   'entry-size': 'ENTRY_OVER_BUDGET',
@@ -74,7 +104,11 @@ export const RULES = Object.freeze({
   'entry-vendors': 'FORBIDDEN_ENTRY_VENDOR',
   'entry-catalogues': 'ENTRY_CATALOGUE',
   'chunk-cycles': 'CHUNK_CYCLE',
+  'entry-regression': 'ENTRY_REGRESSION',
 })
+
+/** Rules `--report-only` refuses to hold, whatever the reason given. */
+export const ALWAYS_ENFORCED = Object.freeze(['entry-regression'])
 
 export const FORBIDDEN_ENTRY_VENDORS = Object.freeze([
   'matrix-js-sdk',
@@ -169,13 +203,24 @@ function chainTo(closure, name) {
  * }} input
  */
 export function measure(input) {
-  const budgets = input.budgets ?? BUDGETS
+  const budgets = input.budgets ?? budgetsFor('production')
   for (const key of ['entryGzip', 'chunkGzip']) {
     if (!Number.isSafeInteger(budgets[key]) || budgets[key] <= 0 || budgets[key] > CEILINGS[key]) {
       throw new BudgetError(
         `the ${key} budget (${budgets[key]}) must be a positive number of bytes at or below its ceiling (${CEILINGS[key]})`
       )
     }
+  }
+  // The regression limit is optional — a build that meets the target has none — and, when there
+  // is one, it is above the target by definition.
+  const regressionLimit = budgets.entryRegressionGzip
+  if (
+    regressionLimit !== undefined &&
+    (!Number.isSafeInteger(regressionLimit) || regressionLimit <= CEILINGS.entryGzip)
+  ) {
+    throw new BudgetError(
+      `the entry regression limit (${regressionLimit}) must be a number of bytes above the entry ceiling (${CEILINGS.entryGzip}): at or below it, the ceiling is what must be enforced, and the limit deleted`
+    )
   }
   const chunks = new Map(input.chunks.map((chunk) => [chunk.fileName, chunk]))
   if (chunks.size !== input.chunks.length) throw new BudgetError('two chunks share a file name')
@@ -200,6 +245,11 @@ export function measure(input) {
   if (entryGzip > budgets.entryGzip) {
     violations.push(
       `ENTRY_OVER_BUDGET: the entry JavaScript is ${entryGzip} bytes gzip, over its budget of ${budgets.entryGzip}`
+    )
+  }
+  if (regressionLimit !== undefined && entryGzip > regressionLimit) {
+    violations.push(
+      `ENTRY_REGRESSION: the entry JavaScript is ${entryGzip} bytes gzip, over its regression limit of ${regressionLimit} (the limit is not the target: the target is ${CEILINGS.entryGzip})`
     )
   }
   for (const chunk of deferred) {
@@ -277,6 +327,9 @@ const MUTATIONS = {
   'vendor-livekit': { into: MAIN_MODULE, source: 'livekit-client' },
   'vendor-oidc': { into: MAIN_MODULE, source: 'oidc-client-ts' },
   'inflate-entry': { into: MAIN_MODULE, source: BALLAST_ID, ballast: 4 * CEILINGS.entryGzip },
+  // About 12 kB once compressed: nowhere near doubling the entry, and well past the few
+  // kilobytes of room its regression limit leaves.
+  'inflate-entry-slightly': { into: MAIN_MODULE, source: BALLAST_ID, ballast: 16_000 },
   'inflate-chunk': {
     into: ORGANISATION_MODULE,
     source: BALLAST_ID,
@@ -432,14 +485,38 @@ function kilobytes(bytes) {
 export function report(result, profile) {
   const lines = [
     `bundle budget (${profile})`,
-    `  entry JavaScript: ${kilobytes(result.entryGzip)} gzip in ${result.entry.length} file(s); budget ${kilobytes(result.budgets.entryGzip)}, ceiling ${kilobytes(CEILINGS.entryGzip)}`,
+    `  entry JavaScript: ${kilobytes(result.entryGzip)} gzip in ${result.entry.length} file(s)`,
     ...result.entry.map((chunk) => `    ${kilobytes(chunk.gzip).padStart(10)}  ${chunk.fileName}`),
+    ...entryStanding(result),
     `  deferred chunks: ${result.deferredCount}; budget ${kilobytes(result.budgets.chunkGzip)} each, ceiling ${kilobytes(CEILINGS.chunkGzip)}`,
     ...result.deferred
       .slice(0, 8)
       .map((chunk) => `    ${kilobytes(chunk.gzip).padStart(10)}  ${chunk.fileName}`),
   ]
   return lines.join('\n')
+}
+
+/**
+ * Where the entry stands, in two lines that cannot be read as one: against the target, and —
+ * while there is one — against the regression limit, which is not the target.
+ */
+function entryStanding(result) {
+  const { entryGzip, budgets } = result
+  const target = budgets.entryGzip
+  const limit = budgets.entryRegressionGzip
+  const lines = [
+    entryGzip > target
+      ? `    target ${kilobytes(target)} (ceiling ${kilobytes(CEILINGS.entryGzip)}): NOT MET, over by ${kilobytes(entryGzip - target)}`
+      : `    target ${kilobytes(target)} (ceiling ${kilobytes(CEILINGS.entryGzip)}): met, ${kilobytes(target - entryGzip)} to spare`,
+  ]
+  if (limit !== undefined) {
+    lines.push(
+      entryGzip > limit
+        ? `    regression limit ${kilobytes(limit)} (not the target): EXCEEDED by ${kilobytes(entryGzip - limit)}`
+        : `    regression limit ${kilobytes(limit)} (not the target): held, ${kilobytes(limit - entryGzip)} to spare`
+    )
+  }
+  return lines
 }
 
 /**
@@ -452,6 +529,11 @@ export function triage(violations, reportOnly) {
     if (!Object.hasOwn(RULES, rule)) {
       throw new BudgetError(
         `unknown rule "${rule}" for --report-only; one of: ${Object.keys(RULES).join(', ')}`
+      )
+    }
+    if (ALWAYS_ENFORCED.includes(rule)) {
+      throw new BudgetError(
+        `"${rule}" cannot be reported only: it is what stops the entry growing while its target is not met`
       )
     }
   }
@@ -489,7 +571,7 @@ async function main(argv) {
       profile: options.profile,
       mutation: options.mutation,
     })
-    const result = measure(description)
+    const result = measure({ ...description, budgets: budgetsFor(options.profile) })
     const { failing, reported } = triage(result.violations, reportOnly)
     console.log(report(result, options.profile))
     if (options.json !== undefined) {
@@ -510,7 +592,7 @@ async function main(argv) {
     }
     console.log(
       reported.length === 0
-        ? 'check-bundle-budget: OK — entry and deferred chunks are within budget, no forbidden vendor or catalogue in the entry'
+        ? 'check-bundle-budget: OK — entry and deferred chunks are within budget, no forbidden vendor or catalogue in the entry, no chunk cycle'
         : `check-bundle-budget: OK for the enforced rules — ${reported.length} reported-only rule(s) NOT MET, listed above`
     )
     return 0

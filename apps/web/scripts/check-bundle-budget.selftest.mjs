@@ -12,7 +12,9 @@
 //
 // The entry ceiling is not met yet, and CI runs the gate with `--report-only entry-size` (see the
 // status note in the gate). The cases here run the same way, so that what they prove is what CI
-// enforces, except the two that are about the entry-size rule itself.
+// enforces, except the ones that are about the entry-size rule itself. What stops the entry
+// growing meanwhile is its regression limit, which is always enforced: the cases on it prove that
+// holding the target does not hold the limit, and that the limit cannot be held at all.
 //
 // The case count at the bottom is counted, not written down: a case that stops running stops
 // being reported.
@@ -25,7 +27,13 @@ import { fileURLToPath } from 'node:url'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const GATE = join(HERE, 'check-bundle-budget.mjs')
 const AS_IN_CI = ['--report-only', 'entry-size']
-const REFUSALS = ['FORBIDDEN_ENTRY_VENDOR', 'CHUNK_OVER_BUDGET', 'ENTRY_CATALOGUE', 'CHUNK_CYCLE']
+const REFUSALS = [
+  'FORBIDDEN_ENTRY_VENDOR',
+  'CHUNK_OVER_BUDGET',
+  'ENTRY_CATALOGUE',
+  'CHUNK_CYCLE',
+  'ENTRY_REGRESSION',
+]
 
 let cases = 0
 
@@ -59,6 +67,14 @@ function expectRefusal(title, args, needle) {
     assert.ok(!output.includes(refusal), `control: the gate printed ${refusal}\n${output}`)
   }
   assert.match(output, /entry JavaScript: \d+\.\d+ kB gzip in \d+ file\(s\)/, output)
+  // Both lines, every run: the target, which is not met, and the limit, which is not the target.
+  assert.match(output, /target 180\.00 kB \(ceiling 180\.00 kB\): NOT MET, over by /, output)
+  assert.match(output, /regression limit \d+\.\d+ kB \(not the target\): held, /, output)
+  assert.ok(
+    output.includes('NOT MET (reported only, does not fail this run): ENTRY_OVER_BUDGET'),
+    `control: the unmet target was not reported as NOT MET\n${output}`
+  )
+  assert.ok(!output.includes('OK — entry and deferred chunks are within budget'), output)
   assert.match(output, /deferred chunks: \d+;/, output)
   console.log('ok - control: the tree as it is passes the enforced rules')
 }
@@ -110,18 +126,36 @@ expectRefusal(
   'ENTRY_OVER_BUDGET: the entry JavaScript is '
 )
 
-// `--report-only` holds the one rule it names and nothing else: the same heavy entry is reported
-// and does not fail, and the report says so in words nobody can read as a pass of that rule.
+// The regression limit holds while the target is held: an entry a few kilobytes heavier — nowhere
+// near the mutation above — fails the run as CI runs it, by the limit's own name, with the target
+// still reported beside it as NOT MET.
 {
   cases++
-  const { status, output } = run([...AS_IN_CI, '--mutation', 'inflate-entry'])
-  assert.equal(status, 0, `report-only: a held rule failed the run\n${output}`)
+  const { status, output } = run([...AS_IN_CI, '--mutation', 'inflate-entry-slightly'])
+  assert.equal(status, 1, `regression: a heavier entry passed while the target is held\n${output}`)
+  assert.ok(
+    output.includes('check-bundle-budget: ENTRY_REGRESSION: the entry JavaScript is '),
+    `regression: the failure did not name the limit\n${output}`
+  )
+  assert.match(output, /regression limit \d+\.\d+ kB \(not the target\): EXCEEDED by /, output)
   assert.ok(
     output.includes('NOT MET (reported only, does not fail this run): ENTRY_OVER_BUDGET'),
-    `report-only: the held rule was not reported as NOT MET\n${output}`
+    `regression: the target was no longer reported as NOT MET\n${output}`
   )
-  assert.ok(!output.includes('OK — entry and deferred chunks are within budget'), output)
-  console.log('ok - a reported-only rule is printed as NOT MET and never as a pass')
+  assert.ok(output.includes('check-bundle-budget: FAILED — 1 violation(s)'), output)
+  console.log(
+    'ok - an entry past its regression limit is refused while the target is only reported'
+  )
+}
+
+// The limit cannot be made report-only: the request is refused before any build.
+{
+  cases++
+  const { status, output } = run(['--report-only', 'entry-regression'])
+  assert.equal(status, 1, `regression: the gate agreed to hold the limit\n${output}`)
+  assert.ok(output.includes('"entry-regression" cannot be reported only'), output)
+  assert.ok(!output.includes('entry JavaScript:'), `regression: a build ran anyway\n${output}`)
+  console.log('ok - the regression limit cannot be reported only')
 }
 
 // A rule can only be held by its own name: a misspelt one stops the run before any build.
