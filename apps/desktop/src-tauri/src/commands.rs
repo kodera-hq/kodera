@@ -2493,6 +2493,67 @@ mod tests {
         );
     }
 
+    /// A member whose handle equals that of a provisioned member who has not checked in yet is
+    /// already shown with its key fingerprint: it cannot pass for the absent member, and its label
+    /// does not change when that member appears.
+    #[test]
+    fn a_handle_shared_with_an_absent_provisioned_member_already_carries_its_fingerprint() {
+        let mut state = session();
+        state
+            .provision_dedicated_handle(ORG, [1; 32], "north-wing-3")
+            .unwrap();
+        state
+            .provision_dedicated_handle(ORG, [2; 32], "north-wing-3")
+            .unwrap();
+        populate(&mut state, 1, 1); // only the first of the two checks in
+        let statuses = |state: &mut DesktopWorkspaceSession| {
+            let DesktopCommandResponse::ProximityMemberStatuses(members) =
+                state.dispatch_command(&json("proximity_member_statuses", ""))
+            else {
+                panic!("expected member statuses")
+            };
+            members
+        };
+        let alone = statuses(&mut state);
+        assert_eq!(alone.len(), 1);
+        assert_eq!(alone[0].sender_handle.as_str(), "north-wing-3");
+        let fingerprint = alone[0]
+            .sender_fingerprint
+            .clone()
+            .expect("the handle is shared with a provisioned member that has not checked in");
+        assert!(kodera_rs::proximity_key_fingerprint(&[1; 32]).starts_with(&fingerprint));
+        assert_eq!(
+            state.member_labels(ORG).unwrap()[0].display(),
+            format!("north-wing-3 [{fingerprint}]")
+        );
+
+        populate(&mut state, 2, 2); // the other member appears: the first label is unchanged
+        let both = statuses(&mut state);
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[0], alone[0]);
+        assert_ne!(both[0].sender_fingerprint, both[1].sender_fingerprint);
+        assert!(both[1].sender_fingerprint.is_some());
+
+        // Provisioning a pseudonym is display metadata for roster keys only.
+        assert_eq!(
+            state.provision_dedicated_handle(ORG, [9; 32], "north-wing-3"),
+            Err(CoreError::UnauthorizedSender)
+        );
+        assert_eq!(
+            state.provision_dedicated_handle(ORG, [1; 32], "North Wing"),
+            Err(CoreError::InvalidProximityHandle)
+        );
+        assert_eq!(
+            state.provision_dedicated_handle(OTHER_ORG, [1; 32], "north-wing-3"),
+            Err(CoreError::OrganisationMismatch)
+        );
+        state.clear_session();
+        assert_eq!(
+            state.provision_dedicated_handle(ORG, [1; 32], "north-wing-3"),
+            Err(CoreError::TransportUnavailable)
+        );
+    }
+
     /// Refusal mutation: drop one alias at a time. The legacy name must then be refused and the
     /// dual-name check above must fail, while the proximity name keeps answering.
     #[test]

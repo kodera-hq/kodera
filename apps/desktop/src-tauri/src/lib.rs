@@ -26,7 +26,7 @@ pub const DESKTOP_APP_IDENTIFIER: &str = "io.kodera.desktop";
 use core::fmt;
 use kodera_rs::{
     compute_proximity_beacon, curated_desktop_themes, decode_shareable_theme,
-    disambiguate_proximity_handles, encode_shareable_theme, evaluate_channel_access, redact_iban,
+    encode_shareable_theme, evaluate_channel_access, label_observed_proximity_senders, redact_iban,
     validate_channel_poll_id, validate_connector_post_url, validate_docs_host,
     validate_docs_pad_url, validate_user_profile, ChannelAccessDecision, ChannelPermissionPolicy,
     ChannelPoll, ChannelPollSnapshot, CoreError, CoreThemeMode, DeviceIdentitySigner,
@@ -365,6 +365,9 @@ fn verified_incoming_proximity_packet(
 pub struct DesktopProximityNode {
     org_beacon_salt: [u8; 32],
     allowed_roster: HashSet<Ed25519PublicKey>,
+    /// Pseudonyms members picked, by provisioned key. Display metadata only: never consulted to
+    /// admit, refuse or deduplicate anything.
+    dedicated_handles: BTreeMap<Ed25519PublicKey, ProximityHandle>,
     replay_guard: ProximityReplayGuard,
     mesh_queue: ProximityMeshQueue,
     roster: ProximityRosterTracker,
@@ -376,6 +379,7 @@ impl DesktopProximityNode {
     fn clear(&mut self) {
         self.org_beacon_salt.fill(0);
         self.allowed_roster.clear();
+        self.dedicated_handles.clear();
         self.replay_guard.clear();
         self.mesh_queue.clear();
         self.roster.clear();
@@ -393,6 +397,7 @@ impl DesktopProximityNode {
             org_beacon_salt,
             roster: ProximityRosterTracker::new(allowed_roster.len())?,
             allowed_roster,
+            dedicated_handles: BTreeMap::new(),
             replay_guard: ProximityReplayGuard::new(MAX_PROXIMITY_STATE_ENTRIES),
             mesh_queue: ProximityMeshQueue::new(max_queue_capacity)?,
         })
@@ -581,21 +586,50 @@ impl DesktopProximityNode {
             .collect()
     }
 
-    /// One display label per roster member, in the order of [`Self::member_statuses`]. Each handle
-    /// is derived from the sender key under this organisation's beacon salt, and senders whose
-    /// handles are equal carry a fingerprint of their signing key. Labels are for display only:
-    /// identity and admission stay with the key, the roster and the signature.
-    pub fn member_labels(&self) -> Vec<ProximityRosterLabel> {
-        let resolved: Vec<(Ed25519PublicKey, ProximityHandle)> = self
+    /// Records the pseudonym a provisioned member picked. Trusted provisioning only: the key
+    /// must already be in the roster and the handle inside the shared grammar. It changes what
+    /// is displayed for that key and nothing else.
+    pub fn provision_dedicated_handle(
+        &mut self,
+        sender_public_key: Ed25519PublicKey,
+        raw_handle: &str,
+    ) -> Result<(), CoreError> {
+        if !self.allowed_roster.contains(&sender_public_key) {
+            return Err(CoreError::UnauthorizedSender);
+        }
+        let handle = ProximityHandle::dedicated(raw_handle)?;
+        self.dedicated_handles.insert(sender_public_key, handle);
+        Ok(())
+    }
+
+    /// One display label per member that has checked in, in the order of
+    /// [`Self::member_statuses`]. A handle is the member's dedicated pseudonym when one was
+    /// provisioned, else derived from the sender key under this organisation's beacon salt.
+    ///
+    /// Equal handles are told apart with a fingerprint of the signing key, and equality is judged
+    /// over EVERY provisioned key, not over the members seen so far: a member whose handle equals
+    /// that of someone who has not checked in yet already carries its fingerprint, so it cannot
+    /// pass for the absent member and no label changes when that member appears. Labels are for
+    /// display only: identity and admission stay with the key, the roster and the signature.
+    pub fn member_labels(&self) -> Result<Vec<ProximityRosterLabel>, CoreError> {
+        let provisioned: Vec<(Ed25519PublicKey, ProximityHandle)> =
+            self.allowed_roster
+                .iter()
+                .map(|key| {
+                    let handle =
+                        self.dedicated_handles.get(key).cloned().unwrap_or_else(|| {
+                            ProximityHandle::generated(&self.org_beacon_salt, key)
+                        });
+                    (*key, handle)
+                })
+                .collect();
+        let observed: Vec<Ed25519PublicKey> = self
             .roster
             .statuses()
             .into_iter()
-            .map(|member| {
-                let handle = member.generated_handle(&self.org_beacon_salt);
-                (member.sender_public_key, handle)
-            })
+            .map(|member| member.sender_public_key)
             .collect();
-        disambiguate_proximity_handles(&resolved)
+        label_observed_proximity_senders(&provisioned, &observed)
     }
 }
 
@@ -795,8 +829,23 @@ impl DesktopWorkspaceSession {
         self.check_organisation(organisation_id)?;
         self.proximity
             .as_ref()
-            .map(DesktopProximityNode::member_labels)
-            .ok_or(CoreError::TransportUnavailable)
+            .ok_or(CoreError::TransportUnavailable)?
+            .member_labels()
+    }
+
+    /// Records the pseudonym a provisioned member picked, for the current organisation only.
+    /// A trusted adapter calls this from provisioning; it is not a JSON route.
+    pub fn provision_dedicated_handle(
+        &mut self,
+        organisation_id: &str,
+        sender_public_key: Ed25519PublicKey,
+        raw_handle: &str,
+    ) -> Result<(), CoreError> {
+        self.check_organisation(organisation_id)?;
+        self.proximity
+            .as_mut()
+            .ok_or(CoreError::TransportUnavailable)?
+            .provision_dedicated_handle(sender_public_key, raw_handle)
     }
 
     pub fn next_relay_batch(

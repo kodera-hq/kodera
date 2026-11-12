@@ -16,8 +16,9 @@
 //! members of one roster do not meet by accident, not enough to stop someone who can try keys
 //! until one matches. A key reaches a roster only through provisioning, and a matching handle
 //! gives its holder nothing but a label; still, a client that lists a roster must run
-//! [`disambiguate_proximity_handles`], which shows equal handles with a fingerprint of each
-//! signing key.
+//! [`label_observed_proximity_senders`], which shows equal handles with a fingerprint of each
+//! signing key. Equality is judged over the whole provisioned roster, absent members included:
+//! a sender cannot borrow the handle of a member who has not checked in yet.
 //!
 //! The derivation is keyed with the organisation's beacon salt, so the same key shows another
 //! handle in another organisation: handles are not linkable across organisations, and one
@@ -27,6 +28,7 @@
 //! Swift and Kotlin ports.
 
 use crate::{encode_hex, hmac_sha256, sha256, CoreError, Ed25519PublicKey};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Fewest characters in a handle.
 pub const MIN_PROXIMITY_HANDLE_CHARS: usize = 3;
@@ -241,45 +243,79 @@ impl ProximityRosterLabel {
     }
 }
 
-/// Labels for the senders of one roster, in the order given. When two or more distinct keys
-/// resolve to the same handle, whatever its origin, each of them carries a fingerprint prefix:
-/// [`MIN_PROXIMITY_FINGERPRINT_HEX_CHARS`] characters, lengthened two at a time until the
-/// prefixes of that group differ. A key listed twice is one sender and does not collide with
-/// itself. The result is for display; identity remains the key in `sender_public_key`.
+/// Labels for every provisioned sender of one roster, in the order given. When two or more
+/// distinct keys resolve to the same handle, whatever its origin, each of them carries a
+/// fingerprint prefix: [`MIN_PROXIMITY_FINGERPRINT_HEX_CHARS`] characters, lengthened two at a
+/// time until the prefixes of that group differ. A key listed twice is one sender and does not
+/// collide with itself. The result is for display; identity remains the key.
+///
+/// `provisioned` must be the whole provisioned roster, never only the senders seen so far. A
+/// group computed over observed senders alone would show a bare handle to a sender whose handle
+/// equals an absent member's, who could then pass for that member until it appears. To label the
+/// senders that have checked in, use [`label_observed_proximity_senders`].
 pub fn disambiguate_proximity_handles(
-    entries: &[(Ed25519PublicKey, ProximityHandle)],
+    provisioned: &[(Ed25519PublicKey, ProximityHandle)],
 ) -> Vec<ProximityRosterLabel> {
-    entries
+    // Handle text to the distinct keys showing it, then to the prefix length that separates them.
+    let mut groups: BTreeMap<&str, BTreeSet<&Ed25519PublicKey>> = BTreeMap::new();
+    for (key, handle) in provisioned {
+        groups.entry(handle.as_str()).or_default().insert(key);
+    }
+    let lengths: BTreeMap<&str, usize> = groups
         .iter()
-        .map(|(sender_public_key, handle)| {
-            let mut group: Vec<&Ed25519PublicKey> = entries
+        .filter(|(_, keys)| keys.len() > 1)
+        .map(|(handle, keys)| {
+            let fingerprints: Vec<String> = keys
                 .iter()
-                .filter(|(_, other)| other.as_str() == handle.as_str())
-                .map(|(key, _)| key)
+                .map(|key| proximity_key_fingerprint(key))
                 .collect();
-            group.sort_unstable();
-            group.dedup();
-            let fingerprint = (group.len() > 1).then(|| {
-                let fingerprints: Vec<String> = group
+            let mut length = MIN_PROXIMITY_FINGERPRINT_HEX_CHARS;
+            while length < 64
+                && fingerprints
                     .iter()
-                    .map(|key| proximity_key_fingerprint(key))
-                    .collect();
-                let mut length = MIN_PROXIMITY_FINGERPRINT_HEX_CHARS;
-                while length < 64 && {
-                    let mut prefixes: Vec<&str> =
-                        fingerprints.iter().map(|full| &full[..length]).collect();
-                    prefixes.sort_unstable();
-                    prefixes.windows(2).any(|pair| pair[0] == pair[1])
-                } {
-                    length += 2;
-                }
-                proximity_key_fingerprint(sender_public_key)[..length].to_owned()
-            });
-            ProximityRosterLabel {
-                sender_public_key: *sender_public_key,
-                handle: handle.clone(),
-                fingerprint,
+                    .map(|full| &full[..length])
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    < fingerprints.len()
+            {
+                length += 2;
             }
+            (*handle, length)
+        })
+        .collect();
+    provisioned
+        .iter()
+        .map(|(sender_public_key, handle)| ProximityRosterLabel {
+            sender_public_key: *sender_public_key,
+            handle: handle.clone(),
+            fingerprint: lengths
+                .get(handle.as_str())
+                .map(|length| proximity_key_fingerprint(sender_public_key)[..*length].to_owned()),
+        })
+        .collect()
+}
+
+/// Labels for the senders that have checked in, in the order of `observed`, with the collision
+/// groups computed over the whole `provisioned` roster. A sender whose handle equals that of any
+/// provisioned member carries its fingerprint whether or not that member has checked in, so a
+/// label never changes when another member appears. An observed key outside the provisioned
+/// roster is refused: nothing is labelled for a sender the roster does not hold.
+pub fn label_observed_proximity_senders(
+    provisioned: &[(Ed25519PublicKey, ProximityHandle)],
+    observed: &[Ed25519PublicKey],
+) -> Result<Vec<ProximityRosterLabel>, CoreError> {
+    let labels: BTreeMap<Ed25519PublicKey, ProximityRosterLabel> =
+        disambiguate_proximity_handles(provisioned)
+            .into_iter()
+            .map(|label| (label.sender_public_key, label))
+            .collect();
+    observed
+        .iter()
+        .map(|key| {
+            labels
+                .get(key)
+                .cloned()
+                .ok_or(CoreError::UnauthorizedSender)
         })
         .collect()
 }
@@ -298,6 +334,7 @@ mod tests {
         dedicated: Option<String>,
         handle: String,
         fingerprint: Option<String>,
+        present: bool,
     }
 
     #[derive(Default)]
@@ -367,7 +404,7 @@ mod tests {
                     bytes32(sender, number),
                     (*handle).to_owned(),
                 )),
-                ["roster", case, salt, sender, dedicated, handle, fingerprint] => {
+                ["roster", case, salt, sender, dedicated, handle, fingerprint, presence] => {
                     parsed.rosters.push(RosterEntry {
                         case: (*case).to_owned(),
                         salt: bytes32(salt, number),
@@ -375,6 +412,11 @@ mod tests {
                         dedicated: optional(dedicated),
                         handle: (*handle).to_owned(),
                         fingerprint: optional(fingerprint),
+                        present: match *presence {
+                            "present" => true,
+                            "absent" => false,
+                            _ => panic!("vectors line {number}: presence {presence:?}"),
+                        },
                     })
                 }
                 _ => panic!("vectors line {number} is not in the grammar: {line:?}"),
@@ -607,28 +649,31 @@ mod tests {
         cases
     }
 
+    fn resolved(entries: &[&RosterEntry], name: &str) -> Vec<(Ed25519PublicKey, ProximityHandle)> {
+        entries
+            .iter()
+            .map(|entry| {
+                let handle = ProximityHandle::resolve(
+                    entry.dedicated.as_deref(),
+                    &entry.salt,
+                    &entry.sender,
+                )
+                .unwrap();
+                assert_eq!(handle.as_str(), entry.handle, "{name}");
+                (entry.sender, handle)
+            })
+            .collect()
+    }
+
     #[test]
     fn equal_handles_in_a_roster_are_shown_with_a_key_fingerprint() {
         let shared = vectors();
         let cases = roster_cases(&shared);
-        assert!(cases.len() >= 4);
+        assert!(cases.len() >= 6);
         let mut disambiguated = 0;
         let mut extended = 0;
         for (name, entries) in cases {
-            let resolved: Vec<(Ed25519PublicKey, ProximityHandle)> = entries
-                .iter()
-                .map(|entry| {
-                    let handle = ProximityHandle::resolve(
-                        entry.dedicated.as_deref(),
-                        &entry.salt,
-                        &entry.sender,
-                    )
-                    .unwrap();
-                    assert_eq!(handle.as_str(), entry.handle, "{name}");
-                    (entry.sender, handle)
-                })
-                .collect();
-            let labels = disambiguate_proximity_handles(&resolved);
+            let labels = disambiguate_proximity_handles(&resolved(&entries, name));
             assert_eq!(labels.len(), entries.len());
             for (label, entry) in labels.iter().zip(&entries) {
                 assert_eq!(label.sender_public_key, entry.sender, "{name}");
@@ -646,13 +691,82 @@ mod tests {
                     extended += usize::from(fingerprint.len() > 8);
                 }
             }
-            // Every sender of a roster ends with a display of its own.
+            // Every provisioned sender of a roster ends with a display of its own.
             let mut displays: Vec<String> = labels.iter().map(|label| label.display()).collect();
             displays.sort();
             displays.dedup();
             assert_eq!(displays.len(), entries.len(), "{name}");
         }
-        assert!(disambiguated >= 7 && extended >= 2);
+        assert!(disambiguated >= 11 && extended >= 2);
+    }
+
+    /// The groups cover every provisioned sender. A sender whose handle equals an absent
+    /// member's is labelled with its fingerprint before that member ever checks in.
+    #[test]
+    fn collision_groups_cover_provisioned_senders_that_have_not_checked_in() {
+        let shared = vectors();
+        let mut guarded = 0;
+        for (name, entries) in roster_cases(&shared) {
+            let provisioned = resolved(&entries, name);
+            let present: Vec<&RosterEntry> = entries
+                .iter()
+                .copied()
+                .filter(|entry| entry.present)
+                .collect();
+            let observed: Vec<Ed25519PublicKey> =
+                present.iter().map(|entry| entry.sender).collect();
+            let labels = label_observed_proximity_senders(&provisioned, &observed).unwrap();
+            assert_eq!(labels.len(), present.len(), "{name}");
+            for (label, entry) in labels.iter().zip(&present) {
+                assert_eq!(label.sender_public_key, entry.sender, "{name}");
+                assert_eq!(label.handle.as_str(), entry.handle, "{name}");
+                assert_eq!(label.fingerprint, entry.fingerprint, "{name}");
+            }
+            // Refusal mutation: groups restricted to the senders seen so far. Where a present
+            // sender shares its handle only with absent members, that computation shows the bare
+            // handle, which is exactly what the vectors refuse.
+            let observed_only: Vec<(Ed25519PublicKey, ProximityHandle)> = provisioned
+                .iter()
+                .filter(|(key, _)| observed.contains(key))
+                .cloned()
+                .collect();
+            let narrowed = disambiguate_proximity_handles(&observed_only);
+            for (label, weak) in labels.iter().zip(&narrowed) {
+                let handle_holders = provisioned
+                    .iter()
+                    .filter(|(_, handle)| handle.as_str() == label.handle.as_str())
+                    .count();
+                let present_holders = observed_only
+                    .iter()
+                    .filter(|(_, handle)| handle.as_str() == label.handle.as_str())
+                    .count();
+                if handle_holders > 1 && present_holders == 1 {
+                    assert!(label.fingerprint.is_some(), "{name}");
+                    assert_eq!(
+                        weak.fingerprint, None,
+                        "{name}: the narrowed groups miss it"
+                    );
+                    guarded += 1;
+                }
+            }
+            // A label does not change when the absent members appear.
+            let everyone: Vec<Ed25519PublicKey> =
+                entries.iter().map(|entry| entry.sender).collect();
+            let later = label_observed_proximity_senders(&provisioned, &everyone).unwrap();
+            for label in &labels {
+                assert!(later.contains(label), "{name}");
+            }
+        }
+        assert!(
+            guarded >= 2,
+            "the vectors must hold a handle shared with an absent member"
+        );
+        // A sender the roster does not hold is not labelled at all.
+        assert_eq!(
+            label_observed_proximity_senders(&[], &[[9; 32]]),
+            Err(CoreError::UnauthorizedSender)
+        );
+        assert_eq!(label_observed_proximity_senders(&[], &[]), Ok(Vec::new()));
     }
 
     #[test]
