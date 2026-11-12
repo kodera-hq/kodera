@@ -280,13 +280,17 @@ describe('the directory, read by an administrator', () => {
     expect(await screen.findByRole('menuitem', { name: "Renvoyer l'invitation" })).toBeVisible()
   })
 
-  it('draws an account with no address as a dash that is not read out, never as a word', async () => {
+  it('draws an account with no address as a dash for the eye and as words for a screen reader', async () => {
     openList('org_admin')
     const table = await listedTable()
     const samir = within(table).getByRole('row', { name: /Samir Benali/ })
     const address = within(samir).getAllByRole('cell')[0]!
-    expect(address).toHaveTextContent(/^—$/)
-    expect(address.querySelector('[aria-hidden="true"]')).toHaveTextContent('—')
+    // The dash is hidden from a screen reader; the words are hidden from the eye. Neither alone.
+    expect(address.querySelector('[aria-hidden="true"]')).toHaveTextContent(/^—$/)
+    const words = within(address).getByText('Aucune adresse e-mail')
+    expect(words).toHaveClass('sr-only')
+    expect(words).not.toHaveAttribute('aria-hidden')
+    expect(address).toHaveTextContent(/^—Aucune adresse e-mail$/)
     expect(table).not.toHaveTextContent(/undefined|null/)
     expect(table.querySelector('a[href^="mailto:"]')).toBeNull()
   })
@@ -325,16 +329,16 @@ describe('the colleagues’ list, read by a member', () => {
     )
   })
 
-  it('a member reads a colleague with no name under their role, with a person glyph', async () => {
+  it('a member reads a colleague with no name under words of their own, with a person glyph', async () => {
     openList('org_member')
     const table = await listedTable()
     assertColleaguesList(table)
     const invited = within(table).getByRole('row', { name: /En attente/ })
     const name = within(invited).getByRole('rowheader')
     // The label alone: no initial taken from it, a glyph in the avatar instead.
-    expect(name).toHaveTextContent(/^Membre$/)
+    expect(name).toHaveTextContent(/^Personne sans nom affiché$/)
     expect(name.querySelector('svg')).not.toBeNull()
-    expect(within(name).getByRole('button', { name: 'Membre' })).toBeVisible()
+    expect(within(name).getByRole('button', { name: 'Personne sans nom affiché' })).toBeVisible()
   })
 
   it('a member keeps the order Core gave, whatever is withheld', async () => {
@@ -349,7 +353,7 @@ describe('the colleagues’ list, read by a member', () => {
       'Marc Petit',
       'Nadia Haddad',
       'Samir Benali',
-      'Membre',
+      'Personne sans nom affiché',
     ])
     expect(Object.values(people)).toHaveLength(listed.length)
   })
@@ -358,7 +362,7 @@ describe('the colleagues’ list, read by a member', () => {
     openList('org_member')
     const table = await listedTable()
     expect(screen.queryByRole('searchbox', { name: /e-mail/i })).toBeNull()
-    const search = screen.getByRole('searchbox', { name: 'Rechercher' })
+    const search = screen.getByRole('searchbox', { name: 'Rechercher un nom' })
     // An address the member happens to know finds nobody: it is not searched, nor told.
     await userEvent.type(search, 'marc.petit@acme.fr')
     expect(
@@ -372,15 +376,15 @@ describe('the colleagues’ list, read by a member', () => {
       expect(within(table).getByRole('row', { name: /Nadia Haddad/ })).toBeVisible()
     })
     // The search reads the words a person is listed under, not their state or their role's badge;
-    // a colleague with no name is listed under their role, and found under it.
+    // a colleague with no name is listed under the words kept for that case, and found under them.
     await userEvent.clear(search)
     await userEvent.type(search, 'en attente')
     expect(await screen.findByText('Aucune personne ne correspond à « en attente ».')).toBeVisible()
     await userEvent.clear(search)
-    await userEvent.type(search, 'membre')
+    await userEvent.type(search, 'sans nom')
     await waitFor(() => {
       expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
-      expect(within(table).getByRole('rowheader')).toHaveTextContent(/^Membre$/)
+      expect(within(table).getByRole('rowheader')).toHaveTextContent(/^Personne sans nom affiché$/)
     })
     assertColleaguesList(table)
   })
@@ -418,9 +422,9 @@ describe('the colleagues’ list, read by a member', () => {
     await assertColleagueDrawer('Marc Petit')
   })
 
-  it('a member opens a colleague with no name under their role', async () => {
+  it('a member opens a colleague with no name under words of their own', async () => {
     openDrawer('org_member', 'invited')
-    await assertColleagueDrawer('Membre')
+    await assertColleagueDrawer('Personne sans nom affiché')
   })
 
   it('a member reads their own address and sign-in in their own drawer', async () => {
@@ -441,15 +445,15 @@ describe('the rules, on their own', () => {
     expect(disclosedEmail({ email: 'julie@acme.fr' })).toBe('julie@acme.fr')
   })
 
-  it('names a person by their name, else their disclosed address, else their role', () => {
+  it('names a person by their name, else their disclosed address, else the words for neither', () => {
     expect(personName({ display_name: ' Julie ', email: 'julie@acme.fr' })).toBe('Julie')
     expect(personName({ display_name: null, email: 'julie@acme.fr' })).toBe('julie@acme.fr')
     expect(personName({ display_name: null, email: null })).toBe('')
     expect(personName({ display_name: '  ' })).toBe('')
-    expect(personLabel({ display_name: null, email: null, role: 'org_member' }, t)).toBe(
-      '«console.people.list.status-role-member»'
+    expect(personLabel({ display_name: null, email: null }, t)).toBe(
+      '«console.people.list.label-unnamed»'
     )
-    expect(personLabel({ display_name: 'Julie', role: 'org_admin' }, t)).toBe('Julie')
+    expect(personLabel({ display_name: 'Julie' }, t)).toBe('Julie')
   })
 
   it('discloses private facts to the person themself and to those who manage people', () => {

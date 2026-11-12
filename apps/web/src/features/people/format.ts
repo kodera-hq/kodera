@@ -74,15 +74,16 @@ export function personName(membership: Pick<Membership, 'display_name' | 'email'
 
 /**
  * What a person is called on screen, never empty: their name, else their disclosed address, else
- * their role in words. A row, a button or a dialog title drawn with no words at all reads as a
- * fault; the role is the one thing Core says of every row.
+ * the words the catalogue keeps for a person with neither (« Personne sans nom affiché »). A row,
+ * a button or a dialog title drawn with no words at all reads as a fault. The words say what the
+ * caller is shown, not what the person has: a withheld address is not a missing one.
  */
 export function personLabel(
-  membership: Pick<Membership, 'display_name' | 'email' | 'role'>,
+  membership: Pick<Membership, 'display_name' | 'email'>,
   t: TFunction
 ): string {
   const name = personName(membership)
-  return name.length > 0 ? name : t(ROLE_LABEL[membership.role])
+  return name.length > 0 ? name : t('console.people.list.label-unnamed')
 }
 
 /** "aujourd'hui", "hier", "il y a 31 jours" — whole days against `now`. */

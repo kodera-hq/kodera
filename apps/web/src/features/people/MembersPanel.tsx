@@ -74,12 +74,11 @@ type Pending = { kind: 'remove'; member: Membership } | { kind: 'owner'; member:
 /**
  * The search field's words, by projection. The directory searches names and addresses, and says
  * so. A colleague's address is withheld from the other projection, so its field must not offer to
- * search one: it borrows the workspace search's plain « Rechercher » until the People catalogue
- * has words of its own for it.
+ * search one: « Rechercher un nom ».
  */
 const SEARCH_LABEL = {
   directory: 'console.people.list.placeholder-search',
-  colleagues: 'console.workspace.search.action-open',
+  colleagues: 'console.people.list.placeholder-search-name',
 } as const satisfies Record<string, MessageKey>
 
 /** A membership's state as a pill: what the colleagues' projection says in place of a sign-in. */
@@ -463,8 +462,14 @@ export function MembersPanel({
                     {directory ? (
                       <TableCell className="max-w-[240px] truncate">
                         {/* A manager is told every address Core holds: none here is an account
-                            with no address (an on-site access), drawn as a dash, not read out. */}
-                        {email ?? <span aria-hidden="true">—</span>}
+                            with no address (an on-site access). A dash for the eye, and the
+                            words for a screen reader, which would otherwise read an empty cell. */}
+                        {email ?? (
+                          <>
+                            <span aria-hidden="true">—</span>
+                            <span className="sr-only">{t('console.people.list.sr-no-email')}</span>
+                          </>
+                        )}
                       </TableCell>
                     ) : null}
                     <TableCell>
