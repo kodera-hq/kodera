@@ -260,14 +260,16 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     const tabAlice = screen.getByTestId('tab-alice')
     const tabKarim = screen.getByTestId('tab-karim')
 
-    // 1. Alice types a proximity note and clicks "Besoin d’assistance" in Tab A
-    const aliceInput = within(tabAlice).getByLabelText('Message court (facultatif)')
+    // 1. Alice types a proximity note and clicks "Besoin d’un coup de main" in Tab A
+    const aliceInput = within(tabAlice).getByLabelText('Zone ou message court (facultatif)')
     await user.type(aliceInput, 'Ascenseur bloqué palier nord')
 
     const aliceActionGroup = within(tabAlice).getByRole('group', {
-      name: 'Signaler votre situation',
+      name: 'Indiquer votre présence',
     })
-    await user.click(within(aliceActionGroup).getByRole('button', { name: /Besoin d’assistance/i }))
+    await user.click(
+      within(aliceActionGroup).getByRole('button', { name: /Besoin d’un coup de main/i })
+    )
 
     // Verify wire frame sent over BroadcastChannel is a valid "KE" v1 binary frame with valid beacon & Ed25519 signature
     expect(hub.wireEnvelopes).toHaveLength(1)
@@ -296,17 +298,17 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     // Verify Tab B's roster UI immediately renders Alice's NeedAssistance check-in at the top
     const karimRosterAfterAlice = await listed(tabKarim, 1)
     expect(karimRosterAfterAlice[0]).toHaveTextContent('poste-alice')
-    expect(karimRosterAfterAlice[0]).toHaveTextContent('Besoin d’assistance')
+    expect(karimRosterAfterAlice[0]).toHaveTextContent('Besoin d’un coup de main')
     expect(karimRosterAfterAlice[0]).toHaveTextContent('Ascenseur bloqué palier nord')
 
-    // 2. Karim clicks "En sécurité" (SafetyStatus.Safe) in Tab B
-    const karimInput = within(tabKarim).getByLabelText('Message court (facultatif)')
+    // 2. Karim clicks "Sur place" (SafetyStatus.Safe) in Tab B
+    const karimInput = within(tabKarim).getByLabelText('Zone ou message court (facultatif)')
     await user.type(karimInput, 'Hall principal dégagé')
 
     const karimActionGroup = within(tabKarim).getByRole('group', {
-      name: 'Signaler votre situation',
+      name: 'Indiquer votre présence',
     })
-    await user.click(within(karimActionGroup).getByRole('button', { name: /En sécurité/i }))
+    await user.click(within(karimActionGroup).getByRole('button', { name: /Sur place/i }))
 
     expect(hub.wireEnvelopes).toHaveLength(2)
 
@@ -315,14 +317,14 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     const karimRosterItems = await listed(tabKarim, 2)
 
     expect(aliceRosterItems[0]).toHaveTextContent('poste-alice')
-    expect(aliceRosterItems[0]).toHaveTextContent('Besoin d’assistance')
+    expect(aliceRosterItems[0]).toHaveTextContent('Besoin d’un coup de main')
     expect(aliceRosterItems[1]).toHaveTextContent('poste-karim')
-    expect(aliceRosterItems[1]).toHaveTextContent('En sécurité')
+    expect(aliceRosterItems[1]).toHaveTextContent('Sur place')
 
     expect(karimRosterItems[0]).toHaveTextContent('poste-alice')
-    expect(karimRosterItems[0]).toHaveTextContent('Besoin d’assistance')
+    expect(karimRosterItems[0]).toHaveTextContent('Besoin d’un coup de main')
     expect(karimRosterItems[1]).toHaveTextContent('poste-karim')
-    expect(karimRosterItems[1]).toHaveTextContent('En sécurité')
+    expect(karimRosterItems[1]).toHaveTextContent('Sur place')
 
     aliceController.close()
     karimController.close()
@@ -526,11 +528,13 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
 
     // Alice emits a live NeedAssistance check-in at t = +5000ms
     const aliceActionGroup = within(tabAlice).getByRole('group', {
-      name: 'Signaler votre situation',
+      name: 'Indiquer votre présence',
     })
-    await user.click(within(aliceActionGroup).getByRole('button', { name: /Besoin d’assistance/i }))
+    await user.click(
+      within(aliceActionGroup).getByRole('button', { name: /Besoin d’un coup de main/i })
+    )
 
-    expect((await listed(tabKarim, 1))[0]).toHaveTextContent('Besoin d’assistance')
+    expect((await listed(tabKarim, 1))[0]).toHaveTextContent('Besoin d’un coup de main')
 
     // Craft an older signed frame from Alice (Safe at t = +1000ms, earlier UuidV7 timestamp)
     const olderMessageId = UuidV7.fromParts(
@@ -570,7 +574,7 @@ describe('ProximityRoomCrossTab — BroadcastChannel + node:crypto Ed25519 integ
     const karimItems = await listed(tabKarim, 1)
     expect(karimItems).toHaveLength(1)
     expect(karimItems[0]).toHaveTextContent('poste-alice')
-    expect(karimItems[0]).toHaveTextContent('Besoin d’assistance')
+    expect(karimItems[0]).toHaveTextContent('Besoin d’un coup de main')
     expect(karimItems[0]).not.toHaveTextContent('Ancien pointage en sécurité')
 
     // Verify full relay queue preemption: fill Alice's 2-slot relay queue with Safe and MusterPoint, then preempt with NeedAssistance

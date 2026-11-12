@@ -21,6 +21,50 @@ describe('ProximityRoomPanel', () => {
     expect(screen.queryByRole('list')).toBeNull()
   })
 
+  it('says, connected or not, that it is not an emergency service and replaces no emergency number', () => {
+    const NOTICE =
+      'Ceci n’est pas un service d’urgence et ne remplace pas les numéros d’urgence. En cas de danger, appelez les secours.'
+    const { unmount } = render(<ProximityRoomPanel channelName="around-me" />)
+    const disconnected = screen.getByRole('note')
+    expect(disconnected).toHaveTextContent(NOTICE)
+    expect(screen.getByTestId('proximity-disconnected')).toContainElement(disconnected)
+    unmount()
+
+    render(<ProximityRoomPanel channelName="around-me" transport={demoProximityTransport()} />)
+    const connected = screen.getByRole('note')
+    expect(connected).toHaveTextContent(NOTICE)
+    expect(connected).toBeVisible()
+    // A sentence that is always there: never an alert that interrupts a screen reader.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(connected).not.toHaveAttribute('aria-live')
+  })
+
+  it('tells who checks in that it is voluntary and shown under a pseudonym', () => {
+    render(<ProximityRoomPanel channelName="around-me" transport={demoProximityTransport()} />)
+    expect(screen.getByTestId('proximity-pseudonym-hint')).toHaveTextContent(
+      'Le pointage est volontaire. Il s’affiche sous un pseudonyme, dédié ou généré, et non sous votre nom.'
+    )
+  })
+
+  it('words nothing as an alarm outside that notice: statuses, actions and the demo roster', async () => {
+    const { container } = render(
+      <ProximityRoomPanel channelName="around-me" transport={demoProximityTransport()} />
+    )
+    const roster = screen.getByRole('list', { name: 'Personnes à proximité' })
+    await waitFor(() => expect(within(roster).getAllByRole('listitem')).toHaveLength(2))
+    const actions = screen.getByRole('group', { name: 'Indiquer votre présence' })
+    expect(
+      within(actions)
+        .getAllByRole('button')
+        .map((button) => button.textContent)
+    ).toEqual(['Sur place', 'Besoin d’un coup de main', 'Point de rencontre'])
+    const outsideTheNotice = container.cloneNode(true) as HTMLElement
+    outsideTheNotice.querySelector('[role="note"]')?.remove()
+    expect(outsideTheNotice.textContent).not.toMatch(
+      /urgen|crise|évacu|alerte|sécurité|assistance|rassembl|signalement|secours|danger/i
+    )
+  })
+
   it('claims no transport technology, signature scheme or frame format in its copy', () => {
     const { container: disconnected } = render(<ProximityRoomPanel channelName="around-me" />)
     const { container: connected } = render(
@@ -44,13 +88,13 @@ describe('ProximityRoomPanel', () => {
       new Uint8Array(32).fill(0x11)
     )
     expect(items[0]).toHaveTextContent(generated.handle)
-    expect(items[0]).toHaveTextContent('Au point de rassemblement')
+    expect(items[0]).toHaveTextContent('Point de rencontre')
     // The second picked one.
     expect(items[1]).toHaveTextContent('north-wing-3')
     expect(roster).not.toHaveTextContent(/Sylvain|Ellenstein|Marina|Loiseau|SRE|Ingénierie/)
   })
 
-  it('emits a signed frame on one tap and puts « Besoin d’assistance » at the top', async () => {
+  it('emits a signed frame on one tap and puts « Besoin d’un coup de main » at the top', async () => {
     const user = userEvent.setup()
     const onCheckIn = vi.fn()
     render(
@@ -61,13 +105,18 @@ describe('ProximityRoomPanel', () => {
       />
     )
 
-    await user.type(screen.getByLabelText('Message court (facultatif)'), 'Porte bloquée aile ouest')
-    const actions = screen.getByRole('group', { name: 'Signaler votre situation' })
-    const assist = within(actions).getByRole('button', { name: 'Besoin d’assistance' })
+    await user.type(
+      screen.getByLabelText('Zone ou message court (facultatif)'),
+      'Porte bloquée aile ouest'
+    )
+    const actions = screen.getByRole('group', { name: 'Indiquer votre présence' })
+    const assist = within(actions).getByRole('button', { name: 'Besoin d’un coup de main' })
     await user.click(assist)
 
     expect(assist).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('status')).toHaveTextContent('Signalement envoyé : Besoin d’assistance')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Présence partagée : Besoin d’un coup de main'
+    )
     expect(onCheckIn).toHaveBeenCalledTimes(1)
     const [checkIn, wireBytes] = onCheckIn.mock.calls[0] as [
       { status: SafetyStatus; text: string; ttlHops: number },
@@ -97,10 +146,10 @@ describe('ProximityRoomPanel', () => {
         onCheckIn={onCheckIn}
       />
     )
-    const input = screen.getByLabelText('Message court (facultatif)') as HTMLInputElement
+    const input = screen.getByLabelText('Zone ou message court (facultatif)') as HTMLInputElement
     await user.type(input, 'x'.repeat(MAX_PROXIMITY_TEXT_BYTES + 25))
     expect(input.value.length).toBe(MAX_PROXIMITY_TEXT_BYTES)
-    await user.click(screen.getByRole('button', { name: 'En sécurité' }))
+    await user.click(screen.getByRole('button', { name: 'Sur place' }))
     const [, wireBytes] = onCheckIn.mock.calls[0] as [unknown, Uint8Array]
     expect(wireBytes.length).toBe(MAX_PROXIMITY_FRAME_BYTES)
   })

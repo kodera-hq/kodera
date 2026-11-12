@@ -346,6 +346,7 @@ translates it key for key. CI fails when a key exists in one file and not the ot
 | `console.order.summary.label-vat` | VAT {rate}% |
 | `console.order.summary.label-billed-annually` | Billed annually |
 | `console.order._.error-role` | Only the owner can place an order. Ask {owner}. |
+| `console.order._.error-role-generic` | Only the owner can place an order. Ask an administrator of your organisation. |
 | `console.order._.error-owner-role` | Only the organisation owner can prepare this order and generate its DPA. |
 | `console.order._.error-owner-unavailable` | We could not verify your access for this order. Try again before continuing. |
 | `console.order._.error-outcome-held` | An order may already have been submitted. Email us at {email} before creating another one. |
@@ -572,6 +573,9 @@ a number.
 | `console.people.list.label-tab-invitations` | Invitations |
 | `console.people.list.label-tab-on-site` | On-site access |
 | `console.people.list.placeholder-search` | Search for a name or an email address |
+| `console.people.list.placeholder-search-name` | Search for a name |
+| `console.people.list.label-unnamed` | Person with no name shown |
+| `console.people.list.sr-no-email` | No email address |
 | `console.people.list.label-filter-role` | Role |
 | `console.people.list.label-filter-all` | All |
 | `console.people.list.label-filter-admins` | Admins |
@@ -1477,6 +1481,7 @@ The Appearance page (`docs/specs/10-appearance.md`): the theme choice, reached f
 | `console.workspace.channel.welcome` | welcome |
 | `console.workspace.channel.general` | general |
 | `console.workspace.channel.lounge` | lounge |
+| `console.workspace.channel.proximity` | proximity |
 | `console.workspace.channel.body-empty` | Messaging is not available for your organisation. |
 | `console.workspace.channel.body-open` | Open your messages to read and write in your channels. |
 | `console.workspace.channel.body-opening` | Opening your messages… |
@@ -1721,23 +1726,25 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.members.online-count` | Online ({count}) |
 | `console.workspace.members.state-online` | Online |
 | `console.workspace.members.state-offline` | Offline |
-| `console.workspace.emergency.title` | Around me |
-| `console.workspace.emergency.state-disconnected` | Not connected |
-| `console.workspace.emergency.state-connected` | Connected |
-| `console.workspace.emergency.disconnected-body` | The proximity relay is in development. |
-| `console.workspace.emergency.message-label` | Short message (optional) |
-| `console.workspace.emergency.message-placeholder` | E.g. Floor 3 clear |
-| `console.workspace.emergency.actions-label` | Report your situation |
-| `console.workspace.emergency.status-safe` | Safe |
-| `console.workspace.emergency.status-assistance` | Need assistance |
-| `console.workspace.emergency.status-muster` | At the assembly point |
-| `console.workspace.emergency.status-note` | Note |
-| `console.workspace.emergency.sent` | Status sent: {status} |
-| `console.workspace.emergency.roster-count` | {count, plural, one {{count} person nearby} other {{count} people nearby}} |
-| `console.workspace.emergency.roster-show` | Show |
-| `console.workspace.emergency.roster-hide` | Hide |
-| `console.workspace.emergency.roster-label` | People nearby |
-| `console.workspace.emergency.local-name` | You (this device) |
+| `console.workspace.proximity.title` | Around me |
+| `console.workspace.proximity.state-disconnected` | Not connected |
+| `console.workspace.proximity.state-connected` | Connected |
+| `console.workspace.proximity.disconnected-body` | The proximity relay is in development. |
+| `console.workspace.proximity.message-label` | Zone or short message (optional) |
+| `console.workspace.proximity.message-placeholder` | E.g. Reception, 2nd floor |
+| `console.workspace.proximity.actions-label` | Share your presence |
+| `console.workspace.proximity.status-safe` | Here |
+| `console.workspace.proximity.status-assistance` | Could use a hand |
+| `console.workspace.proximity.status-muster` | Meeting point |
+| `console.workspace.proximity.status-note` | Note |
+| `console.workspace.proximity.sent` | Presence shared: {status} |
+| `console.workspace.proximity.roster-count` | {count, plural, one {{count} person nearby} other {{count} people nearby}} |
+| `console.workspace.proximity.roster-show` | Show |
+| `console.workspace.proximity.roster-hide` | Hide |
+| `console.workspace.proximity.roster-label` | People nearby |
+| `console.workspace.proximity.local-name` | You (this device) |
+| `console.workspace.proximity.notice` | This is not an emergency service and does not replace emergency numbers. If someone is in danger, call the emergency services. |
+| `console.workspace.proximity.pseudonym-hint` | Checking in is voluntary. It is shown under a pseudonym, dedicated or generated, not under your name. |
 
 ## Product onboarding and deployment
 
@@ -1753,7 +1760,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.onboarding.studio.tech` | Technology & Product Studio |
 | `console.onboarding.studio.consulting` | Consulting & B2B |
 | `console.onboarding.studio.public` | Public sector |
-| `console.onboarding.studio.crisis` | Crisis response |
+| `console.onboarding.studio.proximity` | Field and event teams |
 | `console.onboarding.studio.finish` | Make it yours |
 | `console.onboarding.studio.next` | Continue |
 | `console.onboarding.studio.back` | Back |
@@ -1781,10 +1788,32 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.onboarding.studio.frameio` | Frame.io reviews, timecodes and approvals directly in #post-production and #dailies-rushes. |
 | `console.onboarding.studio.stage` | Stage & Control |
 | `console.onboarding.studio.editing` | Editing room |
+| `console.onboarding.studio.channel-proximity` | proximity |
 | `console.onboarding.studio.integrations-studio` | Frame.io · /frameio-review |
 | `console.onboarding.studio.integrations-tech` | GitHub · Qonto |
 | `console.onboarding.studio.sound-givre` | Givre |
 | `console.onboarding.studio.sound-atelier` | Atelier |
+| `console.onboarding.extensions.count-reference` | {count, plural, one {{count} reference implementation} other {{count} reference implementations}} |
+| `console.onboarding.extensions.list-label` | Kodera reference implementations |
+| `console.onboarding.extensions.reference-note` | Starter examples to adapt: no external account is connected. |
+| `console.onboarding.tour.step-badge` | Step {step} of {total} |
+| `console.onboarding.tour.theme-title` | Visual appearance |
+| `console.onboarding.tour.theme-subtitle` | Choose between the clarity of Givre and the night-time comfort of Nuit, with an instant preview. |
+| `console.onboarding.tour.sonic-title` | 48 kHz acoustic signature |
+| `console.onboarding.tour.sonic-subtitle` | Listen to and pick your sound identity, synthesised in real time by WebAudio DSP. |
+| `console.onboarding.tour.av-check-title` | Microphone & local AI mask |
+| `console.onboarding.tour.av-check-subtitle` | 100% on the device, no biometric data sent to the server. |
+| `console.onboarding.tour.channels-title` | Your essential channels |
+| `console.onboarding.tour.channels-subtitle` | A one-click guided tour of your coordination, architecture and proximity channels. |
+| `console.onboarding.tour.general-label` | #general |
+| `console.onboarding.tour.general-description` | Day-to-day coordination, team announcements and quick polls. |
+| `console.onboarding.tour.general-badge` | Everyday |
+| `console.onboarding.tour.architecture-label` | #architecture |
+| `console.onboarding.tour.architecture-description` | System design, Matrix E2EE, LiveKit SFU and technical decisions. |
+| `console.onboarding.tour.architecture-badge` | Engineering |
+| `console.onboarding.tour.proximity-label` | #proximity |
+| `console.onboarding.tour.proximity-description` | A voluntary, pseudonymous check-in with the people nearby, by named zone. It is not an emergency service. |
+| `console.onboarding.tour.proximity-badge` | Presence |
 
 
 ## Matrix channel invitations

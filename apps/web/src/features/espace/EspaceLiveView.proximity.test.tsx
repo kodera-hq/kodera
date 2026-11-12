@@ -30,7 +30,7 @@ const PROXIMITY_CHANNEL: WorkspaceChannel = {
   kind: 'text',
   name: 'proximity',
   template_key: null,
-  topic: 'Continuité bâtiment et pointage de sécurité',
+  topic: 'Présence de proximité, pointage volontaire',
   lifecycle: 'active',
   room_state: 'ready',
 }

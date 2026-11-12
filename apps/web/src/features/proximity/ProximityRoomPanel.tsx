@@ -46,17 +46,19 @@ export interface ProximityRoomPanelProps {
 }
 
 const STATUS_KEYS = {
-  [SafetyStatus.Safe]: 'console.workspace.emergency.status-safe',
-  [SafetyStatus.NeedAssistance]: 'console.workspace.emergency.status-assistance',
-  [SafetyStatus.MusterPoint]: 'console.workspace.emergency.status-muster',
-  [SafetyStatus.MessageOnly]: 'console.workspace.emergency.status-note',
+  [SafetyStatus.Safe]: 'console.workspace.proximity.status-safe',
+  [SafetyStatus.NeedAssistance]: 'console.workspace.proximity.status-assistance',
+  [SafetyStatus.MusterPoint]: 'console.workspace.proximity.status-muster',
+  [SafetyStatus.MessageOnly]: 'console.workspace.proximity.status-note',
 } as const
 
+// The values are the frame's, frozen on the wire; the words and tones are an everyday presence
+// board's. Nothing here reads as an alarm: this panel is not an emergency service.
 const STATUS_PILLS: Record<SafetyStatus, StatusPillState> = {
   [SafetyStatus.Safe]: 'success',
-  [SafetyStatus.NeedAssistance]: 'danger',
-  [SafetyStatus.MusterPoint]: 'warning',
-  [SafetyStatus.MessageOnly]: 'info',
+  [SafetyStatus.NeedAssistance]: 'warning',
+  [SafetyStatus.MusterPoint]: 'info',
+  [SafetyStatus.MessageOnly]: 'neutral',
 }
 
 const ACTIONS = [SafetyStatus.Safe, SafetyStatus.NeedAssistance, SafetyStatus.MusterPoint] as const
@@ -77,10 +79,24 @@ function PanelTitle({ id, channelName }: { readonly id: string; readonly channel
         <ModuleGlyph name="messaging" />
       </span>
       <h2 id={id} className="truncate text-sm font-semibold text-c-ink">
-        {t('console.workspace.emergency.title')}
+        {t('console.workspace.proximity.title')}
       </h2>
       <span className="truncate text-xs text-c-ink-3">{channelName}</span>
     </div>
+  )
+}
+
+/**
+ * Said in every state of the panel, connected or not: this is not an emergency service and does
+ * not replace emergency numbers. A plain sentence, not an alert: it is always there, so it must
+ * not interrupt a screen reader each time the panel is drawn.
+ */
+function NotAnEmergencyService() {
+  const { t } = useTranslation()
+  return (
+    <p role="note" data-testid="proximity-notice" className="text-xs font-regular text-c-ink-2">
+      {t('console.workspace.proximity.notice')}
+    </p>
   )
 }
 
@@ -91,15 +107,18 @@ function DisconnectedBar({ channelName }: { readonly channelName: string }) {
     <section
       aria-labelledby={headingId}
       data-testid="proximity-disconnected"
-      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-sunken px-3 py-2"
+      className="flex flex-col gap-2 rounded-md border border-c-border-soft bg-c-sunken px-3 py-2"
     >
-      <PanelTitle id={headingId} channelName={channelName} />
-      <span className="flex items-center gap-2 text-xs text-c-ink-2">
-        {t('console.workspace.emergency.disconnected-body')}
-        <StatusPill state="neutral">
-          {t('console.workspace.emergency.state-disconnected')}
-        </StatusPill>
-      </span>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <PanelTitle id={headingId} channelName={channelName} />
+        <span className="flex items-center gap-2 text-xs text-c-ink-2">
+          {t('console.workspace.proximity.disconnected-body')}
+          <StatusPill state="neutral">
+            {t('console.workspace.proximity.state-disconnected')}
+          </StatusPill>
+        </span>
+      </div>
+      <NotAnEmergencyService />
     </section>
   )
 }
@@ -236,13 +255,18 @@ function ConnectedPanel({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <PanelTitle id={headingId} channelName={channelName} />
             <StatusPill state="success">
-              {t('console.workspace.emergency.state-connected')}
+              {t('console.workspace.proximity.state-connected')}
             </StatusPill>
           </div>
 
+          <NotAnEmergencyService />
+          <p data-testid="proximity-pseudonym-hint" className="text-xs font-regular text-c-ink-2">
+            {t('console.workspace.proximity.pseudonym-hint')}
+          </p>
+
           <div className="flex flex-col gap-1">
             <label htmlFor={messageInputId} className="text-xs font-medium text-c-ink-2">
-              {t('console.workspace.emergency.message-label')}
+              {t('console.workspace.proximity.message-label')}
             </label>
             <input
               id={messageInputId}
@@ -251,14 +275,14 @@ function ConnectedPanel({
               onChange={(event) =>
                 setDraftMessage(truncateUtf8Bytes(event.target.value, MAX_PROXIMITY_TEXT_BYTES))
               }
-              placeholder={t('console.workspace.emergency.message-placeholder')}
+              placeholder={t('console.workspace.proximity.message-placeholder')}
               className="h-8 rounded-md border border-c-border-input bg-c-surface px-3 text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
             />
           </div>
 
           <div
             role="group"
-            aria-label={t('console.workspace.emergency.actions-label')}
+            aria-label={t('console.workspace.proximity.actions-label')}
             className="grid grid-cols-1 gap-2 md:grid-cols-3"
           >
             {ACTIONS.map((status) => {
@@ -287,7 +311,7 @@ function ConnectedPanel({
               aria-live="polite"
               className="rounded-md border border-c-ok-border bg-c-ok-soft px-3 py-2 text-xs font-medium text-c-ok-ink"
             >
-              {t('console.workspace.emergency.sent', { status: t(STATUS_KEYS[selectedStatus]) })}
+              {t('console.workspace.proximity.sent', { status: t(STATUS_KEYS[selectedStatus]) })}
             </p>
           )}
 
@@ -299,18 +323,18 @@ function ConnectedPanel({
               onClick={() => setIsRosterCollapsed((prev) => !prev)}
               className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 text-left text-xs font-semibold text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
             >
-              <span>{t('console.workspace.emergency.roster-count', { count: listedCount })}</span>
+              <span>{t('console.workspace.proximity.roster-count', { count: listedCount })}</span>
               <span className="text-xs text-c-ink-3">
                 {t(
                   isRosterCollapsed
-                    ? 'console.workspace.emergency.roster-show'
-                    : 'console.workspace.emergency.roster-hide'
+                    ? 'console.workspace.proximity.roster-show'
+                    : 'console.workspace.proximity.roster-hide'
                 )}
               </span>
             </button>
             {isRosterCollapsed ? null : (
               <ul
-                aria-label={t('console.workspace.emergency.roster-label')}
+                aria-label={t('console.workspace.proximity.roster-label')}
                 aria-busy={labels === null ? true : undefined}
                 className="flex flex-col gap-2"
               >
@@ -326,7 +350,7 @@ function ConnectedPanel({
                         {labels?.get(entry.senderPublicKeyHex)?.display}
                         {entry.isLocal ? (
                           <span className="ml-2 text-xs font-regular text-c-ink-3">
-                            {t('console.workspace.emergency.local-name')}
+                            {t('console.workspace.proximity.local-name')}
                           </span>
                         ) : null}
                       </span>

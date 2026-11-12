@@ -46,7 +46,9 @@ it.each([
         ? 'Plateau & Régie'
         : channel.name === 'editing-room'
           ? 'Salle de montage'
-          : channel.name
+          : channel.name === 'proximity'
+            ? 'proximité'
+            : channel.name
     expect(rows[index]).toContain(text)
   }
 })

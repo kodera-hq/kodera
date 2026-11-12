@@ -239,6 +239,10 @@ const CHANNEL_LABELS = {
   welcome: 'console.workspace.channel.welcome',
   general: 'console.workspace.channel.general',
   lounge: 'console.workspace.channel.lounge',
+  // The proximity template's channel: « proximité » in French, « proximity » in English. A label
+  // only, for the row the template made (`template_key`); a channel a member names « proximity »
+  // keeps its own name, and no identifier is ever translated.
+  proximity: 'console.workspace.channel.proximity',
 } as const satisfies Record<string, MessageKey>
 
 function labelOf(

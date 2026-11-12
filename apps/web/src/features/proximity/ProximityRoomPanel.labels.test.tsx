@@ -81,9 +81,9 @@ describe('who checked in is a handle', () => {
       />
     )
     expect(await labelled()).toEqual([
-      'gentle-ember-jn24grqygEn sécurité',
-      'steady-brook-ah3fccbghEn sécurité',
-      'north-wing-3En sécurité',
+      'gentle-ember-jn24grqygSur place',
+      'steady-brook-ah3fccbghSur place',
+      'north-wing-3Sur place',
     ])
   })
 
@@ -98,9 +98,9 @@ describe('who checked in is a handle', () => {
       />
     )
     expect(await labelled()).toEqual([
-      'north-wing-3 [95043981]En sécurité',
-      'north-wing-3 [790b4513]En sécurité',
-      'mellow-river-pmgj8v226En sécurité',
+      'north-wing-3 [95043981]Sur place',
+      'north-wing-3 [790b4513]Sur place',
+      'mellow-river-pmgj8v226Sur place',
     ])
   })
 
@@ -115,7 +115,7 @@ describe('who checked in is a handle', () => {
         )}
       />
     )
-    expect(await labelled()).toEqual(['north-wing-3 [95043981]En sécurité'])
+    expect(await labelled()).toEqual(['north-wing-3 [95043981]Sur place'])
   })
 
   it('lists nothing for a sender the provisioned roster does not hold', async () => {
@@ -125,7 +125,7 @@ describe('who checked in is a handle', () => {
         transport={transport([member(FIRST)], [checkIn(OUTSIDER), checkIn(FIRST)])}
       />
     )
-    expect(await labelled()).toEqual(['gentle-ember-jn24grqygEn sécurité'])
+    expect(await labelled()).toEqual(['gentle-ember-jn24grqygSur place'])
     expect(screen.getByTestId('proximity-roster-toggle')).toHaveTextContent(
       '1 personne à proximité'
     )

@@ -10,6 +10,7 @@
   "console.order._.error-owner-role": "Only the organisation owner can prepare this order and generate its DPA.",
   "console.order._.error-owner-unavailable": "We could not verify your access for this order. Try again before continuing.",
   "console.order._.error-role": "Only the owner can place an order. Ask {{owner}}.",
+  "console.order._.error-role-generic": "Only the owner can place an order. Ask an administrator of your organisation.",
   "console.order._.label-step-agreements": "Contract",
   "console.order._.label-step-confirmation": "Confirmation",
   "console.order._.label-step-contacts": "Organisation",

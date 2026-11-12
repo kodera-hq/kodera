@@ -1,71 +1,84 @@
+import type { MessageKey } from '../../i18n'
+
 export const ONBOARDING_STORAGE_KEY = 'kodera.onboarding.completed.v1'
 
 export type OnboardingStepId = 'theme' | 'sonic' | 'av_check' | 'channels'
 
+/**
+ * A step of the guided tour. Its words are catalogue keys (`console.onboarding.tour.*`), read
+ * with `t` where the step is drawn: nothing here is a sentence, in any language. The badge is
+ * one key for every step, « Étape {step} sur {total} », filled from `stepNumber`.
+ */
 export interface OnboardingStepDescriptor {
   readonly id: OnboardingStepId
   readonly stepNumber: 1 | 2 | 3 | 4
-  readonly title: string
-  readonly subtitle: string
-  readonly badge: string
+  readonly title: MessageKey
+  readonly subtitle: MessageKey
+  readonly badge: MessageKey
 }
+
+const STEP_BADGE = 'console.onboarding.tour.step-badge' satisfies MessageKey
 
 export const ONBOARDING_STEPS: readonly OnboardingStepDescriptor[] = [
   {
     id: 'theme',
     stepNumber: 1,
-    title: 'Apparence visuelle',
-    subtitle: 'Choisissez entre la clarté Givre et le confort nocturne Nuit avec aperçu immédiat.',
-    badge: 'Étape 1 sur 4',
+    title: 'console.onboarding.tour.theme-title',
+    subtitle: 'console.onboarding.tour.theme-subtitle',
+    badge: STEP_BADGE,
   },
   {
     id: 'sonic',
     stepNumber: 2,
-    title: 'Signature acoustique 48 kHz',
-    subtitle: 'Écoutez et sélectionnez votre identité sonore WebAudio DSP synthétisée en temps réel.',
-    badge: 'Étape 2 sur 4',
+    title: 'console.onboarding.tour.sonic-title',
+    subtitle: 'console.onboarding.tour.sonic-subtitle',
+    badge: STEP_BADGE,
   },
   {
     id: 'av_check',
     stepNumber: 3,
-    title: 'Micro & Masque IA local',
-    subtitle: '100 % sur l’appareil, zéro donnée biométrique envoyée au serveur.',
-    badge: 'Étape 3 sur 4',
+    title: 'console.onboarding.tour.av-check-title',
+    subtitle: 'console.onboarding.tour.av-check-subtitle',
+    badge: STEP_BADGE,
   },
   {
     id: 'channels',
     stepNumber: 4,
-    title: 'Vos salons essentiels',
-    subtitle: 'Visite guidée en un clic de vos salons de coordination, d’architecture et d’urgence.',
-    badge: 'Étape 4 sur 4',
+    title: 'console.onboarding.tour.channels-title',
+    subtitle: 'console.onboarding.tour.channels-subtitle',
+    badge: STEP_BADGE,
   },
 ] as const
 
+/**
+ * A channel the tour presents. `id` is the channel's identifier; `label` is a catalogue key for
+ * the words shown beside it (« #proximité », « #proximity »): a label only, never an identifier.
+ */
 export interface OnboardingGuidedChannel {
   readonly id: string
-  readonly label: string
-  readonly description: string
-  readonly badge: string
+  readonly label: MessageKey
+  readonly description: MessageKey
+  readonly badge: MessageKey
 }
 
 export const ONBOARDING_GUIDED_CHANNELS: readonly OnboardingGuidedChannel[] = [
   {
     id: 'general',
-    label: '#général',
-    description: 'Coordination quotidienne, annonces d’équipe et sondages rapides.',
-    badge: 'Quotidien',
+    label: 'console.onboarding.tour.general-label',
+    description: 'console.onboarding.tour.general-description',
+    badge: 'console.onboarding.tour.general-badge',
   },
   {
     id: 'architecture',
-    label: '#architecture',
-    description: 'Conception système, Matrix E2EE, LiveKit SFU et décisions techniques.',
-    badge: 'Ingénierie',
+    label: 'console.onboarding.tour.architecture-label',
+    description: 'console.onboarding.tour.architecture-description',
+    badge: 'console.onboarding.tour.architecture-badge',
   },
   {
     id: 'proximity',
-    label: '#urgence (BLE)',
-    description: 'Continuité hors-ligne Bluetooth Low Energy et pointage sécurité terrain.',
-    badge: 'Résilience',
+    label: 'console.onboarding.tour.proximity-label',
+    description: 'console.onboarding.tour.proximity-description',
+    badge: 'console.onboarding.tour.proximity-badge',
   },
 ] as const
 

@@ -351,6 +351,7 @@ when a key is present here and missing there, or present in one language and not
 | `console.order.summary.label-vat` | TVA {rate} % |
 | `console.order.summary.label-billed-annually` | Facturé annuellement |
 | `console.order._.error-role` | Seul le propriétaire peut passer commande. Demandez à {owner}. |
+| `console.order._.error-role-generic` | Seul le propriétaire peut passer commande. Demandez à un⋅e administrateur⋅trice de votre organisation. |
 | `console.order._.error-owner-role` | Seul le propriétaire de l’organisation peut préparer cette commande et générer son DPA. |
 | `console.order._.error-owner-unavailable` | Nous n’avons pas pu vérifier vos droits pour cette commande. Réessayez avant de poursuivre. |
 | `console.order._.error-outcome-held` | Une commande pourrait déjà avoir été envoyée. Écrivez-nous à {email} avant d’en créer une autre. |
@@ -577,6 +578,9 @@ a number.
 | `console.people.list.label-tab-invitations` | Invitations |
 | `console.people.list.label-tab-on-site` | Accès sur site |
 | `console.people.list.placeholder-search` | Rechercher un nom ou un e-mail |
+| `console.people.list.placeholder-search-name` | Rechercher un nom |
+| `console.people.list.label-unnamed` | Personne sans nom affiché |
+| `console.people.list.sr-no-email` | Aucune adresse e-mail |
 | `console.people.list.label-filter-role` | Rôle |
 | `console.people.list.label-filter-all` | Toutes |
 | `console.people.list.label-filter-admins` | Admins |
@@ -1491,6 +1495,7 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.workspace.channel.welcome` | bienvenue |
 | `console.workspace.channel.general` | général |
 | `console.workspace.channel.lounge` | détente |
+| `console.workspace.channel.proximity` | proximité |
 | `console.workspace.channel.body-empty` | La messagerie n’est pas disponible pour votre organisation. |
 | `console.workspace.channel.body-open` | Ouvrez vos messages pour lire et écrire dans vos salons. |
 | `console.workspace.channel.body-opening` | Ouverture de vos messages… |
@@ -1735,23 +1740,25 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.members.online-count` | En ligne ({count}) |
 | `console.workspace.members.state-online` | En ligne |
 | `console.workspace.members.state-offline` | Hors ligne |
-| `console.workspace.emergency.title` | Autour de moi |
-| `console.workspace.emergency.state-disconnected` | Non connecté |
-| `console.workspace.emergency.state-connected` | Connecté |
-| `console.workspace.emergency.disconnected-body` | Le relais de proximité est en développement. |
-| `console.workspace.emergency.message-label` | Message court (facultatif) |
-| `console.workspace.emergency.message-placeholder` | Ex. Étage 3 dégagé |
-| `console.workspace.emergency.actions-label` | Signaler votre situation |
-| `console.workspace.emergency.status-safe` | En sécurité |
-| `console.workspace.emergency.status-assistance` | Besoin d’assistance |
-| `console.workspace.emergency.status-muster` | Au point de rassemblement |
-| `console.workspace.emergency.status-note` | Note |
-| `console.workspace.emergency.sent` | Signalement envoyé : {status} |
-| `console.workspace.emergency.roster-count` | {count, plural, one {{count} personne à proximité} other {{count} personnes à proximité}} |
-| `console.workspace.emergency.roster-show` | Afficher |
-| `console.workspace.emergency.roster-hide` | Masquer |
-| `console.workspace.emergency.roster-label` | Personnes à proximité |
-| `console.workspace.emergency.local-name` | Vous (cet appareil) |
+| `console.workspace.proximity.title` | Autour de moi |
+| `console.workspace.proximity.state-disconnected` | Non connecté |
+| `console.workspace.proximity.state-connected` | Connecté |
+| `console.workspace.proximity.disconnected-body` | Le relais de proximité est en développement. |
+| `console.workspace.proximity.message-label` | Zone ou message court (facultatif) |
+| `console.workspace.proximity.message-placeholder` | Ex. Accueil, 2e étage |
+| `console.workspace.proximity.actions-label` | Indiquer votre présence |
+| `console.workspace.proximity.status-safe` | Sur place |
+| `console.workspace.proximity.status-assistance` | Besoin d’un coup de main |
+| `console.workspace.proximity.status-muster` | Point de rencontre |
+| `console.workspace.proximity.status-note` | Note |
+| `console.workspace.proximity.sent` | Présence partagée : {status} |
+| `console.workspace.proximity.roster-count` | {count, plural, one {{count} personne à proximité} other {{count} personnes à proximité}} |
+| `console.workspace.proximity.roster-show` | Afficher |
+| `console.workspace.proximity.roster-hide` | Masquer |
+| `console.workspace.proximity.roster-label` | Personnes à proximité |
+| `console.workspace.proximity.local-name` | Vous (cet appareil) |
+| `console.workspace.proximity.notice` | Ceci n’est pas un service d’urgence et ne remplace pas les numéros d’urgence. En cas de danger, appelez les secours. |
+| `console.workspace.proximity.pseudonym-hint` | Le pointage est volontaire. Il s’affiche sous un pseudonyme, dédié ou généré, et non sous votre nom. |
 
 ## Product onboarding and deployment
 
@@ -1767,7 +1774,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.onboarding.studio.tech` | Studio Tech & Produit |
 | `console.onboarding.studio.consulting` | Cabinet Conseil & B2B |
 | `console.onboarding.studio.public` | Secteur public |
-| `console.onboarding.studio.crisis` | Cellule de crise |
+| `console.onboarding.studio.proximity` | Équipe de terrain et événements |
 | `console.onboarding.studio.finish` | Personnalisez votre espace |
 | `console.onboarding.studio.next` | Continuer |
 | `console.onboarding.studio.back` | Retour |
@@ -1795,10 +1802,32 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.onboarding.studio.frameio` | Avis, timecodes et validations Frame.io directement dans #post-production et #dailies-rushes. |
 | `console.onboarding.studio.stage` | Plateau & Régie |
 | `console.onboarding.studio.editing` | Salle de montage |
+| `console.onboarding.studio.channel-proximity` | proximité |
 | `console.onboarding.studio.integrations-studio` | Frame.io · /frameio-review |
 | `console.onboarding.studio.integrations-tech` | GitHub · Qonto |
 | `console.onboarding.studio.sound-givre` | Givre |
 | `console.onboarding.studio.sound-atelier` | Atelier |
+| `console.onboarding.extensions.count-reference` | {count, plural, one {{count} implémentation de référence} other {{count} implémentations de référence}} |
+| `console.onboarding.extensions.list-label` | Implémentations de référence Kodera |
+| `console.onboarding.extensions.reference-note` | Exemples de départ à adapter : aucun compte externe n’est connecté. |
+| `console.onboarding.tour.step-badge` | Étape {step} sur {total} |
+| `console.onboarding.tour.theme-title` | Apparence visuelle |
+| `console.onboarding.tour.theme-subtitle` | Choisissez entre la clarté Givre et le confort nocturne Nuit avec aperçu immédiat. |
+| `console.onboarding.tour.sonic-title` | Signature acoustique 48 kHz |
+| `console.onboarding.tour.sonic-subtitle` | Écoutez et sélectionnez votre identité sonore WebAudio DSP synthétisée en temps réel. |
+| `console.onboarding.tour.av-check-title` | Micro & Masque IA local |
+| `console.onboarding.tour.av-check-subtitle` | 100 % sur l’appareil, zéro donnée biométrique envoyée au serveur. |
+| `console.onboarding.tour.channels-title` | Vos salons essentiels |
+| `console.onboarding.tour.channels-subtitle` | Visite guidée en un clic de vos salons de coordination, d’architecture et de proximité. |
+| `console.onboarding.tour.general-label` | #général |
+| `console.onboarding.tour.general-description` | Coordination quotidienne, annonces d’équipe et sondages rapides. |
+| `console.onboarding.tour.general-badge` | Quotidien |
+| `console.onboarding.tour.architecture-label` | #architecture |
+| `console.onboarding.tour.architecture-description` | Conception système, Matrix E2EE, LiveKit SFU et décisions techniques. |
+| `console.onboarding.tour.architecture-badge` | Ingénierie |
+| `console.onboarding.tour.proximity-label` | #proximité |
+| `console.onboarding.tour.proximity-description` | Pointage volontaire et pseudonyme auprès des personnes proches, par zones nommées. Ce n’est pas un service d’urgence. |
+| `console.onboarding.tour.proximity-badge` | Présence |
 
 
 ## Matrix channel invitations
