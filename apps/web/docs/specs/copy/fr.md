@@ -1663,6 +1663,24 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.message.action-open-thread` | Ouvrir le fil |
 | `console.workspace.message.action-edit` | Modifier |
 | `console.workspace.message.action-delete` | Supprimer |
+| `console.workspace.message.action-pin` | Épingler |
+| `console.workspace.message.action-unpin` | Désépingler |
+
+## Workspace pins, search and Kodera emoji
+
+| Key | Text |
+|---|---|
+| `console.workspace.pins.action-open` | Messages épinglés ({count}) |
+| `console.workspace.pins.title` | Messages épinglés |
+| `console.workspace.pins.empty` | Aucun message épinglé dans ce salon. Épinglez-en un depuis son menu « ··· ». |
+| `console.workspace.pins.not-loaded` | Message plus ancien que l’historique chargé. |
+| `console.workspace.find.action-open` | Rechercher dans ce salon |
+| `console.workspace.find.field-label` | Mots à chercher |
+| `console.workspace.find.hint` | Dans les messages chargés, sans tenir compte des accents ni des majuscules. |
+| `console.workspace.find.empty` | Aucun message chargé ne contient ces mots. |
+| `console.workspace.find.count-results` | {count, plural, one {{count} message trouvé} many {{count} messages trouvés} other {{count} messages trouvés}} |
+| `console.workspace.find.label-more` | Seuls les {count} plus récents sont listés. |
+| `console.workspace.composer.label-kodera-emoji` | Émojis Kodera |
 
 ## Live workspace message controls
 

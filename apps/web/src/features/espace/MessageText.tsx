@@ -1,4 +1,4 @@
-import { InlineMarkdown, MarkdownText } from '../messaging/MarkdownText'
+import { MarkdownText } from '../messaging/MarkdownText'
 // A message's text with its web addresses as links (V1 bar M10): http and https only, each
 // opening a new tab with no handle back on this page and no referrer. No preview is fetched.
 // Everything else stays text, which React escapes.
@@ -6,6 +6,7 @@ import { InlineMarkdown, MarkdownText } from '../messaging/MarkdownText'
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
+import { EmojiText } from './KoderaEmoji'
 import { LINK_TEXT } from '../../ui/linkText'
 
 export type TextSegment = { text: string } | { text: string; href: string }
@@ -71,7 +72,7 @@ function LinkedText({ body }: { body: string }) {
   const { t } = useTranslation()
   const newTabId = useId()
   const segments = linkSegments(body)
-  if (!segments.some((segment) => 'href' in segment)) return <InlineMarkdown text={body} />
+  if (!segments.some((segment) => 'href' in segment)) return <EmojiText text={body} />
   return (
     <>
       {segments.map((segment, index) =>
@@ -90,7 +91,7 @@ function LinkedText({ body }: { body: string }) {
             {segment.text}
           </a>
         ) : (
-          <InlineMarkdown key={index} text={segment.text} />
+          <EmojiText key={index} text={segment.text} />
         )
       )}
       <span id={newTabId} className="sr-only">

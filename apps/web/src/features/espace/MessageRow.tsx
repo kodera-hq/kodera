@@ -62,6 +62,10 @@ export interface MessageRowProps extends MessageRowActions {
   repliedMessage: MessageView | undefined
   threadReplies: readonly MessageView[]
   menuContextKey: string
+  /** The message is one of the room's pins. */
+  pinned?: boolean | undefined
+  /** Pins or unpins it; absent where the member may not change the room's pins. */
+  onPin?: ((eventId: string, pinned: boolean) => void) | undefined
 }
 
 /** One mounted message; only activation reports a timeline opener to the view. */
@@ -85,6 +89,8 @@ function MessageRowView({
   onEdit,
   onRemove,
   onOpenThread,
+  pinned = false,
+  onPin,
 }: MessageRowProps) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
@@ -225,6 +231,18 @@ function MessageRowView({
                           const trigger = actionsTrigger.current
                           if (trigger !== null) onOpenThread(msg.eventId, trigger)
                         },
+                      },
+                    ]
+                  : []),
+                ...(!inThread && onPin !== undefined && !msg.redacted
+                  ? [
+                      {
+                        label: t(
+                          pinned
+                            ? 'console.workspace.message.action-unpin'
+                            : 'console.workspace.message.action-pin'
+                        ),
+                        onSelect: () => onPin(msg.eventId, !pinned),
                       },
                     ]
                   : []),

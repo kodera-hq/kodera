@@ -1649,6 +1649,24 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.message.action-open-thread` | Open thread |
 | `console.workspace.message.action-edit` | Edit |
 | `console.workspace.message.action-delete` | Delete |
+| `console.workspace.message.action-pin` | Pin |
+| `console.workspace.message.action-unpin` | Unpin |
+
+## Workspace pins, search and Kodera emoji
+
+| Key | Text |
+|---|---|
+| `console.workspace.pins.action-open` | Pinned messages ({count}) |
+| `console.workspace.pins.title` | Pinned messages |
+| `console.workspace.pins.empty` | No pinned messages in this channel. Pin one from its « ··· » menu. |
+| `console.workspace.pins.not-loaded` | Older than the loaded history. |
+| `console.workspace.find.action-open` | Search this channel |
+| `console.workspace.find.field-label` | Words to find |
+| `console.workspace.find.hint` | In the loaded messages, ignoring accents and capitals. |
+| `console.workspace.find.empty` | No loaded message holds these words. |
+| `console.workspace.find.count-results` | {count, plural, one {{count} message found} many {{count} messages found} other {{count} messages found}} |
+| `console.workspace.find.label-more` | Only the {count} newest are listed. |
+| `console.workspace.composer.label-kodera-emoji` | Kodera emoji |
 
 ## Live workspace message controls
 
