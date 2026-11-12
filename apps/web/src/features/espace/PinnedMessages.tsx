@@ -114,12 +114,12 @@ export function PinnedMessages({
         />
       }
     >
-      <div className="flex w-80 max-w-full flex-col gap-2">
+      <div className="flex w-[320px] max-w-full flex-col gap-2">
         <h2 className="text-sm font-semibold text-c-ink">{t('console.workspace.pins.title')}</h2>
         {pins.length === 0 ? (
           <p className="text-sm text-c-ink-3">{t('console.workspace.pins.empty')}</p>
         ) : (
-          <ul className="flex max-h-96 flex-col gap-1 overflow-y-auto">
+          <ul className="flex max-h-[384px] flex-col gap-1 overflow-y-auto">
             {[...pins].reverse().map((eventId) => {
               const message = loaded.get(eventId)
               return (

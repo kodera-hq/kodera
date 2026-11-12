@@ -77,7 +77,7 @@ export function MessageSearch({
         />
       }
     >
-      <div className="flex w-80 max-w-full flex-col gap-2">
+      <div className="flex w-[320px] max-w-full flex-col gap-2">
         <TextField
           label={t('console.workspace.find.field-label')}
           type="search"
@@ -94,7 +94,7 @@ export function MessageSearch({
               : t('console.workspace.find.count-results', { count: result.messages.length })}
         </p>
         {result !== null && result.messages.length > 0 ? (
-          <ul className="flex max-h-96 flex-col gap-1 overflow-y-auto">
+          <ul className="flex max-h-[384px] flex-col gap-1 overflow-y-auto">
             {result.messages.map((message) => (
               <li key={message.key}>
                 <MessageJumpButton message={message} onChoose={choose} />
