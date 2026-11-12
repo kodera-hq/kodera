@@ -92,7 +92,7 @@ def generate(args):
     def issued(key, option):
         token_file = getattr(args, option, None)
         if not token_file or Path(token_file).stat().st_size > 4096:
-            raise ValueError('Community bootstrap requires --' + option.replace('_', '-'))
+            raise ValueError('An issued credential file is required: --' + option.replace('_', '-'))
         token = Path(token_file).read_text().strip()
         if not re.fullmatch(r'[A-Za-z0-9._~+/=-]{32,4096}', token):
             raise ValueError('Invalid issued credential file for ' + key)
