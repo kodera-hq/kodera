@@ -1,4 +1,7 @@
-# Kodera emergency v1: the bounds and the clock rule every platform is to enforce.
+# Kodera proximity frame v1: the bounds and the clock rule every platform is to enforce.
+#
+# The channel is `#proximity`. It was first named `#urgence` and this file keeps its historical
+# path because other checks read it. The frozen wire bytes are in `proximity-frame-v1.txt`.
 #
 # Rust (`src/lib.rs`) is the reference and its tests read this file. The Swift tests
 # (`apps/ios/packages/KoderaDomain`) and the Kotlin tests (`apps/android/domain`) read it too and

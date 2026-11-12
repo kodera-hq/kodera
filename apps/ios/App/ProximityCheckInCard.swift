@@ -2,31 +2,37 @@ import SwiftUI
 import KoderaClient
 import KoderaDomain
 
-/// The unprovisioned app can prepare a local draft, never fabricate a trusted radio session.
-struct EmergencyCheckInCard: View {
+/// The `#proximity` card: an everyday presence check-in, voluntary and pseudonymous. It is not an
+/// emergency service and says so. The unprovisioned app can prepare a local draft, never fabricate
+/// a trusted radio session.
+struct ProximityCheckInCard: View {
     let organisationId: String?
     @Environment(\.colorScheme) private var colorScheme
-    @State private var draft = EmergencyCheckInDraft()
+    @State private var draft = ProximityCheckInDraft()
     @State private var preparing = false
-    @State private var preparationContext: EmergencyCheckInContext?
+    @State private var preparationContext: ProximityCheckInContext?
 
     private var palette: KoderaTokens.Palette {
         colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
     }
     var body: some View {
         VStack(alignment: .leading, spacing: KoderaTokens.Space.s4) {
-            Label("emergency.title", systemImage: "antenna.radiowaves.left.and.right")
+            Label("proximity.title", systemImage: "antenna.radiowaves.left.and.right")
                 .font(NativeTypography.heading).accessibilityAddTraits(.isHeader)
-            Label("emergency.unprovisioned", systemImage: "antenna.radiowaves.left.and.right.slash")
+            Label("proximity.unprovisioned", systemImage: "antenna.radiowaves.left.and.right.slash")
                 .font(NativeTypography.emphasis).foregroundStyle(palette.ink2)
-            Text("emergency.description").font(NativeTypography.body)
+            Text("proximity.description").font(NativeTypography.body)
+                .fixedSize(horizontal: false, vertical: true)
+            // The safety notice is always shown: this channel never reaches emergency services.
+            Label("proximity.notice", systemImage: "exclamationmark.triangle")
+                .font(NativeTypography.caption).foregroundStyle(palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
             if organisationId != nil, draft.organisationId == organisationId, let status = draft.status {
                 VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
-                    Text("emergency.local_draft").font(NativeTypography.caption).foregroundStyle(palette.ink3)
-                    Label(LocalizedStringKey(status.emergencyCatalogueKey), systemImage: status.emergencySymbol)
+                    Text("proximity.local_draft").font(NativeTypography.caption).foregroundStyle(palette.ink3)
+                    Label(LocalizedStringKey(status.proximityCatalogueKey), systemImage: status.proximitySymbol)
                         .font(NativeTypography.emphasis)
-                    Text("emergency.not_sent").font(NativeTypography.caption).foregroundStyle(palette.ink2)
+                    Text("proximity.not_sent").font(NativeTypography.caption).foregroundStyle(palette.ink2)
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.updatesFrequently)
@@ -35,7 +41,7 @@ struct EmergencyCheckInCard: View {
                 preparationContext = draft.preparationContext(forOrganisationId: organisationId)
                 preparing = preparationContext != nil
             } label: {
-                Text("emergency.prepare").font(NativeTypography.emphasis)
+                Text("proximity.prepare").font(NativeTypography.emphasis)
                     .foregroundStyle(palette.accentInk)
                     .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s12)
                     .contentShape(Rectangle())
@@ -51,15 +57,15 @@ struct EmergencyCheckInCard: View {
             NavigationStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: KoderaTokens.Space.s4) {
-                        Text("emergency.not_sent").font(NativeTypography.body)
+                        Text("proximity.not_sent").font(NativeTypography.body)
                             .fixedSize(horizontal: false, vertical: true)
-                        ForEach([EmergencySafetyStatus.safe, .needAssistance, .musterPoint], id: \.rawValue) { status in
+                        ForEach([ProximitySafetyStatus.safe, .needAssistance, .musterPoint], id: \.rawValue) { status in
                             Button {
                                 _ = draft.prepare(status, context: preparationContext)
                                 preparationContext = nil
                                 preparing = false
                             } label: {
-                                Label(LocalizedStringKey(status.emergencyCatalogueKey), systemImage: status.emergencySymbol)
+                                Label(LocalizedStringKey(status.proximityCatalogueKey), systemImage: status.proximitySymbol)
                                     .font(NativeTypography.emphasis)
                                     .foregroundStyle(palette.accentInk)
                                     .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s12, alignment: .leading)
@@ -72,10 +78,10 @@ struct EmergencyCheckInCard: View {
                     .padding(KoderaTokens.Space.s6)
                 }
                 .background(palette.page.ignoresSafeArea())
-                .navigationTitle(Text("emergency.prepare"))
+                .navigationTitle(Text("proximity.prepare"))
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button { preparing = false; preparationContext = nil } label: { Text("emergency.cancel") }
+                        Button { preparing = false; preparationContext = nil } label: { Text("proximity.cancel") }
                     }
                 }
             }
@@ -90,16 +96,16 @@ struct EmergencyCheckInCard: View {
     }
 }
 
-private extension EmergencySafetyStatus {
-    var emergencyCatalogueKey: String {
+private extension ProximitySafetyStatus {
+    var proximityCatalogueKey: String {
         switch self {
-        case .messageOnly: "emergency.local_draft"
-        case .safe: "emergency.safe"
-        case .needAssistance: "emergency.need_assistance"
-        case .musterPoint: "emergency.muster_point"
+        case .messageOnly: "proximity.local_draft"
+        case .safe: "proximity.safe"
+        case .needAssistance: "proximity.need_assistance"
+        case .musterPoint: "proximity.muster_point"
         }
     }
-    var emergencySymbol: String {
+    var proximitySymbol: String {
         switch self {
         case .messageOnly: "square.and.pencil"
         case .safe: "checkmark.shield"

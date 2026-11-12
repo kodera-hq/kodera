@@ -21,8 +21,8 @@ interface Ed25519Primitive {
  * [NoSuchAlgorithmException], or [InvalidKeySpecException] when a provider has the algorithm but not these encodings.
  */
 object PlatformEd25519 : Ed25519Primitive {
-    private val publicPrefix = decodeEmergencyHex("302a300506032b6570032100")
-    private val privatePrefix = decodeEmergencyHex("302e020100300506032b657004220420")
+    private val publicPrefix = decodeProximityHex("302a300506032b6570032100")
+    private val privatePrefix = decodeProximityHex("302e020100300506032b657004220420")
     override fun verify(publicKey: ByteArray, message: ByteArray, signature: ByteArray): Boolean {
         val key = KeyFactory.getInstance("Ed25519").generatePublic(X509EncodedKeySpec(publicPrefix + publicKey))
         return Signature.getInstance("Ed25519").run { initVerify(key); update(message); verify(signature) }
@@ -72,18 +72,18 @@ class PlatformOrBundledEd25519(
         catch (error: InvalidKeySpecException) { call(fallback) }
 }
 
-/** Emergency frame verification over [ed25519]; any other cryptographic failure is a refusal. */
-class Ed25519SignatureVerifier(private val ed25519: Ed25519Primitive = PlatformOrBundledEd25519()) : EmergencySignatureVerifier {
-    override fun verify(publicKey: EmergencyPublicKey, transcript: ByteArray, signature: ByteArray): Boolean = try {
+/** Proximity frame verification over [ed25519]; any other cryptographic failure is a refusal. */
+class Ed25519SignatureVerifier(private val ed25519: Ed25519Primitive = PlatformOrBundledEd25519()) : ProximitySignatureVerifier {
+    override fun verify(publicKey: ProximityPublicKey, transcript: ByteArray, signature: ByteArray): Boolean = try {
         ed25519.verify(publicKey.bytes(), transcript, signature)
     } catch (error: NoSuchAlgorithmException) {
-        throw EmergencyFailure(EmergencyError.CRYPTO_UNAVAILABLE)
+        throw ProximityFailure(ProximityError.CRYPTO_UNAVAILABLE)
     } catch (error: java.security.GeneralSecurityException) { false }
 }
 
 /** A device key held as its 32-byte RFC 8032 seed. The caller owns where the seed is provisioned and kept. */
-class Ed25519EmergencySigner(seed: ByteArray, private val ed25519: Ed25519Primitive = PlatformOrBundledEd25519()) : EmergencySigner {
+class Ed25519ProximitySigner(seed: ByteArray, private val ed25519: Ed25519Primitive = PlatformOrBundledEd25519()) : ProximitySigner {
     private val seed = seed.copyOf()
-    override val publicKey = EmergencyPublicKey(BundledEd25519.publicKey(this.seed))
+    override val publicKey = ProximityPublicKey(BundledEd25519.publicKey(this.seed))
     override fun sign(transcript: ByteArray): ByteArray = ed25519.sign(seed.copyOf(), transcript)
 }

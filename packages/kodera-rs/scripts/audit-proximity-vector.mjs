@@ -20,6 +20,7 @@ assert.equal(frame[53], 11, 'public text length must be eleven UTF-8 bytes');
 assert.equal(frame.length, 54 + frame[53] + 64, 'packet text/signature boundary must be exact');
 assert.equal(frame[51], 3, 'public packet starts with three relay hops');
 
+// Frozen with v1: the signed label keeps the channel's first name. It is wire, not vocabulary.
 function transcript(packet) {
   return Buffer.concat([
     Buffer.from('kodera-emergency-v1:'),
@@ -67,6 +68,49 @@ for (let ttl = 1; ttl <= 6; ttl++) {
   assert.equal(verify(null, transcript(relayed), publicKey, signature), true);
 }
 
+// Every frame of the shared vector file, which the Rust, Swift and Kotlin codecs read too.
+const vectors = readFileSync(new URL('../vectors/proximity-frame-v1.txt', import.meta.url), 'utf8');
+const constants = new Map();
+let frames = 0;
+let refusedFrames = 0;
+for (const line of vectors.split('\n')) {
+  if (line === '' || line.startsWith('#')) continue;
+  const fields = line.split(' ');
+  if (fields[0] === 'const' && fields.length === 3) {
+    constants.set(fields[1], fields[2]);
+  } else if (fields[0] === 'frame' && fields.length === 8) {
+    const [, name, ttl, status, timestamp, text, wireHex, transcriptHex] = fields;
+    const packet = Buffer.from(wireHex, 'hex');
+    const key = createPublicKey({
+      key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), packet.subarray(19, 51)]),
+      format: 'der',
+      type: 'spki',
+    });
+    assert.deepEqual(packet.subarray(0, 3), Buffer.from([0x4b, 0x45, 1]), name + ': v1 header must be exact');
+    assert.equal(packet.length, 54 + packet[53] + 64, name + ': text/signature boundary must be exact');
+    assert.equal(packet[51], Number(ttl), name + ': hop count');
+    assert.equal(packet[52], Number(status), name + ': status');
+    assert.equal(packet.readUIntBE(3, 6), Number(timestamp), name + ': UUIDv7 time');
+    assert.equal(packet.subarray(54, 54 + packet[53]).toString('hex'), text === '-' ? '' : text, name + ': text');
+    assert.equal(transcript(packet).toString('hex'), transcriptHex, name + ': signed transcript');
+    assert.equal(verify(null, transcript(packet), key, packet.subarray(packet.length - 64)), true,
+      name + ': Ed25519 signature must verify');
+    frames++;
+  } else if (fields[0] === 'refuse' && fields.length === 3) {
+    assert.match(fields[2], /^(?:[0-9a-f]{2})+$/u, fields[1] + ': refused frame must be hex');
+    refusedFrames++;
+  } else {
+    assert.fail('unknown line in the shared frame vectors: ' + line);
+  }
+}
+assert.equal(constants.get('magic_hex'), '4b45', 'the magic is frozen');
+assert.equal(constants.get('version'), '1', 'the version is frozen');
+assert.equal(Buffer.from(constants.get('signing_label_hex'), 'hex').toString('latin1'), 'kodera-emergency-v1:',
+  'the signed label is frozen under its historical spelling');
+assert.ok(vectors.includes('frame canonical 3 1 1762520100000 c380206ce2809961627269 ' + documented[0][1] + ' '),
+  'the first shared frame must be the documented public packet');
+assert.ok(frames >= 5 && refusedFrames >= 15, 'the shared frame vectors must not shrink');
+
 const bucket = BigInt(1762520100) / 300n;
 const beaconMessage = Buffer.alloc(24);
 Buffer.from('kodera-beacon-v1').copy(beaconMessage);
@@ -75,4 +119,5 @@ const beacon = createHmac('sha256', Buffer.alloc(32, 0x42)).update(beaconMessage
 assert.equal(beacon.toString('hex'), '1be3967637ebb0ea', 'independent rotating beacon fixture must match');
 assert.ok(documentation.includes('1be3967637ebb0ea'), 'documented beacon must match the oracle');
 console.log('OK — public v1 Ed25519 vector, ' + refused
-  + ' signed-byte/signature mutations refused, six TTL variants and HMAC beacon verified.');
+  + ' signed-byte/signature mutations refused, six TTL variants, ' + frames
+  + ' shared frame signatures and HMAC beacon verified.');

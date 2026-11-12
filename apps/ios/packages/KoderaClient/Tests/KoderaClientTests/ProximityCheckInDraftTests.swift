@@ -2,21 +2,21 @@ import XCTest
 import KoderaDomain
 @testable import KoderaClient
 
-final class EmergencyCheckInDraftTests: XCTestCase {
+final class ProximityCheckInDraftTests: XCTestCase {
     func testPreparationReplacesLocalChoiceAndClearDropsIt() {
-        var draft = EmergencyCheckInDraft()
+        var draft = ProximityCheckInDraft()
         XCTAssertNil(draft.status)
         XCTAssertTrue(draft.prepare(.safe)); XCTAssertEqual(draft.status, .safe)
         XCTAssertTrue(draft.prepare(.needAssistance)); XCTAssertEqual(draft.status, .needAssistance)
         XCTAssertTrue(draft.prepare(.musterPoint)); XCTAssertEqual(draft.status, .musterPoint)
         XCTAssertFalse(draft.prepare(.messageOnly)); XCTAssertEqual(draft.status, .musterPoint)
         draft.clear(); XCTAssertNil(draft.status)
-        XCTAssertNil(EmergencyCheckInDraft().status)
+        XCTAssertNil(ProximityCheckInDraft().status)
     }
     func testScopedPreparationCannotSurviveOrganisationReplacementOrAwayBack() {
         let first = "11111111-1111-4111-8111-111111111111"
         let second = "22222222-2222-4222-8222-222222222222"
-        var draft = EmergencyCheckInDraft()
+        var draft = ProximityCheckInDraft()
         XCTAssertTrue(draft.configure(organisationId: first))
         let old = draft.preparationContext(forOrganisationId: first)
         XCTAssertTrue(draft.prepare(.safe, context: old))
@@ -32,7 +32,7 @@ final class EmergencyCheckInDraftTests: XCTestCase {
     }
     func testMissingForeignAndInvalidOwnersFailClosedWithoutChangingCurrentChoice() {
         let org = "11111111-1111-4111-8111-111111111111"
-        var draft = EmergencyCheckInDraft(), foreign = EmergencyCheckInDraft()
+        var draft = ProximityCheckInDraft(), foreign = ProximityCheckInDraft()
         XCTAssertEqual(draft, foreign, "visible empty draft values remain equal despite private callback ownership")
         XCTAssertNil(draft.preparationContext(forOrganisationId: org))
         XCTAssertFalse(draft.prepare(.safe, context: nil))
@@ -53,7 +53,7 @@ final class EmergencyCheckInDraftTests: XCTestCase {
     }
     func testClearInvalidatesCapturedSheetEvenWithinTheSameOrganisation() {
         let org = "11111111-1111-4111-8111-111111111111"
-        var draft = EmergencyCheckInDraft()
+        var draft = ProximityCheckInDraft()
         draft.configure(organisationId: org)
         let old = draft.preparationContext(forOrganisationId: org)
         draft.clear()

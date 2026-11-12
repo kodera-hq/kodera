@@ -58,12 +58,9 @@
     <string name="session_retry">Try again</string>
     <string name="session_sign_out">Sign out</string>
     <string name="session_sign_out_hint">Signs you out of the Kodera app on all your Android devices.</string>
-    <string name="session_no_organisation">You don’t have access to an organisation yet. If you were asked to set one up, finish in the Console.</string>
-    <string name="session_open_console">Open the Console</string>
-    <string name="session_open_console_hint">Opens the Kodera Console in your browser.</string>
+    <string name="session_no_organisation">You don’t have access to an organisation yet. If you were asked to set one up, finish on the web, then check again here.</string>
     <string name="session_check_again">Check again</string>
     <string name="session_check_again_hint">Checks whether your access to an organisation is ready.</string>
-    <string name="session_console_unavailable">No browser on this device can open the Console.</string>
 
     <!-- Read-only organisation channel metadata; no channel actions. -->
     <string name="workspace_title">Organisation channels</string>
@@ -87,15 +84,17 @@
     <string name="workspace_room_ready">Room linked</string>
     <string name="workspace_room_failed">Room preparation did not complete.</string>
     <string name="workspace_channel_archived">Archived</string>
-    <string name="emergency_title">around-me — nearby</string>
-    <string name="emergency_scope">Check-ins are signed, but their content remains readable. Delivery to other devices and the arrival of help are not guaranteed.</string>
-    <string name="emergency_unprovisioned">This device is not provisioned for your organisation’s emergency relay. Check-ins cannot be sent here.</string>
-    <string name="emergency_safe">Safe</string>
-    <string name="emergency_need_assistance">Need assistance</string>
-    <string name="emergency_muster_point">Muster point</string>
-    <string name="emergency_queued">Check-in prepared in the local queue. Delivery is unconfirmed.</string>
-    <string name="emergency_failed">The check-in could not be prepared. Try again.</string>
-    <string name="emergency_crypto_unavailable">Required cryptographic verification is unavailable on this device. The relay remains disabled.</string>
+    <string name="proximity_title">#proximity</string>
+    <string name="proximity_notice">#proximity is not an emergency service. In an emergency, call your local emergency number.</string>
+    <string name="proximity_scope">A check-in is voluntary and shown under a pseudonym, never your name. Check-ins are signed, but their content remains readable. Delivery to other devices and the arrival of help are not guaranteed.</string>
+    <string name="proximity_shown_as">You appear under the pseudonym %1$s.</string>
+    <string name="proximity_unprovisioned">This device is not provisioned for your organisation’s proximity relay. Check-ins cannot be sent here.</string>
+    <string name="proximity_safe">Safe</string>
+    <string name="proximity_need_assistance">Need assistance</string>
+    <string name="proximity_muster_point">Muster point</string>
+    <string name="proximity_queued">Check-in prepared in the local queue. Delivery is unconfirmed.</string>
+    <string name="proximity_failed">The check-in could not be prepared. Try again.</string>
+    <string name="proximity_crypto_unavailable">Required cryptographic verification is unavailable on this device. The relay remains disabled.</string>
     <string name="voice_title">Voice controls</string>
     <string name="voice_unprovisioned">Live audio transport is not configured in this build. No microphone is captured and no remote audio is transmitted or played.</string>
     <string name="voice_unavailable">Audio controls are unavailable until a local preview is supplied.</string>

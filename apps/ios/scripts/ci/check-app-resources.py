@@ -26,7 +26,14 @@ Xcode does not fail a build on any of these, and each ships silently:
   CoreDiscoveryConfiguration, or as a coreApiOrigin/admittedIssuerOrigins
   argument;
 - a colour or font literal in App/ outside App/Generated/ (design values come
-  only from the generated tokens and FontAssets).
+  only from the generated tokens and FontAssets);
+- anything commercial: pricing, plan, upgrade, checkout, invoice, payment or
+  subscription wording (English or French) or a price in the catalogue or
+  Info.plist; such wording, a billing provider, a store purchase API or a
+  billing address in App/**/*.swift, project.yml or the Swift packages; and
+  any call in App/ that opens a page outside the app (openURL, Link, a web
+  view). The app is a companion: it sells nothing, and sign-in, inside
+  KoderaAuth, is the only page it opens in a browser.
 
 Usage: check-app-resources.py [REPOSITORY_ROOT]   (default: .)
 Exit 0: clean. Exit 1: findings, one `::error::` line each. Exit 2: an input
@@ -112,6 +119,80 @@ DESIGN_LITERALS = (
     ("a literal custom font size",
      re.compile(r"(?:\.custom|\bUIFont)\([^)\n]*\b(?:fixedS|s)ize\s*:\s*[0-9]")),
 )
+
+
+# Sign-in is the only page the app opens, and KoderaAuth opens it. Nothing in App/ opens another:
+# a link out is how a companion app ends up one tap away from a checkout.
+EXTERNAL_OPEN = re.compile(
+    r"\bopenURL\b|UIApplication\.shared\.open\b|\bLink\s*\(|SFSafariViewController|WKWebView"
+    r"|ASWebAuthenticationSession")
+
+# ── companion surface ──────────────────────────────────────────────────────
+# The app is a companion to a workspace its organisation already has: no in-app
+# purchase, no pricing screen, and no link that can reach a checkout or an
+# upgrade page. Stems mean commerce wherever they stand, inside an identifier
+# included (`openCheckout`, `show_paywall`); words only on their own.
+_LETTER = r"[^\W\d_]"
+COMMERCIAL_STEMS = (r"pricing|upgrad(?:e|es|ed|ing)|upsell|checkout|billing|invoic(?:e|es|ed|ing)|payment"
+                    r"|purchas(?:e|es|ed|ing)|paywall|premium|tarification|abonnement|facturation|paiement")
+COMMERCIAL_WORDS = (r"priced?|prices|billed|pay\s+now|free\s+trial|trial\s+period"
+                    r"|(?:paid|pro|business|enterprise)\s+plan|buy(?:\s+now)?|credit\s+card"
+                    r"|per\s+(?:seat|user|month)|tarifs?|prix|mise\s+à\s+niveau|s['’]abonner|factures?"
+                    r"|achats?|acheter|essai\s+gratuit|carte\s+bancaire|par\s+mois")
+# Copy only: in code these are ordinary identifiers (an observer `subscription`, a deployment `plan`).
+COPY_STEMS = r"subscri(?:be|bes|bed|ber|bers|ption|ptions)"
+COPY_WORDS = r"plans?|forfaits?"
+
+
+def _words(pattern):
+    return rf"(?<!{_LETTER})(?:{pattern})(?!{_LETTER})"
+
+
+COMMERCIAL_CODE = re.compile(f"{COMMERCIAL_STEMS}|{_words(COMMERCIAL_WORDS)}", re.IGNORECASE)
+COMMERCIAL_COPY = re.compile(
+    f"{COMMERCIAL_STEMS}|{COPY_STEMS}|{_words(COMMERCIAL_WORDS + '|' + COPY_WORDS)}", re.IGNORECASE)
+# Library code keeps its own vocabulary (a session "upgrade" is not a sale); only the unambiguous stems.
+COMMERCIAL_LIBRARY = re.compile(r"pricing|paywall|upsell|checkout|billing|in-app\s+purchase", re.IGNORECASE)
+# `$` is left to copy: in code it is a closure argument or a string template.
+PRICE_CODE = re.compile(r"[€£]\s?\d|\d\s?(?:€|EUR\b|USD\b|GBP\b)")
+PRICE_COPY = re.compile(r"[€$£]\s?\d|\d\s?(?:€|EUR\b|USD\b|GBP\b)")
+BILLING_SDK = re.compile(
+    r"\b(?:stripe|paypal|revenuecat|paddle|storekit|skpaymentqueue|skproduct|billingclient)\b"
+    r"|com\.android\.billingclient|com\.android\.vending\.BILLING", re.IGNORECASE)
+_BILLING_PATHS = r"billing|checkout|pricing|upgrade|invoices?|orders?|subscriptions?|payments?|plans?"
+BILLING_DESTINATION = re.compile(
+    rf"""(?:https?:)?//[^\s"'<>)]*\b(?:{_BILLING_PATHS})\b|["'`]/(?:{_BILLING_PATHS})(?:[/?#"'`]|$)""",
+    re.IGNORECASE | re.MULTILINE)
+COMPANION = "the app sells nothing and links to no billing page"
+COPY_RULES = (
+    (COMMERCIAL_COPY, "carries commercial wording"),
+    (PRICE_COPY, "states a price"),
+    (BILLING_SDK, "names a billing provider or store purchase API"),
+    (BILLING_DESTINATION, "names a billing destination"),
+)
+APP_CODE_RULES = (
+    (COMMERCIAL_CODE, "carries commercial wording"),
+    (PRICE_CODE, "states a price"),
+    (BILLING_SDK, "names a billing provider or store purchase API"),
+    (BILLING_DESTINATION, "names a billing destination"),
+    (EXTERNAL_OPEN, "opens a page outside the app"),
+)
+LIBRARY_RULES = (
+    (COMMERCIAL_LIBRARY, "carries commercial wording"),
+    (BILLING_SDK, "names a billing provider or store purchase API"),
+    (BILLING_DESTINATION, "names a billing destination"),
+)
+
+
+def companion_findings(where, text, rules, numbered=True):
+    """One finding per rule: the first match, quoted, at its line when the text is a file."""
+    errors = []
+    for pattern, reason in rules:
+        match = pattern.search(text)
+        if match:
+            location = f"{where}:{text.count(chr(10), 0, match.start()) + 1}" if numbered else where
+            errors.append(f'{location} {reason} ("{match.group(0)}"); {COMPANION}')
+    return errors
 
 
 class Unreadable(Exception):
@@ -275,6 +356,49 @@ def findings(root):
                 if pattern.search(line):
                     errors.append(f"App/{relative.as_posix()}:{number} writes {family}; use the generated tokens")
 
+    errors += commercial_findings(root, strings, info)
+    return errors
+
+
+def plist_strings(value):
+    """Every key and string value of a property list, at any depth."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from plist_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from plist_strings(item)
+    elif isinstance(value, str):
+        yield value
+
+
+def commercial_findings(root, strings, info):
+    errors = []
+    for key, entry in sorted(strings.items()):
+        errors += companion_findings(f"Localizable.xcstrings: {key}", key, COPY_RULES, numbered=False)
+        for lang, localization in sorted((entry or {}).get("localizations", {}).items()):
+            value = localization.get("stringUnit", {}).get("value") or ""
+            errors += companion_findings(f"Localizable.xcstrings: {key} ({lang})", value, COPY_RULES, numbered=False)
+    errors += companion_findings("Info.plist", "\n".join(plist_strings(info)), COPY_RULES, numbered=False)
+
+    app = root / "App"
+    for source in sorted(app.rglob("*.swift")):
+        relative = source.relative_to(app)
+        if relative.parts[0] == "Generated":
+            continue
+        errors += companion_findings(f"App/{relative.as_posix()}", read_bytes(source).decode("utf-8", "replace"),
+                                     APP_CODE_RULES)
+
+    errors += companion_findings("project.yml", read_bytes(root / "project.yml").decode("utf-8", "replace"),
+                                 LIBRARY_RULES)
+    packages = root / "packages"
+    library = sorted(packages.glob("*/Package.swift")) + sorted(packages.glob("*/Sources/**/*.swift"))
+    if len(library) < 2:
+        raise Unreadable(f"cannot read {packages}: no Swift package manifest and sources")
+    for source in library:
+        errors += companion_findings(source.relative_to(root).as_posix(),
+                                     read_bytes(source).decode("utf-8", "replace"), LIBRARY_RULES)
     return errors
 
 
