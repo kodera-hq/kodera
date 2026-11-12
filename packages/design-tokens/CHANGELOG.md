@@ -8,6 +8,27 @@ One section per tag, newest first, no dates: the tag and the commit it points at
 
 - Relicensed from MIT to Apache-2.0 (`LICENSE`, `package.json`) for open-core monorepo unification.
 
+"Ethereal Sky Glass", the engine and its foundation tokens (`docs/specs/ethereal-sky-glass.md`). Additive: every token name, CSS variable, preset key and native member a consumer uses today still resolves to the same value, so this is a minor (`RELEASE.md`, step 5). The family, its theme ids, the opaque fallback and the two gates before it can be a default were decided by zôÖma, through the lead session; the values the new themes carry are initial and are not decided.
+
+### Added
+
+- **A theme registry**, `scripts/lib/themes.mjs`: five themes as a family in a mode — `light`, `dark`, `black` (givre) and `ciel`, `ciel-nuit` (ciel). Every generator reads it; `scripts/build.mjs` holds `tokens.json` to it in both directions. Exported to consumers as `@kodera/design-tokens/themes` (`themes`, `themeIds`, `defaultTheme`, `themeFamilies`, `themeFor`, and the types `ThemeId`, `ThemeFamily`, `ThemeMode`, `ThemeInfo`).
+- **The `ciel` family**: `[data-theme="ciel"]` and `[data-theme="ciel-nuit"]`, each with the 79 roles, the four elevation levels and primitives of its own (`color.theme-ciel.*`, `color.theme-ciel-nuit.*`, `shadow.theme-ciel*.*`). Foundation values: Givre light and dark with the grounds moved towards a sky.
+- **A material tier**: `material.theme-<theme>.<level>` and `semantic.material.<theme>.<level>`, levels `bar`, `panel`, `popover`, `dialog`, in all five themes. CSS variables `--material-<level>-tint`, `-fallback`, `-blur`, `-saturate`, `-border`, `-shadow`, `-bg` and `-backdrop` in every theme block, and the classes `.material-bar`, `.material-panel`, `.material-popover`, `.material-dialog`. Opaque by default; the glass is enabled under `@supports (backdrop-filter)` for the ciel family and disabled under `prefers-reduced-transparency: reduce`, `prefers-contrast: more` and `forced-colors: active`. Preset: colours `material-<level>` and `material-<level>-border`, shadow `material-<level>`. New primitives `color.theme-ciel.glass`, `.glass-edge` and their `ciel-nuit` twins.
+- **A controlled sky**: `color.theme-<theme>.sky-zenith` and `.sky-horizon` in the two ciel themes, and a three-stop `page-grad` through them. Givre gradients stay one colour (D-UI3).
+- **Spring motion**: `motion.spring.snappy`, `.gentle`, `.bouncy`, as stiffness, damping and mass. CSS variables `--spring-<name>` and `--spring-<name>-duration`; preset keys `ease-spring-<name>` and `duration-spring-<name>`. The plain ease-out by default; the sampled `linear()` curve where it is supported and motion is not reduced.
+- **Native**, additive members of format `kodera-native-tokens/1`: palettes `KoderaTokens.ciel` and `.cielNuit`; `KoderaTokens.Theme`, `ThemeFamily`, `ThemeMode`; `KoderaTokens.Material`, `Materials`, `MaterialSet.<theme>.<level>`; `KoderaTokens.Spring`, `Motion.<name>`. The manifest gains `themes` and entries of type `material` and `spring`.
+
+### Gates
+
+- **Contrast**: a translucent background is still a hard failure, unless the row names a backdrop set: a list, declared once under `backdropSets` for one registered theme, of the opaque extremes that theme paints behind a surface. The row is then measured over every extreme, the bounds of every blend of them, any declared `layers`, and a material's opaque fallback, and held to the minimum (`docs/adr/0003`). The ground's own theme selects the set; a list written into a row is refused. A gradient ground is measured over its stops, and every stop a glass theme paints must be one of its backdrop extremes. 936 rows, 0 fail: the 486 that were there are unchanged, and 450 are new (the ciel twins of every Givre row, seven rows per material level in every theme, twelve stacked rows, and text on the sky).
+- **Grammar**: `material` is a root group that admits one composite; `spring` and `material` are closed composites, field by field; a gradient is one colour everywhere except a ciel theme's own, which is bounded to four stops, each a named opaque colour of that theme, anchored at 0 and 1.
+- **The contrast report no longer exits before its table is written**: `process.exit()` cut a long table on a pipe on platforms where pipe writes are asynchronous.
+
+### Tests
+
+- New: `test/theme-registry.selftest.mjs`, `test/check-grammar.selftest.mjs`, `test/backdrop-contrast.selftest.mjs`, `test/sky-glass.selftest.mjs`, `test/spring-motion.selftest.mjs`. `test/check-contrast.selftest.mjs` gains every refusal of the backdrop rule. `test/givre-nuit.selftest.mjs` scopes its no-gradient clause to the givre family and to every gradient that belongs to no theme, with a mutation for each way a gradient could enter Givre.
+
 ## v0.6.0
 
 A wider rail item, so the rail's labels fit in 12 px sentence case, and a content-header height of its own. One value changes and one name is added, so this is a minor (`RELEASE.md`, step 5). The licence entry below was carried over from `Unreleased`.

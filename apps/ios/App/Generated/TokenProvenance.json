@@ -1,9 +1,9 @@
 {
   "format": "kodera-native-tokens/1",
   "producerRepository": "kodera-hq/kodera",
-  "producerCommit": "32270125fc9aeb5b37be4475700ddd3f64db34f9",
+  "producerCommit": "cf4e10dbd9aaab05f65deedfb50ca100fd0e3d73",
   "release": "0.6.0",
-  "sourceSha256": "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a",
-  "generatedSha256": "cc71915a279bf702acd492c2c48c97278ec8913d24de4d6d7f77e83e714913bb",
-  "manifestSha256": "ff669def2283259e330f8fa10d48100e44a0b142143ff5cf456ff501e23a6469"
+  "sourceSha256": "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51",
+  "generatedSha256": "4ec3d4a3164948c7d04adee2e6d2986f0a2c523aab9b7c3e6a4f21cd59509b22",
+  "manifestSha256": "02b7109b0ca08143ffe618dd45b77d840c9066ba1058e20d1858e0e6471063eb"
 }

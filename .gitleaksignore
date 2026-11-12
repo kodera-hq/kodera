@@ -73,3 +73,11 @@ d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/android/scripts/ci/check-app-resou
 d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:46
 # Public native-token producer commit or source checksum, not a credential.
 d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:47
+# Public native-token producer commit or source checksum, not a credential.
+89e9247b76088677f53eb6fff9f0bb17b40b2fc1:apps/android/scripts/ci/check-app-resources.py:generic-api-key:66
+# Public native-token producer commit or source checksum, not a credential.
+89e9247b76088677f53eb6fff9f0bb17b40b2fc1:apps/android/scripts/ci/check-app-resources.py:generic-api-key:67
+# Public native-token producer commit or source checksum, not a credential.
+89e9247b76088677f53eb6fff9f0bb17b40b2fc1:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:46
+# Public native-token producer commit or source checksum, not a credential.
+89e9247b76088677f53eb6fff9f0bb17b40b2fc1:apps/ios/scripts/ci/check-app-resources.py:generic-api-key:47
