@@ -6,6 +6,15 @@
 //                   gradient token anywhere in the tree has two colours; and no
 //                   linear-gradient the build emits, in the CSS or the preset,
 //                   has two distinct stop colours (D-UI3)
+//
+// These are the properties of the GIVRE family — light, dark, black — and they
+// hold there exactly as they were approved. The one clause another family can
+// touch is the gradient: the ciel family paints a sky under a controlled
+// grammar of its own (docs/specs/ethereal-sky-glass.md), so "anywhere in the
+// tree" and "anything the build emits" now read "anywhere that is not a ciel
+// theme's own". A gradient in a Givre theme, in a Givre theme's block, or
+// belonging to no theme at all is refused as before, and each of those has a
+// mutation below.
 //   dark steps      dark grounds get lighter in order, inverse to elevated
 //   near-black rail every theme's inverse (the rail) is near-black
 //   own hover       action-hover is each theme's own primitive, never another
@@ -22,13 +31,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, indexTokens, resolve, resolveValue, parseColor, luminance } from '../scripts/lib/tokens.mjs';
+import { THEMES as REGISTERED, themesOfFamily, familyRules, themeSelector } from '../scripts/lib/themes.mjs';
 
 const tree = JSON.parse(readFileSync(join(ROOT, 'tokens.json'), 'utf8'));
 const register = JSON.parse(readFileSync(join(ROOT, 'contrast-pairs.json'), 'utf8'));
 const css = readFileSync(join(ROOT, 'dist/tokens.css'), 'utf8');
 const presetText = readFileSync(join(ROOT, 'dist/tailwind.preset.js'), 'utf8');
 
+/** The Givre family, restated: these properties were approved for these three themes. */
 const THEMES = ['light', 'dark', 'black'];
+/** The themes whose family may paint a gradient, under its own grammar. */
+const CONTROLLED = REGISTERED.filter((theme) => familyRules(theme).gradient === 'controlled');
+/** The controlled theme a token belongs to by where it lives, if any. The trailing dot keeps `ciel` from claiming `ciel-nuit`. */
+const controlledOwner = (path) =>
+  CONTROLLED.find((theme) => path.startsWith(`color.theme-${theme}.`) || path.startsWith(`semantic.theme.${theme}.`));
 /** Darkest first: the rail, then the page, sidebar, work area and overlays. */
 const DARK_STEPS = ['inverse', 'page', 'sunken', 'surface', 'elevated'];
 /** The rail is near-black in every theme: below this relative luminance. */
@@ -52,10 +68,16 @@ function checkNoGradient(source) {
   }
   // Every gradient token anywhere in the tree, not only the theme groups: a
   // top-level primitive reaches the CSS and the preset as surely as a role.
+  // The one exception is a token a ciel theme owns, which the grammar gate
+  // holds to the controlled grammar instead; a Givre role that ALIASES such a
+  // token is not owned by ciel, and is read here like any other.
+  let governed = 0;
   const walk = (node, path, inherited) => {
     const type = node.$type ?? inherited;
     if ('$value' in node) {
       if (type !== 'gradient') return;
+      if (controlledOwner(path)) return;
+      governed += 1;
       const stops = resolve(path, index);
       const colours = new Set(
         stops.map((stop) => (typeof stop.color === 'string' && stop.color.startsWith('{') ? resolveValue(stop.color, index) : stop.color).toUpperCase()),
@@ -68,6 +90,7 @@ function checkNoGradient(source) {
     }
   };
   walk(source, '', undefined);
+  assert.ok(governed >= THEMES.length * 2, `only ${governed} gradient tokens were read, so this check would pass vacuously`);
 }
 
 /** Top-level comma split: a colour like rgba(0, 0, 0, .5) keeps its own commas. */
@@ -87,10 +110,28 @@ function splitStops(args) {
   return parts;
 }
 
-/** What the build actually emits: every linear-gradient in the CSS and the preset is one colour. */
+/**
+ * Whether a gradient declaration in the CSS is a ciel theme's own: declared in
+ * that theme's block, or its primitive (`--theme-<theme>-*`) in the `:root`
+ * block every primitive is emitted in. The name alone is not enough: a ciel
+ * primitive's name redeclared inside a Givre block paints in Givre.
+ */
+function isControlled(styles, at, name) {
+  const opened = styles.lastIndexOf('{', at);
+  const selector = styles.slice(styles.lastIndexOf('\n', opened) + 1, opened).trim();
+  if (CONTROLLED.some((theme) => selector === themeSelector(theme))) return true;
+  if (selector !== ':root') return false;
+  // The theme a primitive belongs to is the longest registered id its name carries.
+  const owner = [...REGISTERED].sort((a, b) => b.length - a.length).find((theme) => name.startsWith(`--theme-${theme}-`));
+  return CONTROLLED.includes(owner);
+}
+
+/** What the build actually emits: every linear-gradient in the CSS and the preset is one colour, outside what a ciel theme owns. */
 function checkEmittedFlat(styles, presetSource) {
   const found = [
-    ...[...styles.matchAll(/(--[\w-]+):\s*linear-gradient\((.*)\);/g)].map((m) => ['tokens.css', m[1], m[2]]),
+    ...[...styles.matchAll(/(--[\w-]+):\s*linear-gradient\((.*)\);/g)]
+      .filter((m) => !isControlled(styles, m.index, m[1]))
+      .map((m) => ['tokens.css', m[1], m[2]]),
     ...[...presetSource.matchAll(/([\w"-]+):\s*"linear-gradient\((.*)\)"/g)].map((m) => ['preset', m[1], m[2]]),
   ];
   assert.ok(found.length > 0, 'dist: no linear-gradient found, so this check would pass vacuously');
@@ -171,8 +212,13 @@ const mutate = (edit) => {
   return copy;
 };
 
-test('no theme paints a gradient', () => checkNoGradient(tree));
-test('nothing the build emits is a gradient', () => checkEmittedFlat(css, presetText));
+test('the givre family is the three themes these properties were approved for', () => {
+  assert.deepEqual(themesOfFamily('givre'), THEMES);
+  for (const theme of THEMES) assert.equal(familyRules(theme).gradient, 'none', `${theme}: its family paints no gradient`);
+  assert.ok(CONTROLLED.every((theme) => !THEMES.includes(theme)), 'no Givre theme is in a family that may paint a gradient');
+});
+test('no Givre theme paints a gradient, and no gradient belongs to no theme', () => checkNoGradient(tree));
+test('nothing the build emits for Givre is a gradient', () => checkEmittedFlat(css, presetText));
 test('dark grounds get lighter in order, from the rail to overlays', () => checkDarkSteps(tree));
 test('the rail is near-black in every theme', () => checkRail(tree));
 test('each theme hovers with its own cobalt', () => checkOwnHover(tree));
@@ -201,6 +247,58 @@ test('every clause fails on its own mutation', () => {
     /dist: preset frost is a linear-gradient with 2 distinct colours/,
   );
   assert.throws(() => checkEmittedFlat('', ''), /no linear-gradient found, so this check would pass vacuously/);
+
+  // The scope. A ciel theme's own gradient is the grammar gate's to hold, so the
+  // same edits that are refused in Givre are not this clause's to refuse there —
+  // and every way of bringing that gradient INTO Givre still is.
+  const SKY = [
+    { color: '#D7E8FA', position: 0 },
+    { color: '#F8FBFE', position: 1 },
+  ];
+  const withSky = (edit = () => {}) =>
+    mutate((t) => {
+      t.color['theme-ciel']['page-grad'].$value = structuredClone(SKY);
+      edit(t);
+    });
+  assert.doesNotThrow(() => checkNoGradient(withSky()), 'a ciel gradient is outside D-UI3');
+  assert.throws(
+    () => checkNoGradient(mutate((t) => (t.color['theme-black']['page-grad'].$value = structuredClone(SKY)))),
+    /black\.page-grad: stop 0 is #D7E8FA, not the flat page #000000 \(no gradient, D-UI3\)/,
+  );
+  // A Givre role that reaches the sky through an alias paints it in Givre.
+  assert.throws(
+    () => checkNoGradient(withSky((t) => (t.semantic.theme.dark['page-grad'].$value = '{color.theme-ciel.page-grad}'))),
+    /dark\.page-grad: stop 0 is #D7E8FA, not the flat page #0B0E14 \(no gradient, D-UI3\)/,
+  );
+  // A second Givre gradient role, aliased to the sky: caught by the tree walk, which reads every role.
+  assert.throws(
+    () => checkNoGradient(withSky((t) => (t.semantic.theme.light['hero-grad'] = { $type: 'gradient', $value: '{color.theme-ciel.page-grad}' }))),
+    /semantic\.theme\.light\.hero-grad: a gradient with 2 distinct colours \(no gradient, D-UI3\)/,
+  );
+
+  const TWO = 'linear-gradient(115deg,#D7E8FA 0%,#F8FBFE 100%)';
+  const inBlock = (selector, declaration) => css.replace(`${selector} {\n`, `${selector} {\n  ${declaration}\n`);
+  assert.notEqual(inBlock('[data-theme="ciel"]', 'x'), css, 'the ciel block was not found, so the next cases would prove nothing');
+  assert.doesNotThrow(() => checkEmittedFlat(inBlock('[data-theme="ciel"]', `--c-sky: ${TWO};`), presetText), 'a gradient in a ciel block is outside D-UI3');
+  assert.doesNotThrow(() => checkEmittedFlat(css.replace(':root {\n', `:root {\n  --theme-ciel-nuit-sky: ${TWO};\n`), presetText), 'a ciel primitive is outside D-UI3');
+  assert.throws(
+    () => checkEmittedFlat(inBlock('[data-theme="dark"]', `--c-sky: ${TWO};`), presetText),
+    /dist: tokens\.css --c-sky is a linear-gradient with 2 distinct colours \(no gradient, D-UI3\)/,
+  );
+  assert.throws(
+    () => checkEmittedFlat(inBlock(':root, [data-theme="light"]', `--c-sky: ${TWO};`), presetText),
+    /dist: tokens\.css --c-sky is a linear-gradient with 2 distinct colours/,
+  );
+  // A ciel primitive's NAME inside a Givre block is a Givre gradient.
+  assert.throws(
+    () => checkEmittedFlat(inBlock('[data-theme="black"]', `--theme-ciel-page-grad: ${TWO};`), presetText),
+    /dist: tokens\.css --theme-ciel-page-grad is a linear-gradient with 2 distinct colours/,
+  );
+  // ...and a Givre primitive in :root is not a ciel one because it starts alike.
+  assert.throws(
+    () => checkEmittedFlat(css.replace(':root {\n', `:root {\n  --theme-dark-sky: ${TWO};\n`), presetText),
+    /dist: tokens\.css --theme-dark-sky is a linear-gradient with 2 distinct colours/,
+  );
   assert.throws(
     () => checkDarkSteps(mutate((t) => (t.color['theme-dark'].surface.$value = '#0D1017'))),
     /dark: sunken must be darker than surface, or the surfaces stop separating/,

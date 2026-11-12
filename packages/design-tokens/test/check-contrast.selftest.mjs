@@ -50,8 +50,8 @@ const writeJson = (dir, file, data) => writeFileSync(join(dir, file), JSON.strin
  * note it wants cannot tell "the gate said this" from "the gate said this among
  * other things".
  */
-function assertFailsFor(name, mutate, expected, absent = []) {
-  test(name, () => {
+function assertFailsFor(name, mutate, expected, absent = [], options = {}) {
+  test(name, options, () => {
     const dir = scratch();
     try {
       mutate(dir);
@@ -439,4 +439,533 @@ assertFailsFor(
   // check, and the binding check is never reached: the split is at the minimum,
   // so a pair that clears is a deletion and never also a loosened bound.
   /the pair now requires/,
+);
+
+// --- A translucent background -----------------------------------------------
+//
+// The gate measures a foreground against what is painted behind it. A
+// translucent background is not what is painted there: the colour a user sees
+// depends on whatever lies underneath, and a row that named only the tint would
+// be measured against a ground that never exists. So the row is refused — and
+// it stays refused unless it says what can lie underneath, by naming a
+// `backdropSet` of opaque extremes the gate then measures the worst case over.
+//
+// The refusals come first and are held on their own: no set at all, and each
+// way a set can fail to be one — empty, a member that is itself translucent, a
+// member that names no token, a name no set carries. Every one of them is the
+// same row, a real ink on a 72 % white glass, so the only thing that differs
+// between two cases is the binding under test.
+const GLASS = 'rgba(255, 255, 255, 0.72)';
+const GLASS_SUBJECT = 'scratch/ink/glass';
+const glassRow = (extra = {}) => ({
+  id: GLASS_SUBJECT,
+  fg: 'semantic.theme.light.ink',
+  bg: GLASS,
+  label: 'scratch: ink on a translucent ground',
+  min: 4.5,
+  ...extra,
+});
+const addGlassRow = (extra) => (dir) => editPairs(dir, (pairs) => pairs.push(glassRow(extra)));
+const editRegister = (dir, edit) => {
+  const data = readJson(dir, 'contrast-pairs.json');
+  edit(data);
+  writeJson(dir, 'contrast-pairs.json', data);
+};
+/** Declare `backdropSets.scratch` beside the shipped sets. */
+const declareSet = (set) => (dir) =>
+  editRegister(dir, (data) => {
+    data.backdropSets = { ...(data.backdropSets ?? {}), scratch: set };
+  });
+/** A set of the light theme: the page and its darkest tint, unless `members` says otherwise. */
+const scratchSetOf = (members = ['semantic.theme.light.page', 'semantic.theme.light.muted-2'], extra = {}) => ({
+  theme: 'light',
+  purpose: 'Scratch-only: what this copy says can lie behind the scratch row.',
+  members,
+  ...extra,
+});
+/** The scratch row over a named scratch set of `members`: the one way a row says what lies behind it. */
+const over = (members, row = {}, set = {}) => (dir) => {
+  declareSet(scratchSetOf(members, set))(dir);
+  addGlassRow({ backdropSet: 'scratch', ...row })(dir);
+};
+/** The scratch row's own report line, unmeasured and red, saying its ground is translucent. */
+const UNMEASURED = new RegExp(`^${rx(GLASS_SUBJECT)}\\s+—\\s+—\\s+—\\s+4\\.5\\s+FAIL\\s`, 'm');
+const REFUSED_AS_TRANSLUCENT = [UNMEASURED, new RegExp(`background "${rx(GLASS)}" is translucent`)];
+const ONE_PROBLEM = /^1 contrast problem\(s\)/m;
+
+assertFailsFor('a translucent background with no backdrop set is refused', addGlassRow(), [
+  ...REFUSED_AS_TRANSLUCENT,
+  /is translucent; a row measures against what is actually painted there — bind a backdropSet of opaque extremes/,
+  ONE_PROBLEM,
+]);
+
+// A set that is not a set is a problem of its own, and the row bound to it is
+// refused for the same reason: two lines, one cause.
+assertFailsFor('a translucent background over an empty backdrop set is refused', over([]), [
+  ...REFUSED_AS_TRANSLUCENT,
+  /backdropSets\.scratch: the set is empty: with no extreme there is nothing to measure against/,
+  /is translucent and backdropSet "scratch" is not a usable set: the set is empty/,
+]);
+
+assertFailsFor(
+  'a translucent background over a backdrop that is itself translucent is refused',
+  over(['semantic.theme.light.page', 'rgba(17, 24, 39, 0.5)']),
+  [
+    ...REFUSED_AS_TRANSLUCENT,
+    /backdropSets\.scratch: the set member "rgba\(17, 24, 39, 0\.5\)" is not opaque: an extreme is a colour that is actually painted/,
+    /is translucent and backdropSet "scratch" is not a usable set: the set member "rgba\(17, 24, 39, 0\.5\)" is not opaque/,
+  ],
+);
+
+assertFailsFor(
+  'a translucent background over a backdrop that names no token is refused',
+  over(['semantic.theme.light.page', 'color.sky.nowhere']),
+  [
+    ...REFUSED_AS_TRANSLUCENT,
+    /backdropSets\.scratch: the set member "color\.sky\.nowhere" does not resolve: dangling reference: "color\.sky\.nowhere" resolves to no token/,
+    /is translucent and backdropSet "scratch" is not a usable set: the set member "color\.sky\.nowhere" does not resolve/,
+  ],
+);
+
+assertFailsFor(
+  'a translucent background bound to a backdrop set nobody declared is refused',
+  addGlassRow({ backdropSet: 'nowhere' }),
+  [
+    ...REFUSED_AS_TRANSLUCENT,
+    /is translucent and backdropSet "nowhere" is not declared; contrast-pairs\.json declares (no set|[a-z-]+(, [a-z-]+)*)$/m,
+    ONE_PROBLEM,
+  ],
+);
+
+assertFailsFor(
+  'a backdrop set that is not a name is refused',
+  addGlassRow({ backdropSet: { members: ['semantic.theme.light.page'] } }),
+  [...REFUSED_AS_TRANSLUCENT, /is translucent and its backdropSet must be the name of a set declared under backdropSets/, ONE_PROBLEM],
+);
+
+// --- A translucent background over a declared backdrop set -------------------
+//
+// The way through. The numbers are written out, and scripts/lib/backdrop.mjs is
+// held to them a second time in test/backdrop-contrast.selftest.mjs, without the
+// gate around it: 72 % white over white is white, over muted-2 (#DCE6F0) it is
+// #F5F8FA, and the ink measures 13.86:1 on the darker of the two.
+
+/** Add rows (and optionally named sets), run the gate, and hand back what it printed. */
+function gateWith(mutate) {
+  const dir = scratch();
+  try {
+    mutate(dir);
+    return runGate(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The scratch row's report line, measured and with this verdict. */
+const glassVerdict = (ratio, verdict) =>
+  new RegExp(`^${rx(GLASS_SUBJECT)}\\s+#[0-9A-F]{6}\\s+#[0-9A-F]{6}\\s+${rx(ratio.toFixed(2))}\\s+4\\.5\\s+${verdict}\\s`, 'm');
+
+test('a translucent background is measured over the backdrop set it names, and held to the minimum', () => {
+  const { status, output } = gateWith(over(['semantic.theme.light.page', 'semantic.theme.light.muted-2']));
+  assert.equal(status, 0, output);
+  assert.match(output, glassVerdict(13.86, 'PASS'));
+  assert.match(output, /↳ minimum of 4 backgrounds over "scratch"; worst: the darkest any blend of the backdrops can be/);
+  // One row more than the register holds, and it is counted as a pass.
+  const shipped = readJson(ROOT, 'contrast-pairs.json').pairs.length;
+  assert.match(output, new RegExp(`^${shipped + 1} pairs — \\d+ pass, 0 allowed, \\d+ exempt, \\d+ forbidden, 0 fail$`, 'm'));
+});
+
+// The extreme is the only thing that changes between these two runs. Tertiary
+// ink on the same glass clears 4.5:1 while only the white page can lie behind
+// it; say that the near-black rail can pass under it too, and the minimum
+// becomes what it measures there.
+const tertiaryOnGlass = (members) => over(members, { fg: 'semantic.theme.light.ink-3' });
+
+test('the same row passes while only a light backdrop can lie behind it', () => {
+  const { status, output } = gateWith(tertiaryOnGlass(['semantic.theme.light.page']));
+  assert.equal(status, 0, output);
+  assert.match(output, glassVerdict(5.7, 'PASS'));
+});
+
+assertFailsFor(
+  'a backdrop extreme that pushes the minimum under the threshold fails the row',
+  tertiaryOnGlass(['semantic.theme.light.page', 'semantic.theme.light.inverse']),
+  [
+    glassVerdict(3.06, 'FAIL'),
+    /↳ minimum of 4 backgrounds over "scratch"; worst: the darkest any blend of the backdrops can be/,
+    /↳ below the minimum and not in contrast-known-failures\.json/,
+    ONE_PROBLEM,
+  ],
+);
+
+assertFailsFor(
+  'a foreground whose luminance lies between the backdrops has no minimum: a blend can match it',
+  over(['#000000', '#FFFFFF'], { fg: '#777777', bg: 'rgba(255, 255, 255, 0.2)' }),
+  [glassVerdict(1, 'FAIL'), /worst: a blend of the backdrops that matches the foreground/, ONE_PROBLEM],
+);
+
+assertFailsFor(
+  'a translucent foreground on a translucent background is refused: the extremes do not bound it',
+  over(['semantic.theme.light.page'], { fg: 'spec:focus-ring.light.outer' }),
+  [/foreground "spec:focus-ring\.light\.outer" is translucent on the translucent background "rgba\(255, 255, 255, 0\.72\)"/, ONE_PROBLEM],
+);
+
+assertFailsFor(
+  'a backdrop set bound under an opaque background measures nothing, and is refused',
+  over(['semantic.theme.light.page'], { bg: 'semantic.theme.light.surface' }),
+  [
+    /background "semantic\.theme\.light\.surface" is opaque, so its backdropSet would measure nothing — remove the binding/,
+    // The set is left unbound by the refusal, which is the second thing wrong with this register.
+    /backdropSets\.scratch: declared, but no row binds it/,
+  ],
+);
+
+// --- Stacked layers ----------------------------------------------------------
+test('translucent layers stacked under the background are composited bottom first', () => {
+  // A 90 % white sheet over the light scrim over the page or the rail: the
+  // scrim darkens both ends before the sheet lightens them again.
+  const { status, output } = gateWith(
+    over(['semantic.theme.light.page', 'semantic.theme.light.inverse'], { bg: 'rgba(255, 255, 255, 0.9)', layers: ['semantic.theme.light.scrim'] }),
+  );
+  assert.equal(status, 0, output);
+  assert.match(output, glassVerdict(12.17, 'PASS'));
+});
+
+assertFailsFor(
+  'an opaque layer hides the backdrop, so it is refused as a layer',
+  over(['semantic.theme.light.page'], { layers: ['semantic.theme.light.surface'] }),
+  [/layer "semantic\.theme\.light\.surface" is opaque: it hides the backdrop, so bind it as the backdrop instead of stacking it/],
+);
+
+assertFailsFor(
+  'an empty layer list is refused rather than read as no layers',
+  over(['semantic.theme.light.page'], { layers: [] }),
+  [/`layers` must be a non-empty list of translucent colours, bottom first/],
+);
+
+assertFailsFor(
+  'layers declared under an opaque background are refused',
+  addGlassRow({ bg: 'semantic.theme.light.surface', layers: ['semantic.theme.light.scrim'] }),
+  [/background "semantic\.theme\.light\.surface" is opaque, so its layers would measure nothing — remove the binding/, ONE_PROBLEM],
+);
+
+// --- Named backdrop sets -----------------------------------------------------
+const SCRATCH_SET = scratchSetOf();
+
+assertFailsFor(
+  'a named backdrop set no row binds is stale, and fails',
+  declareSet(SCRATCH_SET),
+  [/backdropSets\.scratch: declared, but no row binds it — delete the set or measure something over it/, ONE_PROBLEM],
+);
+
+assertFailsFor(
+  'a named backdrop set with no purpose is not a set',
+  over(undefined, {}, { purpose: ' ' }),
+  [
+    /backdropSets\.scratch: has no purpose: say what the extremes are the extremes of/,
+    /is translucent and backdropSet "scratch" is not a usable set: has no purpose/,
+    UNMEASURED,
+  ],
+);
+
+assertFailsFor(
+  'a named backdrop set that is not an object is not a set',
+  (dir) => {
+    declareSet(['semantic.theme.light.page'])(dir);
+    addGlassRow({ backdropSet: 'scratch' })(dir);
+  },
+  [/backdropSets\.scratch: must be an object with a `theme`, a `purpose` and `members`/, UNMEASURED],
+);
+
+assertFailsFor(
+  'a named backdrop set with no list of members is not a set',
+  over(undefined, {}, { members: 'semantic.theme.light.page' }),
+  [/backdropSets\.scratch: the set has no list of members/, UNMEASURED],
+);
+
+// --- Materials ---------------------------------------------------------------
+//
+// A material is the surface the stylesheet declares, read through the same
+// module the build reads it with. Three things are specific to it, and each is
+// broken once below: it is refused without a backdrop set like any other
+// translucent ground; the set it binds must be its own theme's; and the opaque
+// fallback it paints when the glass is off is a ground of its own, held to the
+// same minimum.
+const MATERIAL = 'semantic.material.ciel.bar';
+const materialRow = (extra = {}) => glassRow({ bg: MATERIAL, ...extra });
+/**
+ * The register reduced to the scratch row: nothing else can be red, no set is
+ * left unbound, no excuse is left orphaned. A theme whose set goes loses its
+ * sky as well — flattened to its page — because a sky with no set is a refusal
+ * of its own, and not the one under test.
+ */
+const onlyRow = (row, keepSets = []) => (dir) => {
+  editRegister(dir, (data) => {
+    data.pairs = [row];
+    data.backdropSets = Object.fromEntries(Object.entries(data.backdropSets ?? {}).filter(([name]) => keepSets.includes(name)));
+  });
+  editAllowlist(dir, (failures) => failures.splice(0));
+  const tokens = readJson(dir, 'tokens.json');
+  for (const theme of Object.keys(tokens.semantic.theme)) {
+    if (keepSets.includes(theme)) continue;
+    const primitives = tokens.color[`theme-${theme}`];
+    for (const stop of primitives['page-grad'].$value) stop.color = primitives.page.$value;
+  }
+  writeJson(dir, 'tokens.json', tokens);
+};
+
+assertFailsFor(
+  'a translucent material with no backdrop set is refused, like any translucent ground',
+  onlyRow(materialRow()),
+  [
+    new RegExp(`background "${rx(MATERIAL)}" is translucent; a row measures against what is actually painted there`),
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a material measured over another theme\'s extremes is refused',
+  onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel-nuit' }), ['ciel-nuit']),
+  [
+    new RegExp(`background "${rx(MATERIAL)}" is translucent and backdropSet "ciel-nuit" holds the extremes of the "ciel-nuit" theme, not of "ciel"`),
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+test('a material is measured over its own theme\'s set, and its opaque fallback is one of the grounds', () => {
+  const { status, output } = gateWith(onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel' }), ['ciel']));
+  assert.equal(status, 0, output);
+  // Every extreme of the set, the darkest and the lightest blend, and the fallback.
+  const extremes = readJson(ROOT, 'contrast-pairs.json').backdropSets.ciel.members.length;
+  assert.match(output, new RegExp(`↳ minimum of ${extremes + 3} backgrounds over "ciel"; worst: `));
+  assert.match(output, /^1 pairs — 1 pass/m);
+});
+
+assertFailsFor(
+  'a material whose opaque fallback fails is refused even when the glass passes',
+  (dir) => {
+    // A thin glass declared over the near-black rail, measured over white
+    // alone. Lit from behind it is almost white and the ink is plain on it;
+    // with the glass off it is the tint laid over the rail, a dark grey the ink
+    // disappears into. Only the fallback can be the ground that fails.
+    const tokens = readJson(dir, 'tokens.json');
+    Object.assign(tokens.material['theme-ciel'].bar.$value, { alpha: 0.3, saturation: 1, canvas: '{color.theme-ciel.inverse}' });
+    writeJson(dir, 'tokens.json', tokens);
+    declareSet(scratchSetOf(['semantic.theme.ciel.page', 'semantic.theme.ciel.surface'], { theme: 'ciel' }))(dir);
+    onlyRow(materialRow({ fg: 'semantic.theme.ciel.ink', backdropSet: 'scratch' }), ['scratch'])(dir);
+  },
+  [
+    /worst: its opaque fallback over color\.theme-ciel\.inverse/,
+    /↳ below the minimum and not in contrast-known-failures\.json/,
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+// --- Gradients ---------------------------------------------------------------
+//
+// A gradient is opaque and is not one colour. As a ground it is measured over
+// its stops and the bounds of every blend between them; and every stop a glass
+// theme paints has to be a backdrop extreme of that theme, or the materials are
+// measured over a sky narrower than the one on screen. The sky is built in the
+// scratch copy, so these hold whatever the shipped palette becomes.
+const SKY_GRADIENT = 'semantic.theme.ciel.page-grad';
+/** Give ciel a real three-stop sky; `declare` adds its two ends to the theme's backdrop set. */
+const withSky = ({ zenith = '#D7E8FA', declare = true } = {}) => (dir) => {
+  const tokens = readJson(dir, 'tokens.json');
+  const ciel = tokens.color['theme-ciel'];
+  ciel['sky-zenith'] = { $value: zenith };
+  ciel['sky-horizon'] = { $value: '#F8FBFE' };
+  ciel['page-grad'].$value = [
+    { color: '{color.theme-ciel.sky-zenith}', position: 0 },
+    { color: '{color.theme-ciel.page}', position: 0.5 },
+    { color: '{color.theme-ciel.sky-horizon}', position: 1 },
+  ];
+  writeJson(dir, 'tokens.json', tokens);
+  // `declare: null` leaves the register alone, for a copy that has no ciel set at all.
+  if (declare === null) return;
+  editRegister(dir, (data) => {
+    const wanted = ['color.theme-ciel.sky-zenith', 'color.theme-ciel.sky-horizon'];
+    data.backdropSets.ciel.members = [...data.backdropSets.ciel.members.filter((member) => !wanted.includes(member)), ...(declare ? wanted : [])];
+  });
+};
+const skyRow = (extra = {}) => glassRow({ fg: 'semantic.theme.ciel.ink-3', bg: SKY_GRADIENT, ...extra });
+
+test('a gradient ground is measured over its stops, and held to the minimum', () => {
+  const { status, output } = gateWith((dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(skyRow()));
+  });
+  assert.equal(status, 0, output);
+  // Tertiary ink on the zenith, the darkest stop: #5C6874 on #D7E8FA. Three
+  // stops, the darkest blend and the lightest blend are measured.
+  assert.match(output, glassVerdict(4.56, 'PASS'));
+  assert.match(output, /↳ minimum of 5 backgrounds over the stops of color\.theme-ciel\.page-grad; worst: color\.theme-ciel\.sky-zenith$/m);
+});
+
+assertFailsFor(
+  'a darker stop pushes text on the gradient under its minimum',
+  (dir) => {
+    // The register reduced to this row, and one that keeps the theme's set
+    // bound: the shipped materials over the same sky are not what is under test.
+    onlyRow(skyRow(), ['ciel'])(dir);
+    withSky({ zenith: '#B9D3EE' })(dir);
+    editPairs(dir, (pairs) => pairs.push(glassRow({ id: 'scratch/keeps-the-set-bound', fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel' })));
+  },
+  [
+    glassVerdict(3.69, 'FAIL'),
+    /worst: color\.theme-ciel\.sky-zenith$/m,
+    /↳ below the minimum and not in contrast-known-failures\.json/,
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a gradient stop that is not a backdrop extreme of its theme fails the gate',
+  withSky({ declare: false }),
+  [
+    /semantic\.theme\.ciel\.page-grad: its stop color\.theme-ciel\.sky-zenith \(#D7E8FA\) is not an extreme of backdropSets\.ciel — a material over that end of the gradient is unmeasured/,
+    /semantic\.theme\.ciel\.page-grad: its stop color\.theme-ciel\.sky-horizon \(#F8FBFE\) is not an extreme of backdropSets\.ciel/,
+    /^2 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a glass theme that paints a gradient and declares no backdrop set fails the gate',
+  (dir) => {
+    // The register is reduced first, which flattens every sky; then ciel gets one back.
+    onlyRow(glassRow({ bg: 'semantic.theme.ciel.surface', fg: 'semantic.theme.ciel.ink' }))(dir);
+    withSky({ declare: null })(dir);
+  },
+  [/semantic\.theme\.ciel\.page-grad: "ciel" paints a gradient and declares no backdrop set, so nothing is measured over it/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a backdrop set bound under a gradient ground is refused: a gradient is measured over its own stops',
+  (dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(skyRow({ backdropSet: 'ciel' })));
+  },
+  [/background "semantic\.theme\.ciel\.page-grad" is a gradient, measured over its own stops — remove the backdropSet/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a translucent foreground on a gradient ground is refused',
+  (dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(skyRow({ fg: 'spec:focus-ring.ciel.outer' })));
+  },
+  [/foreground "spec:focus-ring\.ciel\.outer" is translucent on the gradient "semantic\.theme\.ciel\.page-grad"/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a gradient stacked as a layer is refused',
+  (dir) => {
+    withSky()(dir);
+    editPairs(dir, (pairs) => pairs.push(glassRow({ layers: [SKY_GRADIENT], backdropSet: 'ciel' })));
+  },
+  [/layer "semantic\.theme\.ciel\.page-grad" is opaque: it hides the backdrop/, /^1 contrast problem\(s\)/m],
+);
+
+// --- Whose extremes a set holds ------------------------------------------------
+//
+// A backdrop set is a claim about one theme: these are the lightest and darkest
+// things THIS theme paints behind a surface. So the binding is a property of the
+// ground, not of how the row happens to spell it. A translucent ground that
+// belongs to a theme — a material, a theme role such as the scrim, a theme
+// primitive — is measured over a set declared by name for that same theme, and
+// over nothing else: not over another theme's set, not over a set that names no
+// theme or a theme the registry does not hold, and not over a list written into
+// the row, which would let any row pick the friendlier extremes it passes on.
+//
+// One refusal per route. They were written before the gate refused them, and
+// were marked as known gaps until it did.
+const SCRIM = 'semantic.theme.light.scrim';
+const LIGHT_EXTREMES = ['semantic.theme.light.page', 'semantic.theme.light.inverse'];
+/** Declare `backdropSets.scratch` exactly as given — `theme` included or not — and add the scratch row. */
+const scratchSet = (set, row) => (dir) => {
+  declareSet({ purpose: 'Scratch-only.', members: LIGHT_EXTREMES, ...set })(dir);
+  addGlassRow(row)(dir);
+};
+const A_LIST = /is translucent and its backdropSet is a list: a backdrop set is declared once, by name, under backdropSets, for the theme whose extremes it holds/;
+
+assertFailsFor(
+  'a material bound to a list of colours written into the row is refused',
+  addGlassRow({ bg: MATERIAL, fg: 'semantic.theme.ciel.ink', backdropSet: ['semantic.theme.ciel.surface'] }),
+  [new RegExp(`background "${rx(MATERIAL)}" `), A_LIST, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a material primitive bound to a list written into the row is refused',
+  addGlassRow({ bg: 'material.theme-ciel.bar', fg: 'semantic.theme.ciel.ink', backdropSet: ['semantic.theme.ciel.surface'] }),
+  [/background "material\.theme-ciel\.bar" /, A_LIST, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a translucent theme role that is not a material, bound to a list written into the row, is refused',
+  addGlassRow({ bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: ['semantic.theme.light.inverse'] }),
+  [new RegExp(`background "${rx(SCRIM)}" `), A_LIST, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a list written into the row is refused on a ground that belongs to no theme as well',
+  addGlassRow({ backdropSet: LIGHT_EXTREMES }),
+  [new RegExp(`background "${rx(GLASS)}" `), A_LIST, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a set that names no theme is not a set, and a themed ground bound to it is refused',
+  scratchSet({}, { bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'scratch' }),
+  [
+    /backdropSets\.scratch: names no theme: a set holds the extremes of one registered theme \(light, dark, black, ciel, ciel-nuit\)/,
+    new RegExp(`background "${rx(SCRIM)}" is translucent and backdropSet "scratch" is not a usable set: names no theme`),
+  ],
+);
+
+assertFailsFor(
+  'a set that names a theme the registry does not hold is not a set',
+  scratchSet({ theme: 'sepia' }, { bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'scratch' }),
+  [
+    /backdropSets\.scratch: names the theme "sepia", which the registry does not hold \(light, dark, black, ciel, ciel-nuit\)/,
+    new RegExp(`background "${rx(SCRIM)}" is translucent and backdropSet "scratch" is not a usable set: names the theme "sepia"`),
+  ],
+);
+
+assertFailsFor(
+  'a translucent theme role bound to another theme\'s set is refused',
+  addGlassRow({ bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'ciel' }),
+  [
+    new RegExp(`background "${rx(SCRIM)}" is translucent and backdropSet "ciel" holds the extremes of the "ciel" theme, not of "light"`),
+    /^1 contrast problem\(s\)/m,
+  ],
+);
+
+assertFailsFor(
+  'a material primitive bound to another theme\'s set is refused',
+  addGlassRow({ bg: 'material.theme-ciel.bar', fg: 'semantic.theme.ciel.ink', backdropSet: 'ciel-nuit' }),
+  [/background "material\.theme-ciel\.bar" is translucent and backdropSet "ciel-nuit" holds the extremes of the "ciel-nuit" theme, not of "ciel"/, /^1 contrast problem\(s\)/m],
+);
+
+assertFailsFor(
+  'a layer of another theme under a material is refused: a row is measured in one theme',
+  addGlassRow({ bg: MATERIAL, fg: 'semantic.theme.ciel.ink', layers: ['semantic.theme.ciel-nuit.scrim'], backdropSet: 'ciel' }),
+  [new RegExp(`background "${rx(MATERIAL)}" is stacked over "semantic\\.theme\\.ciel-nuit\\.scrim", a surface of the "ciel-nuit" theme, not of "ciel"`), /^1 contrast problem\(s\)/m],
+);
+
+test('a translucent theme role is measured over its own theme\'s named set', () => {
+  const { status, output } = gateWith(
+    scratchSet({ theme: 'light' }, { bg: SCRIM, fg: 'semantic.theme.light.on-inverse', backdropSet: 'scratch', min: 3 }),
+  );
+  assert.equal(status, 0, output);
+  assert.match(output, /↳ minimum of 4 backgrounds over "scratch"; worst: /);
+});
+
+assertFailsFor(
+  'a ground shaped like a theme\'s, for a theme the registry does not hold, is refused rather than read as unthemed',
+  (dir) => {
+    const tokens = readJson(dir, 'tokens.json');
+    tokens.color['theme-sepia'] = { veil: { $value: 'rgba(60, 40, 20, 0.5)' } };
+    writeJson(dir, 'tokens.json', tokens);
+    over(LIGHT_EXTREMES, { bg: 'color.theme-sepia.veil', fg: 'semantic.theme.light.on-inverse' })(dir);
+  },
+  [/"color\.theme-sepia\.veil" names the theme "sepia", which the registry does not hold \(light, dark, black, ciel, ciel-nuit\)/],
 );
