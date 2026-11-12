@@ -266,7 +266,7 @@ function dependenciesOf(packages: readonly string[]): Set<string> {
 function deferredVendorGroups() {
   const dependencies = dependenciesOf(Object.keys(DEFERRED_VENDORS))
   const packageOf = (id: string): string | undefined =>
-    /.*[\\/]node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(id)?.[1]?.replace('\\', '/')
+    /.*[\\/]node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(id)?.[1]?.replaceAll('\\', '/')
   return [
     {
       name: (id: string): string | null => {
