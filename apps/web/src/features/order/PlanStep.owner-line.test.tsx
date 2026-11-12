@@ -5,7 +5,7 @@
 // ask, never a dash, a blank or the word « null ».
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { configure, render, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -15,6 +15,10 @@ import { member, type Membership } from '@/mocks/overlays/support/people'
 import { emptyDraft } from './draft'
 import { PlanStep } from './PlanStep'
 import type { OrderRole } from './PlanStep'
+
+// The waits are for a read MSW answers: long, so that only a wrong sentence fails, not a late one.
+configure({ asyncUtilTimeout: 10_000 })
+vi.setConfig({ testTimeout: 30_000 })
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 beforeEach(() => {

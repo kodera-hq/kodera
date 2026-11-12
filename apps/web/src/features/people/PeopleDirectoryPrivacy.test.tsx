@@ -20,7 +20,7 @@
 //   VITE_PEOPLE_PRIVACY_MUTANT=null-address-refused npx vitest run \
 //     src/features/people/PeopleDirectoryPrivacy.test.tsx -t "a member"
 
-import { screen, waitFor, within } from '@testing-library/react'
+import { configure, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -59,6 +59,11 @@ const MUTANTS = {
   'drawer-reads-absence': 'a withheld sign-in is read as a fact',
 } as const
 type Mutant = keyof typeof MUTANTS
+
+// Every wait here is for a request MSW answers and a draw that follows: on a busy machine that is
+// slow, never wrong. The waits are long so that only a missing element fails a test, not a late one.
+configure({ asyncUtilTimeout: 10_000 })
+vi.setConfig({ testTimeout: 30_000 })
 
 const probe = vi.hoisted(() => ({ mutant: null as string | null }))
 
@@ -107,8 +112,6 @@ beforeEach(() => {
 })
 
 const A_MONTH_AGO = '2027-02-01T09:12:00Z'
-/** Several searches, each waited for past the field's debounce. */
-const SLOW = { timeout: 30_000 }
 
 /** An organisation as Core stores it: every fact of every person. */
 function organisation(callerRole: OrganisationRole) {
@@ -349,7 +352,7 @@ describe('the colleagues’ list, read by a member', () => {
     expect(Object.values(people)).toHaveLength(listed.length)
   })
 
-  it('a member searches names only, and is not offered to search an address', SLOW, async () => {
+  it('a member searches names only, and is not offered to search an address', async () => {
     openList('org_member')
     const table = await listedTable()
     expect(screen.queryByRole('searchbox', { name: /e-mail/i })).toBeNull()
