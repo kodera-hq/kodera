@@ -15,6 +15,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
 import { createLazyRouteTree } from './lazyRouteTree'
+import { endLazyRouteWaits, useShownPathname } from './lazyRouteWait'
 import { rootRoute } from './root-route'
 import type { RouteUnits } from './routeUnits'
 
@@ -49,12 +50,17 @@ function organisationRoutes() {
       guardRuns++
     },
     notFoundComponent: () => <p>organisation not found</p>,
-    component: () => (
-      <main>
-        <h1>shell</h1>
-        <Outlet />
-      </main>
-    ),
+    component: function Layout() {
+      // What the real layout draws its header from (`./org-route.tsx`).
+      const shown = useShownPathname()
+      return (
+        <main>
+          <h1>shell</h1>
+          <p>header for {shown}</p>
+          <Outlet />
+        </main>
+      )
+    },
   })
   const area = (path: string, text: string) =>
     createRoute({ getParentRoute: () => layout, path, component: () => <p>{text}</p> })
@@ -121,6 +127,7 @@ beforeEach(() => {
   units = {}
   fetches = {}
   besideFetches = []
+  endLazyRouteWaits()
   guardRuns = 0
   register('organisation', [])
   register('home', ['home'])
@@ -202,9 +209,15 @@ describe('an area that is still missing, with the layout on screen', () => {
     expect(screen.getByRole('heading', { name: 'shell' })).toBeVisible()
     expect(screen.queryByText(sessionLoading())).not.toBeInTheDocument()
     expect(guardRuns).toBe(0)
+    // The address has changed and the page has not: the header still names the page on screen.
+    expect(router.state.location.pathname).toBe('/acme-sa/people/42')
+    expect(screen.getByText('header for /acme-sa/home')).toBeVisible()
 
     await act(async () => fetches.people?.[0]?.resolve([routes.people, routes.member]))
     expect(await screen.findByText('member screen')).toBeVisible()
+    // Title and content changed together: never the new header over the old page.
+    expect(screen.getByText('header for /acme-sa/people/42')).toBeVisible()
+    expect(screen.queryByText('header for /acme-sa/home')).not.toBeInTheDocument()
     expect(guardRuns).toBe(1)
     expect(fetches.organisation).toHaveLength(1)
     expect(router.state.location.pathname).toBe('/acme-sa/people/42')
@@ -253,6 +266,26 @@ describe('an area that is still missing, with the layout on screen', () => {
     await waitFor(() => expect(fetches.people).toHaveLength(2))
     await act(async () => fetches.people?.[1]?.resolve([routes.people, routes.member]))
     expect(await screen.findByText('people screen')).toBeVisible()
+    expect(screen.getByText('header for /acme-sa/people')).toBeVisible()
+  })
+
+  it('goes back to following the address once the wait is over, failed or not', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { router } = await onHome()
+    await act(async () => {
+      void router.navigate({ href: '/acme-sa/people' })
+    })
+    await waitFor(() => expect(fetches.people).toHaveLength(1))
+    await act(async () => fetches.people?.[0]?.reject(new Error('chunk unavailable')))
+    await waitFor(() => expect(router.state.status).toBe('idle'))
+
+    // An area that is already there: an ordinary navigation, whose header follows the address
+    // from the moment it starts, as it always has.
+    await act(async () => {
+      void router.navigate({ href: '/acme-sa/home' })
+    })
+    expect(await screen.findByText('header for /acme-sa/home')).toBeVisible()
   })
 })
 

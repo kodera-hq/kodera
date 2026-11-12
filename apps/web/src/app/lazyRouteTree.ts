@@ -16,8 +16,9 @@
 //   instead of drawing it twice;
 // - once the layout is on screen, an area that is still missing is answered next to the layout,
 //   not inside it, and shows nothing of its own: the page the person is leaving stays up until
-//   the area arrives, as it does for any navigation that waits on a loader. Placing it below the
-//   layout would run the layout's session guard twice for one navigation.
+//   the area arrives, as it does for any navigation that waits on a loader, and the layout keeps
+//   that page's title until then (`./lazyRouteWait.ts`). Placing it below the layout would run
+//   the layout's session guard twice for one navigation.
 //
 // An address under `/$org` that no unit answers is not a placeholder's business: it reaches the
 // organisation layout and is not found there, exactly as it was when the tree was whole.
@@ -28,6 +29,7 @@
 
 import { createRoute, notFound, redirect } from '@tanstack/react-router'
 import type { AnyRoute, AnyRouter } from '@tanstack/react-router'
+import { beginLazyRouteWait, endLazyRouteWaits } from './lazyRouteWait'
 import { rootRoute } from './root-route'
 import { areaNamesOf } from './routeUnits'
 import type { RouteUnits } from './routeUnits'
@@ -92,7 +94,16 @@ export function createLazyRouteTree(
 
   /** Fetches the units, attaches them, and restarts the navigation on the grown tree. */
   async function grow(names: readonly string[], href: string): Promise<never> {
-    await Promise.all(names.map(fetchUnit))
+    // Until the router settles on the page this leads to, the layout goes on describing the page
+    // that is on screen (`./lazyRouteWait.ts`). The router ends the wait (`bind`); a fetch that
+    // fails ends it here, since the error screen is then what is on screen.
+    beginLazyRouteWait()
+    try {
+      await Promise.all(names.map(fetchUnit))
+    } catch (error) {
+      endLazyRouteWaits()
+      throw error
+    }
     // Nothing to put where the placeholder is: going to the same address again would only come
     // back here. It is an address no route answers.
     if (names.every((name) => attached.get(name)?.length === 0)) throw notFound()
@@ -188,6 +199,7 @@ export function createLazyRouteTree(
     routeTree: rootRoute,
     bind(bound) {
       router = bound
+      bound.subscribe('onResolved', endLazyRouteWaits)
     },
   }
 }
