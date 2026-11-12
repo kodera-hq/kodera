@@ -1,0 +1,22 @@
+{
+  "console.invitation.accept.action-accept": "Rejoindre {{name}}",
+  "console.invitation.accept.action-cancel": "Annuler",
+  "console.invitation.accept.action-open": "Ouvrir l’accueil",
+  "console.invitation.accept.action-open-workspace": "Ouvrir les messages",
+  "console.invitation.accept.action-retry": "Réessayer",
+  "console.invitation.accept.action-sign-in": "Se connecter",
+  "console.invitation.accept.busy": "Un instant…",
+  "console.invitation.accept.check-retry": "Nous n’avons pas pu vérifier ce lien d’invitation. Réessayez dans un instant.",
+  "console.invitation.accept.eyebrow": "Invitation Kodera",
+  "console.invitation.accept.failed": "Nous n’avons pas pu confirmer votre invitation. Rouvrez le lien ou écrivez-nous à {{email}}.",
+  "console.invitation.accept.gone": "Cette invitation a expiré ou a été retirée. Demandez une nouvelle invitation.",
+  "console.invitation.accept.invalid": "Ce lien d’invitation n’est pas valide. Vérifiez-le, ou demandez une nouvelle invitation.",
+  "console.invitation.accept.member": "Vous êtes déjà membre de {{name}}",
+  "console.invitation.accept.missing": "Rouvrez le lien de votre invitation pour continuer",
+  "console.invitation.accept.ready": "Rejoignez {{name}} pour accéder à son espace",
+  "console.invitation.accept.retry": "L’acceptation n’a pas abouti. Réessayez dans un instant.",
+  "console.invitation.accept.sign-in": "Vous êtes invité à rejoindre {{name}}. Connectez-vous avec le compte créé pour vous.",
+  "console.invitation.accept.signing-in": "Une fenêtre de connexion est ouverte. Terminez la connexion dans cette fenêtre.",
+  "console.invitation.accept.unknown": "Cette invitation n’existe pas ou a déjà été utilisée. Demandez une nouvelle invitation.",
+  "console.invitation.accept.unusable": "Cette invitation ne peut pas être utilisée. Contactez la personne qui vous a invité(e)."
+}

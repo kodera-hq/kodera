@@ -1,0 +1,6 @@
+{
+  "console.entry.recovery.body": "This page cannot continue your request.",
+  "console.entry.recovery.restart": "If you received an invitation, reopen the original link.",
+  "console.entry.recovery.support": "If you need help, write to us at {{email}}.",
+  "console.entry.recovery.title": "We cannot continue your request here"
+}

@@ -1,0 +1,22 @@
+{
+  "console.invitation.accept.action-accept": "Join {{name}}",
+  "console.invitation.accept.action-cancel": "Cancel",
+  "console.invitation.accept.action-open": "Open home",
+  "console.invitation.accept.action-open-workspace": "Open messages",
+  "console.invitation.accept.action-retry": "Try again",
+  "console.invitation.accept.action-sign-in": "Sign in",
+  "console.invitation.accept.busy": "One moment…",
+  "console.invitation.accept.check-retry": "We could not check this invitation link. Try again in a moment.",
+  "console.invitation.accept.eyebrow": "Kodera invitation",
+  "console.invitation.accept.failed": "We could not confirm your invitation. Reopen the link or write to us at {{email}}.",
+  "console.invitation.accept.gone": "This invitation has expired or was withdrawn. Ask for a new invitation.",
+  "console.invitation.accept.invalid": "This invitation link is not valid. Check it, or ask for a new invitation.",
+  "console.invitation.accept.member": "You are already a member of {{name}}",
+  "console.invitation.accept.missing": "Reopen your invitation link to continue",
+  "console.invitation.accept.ready": "Join {{name}} to reach its workspace",
+  "console.invitation.accept.retry": "The acceptance did not go through. Try again in a moment.",
+  "console.invitation.accept.sign-in": "You are invited to join {{name}}. Sign in with the account created for you.",
+  "console.invitation.accept.signing-in": "A sign-in window is open. Finish signing in in that window.",
+  "console.invitation.accept.unknown": "This invitation does not exist or has already been used. Ask for a new invitation.",
+  "console.invitation.accept.unusable": "This invitation cannot be used. Contact the person who invited you."
+}

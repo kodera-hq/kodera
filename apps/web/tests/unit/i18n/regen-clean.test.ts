@@ -2,11 +2,18 @@
 // exactly. If this test fails, either the markdown catalogues changed
 // without running `npm run i18n:generate`, or the JSON was hand-edited —
 // both forbidden by docs/dev/I18N.md.
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { generate, serialize } from '../../../scripts/i18n/generate.ts'
+import {
+  NAMESPACE_DIRECTORY,
+  generate,
+  namespaceOf,
+  partitionByNamespace,
+  serialize,
+} from '../../../scripts/i18n/generate.ts'
+import { MESSAGE_NAMESPACES } from '../../../src/i18n/namespaces.ts'
 
 // `import.meta.dirname`, not `new URL(..., import.meta.url)`: under jsdom the
 // URL constructor resolves relative specifiers against the document's base
@@ -53,6 +60,48 @@ describe('generated catalogues', () => {
 
   it('matches the committed en.json exactly (regeneration is clean)', () => {
     expect(serialize(result.en)).toBe(read(enJsonPath))
+  })
+
+  // What a browser loads is the same catalogue, one file per namespace
+  // (`src/i18n/catalogues/<locale>/<namespace>.json`). A markdown edit that
+  // regenerated only by hand, or a merge that kept one side's whole catalogue
+  // and the other's namespace files, shows up here and nowhere else: the rest
+  // of this suite renders from the whole catalogue.
+  describe.each([
+    ['fr', () => result.fr],
+    ['en', () => result.en],
+  ] as const)('the %s namespace catalogues', (locale, entries) => {
+    const directory = join('src', 'i18n', NAMESPACE_DIRECTORY, locale)
+
+    it('are exactly the namespaces the catalogue has, no file more and none less', () => {
+      const files = readdirSync(join(root, directory)).sort()
+      const expected = Object.keys(partitionByNamespace(entries())).map((name) => `${name}.json`)
+      expect(files).toEqual(expected)
+      expect(files.map((name) => name.slice(0, -'.json'.length))).toEqual([...MESSAGE_NAMESPACES])
+    })
+
+    it('match what regeneration writes, file by file', () => {
+      for (const [namespace, catalogue] of Object.entries(partitionByNamespace(entries()))) {
+        expect(read(join(directory, `${namespace}.json`)), `${locale}/${namespace}.json`).toBe(
+          serialize(catalogue)
+        )
+      }
+    })
+  })
+
+  it('files every entry under the namespace its key names, plural entries with their row', () => {
+    const partition = partitionByNamespace({
+      'console.people.invite.action-send_one': 'a',
+      'console.people.invite.action-send_other': 'b',
+      'console.common.action-continue': 'c',
+    })
+    expect(Object.keys(partition)).toEqual(['common', 'people'])
+    expect(Object.keys(partition['people'] ?? {})).toEqual([
+      'console.people.invite.action-send_one',
+      'console.people.invite.action-send_other',
+    ])
+    expect(namespaceOf('console.common.action-continue')).toBe('common')
+    expect(() => namespaceOf('not-a-key')).toThrow('key has no namespace segment')
   })
 
   it('turns every key row of the markdown into exactly one key', () => {

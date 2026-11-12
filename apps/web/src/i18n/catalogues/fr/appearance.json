@@ -1,0 +1,17 @@
+{
+  "console.appearance.theme.error-author": "Thème refusé : l’auteur compte 1 à 64 octets, sans espace en bordure ni caractère de contrôle.",
+  "console.appearance.theme.error-base-mode": "Thème refusé : le mode de base est light, dark ou black.",
+  "console.appearance.theme.error-base64": "Code refusé : l’encodage base64 n’est pas canonique.",
+  "console.appearance.theme.error-colour": "Thème refusé : chaque couleur s’écrit rgb(r, g, b), avec des entiers de 0 à 255.",
+  "console.appearance.theme.error-duplicate-field": "Code refusé : un champ apparaît deux fois.",
+  "console.appearance.theme.error-field-type": "Code refusé : un champ n’a pas le type attendu.",
+  "console.appearance.theme.error-id": "Thème refusé : l’identifiant compte 1 à 64 caractères a-z, 0-9 ou tiret.",
+  "console.appearance.theme.error-json": "Code refusé : le contenu n’est pas un JSON valide.",
+  "console.appearance.theme.error-missing-field": "Code refusé : un champ obligatoire manque.",
+  "console.appearance.theme.error-name": "Thème refusé : le nom compte 1 à 64 octets, sans espace en bordure ni caractère de contrôle.",
+  "console.appearance.theme.error-prefix": "Code refusé : il doit commencer par kodera-theme:v1:",
+  "console.appearance.theme.error-too-long": "Code refusé : un code de thème fait au plus 2048 octets.",
+  "console.appearance.theme.error-unknown-field": "Code refusé : il contient un champ inconnu.",
+  "console.appearance.theme.error-utf8": "Code refusé : le contenu n’est pas de l’UTF-8 valide.",
+  "console.appearance.theme.error-version": "Code refusé : seule la version v=1 est prise en charge."
+}
