@@ -98,6 +98,15 @@ A stack started from an earlier revision of this profile kept Synapse's data in 
 2. Start `synapse-db` alone, then port the data with Synapse's own `synapse_port_db` tool, following the [Synapse PostgreSQL guide](https://element-hq.github.io/synapse/latest/postgres.html#porting-from-sqlite).
 3. Move `homeserver.db` out of the volume (keep the backup), then start the stack.
 
+## Upgrading an existing stack
+
+A stack started from an earlier revision of this profile meets four changes. None is applied silently:
+
+- **A new required secret.** Add `SYNAPSE_POSTGRES_PASSWORD` to your `.env` (`openssl rand -hex 32`). Compose refuses to start without it, and the preflight names it.
+- **Synapse's data moves to PostgreSQL.** Port it first, as "Synapse database" describes; Synapse refuses to start while the SQLite file is still there.
+- **Matrix password sign-in is off in every mode.** Members sign in through your identity provider ("Matrix sign-in"). An account that only ever had a Matrix password can no longer sign in.
+- **`/agent/*` and the Matrix federation, key and admin paths are no longer routed by Caddy.** The tenant agent is unaffected: it calls the server on the internal network. Anything else that called those paths through your public domain must move inside the stack's network.
+
 ## Federation
 
 Status: closed by default. Matrix federation is not part of the product yet; opening it is an operator's own decision and is not tested here.
