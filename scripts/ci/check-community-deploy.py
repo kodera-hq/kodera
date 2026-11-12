@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Validate deploy/community self-host stack invariants and ADR-0003 secret isolation.
 
+Both topologies are checked: `single` (docker-compose.yml, Caddyfile) and `split`
+(docker-compose.yml with docker-compose.split.yml, Caddyfile.split).
+
 With --preflight ENV_FILE it also checks an operator's own .env before `docker compose up`:
 every key of .env.example is set, no CHANGE_ME_ placeholder is left, and KODERA_AUTH_TRUST
 names at least one https issuer. It reports key names only, never a value.
@@ -26,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_COMPOSE = ROOT / "deploy" / "community" / "docker-compose.yml"
 DEFAULT_ENV_EXAMPLE = ROOT / "deploy" / "community" / ".env.example"
 DEFAULT_CADDYFILE = ROOT / "deploy" / "community" / "Caddyfile"
+DEFAULT_SPLIT_COMPOSE = ROOT / "deploy" / "community" / "docker-compose.split.yml"
+DEFAULT_SPLIT_CADDYFILE = ROOT / "deploy" / "community" / "Caddyfile.split"
 
 COMPOSE_VAR_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::[-?][^}]*)?\}")
 ENV_LINE_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=(.*)$")
@@ -88,6 +93,15 @@ SYNAPSE_OIDC_ENV_NAME = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
 SYNAPSE_OIDC_ISSUER_ENV_NAME = "KODERA_SYNAPSE_OIDC_ISSUER"
 SYNAPSE_DB_ENV_NAME = "SYNAPSE_POSTGRES_PASSWORD"
 FEDERATION_ENV_NAME = "KODERA_MATRIX_FEDERATION_ALLOWLIST"
+# `single` (the default) serves the web client and every backend on KODERA_DOMAIN. `split` serves
+# the web client from its own static origin, https://<KODERA_DOMAIN>, and the backends on
+# api.<KODERA_MATRIX_DOMAIN>, matrix.<KODERA_DOMAIN> and livekit.<KODERA_DOMAIN> (README.md,
+# "Topologies"). The Compose override `docker-compose.split.yml` selects the second.
+TOPOLOGY_ENV_NAME = "KODERA_TOPOLOGY"
+COMPOSE_TOPOLOGY_ENV_NAME = "KODERA_COMPOSE_TOPOLOGY"
+TOPOLOGIES = ("single", "split")
+# The media ports LiveKit publishes, and the firewall must open: the reviewed livekit.yaml values.
+LIVEKIT_PUBLISHED_PORTS = ('- "7881:7881"', '- "50000-50200:50000-50200/udp"')
 
 # What Caddy may route from the internet, per upstream. Anything else is refused: the agent API
 # (`/agent/*`) and Matrix federation, key and admin routes are not internet-facing by default.
@@ -214,6 +228,19 @@ def parse_compose_services(compose_text: str) -> dict[str, ServiceSpec]:
                     current_service.depends_on_conditions[current_dep] = v.strip()
 
     return services
+
+
+def section_entries(service: ServiceSpec, section: str) -> list[str]:
+    """The list entries of one block section of a service, as written (`- "7881:7881"`)."""
+    entries: list[str] = []
+    inside = False
+    for line in service.raw_lines:
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 4:
+            inside = line.strip() == section + ":"
+        elif inside and indent == 6 and line.strip().startswith("- "):
+            entries.append(line.strip())
+    return entries
 
 
 def parse_env_example(env_text: str) -> tuple[dict[str, str], list[str]]:
@@ -506,7 +533,94 @@ def check_community_deploy(
         errors.append("Caddyfile must proxy API routes to 'server:8000'")
     errors.extend(check_caddy_routes(caddyfile_text))
 
+    # 7. Both topologies run from this file. Nothing may wait for the web client, which the split
+    #    topology does not start, and Synapse learns which Compose files actually run.
+    if caddy_svc is not None and "web" in caddy_svc.depends_on_conditions:
+        errors.append("service 'caddy' must not wait for 'web': the split topology does not start the web client")
+    if synapse is not None:
+        if synapse.environment.get(TOPOLOGY_ENV_NAME) != "${" + TOPOLOGY_ENV_NAME + ":-single}":
+            errors.append(f"service 'synapse' must consume {TOPOLOGY_ENV_NAME} with the default 'single'")
+        if synapse.environment.get(COMPOSE_TOPOLOGY_ENV_NAME) != "single":
+            errors.append(f"service 'synapse' must set {COMPOSE_TOPOLOGY_ENV_NAME}: single, which only docker-compose.split.yml changes")
+    if env_map.get(TOPOLOGY_ENV_NAME) != "single":
+        errors.append(f".env.example must default {TOPOLOGY_ENV_NAME} to 'single'")
+    livekit = services.get("livekit")
+    if livekit is not None and section_entries(livekit, "ports") != list(LIVEKIT_PUBLISHED_PORTS):
+        errors.append(
+            "service 'livekit' must publish exactly the media ports of livekit.yaml: "
+            + ", ".join(entry[2:].strip('"') for entry in LIVEKIT_PUBLISHED_PORTS)
+        )
+
     return errors
+
+
+# What docker-compose.split.yml may change, per service and key: the Caddyfile Caddy reads and the
+# base domain it names, the web client left unstarted, the console origin the API admits, the
+# signalling origin room-access hands out, and the topology Synapse is told it runs in.
+SPLIT_WEB_PROFILE = "profiles: [single-origin-web]"
+SPLIT_OVERRIDE_KEYS: dict[str, frozenset[str]] = {
+    "caddy": frozenset({"volumes", "environment"}),
+    "web": frozenset({"profiles"}),
+    "server": frozenset({"environment"}),
+    "room-access": frozenset({"environment"}),
+    "synapse": frozenset({"environment"}),
+}
+SPLIT_OVERRIDE_ENVIRONMENT: dict[str, dict[str, str]] = {
+    "caddy": {"KODERA_MATRIX_DOMAIN": "${KODERA_MATRIX_DOMAIN:?"},
+    "server": {"KODERA_CONSOLE_ORIGINS": "https://${KODERA_DOMAIN:?"},
+    "room-access": {"LIVEKIT_WS_URL": "wss://livekit.${KODERA_DOMAIN:?"},
+    "synapse": {COMPOSE_TOPOLOGY_ENV_NAME: "split"},
+}
+SPLIT_CADDY_MOUNT = "- ./Caddyfile.split:/etc/caddy/Caddyfile:ro"
+
+
+def check_split_topology(override_text: str, split_caddyfile_text: str, env_text: str) -> list[str]:
+    """docker-compose.split.yml and Caddyfile.split: the split topology changes only what it must."""
+    errors = compose_structure_errors(override_text, "docker-compose.split.yml")
+    env_map, _ = parse_env_example(env_text)
+    for var in sorted(set(COMPOSE_VAR_RE.findall(override_text))):
+        if var not in env_map:
+            errors.append(f"missing variable in .env.example: {var} (docker-compose.split.yml)")
+    for name, default in COMPOSE_DEFAULT_RE.findall(override_text):
+        if default and (SECRET_SHAPED_NAME_RE.search(name) or looks_like_secret(default)):
+            errors.append(f"secret default in docker-compose.split.yml for {name}")
+    services = parse_compose_services(override_text)
+    for name, service in services.items():
+        allowed = SPLIT_OVERRIDE_KEYS.get(name)
+        if allowed is None:
+            errors.append(f"docker-compose.split.yml changes an unreviewed service '{name}'")
+            continue
+        keys = {line.strip().split(":", 1)[0] for line in service.raw_lines if len(line) - len(line.lstrip(" ")) == 4}
+        for key in sorted(keys - allowed):
+            errors.append(f"docker-compose.split.yml changes an unreviewed key '{key}' of service '{name}'")
+        expected = SPLIT_OVERRIDE_ENVIRONMENT.get(name, {})
+        for key, value in service.environment.items():
+            if key not in expected:
+                errors.append(f"docker-compose.split.yml sets an unreviewed variable {key} on service '{name}'")
+            elif not value.startswith(expected[key]):
+                errors.append(f"docker-compose.split.yml must set {key} on service '{name}' to {expected[key]}...")
+        for key in expected:
+            if key not in service.environment:
+                errors.append(f"docker-compose.split.yml must set {key} on service '{name}'")
+    for name in SPLIT_OVERRIDE_KEYS:
+        if name not in services:
+            errors.append(f"docker-compose.split.yml must change service '{name}'")
+    caddy = services.get("caddy")
+    if caddy is not None and section_entries(caddy, "volumes") != [SPLIT_CADDY_MOUNT]:
+        errors.append("docker-compose.split.yml must mount Caddyfile.split as Caddy's only configuration")
+    web = services.get("web")
+    if web is not None and [line.strip() for line in web.raw_lines] != [SPLIT_WEB_PROFILE]:
+        errors.append(
+            "docker-compose.split.yml must leave the web client unstarted "
+            f"('{SPLIT_WEB_PROFILE}'): the split topology serves it from its own static origin"
+        )
+    server = services.get("server")
+    if server is not None:
+        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME, SYNAPSE_DB_ENV_NAME):
+            if forbidden in "\n".join(server.raw_lines):
+                errors.append(f"ADR-0003 isolation violation: forbidden secret '{forbidden}' in service 'server' (docker-compose.split.yml)")
+    errors.extend(check_split_caddy_routes(split_caddyfile_text))
+    return list(dict.fromkeys(errors))
 
 
 CLIENT_ADDRESS_OVERRIDE = "header_up X-Forwarded-For {remote_host}"
@@ -524,6 +638,7 @@ REVIEWED_SERVICE_KEYS = frozenset({
 BLOCK_ONLY_SERVICE_KEYS = frozenset({"build", "environment", "volumes", "depends_on", "healthcheck", "ports"})
 REVIEWED_BIND_MOUNTS = frozenset({
     "./Caddyfile:/etc/caddy/Caddyfile:ro",
+    "./Caddyfile.split:/etc/caddy/Caddyfile:ro",
     "./livekit.yaml:/etc/livekit.yaml:ro",
     "./configure_synapse.py:/opt/community/configure_synapse.py:ro",
     "../../packages/synapse-policy:/opt/kodera-policy:ro",
@@ -542,7 +657,7 @@ port: 7880
 rtc:
   tcp_port: 7881
   port_range_start: 50000
-  port_range_end: 50060
+  port_range_end: 50200
   use_external_ip: true
 room:
   auto_create: false
@@ -554,7 +669,7 @@ YAML_INDIRECTION_RE = re.compile(r"(?:^|[\s\[{,])[&*][A-Za-z_][\w.-]*(?=$|[\s,\]
 YAML_BLOCK_SCALAR_RE = re.compile(r"(?::|-)\s*[|>][+-]?\d?$")
 
 
-def compose_structure_errors(compose_text: str) -> list[str]:
+def compose_structure_errors(compose_text: str, file_name: str = "docker-compose.yml") -> list[str]:
     """Refuse every Compose construct the line reader cannot follow, and every service key that
     was not reviewed. A host port or host networking is judged on the key, whatever its quoting
     or form; anchors, aliases and merge keys are refused outright."""
@@ -567,7 +682,7 @@ def compose_structure_errors(compose_text: str) -> list[str]:
     scalar_indent: int | None = None
 
     def where(number: int) -> str:
-        return f"docker-compose.yml line {number}"
+        return f"{file_name} line {number}"
 
     for number, raw in enumerate(compose_text.splitlines(), start=1):
         leading = raw[: len(raw) - len(raw.lstrip())]
@@ -729,6 +844,24 @@ REVIEWED_CADDY_RESPONSE_HEADERS = (
     'Referrer-Policy "strict-origin-when-cross-origin"',
 )
 REVIEWED_CADDY_REWRITES = {"rewrite * /token": "room-access:8095"}
+SINGLE_CADDY_SITES: dict[str, frozenset[str]] = {REVIEWED_CADDY_SITE: frozenset(ALLOWED_PUBLIC_ROUTES)}
+# Split topology (README.md, "Topologies"): the web client is served from its own static origin,
+# https://{$KODERA_DOMAIN}, and the stack publishes one origin per backend. Each upstream belongs to
+# exactly one of them, so the Core API is never reachable on the Matrix origin and so on.
+SPLIT_API_SITE = "api.{$KODERA_MATRIX_DOMAIN}"
+SPLIT_MATRIX_SITE = "matrix.{$KODERA_DOMAIN}"
+SPLIT_LIVEKIT_SITE = "livekit.{$KODERA_DOMAIN}"
+SPLIT_CADDY_SITES: dict[str, frozenset[str]] = {
+    SPLIT_API_SITE: frozenset({"server:8000"}),
+    SPLIT_MATRIX_SITE: frozenset({"synapse:8008", "room-access:8095"}),
+    SPLIT_LIVEKIT_SITE: frozenset({"livekit:7880"}),
+}
+# Synapse answers every origin with `Access-Control-Allow-Origin: *`. On its own origin that grant
+# is replaced by the one console origin; the API and room-access already grant exact origins only.
+SPLIT_SYNAPSE_CORS = 'header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"'
+SPLIT_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    (SPLIT_MATRIX_SITE, "synapse:8008"): (SPLIT_SYNAPSE_CORS,),
+}
 
 
 def _directive(line: str) -> str:
@@ -737,11 +870,31 @@ def _directive(line: str) -> str:
 
 
 def check_caddy_routes(caddyfile_text: str) -> list[str]:
-    """Hold the Caddyfile to its reviewed shape, and refuse everything else by name.
+    """The single-origin Caddyfile: one site block, the web client as its catch-all."""
+    return _check_caddy(caddyfile_text, label="Caddyfile", site_upstreams=SINGLE_CADDY_SITES, catch_all=CATCH_ALL_UPSTREAM)
 
-    One global options block, the `client_address` snippet, one site block for
-    `{$KODERA_DOMAIN}`. In it, every `handle` uses a named path matcher of that same block, and
-    proxies one reviewed upstream with X-Forwarded-For overwritten by the peer address. The
+
+def check_split_caddy_routes(caddyfile_text: str) -> list[str]:
+    """The split-origin Caddyfile: one site block per public backend origin, no web client, and
+    an explicit `respond 404` for everything a site does not route (README.md, "Topologies")."""
+    return _check_caddy(caddyfile_text, label="Caddyfile.split", site_upstreams=SPLIT_CADDY_SITES, catch_all=None,
+                        proxy_options=SPLIT_PROXY_OPTIONS)
+
+
+def _check_caddy(
+    caddyfile_text: str,
+    *,
+    label: str,
+    site_upstreams: dict[str, frozenset[str]],
+    catch_all: str | None,
+    proxy_options: dict[tuple[str, str], tuple[str, ...]] | None = None,
+) -> list[str]:
+    """Hold a Caddyfile to its reviewed shape, and refuse everything else by name.
+
+    One global options block, the `client_address` snippet, and exactly the reviewed site blocks.
+    In each, every `handle` uses a named path matcher of that same block, and proxies one
+    upstream reviewed for that site with X-Forwarded-For overwritten by the peer address. A
+    handle without a matcher proxies to `catch_all`, or, when there is none, answers 404. The
     agent API and Matrix federation, key and admin routes are refused; so are `trusted_proxies`,
     an `import` of anything but a snippet of this file, and any directive that was not reviewed:
     the gate does not skip what it does not understand.
@@ -750,7 +903,7 @@ def check_caddy_routes(caddyfile_text: str) -> list[str]:
     code = "\n".join(line for line in caddyfile_text.splitlines() if not line.strip().startswith("#"))
     if "trusted_proxies" in code:
         errors.append(
-            "Caddyfile must not declare trusted_proxies: no proxy sits in front of Caddy, "
+            f"{label} must not declare trusted_proxies: no proxy sits in front of Caddy, "
             "so a forwarded client address is never believed"
         )
     snippets = {
@@ -762,7 +915,7 @@ def check_caddy_routes(caddyfile_text: str) -> list[str]:
     def refuse_import(line: str) -> None:
         argument = line.split(None, 1)[1] if len(line.split(None, 1)) > 1 else ""
         errors.append(
-            f"Caddyfile import '{argument}' is not a snippet defined in this file: "
+            f"{label} import '{argument}' is not a snippet defined in this file: "
             "directives pulled from another file are never checked"
         )
 
@@ -775,114 +928,139 @@ def check_caddy_routes(caddyfile_text: str) -> list[str]:
                 refuse_import(line)
 
     for line in root.lines:
-        errors.append(f"Caddyfile has an unreviewed directive outside every block: '{_directive(line)}'")
+        errors.append(f"{label} has an unreviewed directive outside every block: '{_directive(line)}'")
     sites: list[CaddyBlock] = []
     for position, block in enumerate(root.blocks):
         if block.header == "":
             if position != 0 or block.blocks or tuple(block.lines) != REVIEWED_CADDY_GLOBAL_OPTIONS:
-                errors.append("Caddyfile global options differ from the reviewed ones (the ACME contact only)")
+                errors.append(f"{label} global options differ from the reviewed ones (the ACME contact only)")
         elif block.header.startswith("("):
             name = block.header[1:-1] if block.header.endswith(")") else block.header
             if block.blocks or sorted(block.lines) != sorted(REVIEWED_CADDY_SNIPPETS.get(name, ("",))):
-                errors.append(f"Caddyfile snippet '{name}' differs from the reviewed one")
+                errors.append(f"{label} snippet '{name}' differs from the reviewed one")
         else:
             sites.append(block)
-    if [site.header for site in sites] != [REVIEWED_CADDY_SITE]:
-        errors.append(f"Caddyfile must hold exactly one site block, for {REVIEWED_CADDY_SITE} (found {len(sites)})")
+    if [site.header for site in sites] != list(site_upstreams):
+        if len(site_upstreams) == 1:
+            errors.append(f"{label} must hold exactly one site block, for {next(iter(site_upstreams))} (found {len(sites)})")
+        else:
+            errors.append(
+                f"{label} must hold exactly the site blocks {', '.join(site_upstreams)}, in that order "
+                f"(found {', '.join(site.header for site in sites) or 'none'})"
+            )
+    proxy_options = proxy_options or {}
 
     proxied = 0
     for site in sites:
         # Matchers belong to their site block: one block never answers for another.
         matchers: dict[str, list[str]] = {}
+        answers_unrouted = False
         for line in site.lines:
             if line.startswith("@"):
                 found = re.fullmatch(r"@([a-z_]+)[ \t]+path[ \t]+(\S.*)", line)
                 if not found:
-                    errors.append(f"Caddyfile matcher '{_directive(line)}' must be a single-line path matcher")
+                    errors.append(f"{label} matcher '{_directive(line)}' must be a single-line path matcher")
                 elif found.group(1) in matchers:
-                    errors.append(f"Caddyfile defines the matcher '@{found.group(1)}' twice in one site block")
+                    errors.append(f"{label} defines the matcher '@{found.group(1)}' twice in one site block")
                 else:
                     matchers[found.group(1)] = found.group(2).split()
             elif _directive(line) == "import":
-                errors.append("Caddyfile imports a snippet outside a reverse_proxy block, where it was not reviewed")
+                errors.append(f"{label} imports a snippet outside a reverse_proxy block, where it was not reviewed")
             elif line not in REVIEWED_CADDY_SITE_LINES:
-                errors.append(f"Caddyfile has an unreviewed directive in a site block: '{_directive(line)}'")
+                errors.append(f"{label} has an unreviewed directive in a site block: '{_directive(line)}'")
         for block in site.blocks:
             if block.header == "header":
                 if block.blocks or tuple(block.lines) != REVIEWED_CADDY_RESPONSE_HEADERS:
-                    errors.append("Caddyfile response headers differ from the reviewed set")
+                    errors.append(f"{label} response headers differ from the reviewed set")
                 continue
             if block.header.startswith("@"):
-                errors.append(f"Caddyfile matcher '{_directive(block.header)}' must be a single-line path matcher")
+                errors.append(f"{label} matcher '{_directive(block.header)}' must be a single-line path matcher")
                 continue
             handle = re.fullmatch(r"handle(?:[ \t]+@([a-z_]+))?", block.header)
             if not handle:
-                errors.append(f"Caddyfile has an unreviewed block in a site block: '{_directive(block.header)}'")
+                errors.append(f"{label} has an unreviewed block in a site block: '{_directive(block.header)}'")
                 # Still count what it proxies, so that the route is reported as unreviewed too.
             matcher = handle.group(1) if handle else None
+            if handle and matcher is None and block.lines == ["respond 404"] and not block.blocks:
+                answers_unrouted = True
             upstreams: list[tuple[str, list[str]]] = []
             for line in block.lines:
                 if _directive(line) == "reverse_proxy":
                     upstreams.extend((upstream, []) for upstream in line.split()[1:])
                 elif _directive(line) == "import":
-                    errors.append("Caddyfile imports a snippet outside a reverse_proxy block, where it was not reviewed")
+                    errors.append(f"{label} imports a snippet outside a reverse_proxy block, where it was not reviewed")
                 elif line not in ("respond 404", *REVIEWED_CADDY_REWRITES):
-                    errors.append(f"Caddyfile has an unreviewed directive in a handle: '{_directive(line)}'")
+                    errors.append(f"{label} has an unreviewed directive in a handle: '{_directive(line)}'")
             for child in block.blocks:
                 words = child.header.split()
                 if words[:1] != ["reverse_proxy"] or len(words) != 2 or child.blocks:
-                    errors.append(f"Caddyfile has an unreviewed block in a handle: '{_directive(child.header)}'")
+                    errors.append(f"{label} has an unreviewed block in a handle: '{_directive(child.header)}'")
                     upstreams.extend((upstream, []) for upstream in words[1:] if words[:1] == ["reverse_proxy"])
                     continue
                 directives: list[str] = []
+                reviewed_options = proxy_options.get((site.header, words[1]), ())
                 for line in child.lines:
                     if _directive(line) == "import":
                         name = line.split()[1:]
                         directives.extend(snippets[name[0]].lines if len(name) == 1 and name[0] in snippets else [])
                     elif line in (CLIENT_ADDRESS_OVERRIDE, *STRIPPED_CLIENT_HEADERS) or re.match(r"header_up[ \t]+[+-]?X-Forwarded-For\b", line, re.IGNORECASE):
                         directives.append(line)
+                    elif line in reviewed_options:
+                        directives.append(line)
                     else:
-                        errors.append(f"Caddyfile has an unreviewed reverse_proxy option for '{words[1]}': '{' '.join(line.split()[:2])}'")
+                        errors.append(f"{label} has an unreviewed reverse_proxy option for '{words[1]}': '{' '.join(line.split()[:2])}'")
+                for option in reviewed_options:
+                    if option not in directives:
+                        errors.append(f"{label} must set the reviewed reverse_proxy option for '{words[1]}': '{option}'")
                 upstreams.append((words[1], directives))
             for rewrite, only_for in REVIEWED_CADDY_REWRITES.items():
                 if rewrite in block.lines and [upstream for upstream, _ in upstreams] != [only_for]:
-                    errors.append(f"Caddyfile rewrites a path in a handle that is not the reviewed one ('{rewrite}' is for {only_for} only)")
+                    errors.append(f"{label} rewrites a path in a handle that is not the reviewed one ('{rewrite}' is for {only_for} only)")
             for upstream, directives in upstreams:
                 proxied += 1
                 forwarded = [line for line in directives if re.match(r"header_up[ \t]+[+-]?X-Forwarded-For\b", line, re.IGNORECASE)]
                 if forwarded != [CLIENT_ADDRESS_OVERRIDE]:
                     errors.append(
-                        f"Caddyfile must overwrite X-Forwarded-For with the peer address for '{upstream}' "
+                        f"{label} must overwrite X-Forwarded-For with the peer address for '{upstream}' "
                         f"(exactly '{CLIENT_ADDRESS_OVERRIDE}'): a client-supplied value must never reach an upstream"
                     )
                 for stripped in STRIPPED_CLIENT_HEADERS:
                     if stripped not in directives:
-                        errors.append(f"Caddyfile must drop the client-supplied header for '{upstream}': '{stripped}'")
+                        errors.append(f"{label} must drop the client-supplied header for '{upstream}': '{stripped}'")
                 if handle and matcher is None:
-                    if upstream != CATCH_ALL_UPSTREAM:
-                        errors.append(f"Caddyfile catch-all must proxy to '{CATCH_ALL_UPSTREAM}' only (got '{upstream}')")
+                    if catch_all is None:
+                        errors.append(f"{label} catch-all must answer 404, never proxy (got '{upstream}')")
+                    elif upstream != catch_all:
+                        errors.append(f"{label} catch-all must proxy to '{catch_all}' only (got '{upstream}')")
                     continue
+                if upstream not in site_upstreams.get(site.header, frozenset()) and upstream in ALLOWED_PUBLIC_ROUTES:
+                    errors.append(f"{label} site '{site.header}' proxies to '{upstream}', which is not reviewed for that site")
                 allowed = ALLOWED_PUBLIC_ROUTES.get(upstream)
                 if allowed is None:
-                    errors.append(f"Caddyfile proxies '{block.header}' to an unreviewed upstream '{upstream}'")
+                    errors.append(f"{label} proxies '{block.header}' to an unreviewed upstream '{upstream}'")
                     continue
                 if matcher not in matchers:
-                    errors.append(f"Caddyfile handle '{block.header}' has no path matcher in its own site block")
+                    errors.append(f"{label} handle '{block.header}' has no path matcher in its own site block")
                     continue
                 for path in matchers[matcher]:
                     if path in allowed:
                         continue
                     if upstream == "server:8000" and path.startswith("/agent"):
-                        errors.append(f"Caddyfile must not expose the agent API to the internet (got '{path}')")
+                        errors.append(f"{label} must not expose the agent API to the internet (got '{path}')")
                     elif upstream == "synapse:8008":
                         errors.append(
-                            "federation must be closed by default: Caddyfile must route only the Matrix client API, "
+                            f"federation must be closed by default: {label} must route only the Matrix client API, "
                             f"never federation, key or admin routes (got '{path}')"
                         )
                     else:
-                        errors.append(f"Caddyfile exposes an unreviewed route to '{upstream}': '{path}'")
+                        errors.append(f"{label} exposes an unreviewed route to '{upstream}': '{path}'")
+        if catch_all is None and not answers_unrouted:
+            errors.append(
+                f"{label} site '{site.header}' must answer 404 for every path it does not route "
+                "(a 'handle' block holding 'respond 404' only)"
+            )
     if proxied != len(re.findall(r"(?m)^[ \t]*reverse_proxy[ \t]", code)):
-        errors.append("Caddyfile has a reverse_proxy outside a reviewed handle block")
+        errors.append(f"{label} has a reverse_proxy outside a reviewed handle block")
     return list(dict.fromkeys(errors))
 
 
@@ -1106,9 +1284,37 @@ def check_synapse_config(source: str) -> list[str]:
             problems.append("Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential")
         return problems
 
+    def topologies() -> list[str]:
+        problems = []
+        split = {TOPOLOGY_ENV_NAME: "split", COMPOSE_TOPOLOGY_ENV_NAME: "split"}
+        plain = configure(_generated_homeserver(), split)
+        if plain.get("public_baseurl") != "https://matrix.chat.example.org/" or plain.get("server_name") != "chat.example.org":
+            problems.append("Synapse split topology must publish its client API at https://matrix.<server_name>/")
+        community = {COMMUNITY_KEYS[0]: "community", COMMUNITY_KEYS[1]: "https://id.example.org/realms/community",
+                     SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL, **split}
+        signed = configure(_generated_homeserver(), community)
+        if signed.get("public_baseurl") != "https://matrix.chat.example.org/":
+            problems.append("Synapse split topology must publish its client API at https://matrix.<server_name>/")
+        if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"]:
+            problems.append("Synapse split sign-in must return the login token to the web origin https://<server_name>/ only")
+        if configure(copy.deepcopy(signed), community) != signed:
+            problems.append("Synapse split configuration must be idempotent across restarts")
+        if configure(copy.deepcopy(plain), {}).get("public_baseurl") == "https://matrix.chat.example.org/":
+            problems.append("Synapse must drop the split public base URL when the stack returns to the single topology")
+        mismatched = (
+            {TOPOLOGY_ENV_NAME: "split"}, {COMPOSE_TOPOLOGY_ENV_NAME: "split"},
+            {TOPOLOGY_ENV_NAME: "split", COMPOSE_TOPOLOGY_ENV_NAME: "single"},
+            {TOPOLOGY_ENV_NAME: "both", COMPOSE_TOPOLOGY_ENV_NAME: "both"},
+            {TOPOLOGY_ENV_NAME: "Split", COMPOSE_TOPOLOGY_ENV_NAME: "Split"},
+        )
+        if not all(_refuses(lambda environment=environment: configure(_generated_homeserver(), environment)) for environment in mismatched):
+            problems.append("Synapse must refuse a topology the Compose files do not run")
+        return problems
+
     for label, call in (
         ("database", database), ("federation", federation), ("room policy", policy),
         ("rate limits", rate_limits), ("accounts", accounts), ("sign-in", sign_in),
+        ("topologies", topologies),
     ):
         guarded(label, call)
     return errors
@@ -1370,8 +1576,8 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME) and not actual.get(key, "").strip("'\""):
-            continue
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME) and not actual.get(key, "").strip("'\""):
+            continue  # An .env written before the topology setting existed runs the single topology.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
         elif key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
@@ -1449,6 +1655,16 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             admitted = False
         if not admitted:
             errors.append("KODERA_DEFAULT_COMMUNITY_ISSUER must be admitted on the customer trust lane")
+    topology = actual.get(TOPOLOGY_ENV_NAME, "").strip("'\"") or "single"
+    if topology not in TOPOLOGIES:
+        errors.append(f"{TOPOLOGY_ENV_NAME} must be single or split")
+    elif topology == "split":
+        base = actual.get("KODERA_MATRIX_DOMAIN", "").strip("'\"")
+        host = actual.get("KODERA_DOMAIN", "").strip("'\"")
+        if not base or not host.endswith("." + base):
+            errors.append("KODERA_DOMAIN must be a subdomain of KODERA_MATRIX_DOMAIN in the split topology")
+        if actual.get("DJANGO_ALLOWED_HOSTS", "").strip("'\"") != f"api.{base},127.0.0.1":
+            errors.append("DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1 in the split topology")
     staff = actual.get("KODERA_STAFF_ISSUER", "").strip("'\"")
     if staff:
         try:
@@ -1475,6 +1691,47 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         return 1
 
     mutations: list[tuple[str, MutationFn, str]] = [
+        (
+            "Caddy waits for the web client the split topology does not start",
+            lambda c, e, cf: (c.replace("    depends_on:\n      server:\n        condition: service_healthy\n      room-access:",
+                                        "    depends_on:\n      web:\n        condition: service_started\n      server:\n        condition: service_healthy\n      room-access:", 1), e, cf),
+            "service 'caddy' must not wait for 'web': the split topology does not start the web client",
+        ),
+        (
+            "the LiveKit media range is narrower than the firewall range",
+            lambda c, e, cf: (c.replace('"50000-50200:50000-50200/udp"', '"50000-50060:50000-50060/udp"', 1), e, cf),
+            "service 'livekit' must publish exactly the media ports of livekit.yaml: 7881:7881, 50000-50200:50000-50200/udp",
+        ),
+        (
+            "LiveKit publishes its signalling port around Caddy",
+            lambda c, e, cf: (c.replace('      - "7881:7881"\n', '      - "7881:7881"\n      - "7880:7880"\n', 1), e, cf),
+            "service 'livekit' must publish exactly the media ports of livekit.yaml",
+        ),
+        (
+            "LiveKit drops its TCP media fallback",
+            lambda c, e, cf: (c.replace('      - "7881:7881"\n', '', 1), e, cf),
+            "service 'livekit' must publish exactly the media ports of livekit.yaml",
+        ),
+        (
+            "Synapse is not told which Compose files run",
+            lambda c, e, cf: (c.replace(f"      {COMPOSE_TOPOLOGY_ENV_NAME}: single\n", "", 1), e, cf),
+            f"service 'synapse' must set {COMPOSE_TOPOLOGY_ENV_NAME}: single",
+        ),
+        (
+            "the base Compose file claims the split topology",
+            lambda c, e, cf: (c.replace(f"      {COMPOSE_TOPOLOGY_ENV_NAME}: single\n", f"      {COMPOSE_TOPOLOGY_ENV_NAME}: split\n", 1), e, cf),
+            f"service 'synapse' must set {COMPOSE_TOPOLOGY_ENV_NAME}: single",
+        ),
+        (
+            "Synapse ignores the operator's topology",
+            lambda c, e, cf: (c.replace(f"      {TOPOLOGY_ENV_NAME}: ${{{TOPOLOGY_ENV_NAME}:-single}}\n", "", 1), e, cf),
+            f"service 'synapse' must consume {TOPOLOGY_ENV_NAME} with the default 'single'",
+        ),
+        (
+            "the template defaults to the split topology",
+            lambda c, e, cf: (c, e.replace(f"{TOPOLOGY_ENV_NAME}=single", f"{TOPOLOGY_ENV_NAME}=split", 1), cf),
+            f".env.example must default {TOPOLOGY_ENV_NAME} to 'single'",
+        ),
         (
             "leak LIVEKIT_API_SECRET into server environment",
             lambda c, e, cf: (
@@ -1985,6 +2242,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
         else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME)
+        else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}=filled-value-{i}"
         for i, key in enumerate(parse_env_example(env_text)[0])
@@ -2001,6 +2259,40 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         if any("filled-value" in err or "example.net" in err for err in got):
             print(f"[FAIL] preflight case '{label}' printed a value", file=sys.stderr)
             return 1
+
+    # Topologies: an .env that predates the setting runs `single`; `split` needs the API host.
+    def setting(env: str, key: str, value: str) -> str:
+        return re.sub(r"(?m)^" + key + r"=.*$", key + "=" + value, env)
+
+    split_env = setting(setting(setting(setting(filled, TOPOLOGY_ENV_NAME, "split"), "KODERA_DOMAIN", "chat.example.net"),
+                                "KODERA_MATRIX_DOMAIN", "example.net"), "DJANGO_ALLOWED_HOSTS", "api.example.net,127.0.0.1")
+    topology_accepted = (
+        ("an .env written before topologies existed", re.sub(r"(?m)^" + TOPOLOGY_ENV_NAME + r"=.*\n?", "", filled)),
+        ("an empty topology", setting(filled, TOPOLOGY_ENV_NAME, "")),
+        ("the split topology with its API host", split_env),
+    )
+    topology_refused = (
+        ("an unknown topology", setting(filled, TOPOLOGY_ENV_NAME, "both"), f"{TOPOLOGY_ENV_NAME} must be single or split"),
+        ("a topology in another case", setting(filled, TOPOLOGY_ENV_NAME, "Split"), f"{TOPOLOGY_ENV_NAME} must be single or split"),
+        ("split with the single-origin allowed hosts", setting(split_env, "DJANGO_ALLOWED_HOSTS", "chat.example.net,127.0.0.1"),
+         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1 in the split topology"),
+        ("split admitting a wildcard host", setting(split_env, "DJANGO_ALLOWED_HOSTS", "*"),
+         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1 in the split topology"),
+        ("split with a web origin outside the base domain", setting(split_env, "KODERA_DOMAIN", "chat.example.com"),
+         "KODERA_DOMAIN must be a subdomain of KODERA_MATRIX_DOMAIN in the split topology"),
+        ("split with the web origin on the base domain itself", setting(split_env, "KODERA_DOMAIN", "example.net"),
+         "KODERA_DOMAIN must be a subdomain of KODERA_MATRIX_DOMAIN in the split topology"),
+    )
+    for label, env in topology_accepted:
+        if preflight_env(env_text, env):
+            print(f"[FAIL] preflight refuses {label}: {preflight_env(env_text, env)}", file=sys.stderr)
+            return 1
+    for label, env, expected in topology_refused:
+        got = preflight_env(env_text, env)
+        if expected not in got or any("example.net" in err or "example.com" in err for err in got):
+            print(f"[FAIL] preflight case '{label}' did not report '{expected}' without a value (got {got})", file=sys.stderr)
+            return 1
+    preflight_cases += [(label, lambda env: env, expected) for label, _env, expected in topology_refused]
 
     canonical = filled.replace("KODERA_DEFAULT_COMMUNITY_ORG_SLUG=\n", "KODERA_DEFAULT_COMMUNITY_ORG_SLUG=community\n")
     canonical = canonical.replace("KODERA_DEFAULT_COMMUNITY_ISSUER=\n", "KODERA_DEFAULT_COMMUNITY_ISSUER=https://id.example.net/realms/community\n")
@@ -2156,7 +2448,106 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential"),
     ("an unrelated identity provider is replaced", 'raise ValueError("Synapse sign-in refuses to replace an unrelated identity provider")', 'pass',
      "Synapse OIDC sign-in must not silently replace an unrelated identity provider (kodera)"),
+    ("the split client API is published on the web origin", 'split_baseurl = f"https://matrix.{server}/"', 'split_baseurl = f"https://{server}/"',
+     "Synapse split topology must publish its client API at https://matrix.<server_name>/"),
+    ("split sign-in returns the login token to the Matrix origin", 'client_whitelist=[f"https://{server}/"]', 'client_whitelist=[split_baseurl if split else f"https://{server}/"]',
+     "Synapse split sign-in must return the login token to the web origin https://<server_name>/ only"),
+    ("a topology the Compose files do not run is accepted", '    if chosen != running:', '    if False:',
+     "Synapse must refuse a topology the Compose files do not run"),
+    ("an unknown topology is accepted", '    if chosen not in TOPOLOGIES or running not in TOPOLOGIES:', '    if False:',
+     "Synapse must refuse a topology the Compose files do not run"),
+    ("the split base URL survives a return to single", '        del document["public_baseurl"]', '        pass',
+     "Synapse must drop the split public base URL when the stack returns to the single topology"),
 )
+
+
+SplitMutation = tuple[str, str, Callable[[str], str], str]
+
+
+def _first(old: str, new: str) -> Callable[[str], str]:
+    return lambda text: text.replace(old, new, 1)
+
+
+def _last(old: str, new: str) -> Callable[[str], str]:
+    return lambda text: new.join(text.rsplit(old, 1))
+
+
+# (label, file mutated: "override" or "caddy", mutation, expected refusal)
+SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
+    ("the API origin routes the agent API", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /agent/*"),
+     "Caddyfile.split must not expose the agent API to the internet (got '/agent/*')"),
+    ("the Matrix origin routes federation", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/federation/*"),
+     "federation must be closed by default: Caddyfile.split must route only the Matrix client API, never federation, key or admin routes (got '/_matrix/federation/*')"),
+    ("the Matrix origin routes the key API", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/key/*"),
+     "(got '/_matrix/key/*')"),
+    ("the Matrix origin answers server discovery", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /.well-known/matrix/server"),
+     "(got '/.well-known/matrix/server')"),
+    ("the Matrix origin routes the admin API", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_synapse/admin/*"),
+     "(got '/_synapse/admin/*')"),
+    ("Synapse keeps granting every origin", "caddy", _first("\t\t\t" + SPLIT_SYNAPSE_CORS + "\n", ""),
+     f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_SYNAPSE_CORS}'"),
+    ("Synapse grants a wildcard origin", "caddy", _first(SPLIT_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"'),
+     "Caddyfile.split has an unreviewed reverse_proxy option for 'synapse:8008': 'header_down Access-Control-Allow-Origin'"),
+    ("the API is answered on the signalling origin", "caddy", _first("reverse_proxy livekit:7880 {", "reverse_proxy server:8000 {"),
+     "Caddyfile.split site 'livekit.{$KODERA_DOMAIN}' proxies to 'server:8000', which is not reviewed for that site"),
+    ("room-access is answered on the API origin", "caddy", _first("@api path /api/* /health/*", "@api path /_kodera/rooms/token"),
+     "Caddyfile.split exposes an unreviewed route to 'server:8000': '/_kodera/rooms/token'"),
+    ("an unrouted API path falls through to the web client", "caddy",
+     _first("\thandle {\n\t\trespond 404\n\t}", "\thandle {\n\t\treverse_proxy web:8080 {\n\t\t\timport client_address\n\t\t}\n\t}"),
+     "Caddyfile.split catch-all must answer 404, never proxy (got 'web:8080')"),
+    ("the signalling origin answers unrouted paths", "caddy", _last("\n\thandle {\n\t\trespond 404\n\t}", ""),
+     "Caddyfile.split site 'livekit.{$KODERA_DOMAIN}' must answer 404 for every path it does not route"),
+    ("a client-supplied address reaches the API", "caddy", _first("\t\t\timport client_address\n", ""),
+     "Caddyfile.split must overwrite X-Forwarded-For with the peer address for 'server:8000'"),
+    ("the stack serves the web origin too", "caddy", _last("}\n", "}\n\n{$KODERA_DOMAIN} {\n\thandle {\n\t\trespond 404\n\t}\n}\n"),
+     "Caddyfile.split must hold exactly the site blocks api.{$KODERA_MATRIX_DOMAIN}, matrix.{$KODERA_DOMAIN}, livekit.{$KODERA_DOMAIN}, in that order"),
+    ("a forwarded address is believed", "caddy", _first("\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tservers {\n\t\ttrusted_proxies static private_ranges\n\t}\n"),
+     "Caddyfile.split must not declare trusted_proxies"),
+    ("the web client is started", "override", _first("  web:\n    profiles: [single-origin-web]\n", ""),
+     "docker-compose.split.yml must change service 'web'"),
+    ("the web client joins the default profile", "override", _first("profiles: [single-origin-web]", "profiles: [default]"),
+     "docker-compose.split.yml must leave the web client unstarted"),
+    ("Caddy keeps the single-origin Caddyfile", "override", _first("./Caddyfile.split:/etc/caddy/Caddyfile:ro", "./Caddyfile:/etc/caddy/Caddyfile:ro"),
+     "docker-compose.split.yml must mount Caddyfile.split as Caddy's only configuration"),
+    ("Caddy cannot name the API origin", "override", _first("      KODERA_MATRIX_DOMAIN: ", "      KODERA_MATRIX_DOMAIN_UNUSED: "),
+     "docker-compose.split.yml must set KODERA_MATRIX_DOMAIN on service 'caddy'"),
+    ("the API admits every origin", "override", _first("KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?", "KODERA_CONSOLE_ORIGINS: '*'${KODERA_DOMAIN:?"),
+     "docker-compose.split.yml must set KODERA_CONSOLE_ORIGINS on service 'server' to https://${KODERA_DOMAIN:?..."),
+    ("room-access hands out the single-origin signalling URL", "override", _first("wss://livekit.${KODERA_DOMAIN", "wss://${KODERA_DOMAIN"),
+     "docker-compose.split.yml must set LIVEKIT_WS_URL on service 'room-access' to wss://livekit.${KODERA_DOMAIN:?..."),
+    ("Synapse is not told it runs split", "override", _first(f"      {COMPOSE_TOPOLOGY_ENV_NAME}: split\n", ""),
+     f"docker-compose.split.yml must set {COMPOSE_TOPOLOGY_ENV_NAME} on service 'synapse'"),
+    ("a LiveKit secret reaches the server", "override",
+     _first("      KODERA_CONSOLE_ORIGINS:", "      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?Set it}\n      KODERA_CONSOLE_ORIGINS:"),
+     "ADR-0003 isolation violation: forbidden secret 'LIVEKIT_API_SECRET' in service 'server' (docker-compose.split.yml)"),
+    ("Synapse is published around Caddy", "override", _first("  synapse:\n", '  synapse:\n    ports:\n      - "8008:8008"\n'),
+     "service 'synapse' must not publish a port"),
+    ("an unreviewed service is changed", "override", lambda text: text + "  db:\n    mem_limit: 4g\n",
+     "docker-compose.split.yml changes an unreviewed service 'db'"),
+    ("the server image is replaced", "override", _first("  server:\n", "  server:\n    image: example.org/server:latest\n"),
+     "docker-compose.split.yml changes an unreviewed key 'image' of service 'server'"),
+    ("an undocumented variable is read", "override", _first("wss://livekit.${KODERA_DOMAIN", "wss://livekit.${KODERA_SIGNALLING_HOST:?x}${KODERA_DOMAIN"),
+     "missing variable in .env.example: KODERA_SIGNALLING_HOST (docker-compose.split.yml)"),
+)
+
+
+def run_split_selftest(override_text: str, split_caddyfile_text: str, env_text: str) -> int:
+    baseline = check_split_topology(override_text, split_caddyfile_text, env_text)
+    if baseline:
+        for error in baseline:
+            print(f"[FAIL] baseline split topology invalid: {error}", file=sys.stderr)
+        return 1
+    for label, target, mutate, expected in SPLIT_MUTATIONS:
+        override, caddy = (mutate(override_text), split_caddyfile_text) if target == "override" else (override_text, mutate(split_caddyfile_text))
+        if (override, caddy) == (override_text, split_caddyfile_text):
+            print(f"[FAIL] split mutation '{label}' produced no change", file=sys.stderr)
+            return 1
+        errors = check_split_topology(override, caddy, env_text)
+        if not any(expected in error for error in errors):
+            print(f"[FAIL] split mutation '{label}' did not trigger '{expected}' (got {errors})", file=sys.stderr)
+            return 1
+    print(f"OK: split topology valid, {len(SPLIT_MUTATIONS)} override and Caddyfile.split mutations refused by name.")
+    return 0
 
 
 def run_synapse_config_selftest(source: str) -> int:
@@ -2217,6 +2608,8 @@ def main() -> int:
         (args.caddyfile, "Caddyfile"),
         (ROOT / "deploy/community/configure_synapse.py", "configure_synapse.py"),
         (ROOT / "deploy/community/livekit.yaml", "livekit.yaml"),
+        (DEFAULT_SPLIT_COMPOSE, "docker-compose.split.yml"),
+        (DEFAULT_SPLIT_CADDYFILE, "Caddyfile.split"),
     ):
         problem = path_problem(path)
         text = read_regular_file(path) if problem is None else None
@@ -2248,7 +2641,7 @@ def main() -> int:
              "at line 8: found 'auto_create' indented by 2, the reviewed file holds 'auto_create' indented by 2 (same setting, another value or spacing)"),
             ("a webhook to an unreviewed receiver", "logging:\n", "webhook:\n  urls: [https://example.org/hook]\nlogging:\n",
              "at line 10: found 'webhook' indented by 0"),
-            ("the media port range widened", "port_range_end: 50060", "port_range_end: 65535",
+            ("the media port range widened", "port_range_end: 50200", "port_range_end: 65535",
              "at line 5: found 'port_range_end' indented by 2, the reviewed file holds 'port_range_end' indented by 2 (same setting"),
             ("a reviewed setting removed", "  use_external_ip: true\n", "",
              "at line 6: found 'room' indented by 0, the reviewed file holds 'use_external_ip' indented by 2"),
@@ -2277,10 +2670,12 @@ def main() -> int:
         return (
             run_synapse_config_selftest(policy_source)
             or run_scaffolder_selftest()
+            or run_split_selftest(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
             or run_selftest(compose_text, env_text, caddyfile_text)
         )
 
     errors = check_community_deploy(compose_text, env_text, caddyfile_text)
+    errors += check_split_topology(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
     scaffolder_state = read_scaffolder_state()
     errors += scaffolder_state[3] + check_scaffolder_parity(*scaffolder_state[:3])
     if args.preflight is not None:
@@ -2298,7 +2693,7 @@ def main() -> int:
             print(f"[FAIL] {err}", file=sys.stderr)
         return 1
 
-    print("OK: deploy/community passed all compose, .env.example, Caddyfile, LiveKit, Synapse and scaffolder parity checks.")
+    print("OK: deploy/community passed all compose, .env.example, Caddyfile, split topology, LiveKit, Synapse and scaffolder parity checks.")
     return 0
 
 

@@ -2,7 +2,7 @@
 
 Status: Active
 
-This Docker Compose stack runs a single-node Kodera Community workspace: `Caddy` (automatic HTTPS), the `@kodera/web` client, the `apps/server` migrator and API, `room-access`, `PostgreSQL 17`, `Valkey 8`, `Synapse` on its own `PostgreSQL 17` database, and the `LiveKit` SFU. The `community-governance` profile adds the Matrix-only tenant agent and persistent reconciliation state.
+This Docker Compose stack runs a single-node Kodera Community workspace, in one of two topologies (see "Topologies"): `Caddy` (automatic HTTPS), the `@kodera/web` client, the `apps/server` migrator and API, `room-access`, `PostgreSQL 17`, `Valkey 8`, `Synapse` on its own `PostgreSQL 17` database, and the `LiveKit` SFU. The `community-governance` profile adds the Matrix-only tenant agent and persistent reconciliation state.
 
 It runs **no identity provider**. Sign-in uses an OIDC issuer you already operate (see "Sign-in"), so plan for one before you start.
 
@@ -10,7 +10,7 @@ No installation time or memory footprint has been measured for this stack, and n
 
 ## Before you start
 
-- A Linux host with Docker Compose v2, a public DNS name for `KODERA_DOMAIN`, and ports 80, 443, 7881/tcp and 50000–50060/udp open.
+- A Linux host with Docker Compose v2, public DNS names for the topology you choose (`KODERA_DOMAIN` for `single`; see "Topologies" for `split`), and ports 80/tcp, 443/tcp and 443/udp, 7881/tcp and 50000–50200/udp open.
 - An OIDC issuer you operate, reachable over public `https`, whose realm URLs follow the `/realms/<name>/` layout the web client expects (a Keycloak-style layout). It does not run in this stack.
 
 ## Quickstart
@@ -32,6 +32,48 @@ docker compose --profile community-governance up -d
 ```
 
 The preflight refuses to pass while any key of `.env.example` is missing or empty, while any `CHANGE_ME_` placeholder is left, or while `KODERA_AUTH_TRUST` and `KODERA_OIDC_PROVIDER_ORIGIN` do not name a public `https` issuer. Compose itself also refuses to start without `KODERA_AUTH_TRUST` and `KODERA_OIDC_PROVIDER_ORIGIN`.
+
+## Topologies
+
+`KODERA_TOPOLOGY` selects one of two layouts. Both run from the same `docker-compose.yml`; nothing else changes between them, and `scripts/ci/check-community-deploy.py` checks both.
+
+| | `single` (default) | `split` |
+| :--- | :--- | :--- |
+| Web client | `https://<KODERA_DOMAIN>/`, served by this stack | `https://<KODERA_DOMAIN>/`, served by **another** static host |
+| Core API | `https://<KODERA_DOMAIN>/api/*` | `https://api.<KODERA_MATRIX_DOMAIN>/api/*` |
+| Matrix client API, `room-access` | `https://<KODERA_DOMAIN>/_matrix/*`, `/_kodera/rooms/token` | `https://matrix.<KODERA_DOMAIN>/_matrix/*`, `/_kodera/rooms/token` |
+| LiveKit signalling | `wss://<KODERA_DOMAIN>/rtc` | `wss://livekit.<KODERA_DOMAIN>/rtc` |
+| Compose files | `docker-compose.yml` | `docker-compose.yml` and `docker-compose.split.yml` |
+| Caddy configuration | `Caddyfile` | `Caddyfile.split` |
+
+In both, the Matrix server name is `KODERA_DOMAIN`, federation stays closed and the same services, images, limits and secret isolation apply. `npx create-kodera` and the quickstart above produce the `single` topology.
+
+### The split topology
+
+Use it when the web client is a static site hosted elsewhere (for example `https://community.example.org`) and this stack serves the backends only. With `KODERA_DOMAIN=community.example.org` and `KODERA_MATRIX_DOMAIN=example.org`:
+
+- **DNS:** `api.example.org`, `matrix.community.example.org` and `livekit.community.example.org` point at this host. `community.example.org` points at the static host, not here.
+- **`.env`:** `KODERA_TOPOLOGY=split` and `DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1`. The generator writes both with `--topology split`; the preflight refuses a split `.env` whose allowed hosts are not exactly the API host, or whose `KODERA_DOMAIN` is not below `KODERA_MATRIX_DOMAIN`.
+- **Start:** `docker compose -f docker-compose.yml -f docker-compose.split.yml up -d` (add `--profile community-governance` for the canonical workspace). Synapse refuses to start when `KODERA_TOPOLOGY` and the Compose files disagree, so a split `.env` started without the override, or the reverse, fails visibly.
+- **Firewall:** 80/tcp, 443/tcp and 443/udp for Caddy; 7881/tcp and 50000–50200/udp for LiveKit media (its `use_external_ip` setting advertises the host's public address). Nothing else.
+
+What `docker-compose.split.yml` changes, and nothing more:
+
+- Caddy reads `Caddyfile.split`: three site blocks, `api.<KODERA_MATRIX_DOMAIN>`, `matrix.<KODERA_DOMAIN>` and `livekit.<KODERA_DOMAIN>`. Each routes only its own upstreams, with the paths of "What the internet can reach", and answers `404` on every other path, so `/agent/*`, `/_matrix/federation/*`, `/_matrix/key/*`, `/_synapse/admin/*` and `/.well-known/matrix/server` all answer `404`.
+- The `web` service is not started (it is moved to the `single-origin-web` profile, which this topology never enables).
+- `server` admits the browser origin `https://<KODERA_DOMAIN>` (`KODERA_CONSOLE_ORIGINS`), the only origin its CORS answers, preflight included.
+- `room-access` hands out `wss://livekit.<KODERA_DOMAIN>` as the signalling URL; it already admits `https://<KODERA_DOMAIN>` only (`ROOM_ACCESS_ALLOWED_ORIGINS`) and refuses any other preflight.
+- Synapse publishes `public_baseurl: https://matrix.<KODERA_DOMAIN>/`. Its single sign-on still returns the login token to the web origin `https://<KODERA_DOMAIN>/` only. Synapse grants every origin (`Access-Control-Allow-Origin: *`); `Caddyfile.split` replaces that grant with `https://<KODERA_DOMAIN>`.
+
+The static host must:
+
+- publish `GET https://<KODERA_DOMAIN>/.well-known/matrix/client` returning `{"m.homeserver":{"base_url":"https://matrix.<KODERA_DOMAIN>"}}` with `Access-Control-Allow-Origin: *`, because Synapse no longer answers on the server name;
+- serve a web client built with `VITE_AUTH_MODE=oidc`, `VITE_ENABLE_MSW=0`, `VITE_CORE_API_URL=https://api.<KODERA_MATRIX_DOMAIN>/api/v1`, `VITE_KEYCLOAK_URL=<KODERA_OIDC_PROVIDER_ORIGIN>` and `VITE_MATRIX_DOMAIN=<KODERA_MATRIX_DOMAIN>`;
+- admit exactly those origins in its Content-Security-Policy `connect-src`: the identity provider, `https://api.<KODERA_MATRIX_DOMAIN>`, `https://matrix.<KODERA_DOMAIN>` and `wss://livekit.<KODERA_DOMAIN>`.
+
+Register the Synapse callback of your realm's `synapse` client at the Matrix origin, `https://matrix.<KODERA_DOMAIN>/_synapse/client/oidc/callback`, and keep the `console` client's callbacks on the web origin.
+
+Status: the split topology is checked by the repository gate and its Caddy configuration is parsed by the pinned Caddy image; no deployment of it is rehearsed in this repository.
 
 ## Sign-in
 
@@ -58,7 +100,7 @@ Two settings connect the stack to your issuer:
 
 Members sign in to Synapse through your identity provider, never with a Matrix password: the web client sends the browser to Synapse's single sign-on, Synapse to your realm, and Synapse returns a single-use login token to the web origin. On every start `configure_synapse.py` therefore keeps password sign-in and open registration off, issues refreshable access tokens (the web client refuses a token that never expires) and, when a realm is configured, writes one OIDC provider:
 
-- the confidential client **`synapse`** of your realm, with the callback `https://<KODERA_DOMAIN>/_synapse/client/oidc/callback`, PKCE S256 and back-channel logout;
+- the confidential client **`synapse`** of your realm, with the callback `https://<KODERA_DOMAIN>/_synapse/client/oidc/callback` (`https://matrix.<KODERA_DOMAIN>/…` in the split topology), PKCE S256 and back-channel logout;
 - the Matrix localpart from the stable `sub` claim, never from an e-mail address or a mutable user name;
 - `sso.client_whitelist` holding `https://<KODERA_DOMAIN>/` only, with its trailing slash: Synapse matches by prefix.
 
@@ -72,7 +114,7 @@ Synapse reads the realm's discovery document when it starts and refuses to start
 
 ## What the internet can reach
 
-Caddy is the only service that publishes HTTP ports. It routes:
+Caddy is the only service that publishes HTTP ports. In the `single` topology it routes, on `KODERA_DOMAIN` (the `split` topology routes the same paths on the origins of "Topologies", has no web client and answers `404` on everything else):
 
 | Path | To |
 | :--- | :--- |
@@ -84,7 +126,7 @@ Caddy is the only service that publishes HTTP ports. It routes:
 
 **Caddy alone names the client.** For every upstream it overwrites `X-Forwarded-For` with the address of the peer it accepted, and drops `X-Real-IP` and `Forwarded`: a value a client sends in those headers never reaches Synapse or the API. The `Caddyfile` declares no `trusted_proxies`, because nothing sits in front of Caddy in this profile; if you put your own proxy or load balancer in front, that is a change to review, since Caddy would then see the proxy's address as every client's. Only Caddy and LiveKit publish ports on the host. Synapse, the API and the databases are reachable on the stack's internal network only, so the listener that believes the forwarded address cannot be called around Caddy.
 
-It answers `404` on `/agent/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50060/udp).
+It answers `404` on `/agent/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50200/udp), exactly those of `livekit.yaml`.
 
 ## Synapse database
 
@@ -132,7 +174,7 @@ The room policy still applies: a member may invite a user of another server only
 - Synapse is rate limited (`rc_message`, `rc_registration`, `rc_login`, `rc_joins`, `rc_invites`). Every value is Synapse's documented default, written out so that a later default cannot loosen it, with one exception: **`rc_login.address` is 20 sign-ins, then one every 6 seconds**, where the default is 5, then one every 5.5 minutes. The default would lock out a team that shares one office address, and the web client signs in again on every reload. Password sign-in is off, so the only login an address can attempt is a single-use token that Synapse itself issued after your identity provider authenticated the member; failed attempts (`rc_login.failed_attempts`) and per-account sign-ins (`rc_login.account`) keep the default. The check refuses any value looser than these. One consequence of the per-account default: Synapse counts every sign-in of a member, a reload of the web client included, so a member who reloads more than five times in quick succession waits a few minutes for the next Matrix session.
 - A per-address limit is only as good as the address. Synapse reads the client address from `X-Forwarded-For` on the one listener Caddy targets (port 8008) and on no other; see "What the internet can reach" for why that header can be believed.
 - `scripts/ci/check-community-deploy.py` checks all of this, with the rest of this stack's invariants, on every change: it runs `configure_synapse.py` on a freshly generated homeserver and refuses SQLite, an open federation, a missing policy module, missing or loosened rate limits, a route to `/agent/*`, and a default in `.env.example` or the Compose file that looks like a secret. `--selftest` proves each check can fail.
-- The check refuses what it cannot follow, instead of passing over it. The Compose file is read as block mappings with reviewed keys only: an anchor, alias or merge key, an inline or quoted form, `env_file`, `extends`, `network_mode`, a new bind mount or a new build context is refused. The `Caddyfile` is held to its reviewed shape: one site block, single-line path matchers, the reviewed directives, and no `import` of anything but the snippet it defines. `livekit.yaml` is exactly its reviewed settings. A symbolic link in place of any of these files is refused and never followed. Changing one of them therefore means updating the check in the same change, which is the review.
+- The check refuses what it cannot follow, instead of passing over it. The Compose file is read as block mappings with reviewed keys only: an anchor, alias or merge key, an inline or quoted form, `env_file`, `extends`, `network_mode`, a new bind mount or a new build context is refused. The `Caddyfile` is held to its reviewed shape: one site block (`Caddyfile.split`: its three, each with its own upstreams and a `404` for the rest), single-line path matchers, the reviewed directives, and no `import` of anything but the snippet it defines. `livekit.yaml` is exactly its reviewed settings, and the Compose file publishes exactly its media ports. `docker-compose.split.yml` may change only the reviewed keys listed in "Topologies". A symbolic link in place of any of these files is refused and never followed. Changing one of them therefore means updating the check in the same change, which is the review.
 
 ## Security and secret isolation (`ADR-0003` and `ADR-0018`)
 
@@ -158,6 +200,9 @@ bash deploy/community/kodera-deploy.sh --domain chat.example.org \
   --oidc-client-id console --template audiovisual-production \
   --trust-file public-trust.json --env-file kodera-generated.conf --generate-only
 ```
+
+`--topology split` writes the split topology's `.env` (see "Topologies") and prints the
+origins the static web host must name; the default is `single`.
 
 The generator creates mode-0600 configuration with independent random secrets, refuses
 an existing destination and prints the exact Compose startup command. It starts no
