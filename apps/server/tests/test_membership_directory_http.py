@@ -46,14 +46,17 @@ def seed(w, *, state="active", role="org_member", enabled=True):
     return user, membership
 
 
-def expected(item, user):
+def expected(item, user, *, disclosed=True):
+    """The row as its reader sees it: directory privacy (MEMBERSHIP_LIFECYCLE.md §2.1) leaves the
+    address out of a row that is neither the reader's own nor read by an owner or admin."""
+
     def stamp(value):
         return value.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     return {
         "id": str(item.id),
         "organisation_id": str(item.organisation_id),
-        "email": user.email,
+        **({"email": user.email} if disclosed else {}),
         "display_name": user.display_name,
         "role": item.role,
         "state": item.state,
@@ -95,7 +98,10 @@ def test_projection_population_and_no_writes(http_world, role):
     assert {row["id"] for row in body["data"]}.isdisjoint(
         {str(removed.id), str(deleted.id), str(retained.id)}
     ), "directory included an excluded relationship"
-    want = [expected(item, user) for user, item in sorted(pairs, key=lambda pair: pair[1].id)]
+    want = [
+        expected(item, user, disclosed=role != "org_member" or item.id == w.member.id)
+        for user, item in sorted(pairs, key=lambda pair: pair[1].id)
+    ]
     assert body["data"] == want, "directory invented an unavailable fact"
     assert body == {"data": want, "has_more": False, "next_cursor": None}
     assert response.headers["Cache-Control"] == "no-store" and "ETag" not in response.headers

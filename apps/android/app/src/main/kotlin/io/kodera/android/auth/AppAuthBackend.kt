@@ -41,8 +41,8 @@ internal fun interface AuthorizationPresenter {
 }
 
 /**
- * The browsers AppAuth may open sign-in in; its `BrowserSelector` picks one of them. The Console opens in the
- * browser the same selector picks with this matcher, so both go to the same browser.
+ * The browsers AppAuth may open sign-in in; its `BrowserSelector` picks one of them. Sign-in is the only
+ * page the app opens in a browser.
  */
 internal val SIGN_IN_BROWSERS: BrowserMatcher = AnyBrowserMatcher.INSTANCE
 

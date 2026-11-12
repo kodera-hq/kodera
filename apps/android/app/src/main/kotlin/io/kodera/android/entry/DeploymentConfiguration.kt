@@ -16,7 +16,7 @@ internal class Deployment(
     val coreApiOrigin: String?,
     /** Debug builds only: a realm issuer to sign in to without Core discovery. */
     val developmentIssuer: String?,
-    /** Where a member with no organisation yet finishes in the browser; null hides the Console action. */
+    /** The validated Console origin, or null. Held only: no screen opens it (the app links to no commercial page). */
     val consoleOrigin: String? = null,
 )
 

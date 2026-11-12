@@ -19,6 +19,7 @@ from services.identity.access_tokens import VerifiedAccessToken
 
 from .initialise import lock_organisation
 from .models import Channel, WarmPoolAllocation
+from .templates import canonical_plan
 from .warm_pool import InstantClaimRequest, build_instant_claim_plan, build_instant_claim_response
 
 
@@ -99,7 +100,9 @@ def claim_allocation(payload: InstantClaimRequest, organisation_id: UUID) -> dic
         raise PoolUnavailableError()
     if allocation.claimed_at is not None:
         raise ClaimConflictError()
-    if allocation.plan != plan or not all(
+    # The stored plan is read with today's identifiers (a plan prepared as `givre` is `light`),
+    # by the same canonicalisation the claim's own identifiers went through.
+    if canonical_plan(allocation.plan) != plan or not all(
         map(
             _public_https,
             (

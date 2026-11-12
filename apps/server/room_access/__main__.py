@@ -8,7 +8,7 @@ import time
 
 from .clients import LiveKit, Matrix
 from .config import Config, ConfigError
-from .server import make_token_server, make_webhook_server
+from .server import GrantLimiter, make_token_server, make_webhook_server
 from .service import Service
 
 
@@ -28,7 +28,13 @@ def main() -> int:
         config.token_ttl_s,
     )
     for server in (
-        make_token_server(config.api_bind, config.api_port, service, config.allowed_origins),
+        make_token_server(
+            config.api_bind,
+            config.api_port,
+            service,
+            config.allowed_origins,
+            limiter=GrantLimiter(config.grants_per_minute),
+        ),
         make_webhook_server(config.webhook_bind, config.webhook_port, livekit, service.on_webhook),
     ):
         threading.Thread(target=server.serve_forever, daemon=True).start()

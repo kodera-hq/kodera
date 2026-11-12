@@ -4,7 +4,7 @@
   "id": "io.kodera.ext.notion-workspace-bridge",
   "name": "Notion Workspace & Database Bridge",
   "version": "0.1.0",
-  "description": "Partage et synchronise les pages et bases de données Notion dans un salon Kodera Espace en complément de DINUM Docs.",
+  "description": "Partage et synchronise les pages et bases de données Notion dans un salon Kodera Espace en complément de Docs.",
   "permissions": [
     "messages:write",
     "commands:register",
@@ -23,8 +23,8 @@
     {
       "command": "/notion-page",
       "name": "/notion-page",
-      "description": "Partager ou synchroniser une page ou entrée de base Notion aux côtés de DINUM Docs"
+      "description": "Partager ou synchroniser une page ou entrée de base Notion aux côtés de Docs"
     }
   ],
-  "webhookUrl": "https://extensions.example.kodera.io/hooks/notion-workspace-bridge"
+  "webhookUrl": "https://extensions.example.org/hooks/notion-workspace-bridge"
 }

@@ -1,4 +1,9 @@
-"""Current authority and materialized directory facts share one read-only snapshot."""
+"""Current authority and materialized directory facts share one read-only snapshot.
+
+Directory privacy (docs/specs/MEMBERSHIP_LIFECYCLE.md §2.1) is applied here, row by row, before a
+row leaves the snapshot: a row whose private member facts are withheld from the caller carries no
+contact at all, so the serializer cannot emit one.
+"""
 
 from dataclasses import dataclass
 
@@ -19,6 +24,7 @@ from .membership_selectors import (
     DirectoryMembership,
     directory_memberships,
     directory_role,
+    discloses_private_facts,
 )
 from .selectors import has_current_read_grant
 
@@ -37,8 +43,16 @@ class DirectoryNotFoundError(Exception):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class DirectoryRow:
+    """One row as the caller may read it: `email` is None when directory privacy withholds the
+    person's private member facts from this caller, and is then absent from the answer."""
+
     membership: DirectoryMembership
-    person: PersonSnapshot
+    display_name: str | None
+    email: str | None
+
+
+def _row(item: DirectoryMembership, contact: PersonSnapshot, *, disclosed: bool) -> DirectoryRow:
+    return DirectoryRow(item, contact.display_name, contact.email if disclosed else None)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -95,7 +109,16 @@ def read_directory(
             contact.id: contact
             for contact in person_contacts(user_ids=tuple(item.user_id for item in visible))
         }
-        rows = tuple(DirectoryRow(item, contacts[item.user_id]) for item in visible)
+        rows = tuple(
+            _row(
+                item,
+                contacts[item.user_id],
+                disclosed=discloses_private_facts(
+                    caller_role=role, own_row=item.user_id == person.id
+                ),
+            )
+            for item in visible
+        )
         next_cursor = None
         if has_more:
             if ceiling is None:

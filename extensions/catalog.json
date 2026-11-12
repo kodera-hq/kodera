@@ -1,0 +1,293 @@
+{
+  "schemaVersion": "kodera.extensions.catalog.v1",
+  "generatedBy": "extensions/catalog.mjs",
+  "label": "Reference implementation",
+  "notice": "Generated from the extension manifests. Every entry is a reference implementation exercised with synthetic fixtures: it is not installed, hosted or connected to a provider account by this repository.",
+  "extensions": [
+    {
+      "slug": "docs-collab-announcer",
+      "id": "io.kodera.ext.docs-collab-announcer",
+      "name": "Docs Collaborative Pad Announcer",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Annonce les créations, publications et résolutions de commentaires des documents collaboratifs Docs dans les salons Kodera Espace.",
+      "manifest": "extensions/docs-collab-announcer/manifest.json",
+      "readme": null,
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/doc-pad",
+          "description": "Partager ou ouvrir un document collaboratif Docs lié au salon"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/docs-collab-announcer"
+    },
+    {
+      "slug": "frameio-review-bridge",
+      "id": "io.kodera.ext.frameio-review-bridge",
+      "name": "Frame.io Review Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Signed production review events for channel-based post-production.",
+      "manifest": "extensions/frameio-review-bridge/manifest.json",
+      "readme": "extensions/frameio-review-bridge/README.md",
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "message.created",
+        "command.invoked"
+      ],
+      "commands": [
+        {
+          "name": "/frameio-review",
+          "description": "Share a production review"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/frameio-review-bridge"
+    },
+    {
+      "slug": "gdrive-document-share",
+      "id": "io.kodera.ext.gdrive-document-share",
+      "name": "Google Drive Document & Folder Share",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Partage des fichiers et dossiers Google Drive dans un salon Kodera Espace avec badges de droits d'accès (lecture, commentaire, édition) et validation HTTPS anti-SSRF.",
+      "manifest": "extensions/gdrive-document-share/manifest.json",
+      "readme": null,
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/gdrive-share",
+          "description": "Partager un fichier ou dossier Google Drive avec badge de permission (lecture, commentaire, édition)"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/gdrive-document-share"
+    },
+    {
+      "slug": "git-tracker",
+      "id": "io.kodera.ext.git-tracker",
+      "name": "Git Tracker",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Verified GitHub and GitLab activity cards with durable delivery.",
+      "manifest": "extensions/git-tracker/kodera-extension.json",
+      "readme": "extensions/git-tracker/README.md",
+      "scopes": [
+        "messages:write",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "release.published",
+        "ci.workflow_failed"
+      ],
+      "commands": [],
+      "webhookUrl": "https://extensions.example.org/hooks/git-tracker"
+    },
+    {
+      "slug": "github-release-notifier",
+      "id": "io.kodera.ext.github-release-notifier",
+      "name": "GitHub Release & CI Notifier",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Transforms signed release publications and CI workflow failures into structured Kodera channel cards with SemVer validation, markdown sanitization, and idempotent delivery.",
+      "manifest": "extensions/github-release-notifier/kodera-extension.json",
+      "readme": "extensions/github-release-notifier/README.md",
+      "scopes": [
+        "messages:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "release.published",
+        "ci.workflow_failed",
+        "command.invoked"
+      ],
+      "commands": [
+        {
+          "name": "/release-notes",
+          "description": "Format or preview a release announcement for a repository tag"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/github-release-notifier"
+    },
+    {
+      "slug": "github-repo-tracker",
+      "id": "io.kodera.ext.github-repo-tracker",
+      "name": "GitHub Repository Activity Tracker",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Suit en temps réel l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans un salon Kodera Espace.",
+      "manifest": "extensions/github-repo-tracker/manifest.json",
+      "readme": null,
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created",
+        "release.published",
+        "ci.workflow_failed"
+      ],
+      "commands": [
+        {
+          "name": "/github-track",
+          "description": "Configurer ou afficher le suivi d'un dépôt GitHub (owner/repo) dans le salon"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/github-repo-tracker"
+    },
+    {
+      "slug": "hello-webhook",
+      "id": "io.kodera.ext.hello-webhook",
+      "name": "Hello Webhook Starter",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Reference Kodera slash-command and signed webhook starter extension (<15 min onboarding).",
+      "manifest": "extensions/hello-webhook/kodera-extension.json",
+      "readme": "extensions/hello-webhook/README.md",
+      "scopes": [
+        "messages:write",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked"
+      ],
+      "commands": [
+        {
+          "name": "/hello",
+          "description": "Reply with a greeting in the current Kodera channel"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/hello-webhook"
+    },
+    {
+      "slug": "notion-workspace-bridge",
+      "id": "io.kodera.ext.notion-workspace-bridge",
+      "name": "Notion Workspace & Database Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Partage et synchronise les pages et bases de données Notion dans un salon Kodera Espace en complément de Docs.",
+      "manifest": "extensions/notion-workspace-bridge/manifest.json",
+      "readme": null,
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/notion-page",
+          "description": "Partager ou synchroniser une page ou entrée de base Notion aux côtés de Docs"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/notion-workspace-bridge"
+    },
+    {
+      "slug": "qonto-treasury-feed",
+      "id": "io.kodera.ext.qonto-treasury-feed",
+      "name": "Qonto Corporate Treasury Feed",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Suit les mouvements bancaires Qonto (virements entrants/sortants, justificatifs manquants, alertes de seuil de dépense) avec masquage déterministe des IBAN.",
+      "manifest": "extensions/qonto-treasury-feed/manifest.json",
+      "readme": null,
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/qonto-feed",
+          "description": "Consulter le flux de trésorerie Qonto, les seuils de dépense ou les justificatifs manquants"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/qonto-treasury-feed"
+    },
+    {
+      "slug": "social-pulse-bridge",
+      "id": "io.kodera.ext.social-pulse-bridge",
+      "name": "Social Pulse Syndication Bridge (X, Mastodon, Instagram)",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Diffuse et archive les publications X / Twitter, Mastodon / Fédiverse et Instagram dans un salon Kodera Espace sans pixel de pistage tiers et avec suppression automatique des paramètres de traçage.",
+      "manifest": "extensions/social-pulse-bridge/manifest.json",
+      "readme": null,
+      "scopes": [
+        "messages:write",
+        "commands:register",
+        "webhooks:incoming"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/social-post",
+          "description": "Partager une publication X / Twitter, Mastodon / Fédiverse ou Instagram nettoyée de tout pistage"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/social-pulse-bridge"
+    },
+    {
+      "slug": "uptime-incident-bridge",
+      "id": "io.kodera.ext.uptime-incident-bridge",
+      "name": "Uptime & Alerting Incident Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Bridges monitoring alerts (incident.opened, incident.acknowledged, incident.resolved) into Kodera incident cards and thread follow-ups with configurable flapping deduplication.",
+      "manifest": "extensions/uptime-incident-bridge/kodera-extension.json",
+      "readme": "extensions/uptime-incident-bridge/README.md",
+      "scopes": [
+        "messages:write",
+        "incidents:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "incident.opened",
+        "incident.acknowledged",
+        "incident.resolved",
+        "command.invoked"
+      ],
+      "commands": [
+        {
+          "name": "/incident-bridge",
+          "description": "Inspect or declare a monitored service incident"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.org/hooks/uptime-incident-bridge"
+    }
+  ]
+}

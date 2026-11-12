@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "Official Kodera extension streaming Qonto corporate treasury movements, missing invoice reminders, and spend alerts with deterministic IBAN masking.",
+  "description": "Reference implementation: streaming Qonto corporate treasury movements, missing invoice reminders, and spend alerts with deterministic IBAN masking.",
   "dependencies": {
     "@kodera/extension-sdk": "0.1.0"
   },

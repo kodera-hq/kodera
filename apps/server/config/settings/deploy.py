@@ -18,6 +18,7 @@ from config.environment import (
     console_client_id,
     intake_admitted,
     legal_text_origin,
+    mutation_rate_per_minute,
     staff_issuer,
     tenant_app_urls,
     trusted_edge,
@@ -56,7 +57,8 @@ KODERA_CONTACT_SEAL_KEY = key_from_environment(os.environ, "KODERA_CONTACT_SEAL_
 KODERA_MEMBERSHIP_CURSOR_KEY = os.environ.get("KODERA_MEMBERSHIP_CURSOR_KEY")
 # Discovery validates its own key only when called, without blocking other operations.
 KODERA_DISCOVERY_HMAC_KEY = os.environ.get("KODERA_DISCOVERY_HMAC_KEY")
-# The browser origins (the Console's) discovery admits, comma-separated; validated by the route.
+# The browser origins (the Console's), comma-separated: the ones discovery admits and the only
+# ones CORS names (core/api/edge.py). A malformed value names none; validated where it is read.
 KODERA_CONSOLE_ORIGINS = os.environ.get("KODERA_CONSOLE_ORIGINS")
 # Where a support ticket is mailed (docs/specs/SUPPORT_TICKETS.md §5); validated by the route.
 KODERA_SUPPORT_MAILBOX = os.environ.get("KODERA_SUPPORT_MAILBOX") or None
@@ -64,6 +66,8 @@ KODERA_SUPPORT_MAILBOX = os.environ.get("KODERA_SUPPORT_MAILBOX") or None
 # (apps/billing/configuration.py payment_return_origins).
 KODERA_PAYMENT_RETURN_ORIGINS = payment_return_origins(KODERA_CONSOLE_ORIGINS)
 KODERA_LEGAL_TEXT_ORIGIN = legal_text_origin(os.environ)
+# One principal's writes per rolling minute (docs/specs/ABUSE_AND_ORIGIN_CONTROLS.md §2); unset, 60.
+KODERA_MUTATION_RATE_PER_MINUTE = mutation_rate_per_minute(os.environ)
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)

@@ -9,44 +9,60 @@
 <h1 align="center">Kodera</h1>
 
 <p align="center">
-  <strong>The fast, sovereign, open-core workspace for teams, communities, and resilient organisations.</strong><br>
-  Instant channels, low-latency voice &amp; video rooms, native clients, and crisis-ready resilience — hosted in Europe or on your own infrastructure.
+  <strong>An open-core workspace for teams and communities: channels, threads and always-open audio rooms.</strong><br>
+  Built on Matrix and LiveKit, hosted in Europe or on your own infrastructure.
 </p>
 
 <p align="center">
-  <a href="https://kodera.io"><strong>kodera.io (Managed Cloud &amp; Enterprise)</strong></a> ·
   <a href="./deploy/community/README.md">Self-Host (Docker Compose)</a> ·
   <a href="./ARCHITECTURE.md">Architecture</a> ·
-  <a href="./docs/rfcs/RFC-0001-emergency-ble-channel.md">RFC-0001 (<code>#urgence</code> BLE)</a> ·
-  <a href="./CONTRIBUTING.md">Contribute</a>
+  <a href="./ROADMAP.md">Roadmap</a> ·
+  <a href="./docs/adr/README.md">Decisions (ADR index)</a> ·
+  <a href="./docs/rfcs/RFC-0001-emergency-ble-channel.md">RFC-0001 (<code>#proximity</code>)</a> ·
+  <a href="./CONTRIBUTING.md">Contribute</a> ·
+  <a href="https://kodera.io">kodera.io</a>
 </p>
 
 ---
 
-> **Status: Developer Preview (`v0.x`)** — Active pre-`v1.0` open-core development. Core API contracts, web client, design tokens, and shared Rust primitives (`kodera-rs`) are verified in CI; mobile clients (`apps/ios`, `apps/android`) and `#urgence` offline proximity relaying are under active build-out.
+> **Status: Developer Preview (`v0.x`).** Pre-`v1.0`, under active development. This page says what the repository contains today and marks everything else **Planned**. The list of planned work, and its order, is the [roadmap](./ROADMAP.md); the authoritative backlog is this repository's issues and its GitHub Project.
 
-## Why Kodera?
+## What works today
 
-Most modern collaboration tools force an uncomfortable trade-off: **consumer-fast UX locked inside US hyperscaler silos** (Discord, Slack, Teams) *or* **fragmented self-hosted stacks that struggle with onboarding and voice reliability**.
+- **Channels in the web client.** Text channels with threads, replies, reactions, typing and presence, backed by a Matrix homeserver (Synapse) that a Kodera policy module keeps under the control plane's rules.
+- **Always-open audio rooms.** One click to join, over a LiveKit SFU, with who-is-in-the-room shown in the channel list. The web client publishes and plays microphone audio.
+- **A control plane with a contract.** `apps/server` (Django) owns organisations, members, roles, workspaces and channel access behind an OpenAPI 3.1 contract, from which the web client's API types are generated.
+- **Sign-in through OpenID Connect.** The server trusts the issuers you list; the web client signs in at your identity provider, and Synapse signs members in through the same realm. The web client's "Create an account" sends a new person to the identity provider's own registration page.
+- **A self-host profile.** [`deploy/community`](./deploy/community/README.md): a single-node Docker Compose stack with Synapse on PostgreSQL, federation closed, rate limits set and the agent API off the internet. `scripts/ci/check-community-deploy.py` holds it to that on every change.
+- **An extension SDK.** [`@kodera/extension-sdk`](./packages/extension-sdk/README.md) for signed webhooks and slash commands, with [reference implementations](./extensions/README.md) that run against its test harness.
+- **One design system.** [`@kodera/design-tokens`](./packages/design-tokens) is the single source of colour, type and motion for the web and native clients, with contrast gates in CI.
 
-Kodera bridges both worlds:
+## What is not there yet
 
-- **Discord-Fast Real-Time Collaboration:** Instant channels, threads, presence, and one-click **LiveKit WebRTC** audio/video/screen-sharing rooms.
-- **Frictionless Multi-Server Identity (`Kodera Passport`):** Join multiple workspaces from a single client using Passkeys or Magic Links — while allowing corporate workspaces to enforce strict SAML/OIDC SSO and hardware MFA per server.
-- **Transport-Agnostic Cryptographic Core (`kodera-rs`):** `#![forbid(unsafe_code)]` Rust crate unifying RFC 9562 `UuidV7` routing, `Ed25519` device identity, a `CryptoProvider` seam and ciphertext envelope types (`MatrixOlmV1`, with `OpenMlsDraft` reserved for a future RFC 9420 provider; no MLS implementation ships today), and offline proximity frames shared by the Desktop developer preview, **SwiftUI iOS** and **Jetpack Compose Android**.
-- **Built for Physical Resilience (`#urgence`):** Architectural support for an offline intra-building emergency channel over local Wi-Fi (`mDNS + QUIC`) and `BLE GATT` (`<= 256 B` signed frames) when internet or WAN connectivity goes dark ([`RFC-0001`](./docs/rfcs/RFC-0001-emergency-ble-channel.md)).
-- **EU Cyber Resilience Act (CRA) Ready by Design:** Startup secret isolation (`ADR-0003`), SHA-pinned CI workflows, CycloneDX SBOM generation, and SLSA v1.0 provenance architecture.
+Status: Planned. None of the following ships today; the [roadmap](./ROADMAP.md) orders it.
+
+- **Direct messages, file upload and message search** in the web client.
+- **Camera video and screen sharing** in rooms. LiveKit alone carries voice and video; no other conferencing system is planned.
+- **Collaborative documents.** The web client has local Markdown drafts that can be published to a channel as a message. Native Docs will be a block editor inside `apps/web` (ProseMirror/Tiptap and Yjs, both MIT-licensed, with no GPL add-on) with a small Yjs sync service. No third-party office suite is integrated or planned.
+- **End-to-end encryption and Matrix federation.** Both are deferred. Channels are encrypted in transit and the homeserver is closed; `kodera-rs` carries only the type seams for a future encryption provider.
+- **Public community rooms**, which will use Matrix's native join rules.
+- **Passkeys and magic-link sign-in** ("Kodera Passport"). Community is designed for self-signup with an optional TOTP second factor; today accounts and second factors live in the identity provider you operate.
+- **Mobile and desktop apps.** `apps/ios` and `apps/android` are native clients in development, without chat or call transport yet; version 1.0 is a companion app with no in-app purchase and no pricing screen. `apps/desktop` is a Rust backend preview without a running window.
+- **`#proximity`**, an everyday proximity channel with a voluntary, pseudonymous check-in. Its signed frame codec exists; no radio transport and no check-in screen do. It is not an emergency service ([`RFC-0001`](./docs/rfcs/RFC-0001-emergency-ble-channel.md)).
+- **An extension runtime.** The server does not yet register, install or call an extension.
+- **Enterprise modules.** [`ee/`](./ee) holds a licence and READMEs, no code.
 
 ---
 
-## Ways to Run Kodera
+## Editions and pricing
 
-| Deployment Mode | Best For | Operations & Hosting | Get Started |
+| Edition | For | What you get | Price |
 | :--- | :--- | :--- | :--- |
-| **Kodera Cloud & Business** | Startups, SMEs, NGOs & distributed teams | Zero-ops European hosting (Scaleway France), automated backups, SLA | **[Start on kodera.io →](https://kodera.io)** |
-| **Kodera Autopilot** *(Managed Self-Host)* | Regulated mid-market & public sector | Runs on **your** VPC/VPS (Scaleway, OVHcloud, Hetzner); patched & monitored by Kodera | **[Talk to Engineering →](https://kodera.io)** |
-| **Kodera Enterprise** | Large enterprises & critical infrastructure | Dedicated sovereign EU instances, multi-org federation, SAML 2.0 / SCIM 2.0, Managed SLA, SIEM exports, `#urgence` crisis console | **[Enterprise Licensing →](https://kodera.io)** |
-| **Community Self-Host** | Developers, homelabs & open communities | Single-node Docker Compose, automatic Caddy TLS; sign-in through an OIDC issuer you operate | **[`deploy/community/`](./deploy/community/README.md)** |
+| **Community / Self-Host** | Developers, communities and teams who run their own server | Everything in the open-source tree, on your infrastructure: [`deploy/community`](./deploy/community/README.md). You bring an OIDC issuer and operate the stack. | **0 €** |
+| **Team / Pro** | Teams who want it hosted | A workspace on the shared European cloud, with strict per-seat quotas. | **5 € excl. VAT per seat per month, billed annually** (6 € billed monthly) |
+| **Sovereign / Enterprise** | Organisations that need their own tenant | A dedicated tenant, with custom terms. | **From 290 € excl. VAT per month**, or custom |
+
+Community is what this repository builds and tests. Team / Pro and Sovereign / Enterprise are commercial offers of Samouraï Coop at [kodera.io](https://kodera.io): their price schedules and managed-hosting automation are not in the open-source tree ([`ee/billing`](./ee/billing/README.md)), and self-hosting never requires billing (`KODERA_BILLING_ENABLED=false`). The open-core boundary is in [`GOVERNANCE.md`](./GOVERNANCE.md).
 
 ---
 
@@ -54,20 +70,20 @@ Kodera bridges both worlds:
 
 ```mermaid
 flowchart TB
-  subgraph Clients["Native & Web Clients (Apache-2.0)"]
+  subgraph Clients["Web & Native Clients (Apache-2.0)"]
     WEB["`apps/web
 React 19 + Vite + Tailwind`"]
     DESK["`apps/desktop
 Rust backend, developer preview`"]
     IOS["`apps/ios
-SwiftUI`"]
+SwiftUI, in development`"]
     AND["`apps/android
-Kotlin + Jetpack Compose`"]
+Kotlin + Jetpack Compose, in development`"]
   end
 
   subgraph Shared["Shared Packages & SDKs (Apache-2.0)"]
     RS["`packages/kodera-rs
-UuidV7 · Ed25519 · crypto seam · urgence frames`"]
+UuidV7 · Ed25519 · crypto seam · proximity frames`"]
     TOK["`packages/design-tokens
 Cobalt × Kodera`"]
     API["`packages/api-contract
@@ -80,41 +96,43 @@ Signed Webhooks & Slash Commands`"]
     SRV["`apps/server (AGPL-3.0-or-later)
 Django 6 · ADR-0003 Secret Isolation · Room Access`"]
     SYN["`Synapse + packages/synapse-policy
-Federated / Sovereign Messaging`"]
+Closed homeserver, policy-governed rooms`"]
     LK["`LiveKit SFU
-Low-Latency Voice, Video & Screen Share`"]
+Audio rooms`"]
     EE["`ee/ (Commercial License)
-Enterprise SSO/SCIM · Audit · Autopilot`"]
+Planned enterprise modules`"]
   end
 
   WEB --> TOK & API
-  DESK --> WEB & RS
-  IOS & AND --> RS & TOK
+  WEB --> SYN & LK
+  DESK --> RS
+  IOS & AND --> TOK
   SRV --> API & SYN & LK
-  EE -. "KODERA_EDITION=enterprise" .-> SRV
+  EE -. "KODERA_EDITION=enterprise (planned)" .-> SRV
 ```
 
 | Path | Package / Target | License | Description |
 | :--- | :--- | :--- | :--- |
-| [`apps/web`](./apps/web) | `@kodera/web` | `Apache-2.0` | Customer & workspace web application |
+| [`apps/web`](./apps/web) | `@kodera/web` | `Apache-2.0` | Customer console and workspace web client |
 | [`apps/desktop`](./apps/desktop) | `@kodera/desktop` | `Apache-2.0` | Desktop developer preview: Rust backend seams and a local self-host preflight; no running shell and no provider calls yet |
-| [`apps/ios`](./apps/ios) | `KoderaiOS` | `Apache-2.0` | Native SwiftUI iOS client |
-| [`apps/android`](./apps/android) | `KoderaAndroid` | `Apache-2.0` | Native Kotlin / Jetpack Compose Android client |
-| [`apps/server`](./apps/server) | `kodera-server` | `AGPL-3.0-or-later` | Control plane API, provisioning worker, `room_access` & `tenant_agent` |
-| [`packages/kodera-rs`](./packages/kodera-rs) | `kodera-rs` | `Apache-2.0` | Zero-unsafe Rust core (`UuidV7`, `CryptoProvider` OpenMLS seam, `#urgence` frame codec) |
-| [`packages/design-tokens`](./packages/design-tokens) | `@kodera/design-tokens` | `Apache-2.0` | Single source of truth for colour, typography & contrast gates |
+| [`apps/ios`](./apps/ios) | `KoderaiOS` | `Apache-2.0` | Native SwiftUI client, in development |
+| [`apps/android`](./apps/android) | `KoderaAndroid` | `Apache-2.0` | Native Kotlin / Jetpack Compose client, in development |
+| [`apps/server`](./apps/server) | `kodera-server` | `AGPL-3.0-or-later` | Control plane API, job runner, `room_access` and `tenant_agent` |
+| [`packages/kodera-rs`](./packages/kodera-rs) | `kodera-rs` | `Apache-2.0` | Zero-unsafe Rust core (`UuidV7`, `Ed25519` device identity, crypto provider seam, `#proximity` frame codec), linked by the desktop preview |
+| [`packages/design-tokens`](./packages/design-tokens) | `@kodera/design-tokens` | `Apache-2.0` | Single source of truth for colour, typography and contrast gates |
 | [`packages/api-contract`](./packages/api-contract) | `@kodera/api-contract` | `Apache-2.0` | Canonical OpenAPI 3.1 specifications |
-| [`packages/extension-sdk`](./packages/extension-sdk) | `@kodera/extension-sdk` | `Apache-2.0` | Zero-dependency SDK for HMAC-signed webhooks & slash commands |
+| [`packages/extension-sdk`](./packages/extension-sdk) | `@kodera/extension-sdk` | `Apache-2.0` | Zero-dependency SDK for HMAC-signed webhooks and slash commands |
 | [`packages/synapse-policy`](./packages/synapse-policy) | `kodera-synapse-policy` | `AGPL-3.0-or-later` | Matrix Synapse room-governance module |
-| [`extensions/hello-webhook`](./extensions/hello-webhook) | `@kodera/ext-hello-webhook` | `Apache-2.0` | `< 15 min` starter slash-command extension |
-| [`deploy/community`](./deploy/community) | Docker Compose | `Apache-2.0` | Self-hosted stack (`Caddy + Postgres 17 + Valkey 8 + Synapse + LiveKit`), bring your own OIDC issuer |
-| [`ee`](./ee) | Enterprise Edition | [`ee/LICENSE`](./ee/LICENSE) | Commercial enterprise governance modules (Copyright Samouraï Coop) |
+| [`packages/create-kodera`](./packages/create-kodera) | `create-kodera` | `Apache-2.0` | Configuration generator that ships the same stack as `deploy/community`; local pre-release, not published |
+| [`extensions`](./extensions/README.md) | `@kodera/ext-*` | `Apache-2.0` | Reference implementations built on the SDK; start from [`hello-webhook`](./extensions/hello-webhook) |
+| [`deploy/community`](./deploy/community) | Docker Compose | `Apache-2.0` | Self-hosted stack (`Caddy + Postgres 17 + Valkey 8 + Synapse on its own Postgres + LiveKit`), bring your own OIDC issuer |
+| [`ee`](./ee) | Enterprise Edition | [`ee/LICENSE`](./ee/LICENSE) | Reserved for commercial enterprise modules (Copyright Samouraï Coop); no code yet |
+
+Architecture decisions are indexed in [`docs/adr/`](./docs/adr/README.md).
 
 ---
 
 ## Quickstart
-
-> **Want zero infrastructure to maintain?** Start on Managed European Cloud or Dedicated Sovereign Hosting at **[kodera.io](https://kodera.io)**.
 
 ### 1. Self-Host Community Edition
 
@@ -128,13 +146,15 @@ python3 ../../scripts/ci/check-community-deploy.py --preflight .env
 docker compose up -d
 ```
 
+The stack runs no identity provider: read [`deploy/community/README.md`](./deploy/community/README.md) first, in particular "Sign-in" and "Matrix sign-in". No installation time or footprint has been measured for it.
+
 ### 2. Develop Locally (Pick Only the Layer You Need)
 
 ```bash
-# Extension SDK & starter bot (< 30 seconds, zero backend required)
+# Extension SDK & reference extensions (zero backend required)
 npm ci --ignore-scripts && npm run test:sdk
 
-# Shared Rust core & Tauri Desktop shell
+# Shared Rust core & desktop preview
 cargo fmt --all -- --check && cargo clippy --locked --workspace --all-targets -- -D warnings && cargo test --locked --workspace && npm --workspace @kodera/desktop run typecheck
 
 # Design Tokens + Web Client
@@ -142,12 +162,16 @@ npm run test:tokens && npm run typecheck && npm run test:web
 
 # Server Control Plane static & contract gates (Python 3.12 + uv; clean env per ADR-0003)
 (cd apps/server && uv sync --locked && env -i PATH="$PATH" HOME="$HOME" uv run ruff check . && env -i PATH="$PATH" HOME="$HOME" uv run mypy . && env -i PATH="$PATH" HOME="$HOME" uv run python scripts/ci/check-authz-matrix.py)
+
+# Documentation links, the ADR index and the self-host profile
+python3 scripts/ci/check-docs-truth.py && python3 scripts/ci/check-community-deploy.py
 ```
 
 ---
 
 ## Security, Governance & Licensing
 
+- **Supply chain:** secrets are refused at server start-up unless admitted by name (`ADR-0003`); GitHub Actions are pinned to commit SHAs; every pull request and every push to `main` is scanned for secrets; a CycloneDX SBOM is generated for the npm workspaces. Signed build provenance (SLSA) is planned and not produced today.
 - **Vulnerability Disclosure:** Please report security issues privately via [GitHub Security Advisories](https://github.com/kodera-hq/kodera/security/advisories/new) or `support@kodera.io` — see [`SECURITY.md`](./SECURITY.md).
 - **Open-Core Governance:** Read our buyer-based open-core pledge and maintainer rings in [`GOVERNANCE.md`](./GOVERNANCE.md).
 - **Licensing & Trademarks:** Client apps, design tokens, contracts, SDKs, community deploy, and Rust core are [`Apache-2.0`](./LICENSE-APACHE); server and Synapse policy are [`AGPL-3.0-or-later`](./LICENSE-AGPL); `ee/` is commercial ([`ee/LICENSE`](./ee/LICENSE)). The **Kodera** name and mark are protected under [`TRADEMARKS.md`](./TRADEMARKS.md).

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, indexTokens, resolve, parseColor, composite, contrastRatio } from '../scripts/lib/tokens.mjs';
 import { SPEC, SPEC_COLORS, focusRingColorProperty } from '../scripts/lib/spec.mjs';
+import { THEMES } from '../scripts/lib/themes.mjs';
 import preset from '../dist/tailwind.preset.js';
 
 const fixture = JSON.parse(readFileSync(join(ROOT, 'test/fixtures/themes.json'), 'utf8'));
@@ -55,7 +56,7 @@ function checkRingIsDynamic(styles, config) {
 }
 
 function checkContract(source, styles, config) {
-  assert.deepEqual(Object.keys(source.semantic.theme ?? {}), ['light', 'dark', 'black'], 'complete theme set');
+  assert.deepEqual(Object.keys(source.semantic.theme ?? {}), [...THEMES], 'complete theme set');
   const index = indexTokens(source);
   for (const [theme, expected] of Object.entries(fixture)) {
     const roles = source.semantic.theme[theme];
@@ -123,7 +124,7 @@ function checkWhiteFoundation(source, styles) {
   assert.ok(light, 'WHITE_LIGHT_DEFAULT_SCOPE');
   for (const role of ['page', 'surface', 'sunken', 'elevated']) {
     assert.ok(light.includes(`--c-${role}: #FFFFFF;`), `WHITE_LIGHT_SCOPED_CSS:${role}`);
-    assert.equal((styles.match(new RegExp(`--c-${role}:`, 'g')) ?? []).length, 3, `WHITE_THEME_BOUNDARY_COUNT:${role}`);
+    assert.equal((styles.match(new RegExp(`--c-${role}:`, 'g')) ?? []).length, THEMES.length, `WHITE_THEME_BOUNDARY_COUNT:${role}`);
   }
   assert.ok(light.includes('--c-page-grad: linear-gradient(115deg,#FFFFFF 0%,#FFFFFF 45%,#FFFFFF 100%);'), 'WHITE_LIGHT_SCOPED_GRADIENT');
 }

@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { THEMES } from '../scripts/lib/themes.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const css = readFileSync(join(ROOT, 'dist', 'tokens.css'), 'utf8');
@@ -97,6 +98,18 @@ test('every theme declares both rings, an opaque core inside a translucent halo'
       '--focus-ring-on-inverse: 0 0 0 2px #F7FAFC, 0 0 0 5px rgba(247, 250, 252, 0.35);',
       '--focus-ring-on-inverse-color: #F7FAFC;',
     ],
+    '[data-theme="ciel"]': [
+      '--focus-ring: 0 0 0 2px #2340C4, 0 0 0 5px rgba(35, 64, 196, 0.35);',
+      '--focus-ring-color: #2340C4;',
+      '--focus-ring-on-inverse: 0 0 0 2px #FFFFFF, 0 0 0 5px rgba(255, 255, 255, 0.35);',
+      '--focus-ring-on-inverse-color: #FFFFFF;',
+    ],
+    '[data-theme="ciel-nuit"]': [
+      '--focus-ring: 0 0 0 2px #AEBEFF, 0 0 0 5px rgba(174, 190, 255, 0.35);',
+      '--focus-ring-color: #AEBEFF;',
+      '--focus-ring-on-inverse: 0 0 0 2px #F3F7FB, 0 0 0 5px rgba(243, 247, 251, 0.35);',
+      '--focus-ring-on-inverse-color: #F3F7FB;',
+    ],
   };
 
   for (const [selector, declarations] of Object.entries(rings)) {
@@ -111,7 +124,8 @@ test('every theme declares both rings, an opaque core inside a translucent halo'
   // ...and nowhere else. A copy on `:root` outside the theme blocks would be
   // shadowed here by the light block and would win nothing, but it would still
   // be a second place the ring is written down.
-  assert.equal((css.match(/--focus-ring:/g) ?? []).length, 3, 'one ring declaration per theme, no more');
+  assert.equal(Object.keys(rings).length, THEMES.length, 'every registered theme is listed above');
+  assert.equal((css.match(/--focus-ring:/g) ?? []).length, THEMES.length, 'one ring declaration per theme, no more');
 });
 
 test('the generic font keywords are not quoted into family names', () => {

@@ -11,7 +11,7 @@ import {
 } from '@kodera/extension-sdk';
 
 const rawManifest = JSON.parse(
-  readFileSync(new URL('./extension.json', import.meta.url), 'utf8')
+  readFileSync(new URL('./manifest.json', import.meta.url), 'utf8')
 );
 
 const REVERSE_DNS_ID_PREFIX = 'io.kodera.ext.';
@@ -136,7 +136,7 @@ export function validateNotionPageId(rawPageId) {
 }
 
 /**
- * Validates a Notion or companion DINUM Docs HTTPS URL via `@kodera/extension-sdk`'s `validateEndpointUrl`.
+ * Validates a Notion or companion Docs HTTPS URL via `@kodera/extension-sdk`'s `validateEndpointUrl`.
  *
  * @param {unknown} rawUrl
  * @param {{ allowLocalhostHttp?: boolean }} [options]
@@ -237,7 +237,7 @@ export function handleNotionPageCommand(input = {}) {
   );
 
   return {
-    text: `[Notion × DINUM Docs] Page **${title}** (\`${pageId}\`, base : *${databaseName}*) partagée dans <#${channelId}> par <@${actorId}> — Notion : ${pageUrl} • Pad DINUM Docs compagnon : ${docsCompanionUrl}`,
+    text: `[Notion × Docs] Page **${title}** (\`${pageId}\`, base : *${databaseName}*) partagée dans <#${channelId}> par <@${actorId}> — Notion : ${pageUrl} • Pad Docs compagnon : ${docsCompanionUrl}`,
     ephemeral: subcommand === 'status',
     subcommand,
     pageId,
@@ -251,14 +251,14 @@ export function handleNotionPageCommand(input = {}) {
 export const notionPageCommand = defineSlashCommand({
   name: '/notion-page',
   description:
-    'Partager ou synchroniser une page ou entrée de base Notion aux côtés de DINUM Docs',
+    'Partager ou synchroniser une page ou entrée de base Notion aux côtés de Docs',
   scopes: ['messages:write', 'commands:register'],
   handler: ({ args, channelId, actorId }) =>
     handleNotionPageCommand({ args, channelId, actorId }),
 });
 
 /**
- * Builds a structured channel card for a Notion page or database entry alongside DINUM Docs.
+ * Builds a structured channel card for a Notion page or database entry alongside Docs.
  *
  * @param {'page.shared' | 'page.updated' | 'database.entry_synced'} eventName
  * @param {Record<string, unknown>} payload
@@ -301,7 +301,7 @@ export function buildNotionBridgeCard(eventName, payload, defaultChannelId = 'ch
 
   const badge = badges[eventName];
   const dbSegment = databaseName ? ` (base : **${databaseName}**, statut : \`${statusProperty}\`)` : '';
-  const text = `${badge} **${title}** (\`${pageId}\`) dans *${workspaceName}*${dbSegment} par **${author}**\nLien Notion : ${pageUrl}\nPad DINUM Docs associé : ${docsCompanionUrl}`;
+  const text = `${badge} **${title}** (\`${pageId}\`) dans *${workspaceName}*${dbSegment} par **${author}**\nLien Notion : ${pageUrl}\nPad Docs associé : ${docsCompanionUrl}`;
 
   const block = {
     type: 'notion_workspace_card',

@@ -7,7 +7,9 @@ The agent-facing functions implement the Agent API command loop
 
 Lock order. An emission: the caller's domain rows (workspace, membership), then the member head,
 then the channel head (`lock_heads`), then the credentials, then their pending commands. A pull, an
-ack and a revocation: the credential, then its commands. A result is the one exception: it locks its
+ack and a revocation: the credential, then its commands. A pull of the canonical community's agent
+first records the sets its newcomers are owed, as an emission of its own that has committed before
+the pull takes its credential. A result is the one exception: it locks its
 own command row first, then, for a retry, both heads. It never waits on another command, and an
 emission only touches pending commands, which a reported one never is.
 """
@@ -29,6 +31,7 @@ from django.utils import timezone
 
 from apps.audit.services import record_engine_channel_set_event, record_engine_member_set_event
 from apps.identity.selectors import realm_subjects
+from apps.orgs.actor_selectors import organisation_authority_revision
 from apps.orgs.membership_pagination import DirectoryQuery
 from apps.orgs.membership_selectors import directory_memberships
 from apps.orgs.selectors import organisation_slug
@@ -60,6 +63,8 @@ POLL_AFTER_S = 3
 REFRESH_AFTER = timedelta(hours=24)
 EXPIRES_AFTER = timedelta(days=30)
 LAG_ALERT_AFTER = timedelta(hours=1)
+# How long a refused rebuild of a stale member set waits before the next poll tries it again.
+REFRESH_RETRY_AFTER = timedelta(minutes=5)
 DEADLINE_S = 600
 # The contract's subject shape (MemberSubjects): a Keycloak subject is a UUID in practice.
 _SUBJECT = re.compile(r"[\x21-\x7e]{1,255}")
@@ -310,6 +315,11 @@ def emit_member_set(
     if not connection.in_atomic_block:
         raise MemberSetError("a member set is recorded in the transaction of its change")
     head, _ = lock_heads(organisation_id)
+    # Before any member is read: a membership or identity write that commits after this read
+    # advances the organisation's revision past the one this set records, and is then seen as
+    # owed a rebuild (`member_set_refresh_due`); one this set already includes costs a rebuild
+    # too many, never one too few.
+    authority_revision = organisation_authority_revision(organisation_id=organisation_id)
     # Then the credentials, in id order: a pull locks its credential before its commands, so the
     # two never wait on each other's command rows.
     credential_ids = list(
@@ -396,6 +406,7 @@ def emit_member_set(
         reason=reason,
         unnamed_leavers=unnamed,
         malformed_subjects=len(left_out),
+        authority_revision=authority_revision,
     )
     record_engine_member_set_event(
         action="engine_member_set.issued",
@@ -418,6 +429,32 @@ def emit_member_set(
         _supersede(credential_id, now)
         _issue(member_set, credential_id, now, attempt=1)
     return member_set
+
+
+def member_set_refresh_due(*, organisation_id: UUID, now: datetime | None = None) -> bool:
+    """Whether the organisation's latest member set is behind its membership: recorded at an
+    older authority revision than the organisation's, or not recorded at all. Two indexed reads,
+    no lock, and never a list of members: cheap enough for every agent poll.
+
+    Not due while the last attempt was refused less than `REFRESH_RETRY_AFTER` ago: a set that
+    cannot be recorded (over the bound, say) is not rebuilt on every poll."""
+    head = (
+        EngineMemberSetHead.objects.filter(organisation_id=organisation_id)
+        .values_list("revision", "refused_at")
+        .first()
+    )
+    if head is not None and head[1] is not None:
+        if (now or timezone.now()) - head[1] < REFRESH_RETRY_AFTER:
+            return False
+    recorded = (
+        None
+        if head is None or head[0] == 0
+        else EngineMemberSet.objects.filter(organisation_id=organisation_id, revision=head[0])
+        .values_list("authority_revision", flat=True)
+        .first()
+    )
+    current = organisation_authority_revision(organisation_id=organisation_id)
+    return current is not None and recorded != current
 
 
 def record_member_set_refusal(refused: MemberSetRefusedError) -> None:
@@ -615,6 +652,13 @@ def pull(credential: EngineAgentCredential, *, kinds: tuple[str, ...] | None, li
     served = [k for k in SERVED if kinds is None or k.name in kinds]
     if not served:
         return Pulled([])
+    # The canonical community's people join on their first read, which records nothing for the
+    # engines: the sets they are owed are rebuilt here, once for everyone who joined since the
+    # last poll, in a transaction of its own that ends before this pull takes its credential
+    # (docs/specs/DEFAULT_COMMUNITY.md). It never raises: a refresh that fails never fails a poll.
+    from apps.orgs.community import refresh_community_member_set
+
+    refresh_community_member_set(credential.organisation_id)
     now = timezone.now()
     with transaction.atomic():
         # One pull per credential at a time: two concurrent pulls never issue the set twice.

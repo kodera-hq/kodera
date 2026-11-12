@@ -12,6 +12,8 @@ The design specification E4 spike chose this design over lk-jwt-service. That sp
   - **Who gets one:** a joined member of an audio channel's room that is not archived. It is refused (403) to everyone else, with one answer for every reason.
   - **What it covers:** that room only, valid 10 minutes, under the identity `{user_id}|{device_id}`. The device comes from the caller's own token, so a second tab does not replace the first.
   - **Listen-only:** publishing is withheld from members outside `may_publish`.
+- **Rate limit.** One Matrix user's token requests per rolling minute (default 30), counted once Synapse has named the caller and before the room or LiveKit is asked anything; and, before Synapse is asked at all, one presented credential's. Past the limit the answer is `429 {"error": "rate_limited", "retry_after_s": n}` with `Retry-After: n`, which a listed origin may read. The count is this process's, which is the tenant's: one room-access runs per tenant VM.
+- **CORS.** `Access-Control-Allow-Origin` is sent only when the request's `Origin` is exactly a configured origin, and is then that origin: never `*`, never a reflection. Every answer carries `Vary: Origin`. A preflight from any other origin is refused.
 - **Guard,** on LiveKit's `participant_joined` and on every reconciliation pass (every 2 s):
   - a participant whose Matrix user is not joined to the room, or whose audio policy is missing,
     malformed, archived or no longer audio, is removed. Issuance and reconciliation use the same
@@ -41,7 +43,8 @@ python -m room_access
 | `ROOM_ACCESS_SYNAPSE_URL`, `ROOM_ACCESS_MATRIX_TOKEN` | the VM's Synapse, and this service's own account token |
 | `LIVEKIT_URL`, `LIVEKIT_WS_URL` | LiveKit's server API on the VM's network, and the `wss://` URL browsers connect to |
 | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | the VM's LiveKit key |
-| `ROOM_ACCESS_ALLOWED_ORIGINS` | the Console origins CORS answers, comma-separated |
+| `ROOM_ACCESS_ALLOWED_ORIGINS` | the Console origins CORS answers, comma-separated: exact origins (`https://host[:port]`, or plain http on `localhost` / `127.0.0.1` for a local stack). A wildcard, `null`, a path or a pattern stops the process |
+| `ROOM_ACCESS_GRANTS_PER_MINUTE` | one identity's token requests per rolling minute, 1 to 600 (default 30); it cannot be turned off |
 | `ROOM_ACCESS_AGENT_USER` | the tenant agent's full Matrix user ID (`@kodera-agent:{server_name}`): the only sender of a policy that counts and the only inviter accepted |
 | `ROOM_ACCESS_API_BIND`, `ROOM_ACCESS_API_PORT` | the token listener (default `127.0.0.1:8095`), published only through the edge |
 | `ROOM_ACCESS_WEBHOOK_BIND`, `ROOM_ACCESS_WEBHOOK_PORT` | LiveKit's webhook listener (default `127.0.0.1:8096`), on the VM's internal network only |

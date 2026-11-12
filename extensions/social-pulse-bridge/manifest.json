@@ -26,5 +26,5 @@
       "description": "Partager une publication X / Twitter, Mastodon / Fédiverse ou Instagram nettoyée de tout pistage"
     }
   ],
-  "webhookUrl": "https://extensions.example.kodera.io/hooks/social-pulse-bridge"
+  "webhookUrl": "https://extensions.example.org/hooks/social-pulse-bridge"
 }

@@ -20,13 +20,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -35,7 +30,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import io.kodera.android.R
 import io.kodera.android.client.WorkspaceChannel
-import io.kodera.android.client.EmergencyCheckInSession
+import io.kodera.android.client.ProximityCheckInSession
 import io.kodera.android.client.DocsWorkspaceSession
 import io.kodera.android.client.ChannelPollSession
 import io.kodera.android.client.WorkspacePreferencesSession
@@ -52,9 +47,9 @@ import io.kodera.tokens.KoderaTokens
 
 /** Current member and read-only organisation channels, with sign-out before potentially long metadata. */
 @Composable
-fun SignedInScreen(member: MemberState, workspace: WorkspaceViewState, consoleOrigin: String?,
+fun SignedInScreen(member: MemberState, workspace: WorkspaceViewState,
     onRetry: () -> Unit, onCheckAgain: () -> Unit, onWorkspaceRetry: () -> Unit, onSignOut: () -> Unit,
-    emergencySession: EmergencyCheckInSession? = null, voiceCallSession: VoiceCallDockSession? = null,
+    proximitySession: ProximityCheckInSession? = null, voiceCallSession: VoiceCallDockSession? = null,
     docsSession: DocsWorkspaceSession? = null, soundPreferencesSession: SoundPreferencesSession? = null, pollSession: ChannelPollSession? = null, workspacePreferencesSession: WorkspacePreferencesSession? = null) {
     val palette = LocalKoderaPalette.current
     Surface(modifier = Modifier.fillMaxSize(), color = palette.page, contentColor = palette.ink) {
@@ -75,7 +70,7 @@ fun SignedInScreen(member: MemberState, workspace: WorkspaceViewState, consoleOr
                         modifier = Modifier.fillMaxWidth().padding(KoderaTokens.Space.s5)
                             .semantics { liveRegion = LiveRegionMode.Polite },
                         verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s4),
-                    ) { MemberCard(member, consoleOrigin, onRetry, onCheckAgain) }
+                    ) { MemberCard(member, onRetry, onCheckAgain) }
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2)) {
                     OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
@@ -85,7 +80,7 @@ fun SignedInScreen(member: MemberState, workspace: WorkspaceViewState, consoleOr
                     Text(stringResource(R.string.session_sign_out_hint), style = NativeTypography.caption, color = palette.ink3)
                 }
                 if (member is MemberState.Loaded && workspace != WorkspaceViewState.Hidden) {
-                    EmergencyCheckInCard(emergencySession?.takeIf {
+                    ProximityCheckInCard(proximitySession?.takeIf {
                         workspace is WorkspaceViewState.Loaded && it.organisationId == workspace.snapshot.organisationId
                     }, organisationId = (workspace as? WorkspaceViewState.Loaded)?.snapshot?.organisationId)
                     WorkspaceSection(workspace, onWorkspaceRetry)
@@ -150,9 +145,8 @@ fun RestoringScreen() {
 }
 
 @Composable
-private fun MemberCard(member: MemberState, consoleOrigin: String?, onRetry: () -> Unit, onCheckAgain: () -> Unit) {
+private fun MemberCard(member: MemberState, onRetry: () -> Unit, onCheckAgain: () -> Unit) {
     val palette = LocalKoderaPalette.current
-    val context = LocalContext.current
     when (member) {
         MemberState.Loading -> {
             // The text says it once; the spinner itself is silent to TalkBack. accentInk, not action:
@@ -180,24 +174,12 @@ private fun MemberCard(member: MemberState, consoleOrigin: String?, onRetry: () 
                 Text(stringResource(R.string.session_retry), style = NativeTypography.emphasis, color = palette.accentInk)
             }
         }
-        // A 403 is an answer, not an outage, and never a dead end: the Console, when this build names one, Check
-        // again, and sign-out below. An owner's claim is finished in the Console, never in the app; that changes
-        // Core's answer, so coming back to the app checks again too (the Activity's resume).
+        // A 403 is an answer, not an outage, and never a dead end: Check again, and sign-out below. An owner's
+        // claim is finished on the web, never in the app; that changes Core's answer, so coming back to the app
+        // checks again too (the Activity's resume). The app is a companion: it opens no page outside sign-in, so
+        // it offers no link to the Console, where the organisation's commercial pages live.
         MemberState.NoOrganisationYet -> {
             Text(stringResource(R.string.session_no_organisation), style = NativeTypography.body, color = palette.ink2)
-            consoleOrigin?.let { origin ->
-                var consoleUnavailable by remember(origin) { mutableStateOf(false) }
-                OutlinedButton(onClick = { consoleUnavailable = !openConsole(context, origin) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
-                    // accentInk, not action: action on surface is under 4.5:1 in the dark palettes.
-                    Text(stringResource(R.string.session_open_console), style = NativeTypography.emphasis, color = palette.accentInk)
-                }
-                Text(stringResource(R.string.session_open_console_hint), style = NativeTypography.caption, color = palette.ink3)
-                // Inside the card's polite live region, so TalkBack reads it out.
-                if (consoleUnavailable) {
-                    Text(stringResource(R.string.session_console_unavailable), style = NativeTypography.body, color = palette.ink2)
-                }
-            }
             OutlinedButton(onClick = onCheckAgain, modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12)) {
                 // accentInk, not action: action on surface is under 4.5:1 in the dark palettes.
                 Text(stringResource(R.string.session_check_again), style = NativeTypography.emphasis, color = palette.accentInk)

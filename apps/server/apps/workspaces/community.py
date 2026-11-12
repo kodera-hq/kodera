@@ -1,7 +1,15 @@
-"""Workspace-owned canonical template provisioning and explicit staff policy grants."""
+"""Workspace-owned canonical template provisioning and explicit staff policy grants.
+
+The layout names rooms by what they are for. It names no organisation outside Kodera: a partner's
+room is granted to the partner (`allow_member`), never named after them
+(docs/specs/DEFAULT_COMMUNITY.md, "The layout").
+"""
 
 from dataclasses import dataclass
 from uuid import UUID
+
+from django.db.models import F
+from django.utils import timezone
 
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -31,8 +39,66 @@ CATEGORIES = (
         ),
     ),
     ("core_kodera", "Core Kodera", ("dev", "strategy", "ops-oncall", "kodera-git-tracker")),
-    ("design_partners", "Design Partners", ("partner-dinum", "partner-octo")),
+    ("design_partners", "Design Partners", ("partner-onboarding", "partner-feedback")),
 )
+
+
+# The categories whose rooms an earlier layout named differently. On a re-run, a templated channel
+# of such a category whose template key the layout no longer names is that earlier room: it is
+# renamed in place onto the layout's channel that does not exist yet, never left beside a new one.
+RENAMED_SINCE_AN_EARLIER_LAYOUT = frozenset({"design_partners"})
+
+
+def _template_key(channel_name: str) -> str:
+    return channel_name.replace("-", "_")
+
+
+def _rename_earlier_layout(
+    workspace: Workspace, category: Category, channels: tuple[str, ...]
+) -> int:
+    """Rename this category's rooms of an earlier layout onto the layout's present names, in place.
+
+    A room keeps its row, and so its id, its Matrix room, its history, its access policy, its
+    position and its room state: only `name` and `template_key` change, with `version` and
+    `updated_at`, what `patchChannel` changes on a rename (ESPACE_STRUCTURE.md §3). The
+    engines learn the new name from the channel set the bootstrap records after provisioning.
+
+    The earlier rooms are found by what they are, not by what they were called: templated channels
+    of this category (only this provisioner sets a template key here; a room an administrator
+    renamed has none and is theirs) whose key the layout no longer names. They are paired, by
+    position, with the layout's channels that have no row yet. Nothing is created here and nothing
+    is deleted: an earlier room with no layout name left to take stays as it is. Returns how many
+    rooms were renamed; a second run finds none."""
+    present = {_template_key(name) for _, _, names in CATEGORIES for name in names}
+    existing = set(
+        Channel.objects.filter(workspace=workspace, template_key__isnull=False).values_list(
+            "template_key", flat=True
+        )
+    )
+    earlier = list(
+        Channel.objects.filter(workspace=workspace, category=category, template_key__isnull=False)
+        .exclude(template_key__in=present)
+        .order_by("position", "id")
+    )
+    missing = [name for name in channels if _template_key(name) not in existing]
+    renamed = 0
+    for channel, name in zip(earlier, missing, strict=False):
+        renamed += Channel.objects.filter(id=channel.id).update(
+            name=name,
+            template_key=_template_key(name),
+            version=F("version") + 1,
+            updated_at=timezone.now(),
+        )
+    return renamed
+
+
+def _free_position(workspace: Workspace, category: Category, wanted: int) -> int:
+    taken = set(
+        Channel.objects.filter(workspace=workspace, category=category).values_list(
+            "position", flat=True
+        )
+    )
+    return wanted if wanted not in taken else max(taken) + 1
 
 
 def provision_community_workspace(
@@ -66,13 +132,22 @@ def provision_community_workspace(
                 ResourcePolicyRule.objects.get_or_create(
                     policy=category.default_policy, kind="allow_member", membership_id=membership_id
                 )
+        if key in RENAMED_SINCE_AN_EARLIER_LAYOUT and _rename_earlier_layout(
+            workspace, category, channels
+        ):
+            # A structural change, as a rename through the API is (ESPACE_STRUCTURE.md §3).
+            Workspace.objects.filter(pk=workspace.pk).update(
+                structure_revision=F("structure_revision") + 1
+            )
         for index, channel_name in enumerate(channels):
             channel, created = Channel.objects.get_or_create(
                 workspace=workspace,
-                template_key=channel_name.replace("-", "_"),
+                template_key=_template_key(channel_name),
                 defaults={
                     "category": category,
-                    "position": index,
+                    # Its place in the layout, or the end of the category when a room kept from
+                    # an earlier layout, or an administrator's own, already stands there.
+                    "position": _free_position(workspace, category, index),
                     "name": channel_name,
                     "kind": "audio" if channel_name == "office-hours" else "text",
                     "lifecycle": "active",

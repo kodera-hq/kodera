@@ -10,6 +10,11 @@ MIDDLEWARE = [
     # First: no view, and no other middleware, reads a caller's X-Request-Id before it is
     # namespaced (core/api/edge.py, docs/specs/TRUSTED_EDGE.md).
     "core.api.edge.CallerRequestIdMiddleware",
+    # Next, and outside everything that can answer: which origin may read the answer
+    # (docs/specs/ABUSE_AND_ORIGIN_CONTROLS.md §3).
+    "core.api.edge.ConsoleCorsMiddleware",
+    # Before any view: one principal's writes per minute (§2).
+    "core.api.edge.MutationRateLimitMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
@@ -22,6 +27,12 @@ REST_FRAMEWORK = {
 # The operator's edge proxies whose X-Forwarded-For Core believes (core/api/edge.py). Empty: none,
 # the client is the direct peer. Only the deployed API profile reads it from its environment.
 KODERA_TRUSTED_EDGE: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
+# One principal's writes per rolling minute on the customer API (core/api/edge.py): the
+# documented default here; a serving profile reads KODERA_MUTATION_RATE_PER_MINUTE. Never off.
+KODERA_MUTATION_RATE_PER_MINUTE = 60
+# The Console's browser origins, the only ones CORS names (core/api/edge.py) and discovery admits.
+# None: no browser origin. A serving profile reads KODERA_CONSOLE_ORIGINS.
+KODERA_CONSOLE_ORIGINS: str | None = None
 USE_TZ = True
 TIME_ZONE = "UTC"
 APPEND_SLASH = False

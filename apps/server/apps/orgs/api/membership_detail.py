@@ -32,6 +32,7 @@ from apps.orgs.membership_lifecycle import (
     record_tenant_denial,
     remove_membership,
 )
+from apps.orgs.membership_selectors import withhold_private_facts
 from core.api import lanes, problems
 from core.api.scopes import declares
 from core.db.ids import new_uuid7
@@ -93,21 +94,26 @@ def _stamp(value: datetime) -> str:
 
 
 def _membership(view: MembershipView) -> dict[str, object]:
-    if len(view.email) > 320 or any(char in view.email for char in "\r\n"):
-        raise ValueError("stored contact is outside the projection contract")
-    EMAIL(view.email)
-    return {
+    body: dict[str, object] = {
         "id": str(view.id),
         "organisation_id": str(view.organisation_id),
         "person_id": str(view.user_id),
-        "identity_id": None if view.identity_id is None else str(view.identity_id),
-        "email": view.email,
         "display_name": view.display_name,
         "role": view.role,
         "state": view.state,
         "created_at": _stamp(view.created_at),
         "updated_at": _stamp(view.updated_at),
     }
+    if not view.private_facts:
+        # Directory privacy (MEMBERSHIP_LIFECYCLE.md §2.1): the private member facts are absent,
+        # never null, masked or partial. The view carries none of them either.
+        return withhold_private_facts(body)
+    if view.email is None or len(view.email) > 320 or any(char in view.email for char in "\r\n"):
+        raise ValueError("stored contact is outside the projection contract")
+    EMAIL(view.email)
+    body["identity_id"] = None if view.identity_id is None else str(view.identity_id)
+    body["email"] = view.email
+    return body
 
 
 def _removed(view: MembershipView) -> dict[str, object]:

@@ -22,7 +22,9 @@
     "test": "node --test test/*.test.mjs",
     "selftest": "node bin/create-kodera.mjs --selftest",
     "typecheck": "tsc -p tsconfig.json",
-    "build": "node build.mjs",
-    "prepack": "node build.mjs"
+    "sync-assets": "node sync-assets.mjs",
+    "check-assets": "node sync-assets.mjs --check",
+    "build": "node sync-assets.mjs --check && node build.mjs",
+    "prepack": "node sync-assets.mjs --check && node build.mjs"
   }
 }

@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
             KoderaTheme {
                 when (session.phase) {
                     SessionPhase.Restoring -> RestoringScreen()
-                    is SessionPhase.SignedIn -> SignedInScreen(member = session.member, workspace = session.workspace, consoleOrigin = session.consoleOrigin,
+                    is SessionPhase.SignedIn -> SignedInScreen(member = session.member, workspace = session.workspace,
                         onRetry = session::reloadMember, onCheckAgain = session::checkMemberAgain,
                         onWorkspaceRetry = session::retryWorkspace, onSignOut = session::signOut)
                     else -> OrganisationEntryScreen(state = model.state, onSlugChanged = model::updateSlug,

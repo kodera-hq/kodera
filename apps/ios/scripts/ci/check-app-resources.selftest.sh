@@ -8,8 +8,8 @@
 # count keeps each mutation surgical, so a case cannot pass on a message some
 # other guard happened to print.
 #
-# Each case mutates a COPY of App/, Config/ and project.yml in a scratch
-# directory, never the tree.
+# Each case mutates a COPY of App/, Config/, project.yml and the Swift package
+# manifests and sources in a scratch directory, never the tree.
 
 set -euo pipefail
 
@@ -20,6 +20,7 @@ check="$here/check-app-resources.py"
 [ -d "$root/App" ] || { echo "self-test FAILED: $root/App is missing" >&2; exit 1; }
 [ -d "$root/Config" ] || { echo "self-test FAILED: $root/Config is missing" >&2; exit 1; }
 [ -f "$root/project.yml" ] || { echo "self-test FAILED: $root/project.yml is missing" >&2; exit 1; }
+[ -d "$root/packages" ] || { echo "self-test FAILED: $root/packages is missing" >&2; exit 1; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/app-resources-selftest.XXXXXX")"
 trap 'rm -r -- "$work"' EXIT
@@ -41,6 +42,14 @@ fresh() {
   # Tracked files only: a developer's untracked Local.xcconfig is not under test.
   cp "$root/Config/Kodera.xcconfig" "$root/Config/Local.xcconfig.example" "$work/Config/"
   cp "$root/project.yml" "$work/project.yml"
+  # Manifests and sources only: build products and resolved dependencies are not under test.
+  if [ -d "$work/packages" ]; then rm -r -- "$work/packages"; fi
+  for package in "$root"/packages/*/; do
+    name="$(basename "$package")"
+    mkdir -p "$work/packages/$name"
+    cp "$package/Package.swift" "$work/packages/$name/"
+    cp -R "$package/Sources" "$work/packages/$name/Sources"
+  done
 }
 
 # Replaces the whole line assigning SETTING in a copied Config file.
@@ -430,6 +439,102 @@ for entry in "${literal_cases[@]}"; do
     "App/Literal.swift:1 writes ${entry#*|}; use the generated tokens"
 done
 
+# ── companion surface ──────────────────────────────────────────────────────
+# The app sells nothing: no commercial wording, no price, no billing provider,
+# no billing address, and no page opened outside sign-in. Each reintroduction
+# is refused for its own reason.
+SOLD="; the app sells nothing and links to no billing page"
+set_copy() {
+  edit_json Resources/Localizable.xcstrings "d['strings']['$1']['localizations']['$2']['stringUnit']['value'] = '$3'"
+}
+
+fresh; set_copy proximity.prepare en 'Upgrade to check in'
+expect_refusal "an upgrade prompt in the English copy" 1 \
+  "Localizable.xcstrings: proximity.prepare (en) carries commercial wording (\"Upgrade\")$SOLD"
+
+fresh; set_copy proximity.prepare fr 'Passez à un abonnement'
+expect_refusal "commercial wording in the French copy" 1 \
+  "Localizable.xcstrings: proximity.prepare (fr) carries commercial wording (\"abonnement\")$SOLD"
+
+fresh; set_copy session.no_organisation en 'See pricing on the web.'
+expect_refusal "a pricing pointer in the no-organisation copy" 1 \
+  "Localizable.xcstrings: session.no_organisation (en) carries commercial wording (\"pricing\")$SOLD"
+
+fresh; set_copy proximity.description en 'Choose a plan to continue.'
+expect_refusal "plan wording in the copy" 1 \
+  "Localizable.xcstrings: proximity.description (en) carries commercial wording (\"plan\")$SOLD"
+
+fresh; set_copy proximity.description en 'Manage your subscription.'
+expect_refusal "subscription wording in the copy" 1 \
+  "Localizable.xcstrings: proximity.description (en) carries commercial wording (\"subscription\")$SOLD"
+
+fresh; set_copy proximity.description fr 'Seulement 9 € par appareil.'
+expect_refusal "a price in the copy" 1 \
+  "Localizable.xcstrings: proximity.description (fr) states a price (\"9 €\")$SOLD"
+
+fresh; set_copy proximity.description en 'Only $4 each.'
+expect_refusal "a dollar price in the copy" 1 \
+  "Localizable.xcstrings: proximity.description (en) states a price (\"\$4\")$SOLD"
+
+fresh; edit_json Resources/Localizable.xcstrings 'd["strings"]["offer.checkout"] = d["strings"]["proximity.cancel"]'
+expect_refusal "a checkout key in the catalogue" 1 \
+  "Localizable.xcstrings: offer.checkout carries commercial wording (\"checkout\")$SOLD"
+
+fresh; edit_plist Info.plist 'd["NSHumanReadableCopyright"] = "Premium features available"'
+expect_refusal "commercial wording in Info.plist" 1 "Info.plist carries commercial wording (\"Premium\")$SOLD"
+
+fresh; printf '// Shows the paywall when the trial ends.\nlet shown = true\n' > "$work/App/Offer.swift"
+expect_refusal "a paywall in app code" 1 "App/Offer.swift:1 carries commercial wording (\"paywall\")$SOLD"
+
+fresh; mkdir -p "$work/App/Features"; printf 'let ready = true\nfunc openCheckout() {}\n' > "$work/App/Features/Offer.swift"
+expect_refusal "a checkout action inside an identifier, in a subdirectory" 1 \
+  "App/Features/Offer.swift:2 carries commercial wording (\"Checkout\")$SOLD"
+
+fresh; printf 'import StoreKit\n' > "$work/App/Offer.swift"
+expect_refusal "a store purchase API in app code" 1 \
+  "App/Offer.swift:1 names a billing provider or store purchase API (\"StoreKit\")$SOLD"
+
+fresh; printf 'let path = "/plans"\n' > "$work/App/Offer.swift"
+expect_refusal "a billing path in app code" 1 "App/Offer.swift:1 names a billing destination (\"\"/plans\"\")$SOLD"
+
+fresh; printf 'let label = "9 EUR"\n' > "$work/App/Offer.swift"
+expect_refusal "a price in app code" 1 "App/Offer.swift:1 states a price (\"9 EUR\")$SOLD"
+
+# The Console action this app no longer has: any page opened from App/ is refused.
+open_cases=(
+  '@Environment(\.openURL) private var openURL|openURL'
+  'UIApplication.shared.open(console)|UIApplication.shared.open'
+  'Link("Console", destination: console)|Link('
+  'SFSafariViewController(url: console)|SFSafariViewController'
+  'WKWebView(frame: .zero)|WKWebView'
+  'ASWebAuthenticationSession(url: console, callbackURLScheme: nil) { _, _ in }|ASWebAuthenticationSession'
+)
+for entry in "${open_cases[@]}"; do
+  fresh; printf 'let ready = true\n%s\n' "${entry%%|*}" > "$work/App/Offer.swift"
+  expect_refusal "a page opened outside the app: ${entry#*|}" 1 \
+    "App/Offer.swift:2 opens a page outside the app (\"${entry#*|}\")$SOLD"
+done
+
+fresh; printf '\n# packages: RevenueCat\n' >> "$work/project.yml"
+expect_refusal "a billing provider in project.yml" 1 \
+  "project.yml:$(($(wc -l < "$root/project.yml") + 2)) names a billing provider or store purchase API (\"RevenueCat\")$SOLD"
+
+fresh; printf '\n// StoreKit products\n' >> "$work/packages/KoderaClient/Sources/KoderaClient/CoreMeClient.swift"
+expect_refusal "a store purchase API in a package source" 1 \
+  "packages/KoderaClient/Sources/KoderaClient/CoreMeClient.swift:$(($(wc -l < "$root/packages/KoderaClient/Sources/KoderaClient/CoreMeClient.swift") + 2)) names a billing provider or store purchase API (\"StoreKit\")$SOLD"
+
+fresh; printf '\nlet invoices = "/invoices"\n' >> "$work/packages/KoderaDomain/Sources/KoderaDomain/ConsoleOrigin.swift"
+expect_refusal "a billing path in a package source" 1 \
+  "packages/KoderaDomain/Sources/KoderaDomain/ConsoleOrigin.swift:$(($(wc -l < "$root/packages/KoderaDomain/Sources/KoderaDomain/ConsoleOrigin.swift") + 2)) names a billing destination (\"\"/invoices\"\")$SOLD"
+
+fresh; printf '\n// A paywall would live here.\n' >> "$work/packages/KoderaAuth/Sources/KoderaAuth/AppConfiguration.swift"
+expect_refusal "a paywall in a package source" 1 \
+  "packages/KoderaAuth/Sources/KoderaAuth/AppConfiguration.swift:$(($(wc -l < "$root/packages/KoderaAuth/Sources/KoderaAuth/AppConfiguration.swift") + 2)) carries commercial wording (\"paywall\")$SOLD"
+
+fresh; printf '\n// .package(name: "Paddle")\n' >> "$work/packages/KoderaClient/Package.swift"
+expect_refusal "a billing provider in a package manifest" 1 \
+  "packages/KoderaClient/Package.swift:$(($(wc -l < "$root/packages/KoderaClient/Package.swift") + 2)) names a billing provider or store purchase API (\"Paddle\")$SOLD"
+
 # ── could not look ─────────────────────────────────────────────────────────
 # expect_unreadable LABEL — after the mutation was applied.
 expect_unreadable() {
@@ -457,10 +562,13 @@ expect_unreadable "a missing Config/Local.xcconfig.example"
 fresh; rm -- "$work/project.yml"
 expect_unreadable "a missing project.yml"
 
+fresh; rm -r -- "$work/packages"
+expect_unreadable "missing Swift packages"
+
 fresh
 expect_clean "the copy passes again once restored"
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=89
+expected_cases=115
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"
