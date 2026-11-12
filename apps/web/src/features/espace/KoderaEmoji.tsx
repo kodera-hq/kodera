@@ -39,19 +39,16 @@ export function KoderaEmoji({ name }: { name: KoderaEmojiName }) {
   )
 }
 
-/** Text with its known Kodera codes drawn as glyphs; the rest keeps its inline Markdown. */
-export function EmojiText({ text }: { text: string }) {
-  const segments = koderaSegments(text)
-  if (segments.length === 1 && 'text' in segments[0]!) return <InlineMarkdown text={text} />
-  return (
-    <>
-      {segments.map((segment, index) =>
-        'emoji' in segment ? (
-          <KoderaEmoji key={index} name={segment.emoji} />
-        ) : (
-          <InlineMarkdown key={index} text={segment.text} />
-        )
-      )}
-    </>
+/** A plain run with its known Kodera codes drawn as glyphs. */
+function withGlyphs(run: string): ReactNode {
+  const segments = koderaSegments(run)
+  if (segments.length === 1 && 'text' in segments[0]!) return run
+  return segments.map((segment, index) =>
+    'emoji' in segment ? <KoderaEmoji key={index} name={segment.emoji} /> : segment.text
   )
+}
+
+/** Text with its inline Markdown, its known Kodera codes drawn as glyphs outside inline code. */
+export function EmojiText({ text }: { text: string }) {
+  return <InlineMarkdown text={text} renderText={withGlyphs} />
 }

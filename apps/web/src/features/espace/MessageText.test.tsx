@@ -109,4 +109,17 @@ describe("Kodera's own emoji in a message", () => {
     expect(screen.getByText(/:wave:/u)).toBeInTheDocument()
     expect(screen.getByText('fort').tagName).toBe('STRONG')
   })
+
+  it('never draws a code inside inline code, and keeps emphasis around a glyph', async () => {
+    const { container } = render(
+      <MessageText body={'`:kodera_heart:` puis **bravo :kodera_spark:** et \\:kodera_sun:'} />
+    )
+    await screen.findByRole('img', { name: ':kodera_spark:' })
+    expect(container.querySelector('code')?.textContent).toBe(':kodera_heart:')
+    expect(screen.queryByRole('img', { name: ':kodera_heart:' })).toBeNull()
+    expect(screen.queryByRole('img', { name: ':kodera_sun:' })).toBeNull()
+    const strong = container.querySelector('strong')!
+    expect(strong.textContent).toContain('bravo')
+    expect(strong.querySelector('[data-kodera-emoji="kodera_spark"]')).not.toBeNull()
+  })
 })

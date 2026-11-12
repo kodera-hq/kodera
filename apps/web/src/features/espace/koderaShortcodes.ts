@@ -1,7 +1,11 @@
 // Kodera's own emoji (docs/specs/espace-timeline-scale.md): « :kodera_nom: » shortcodes that no
 // Unicode emoji writes. The body keeps the code, so another Matrix client shows the code as text;
 // Kodera draws each known one as its glyph, from a chunk loaded only when one is first drawn
-// (`KoderaEmojiGlyphs.tsx`). Only an exact, known code is drawn: anything else stays text.
+// (`KoderaEmojiGlyphs.tsx`). Only an exact, known code is drawn, standing where the composer's own
+// shortcodes may (`shortcodeGrammar.ts`: not touching a letter, a digit or a slash, and not after
+// a backslash); anything else stays text. Inline code is never searched (`InlineMarkdown`).
+
+import { GUARD_AFTER, GUARD_BEFORE } from './shortcodeGrammar'
 
 /** The codes Kodera draws, in the palette's order. */
 export const KODERA_EMOJI = [
@@ -22,7 +26,7 @@ const KNOWN: ReadonlySet<string> = new Set(KODERA_EMOJI)
 /** A code as it is written in a message. */
 export const shortcodeOf = (name: KoderaEmojiName) => `:${name}:`
 
-const CODE = /:(kodera_[a-z0-9_]{1,32}):/gu
+const CODE = new RegExp(`${GUARD_BEFORE}:(kodera_[a-z0-9_]{1,32}):${GUARD_AFTER}`, 'gu')
 
 export type EmojiSegment = { text: string } | { emoji: KoderaEmojiName }
 

@@ -1,9 +1,19 @@
-import { useState, type ReactNode } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { composerCopy } from './composerMessages'
 
-/** Only literal emphasis/code delimiters. HTML, images and arbitrary links remain escaped text. */
-export function InlineMarkdown({ text }: { text: string }) {
+/**
+ * Only literal emphasis/code delimiters. HTML, images and arbitrary links remain escaped text.
+ * `renderText` draws the plain and emphasised runs (Kodera's emoji, for one); inline code is
+ * always shown exactly as written.
+ */
+export function InlineMarkdown({
+  text,
+  renderText = (run) => run,
+}: {
+  text: string
+  renderText?: (run: string) => ReactNode
+}) {
   const nodes: ReactNode[] = []
   let cursor = 0
   let plain = 0
@@ -24,13 +34,14 @@ export function InlineMarkdown({ text }: { text: string }) {
       cursor += marker.length
       continue
     }
-    if (cursor > plain) nodes.push(text.slice(plain, cursor))
+    if (cursor > plain)
+      nodes.push(<Fragment key={`t${plain}`}>{renderText(text.slice(plain, cursor))}</Fragment>)
     const body = text.slice(cursor + marker.length, end)
     nodes.push(
       marker === '**' ? (
-        <strong key={cursor}>{body}</strong>
+        <strong key={cursor}>{renderText(body)}</strong>
       ) : marker === '*' ? (
-        <em key={cursor}>{body}</em>
+        <em key={cursor}>{renderText(body)}</em>
       ) : (
         <code key={cursor} className="rounded-sm bg-c-muted px-1 font-mono text-sm">
           {body}
@@ -40,7 +51,7 @@ export function InlineMarkdown({ text }: { text: string }) {
     cursor = end + marker.length
     plain = cursor
   }
-  nodes.push(text.slice(plain))
+  nodes.push(<Fragment key={`t${plain}`}>{renderText(text.slice(plain))}</Fragment>)
   return <>{nodes}</>
 }
 function CodeBlock({ code, language }: { code: string; language: string }) {
