@@ -1,0 +1,15 @@
+# Hosts a string of the product may show: each line allows that host and anything under it.
+#
+# Read by organisation-names.test.ts. Kodera's own domain, reserved example domains and obvious
+# placeholders, and the two services the console links to. An example address is written on a
+# reserved example domain, never on an organisation's own: adding a line is a review.
+kodera.io
+example.org
+example.com
+exemple-organisation.fr
+votreentreprise.fr
+yourcompany.com
+domaine.tld
+domain.tld
+matrix.to
+frame.io
