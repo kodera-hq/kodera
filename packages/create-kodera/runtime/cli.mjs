@@ -34,8 +34,9 @@ export const TEMPLATES = Object.freeze({
     connectors: [],
     roles: ['Coordinator', 'Member'],
   },
-  'crisis-cell': {
-    channels: ['general', 'incident-log', 'field-bridge', 'urgence'],
+  proximity: {
+    aliases: ['crisis-cell'],
+    channels: ['general', 'incident-log', 'field-bridge', 'proximity'],
     connectors: ['uptime-incident-bridge'],
     roles: ['Coordinator', 'Responder'],
   },
@@ -52,8 +53,6 @@ export const TEMPLATES = Object.freeze({
       'dev',
       'strategy',
       'ops-oncall',
-      'partner-dinum',
-      'partner-octo',
     ],
     connectors: [],
     roles: ['Owner', 'Administrator', 'Member'],
@@ -80,7 +79,7 @@ export const TEMPLATES = Object.freeze({
       {
         name: 'Design Partners',
         visibility: 'restricted',
-        channels: ['partner-dinum', 'partner-octo'],
+        channels: [],
       },
     ],
     readOnlyChannels: ['announcements'],
@@ -89,6 +88,31 @@ export const TEMPLATES = Object.freeze({
 })
 
 
+// A template keeps every identifier it ever had: `crisis-cell` selects `proximity`, permanently.
+export const TEMPLATE_ALIASES                                       =
+  Object.freeze({ 'crisis-cell': 'proximity' })
+// The only placeholders this generator may fill with random bytes. Every other placeholder is a
+// credential someone issues (an agent token, an identity provider's client secret): it is left
+// empty, never invented.
+const GENERATED_SECRETS                      = new Set([
+  'POSTGRES_PASSWORD',
+  'SYNAPSE_POSTGRES_PASSWORD',
+  'DJANGO_SECRET_KEY',
+  'KODERA_CONTACT_SEAL_KEY',
+  'KODERA_OUTBOX_SEAL_KEY',
+  'KODERA_MEMBERSHIP_CURSOR_KEY',
+  'KODERA_DISCOVERY_HMAC_KEY',
+  'ROOM_ACCESS_MATRIX_TOKEN',
+  'LIVEKIT_API_KEY',
+  'LIVEKIT_API_SECRET',
+])
+// The Compose assets, copied from `deploy/community` by `sync-assets.mjs` and checked against it.
+export const ASSET_FILES = Object.freeze([
+  'docker-compose.yml',
+  'Caddyfile',
+  'livekit.yaml',
+  'configure_synapse.py',
+])
 const ASSETS = fileURLToPath(new URL('../assets/', import.meta.url))
 export function publicDomain(value         )         {
   if (
@@ -173,10 +197,16 @@ export function parseArgs(args                   )          {
   return result
 }
 export function plan(options         ) {
-  const id = options.template ?? 'audiovisual-production'
+  const requested = options.template ?? 'audiovisual-production'
+  const id =
+    typeof requested === 'string' && Object.hasOwn(TEMPLATE_ALIASES, requested)
+      ? TEMPLATE_ALIASES[requested]
+      : requested
   if (typeof id !== 'string' || !Object.hasOwn(TEMPLATES, id))
     throw new Error('INVALID_TEMPLATE')
-  const template = TEMPLATES[id              ]
+  const { aliases: _aliases, ...template } = TEMPLATES[id              ]
+
+
   if (options['self-host']) {
     const domain = publicDomain(options.domain)
     const issuer = publicHttps(options['oidc-issuer'])
@@ -190,14 +220,7 @@ export function plan(options         ) {
       clientId,
       templateId: id              ,
       ...template,
-      files: [
-        '.env',
-        'docker-compose.yml',
-        'Caddyfile',
-        'livekit.yaml',
-        'workspace-template.json',
-        'README.md',
-      ],
+      files: ['.env', ...ASSET_FILES, 'workspace-template.json', 'README.md'],
     }
   }
   if (options.cloud) {
@@ -297,13 +320,19 @@ export async function generate(options         ) {
     !/^[a-zA-Z0-9._+-]+@[a-z0-9.-]+\.[a-z]{2,63}$/u.test(mailbox)
   )
     throw new Error('INVALID_SUPPORT_MAILBOX')
+  const labels = prepared.domain.split('.')
   const values                         = {
     KODERA_OIDC_CLIENT_ID: prepared.clientId,
     KODERA_DOMAIN: prepared.domain,
+    // The base domain, without the tenant label, as `deploy/community/kodera_deploy.py` derives it.
+    KODERA_MATRIX_DOMAIN:
+      labels.length >= 3 ? labels.slice(1).join('.') : prepared.domain,
     KODERA_ACME_EMAIL: mailbox,
     DJANGO_ALLOWED_HOSTS: `${prepared.domain},127.0.0.1`,
     KODERA_OIDC_PROVIDER_ORIGIN: new URL(prepared.issuer).origin,
     KODERA_AUTH_TRUST: `'${trust}'`,
+    // An isolated self-host: no canonical Community bootstrap and no tenant agent.
+    KODERA_DEFAULT_COMMUNITY_ORG_SLUG: '',
   }
   const example = await readFile(join(ASSETS, '.env.example'), 'utf8')
   const content =
@@ -316,12 +345,14 @@ export async function generate(options         ) {
         const value =
           values[key] ??
           (rest.join('=').includes('CHANGE_ME_')
-            ? key.endsWith('SEAL_KEY')
-              ? randomBytes(32)
-                  .toString('base64')
-                  .replace(/\+/gu, '-')
-                  .replace(/\//gu, '_')
-              : randomBytes(32).toString('hex')
+            ? !GENERATED_SECRETS.has(key)
+              ? ''
+              : key.endsWith('SEAL_KEY')
+                ? randomBytes(32)
+                    .toString('base64')
+                    .replace(/\+/gu, '-')
+                    .replace(/\//gu, '_')
+                : randomBytes(32).toString('hex')
             : rest.join('='))
         return `${key}=${value}`
       })
@@ -335,7 +366,7 @@ export async function generate(options         ) {
   await mkdir(output, { mode: 0o700 })
   try {
     await writeFile(join(output, '.env'), content, { mode: 0o600, flag: 'wx' })
-    for (const name of ['docker-compose.yml', 'Caddyfile', 'livekit.yaml'])
+    for (const name of ASSET_FILES)
       await writeFile(join(output, name), await readFile(join(ASSETS, name)), {
         flag: 'wx',
       })
@@ -355,7 +386,7 @@ export async function generate(options         ) {
     )
     await writeFile(
       join(output, 'README.md'),
-      '# Kodera Community\n\nExternal OIDC issuer and public trust are configured. Runtime images are built from KODERA_SOURCE_DIR.\nThe workspace-template.json is a provisioning intent, not proof that remote channels or connectors exist.\n\nStart explicitly from this directory: docker compose --env-file .env up -d --build\n',
+      '# Kodera Community\n\nExternal OIDC issuer and public trust are configured. Runtime images are built from KODERA_SOURCE_DIR.\nThe workspace-template.json is a provisioning intent, not proof that remote channels or connectors exist.\nMatrix sign-in is not configured: set KODERA_SYNAPSE_OIDC_ISSUER and KODERA_SYNAPSE_OIDC_CLIENT_SECRET in .env (see deploy/community/README.md in the source checkout, "Matrix sign-in"). Federation is closed.\n\nStart explicitly from this directory: docker compose --env-file .env up -d --build\n',
       { flag: 'wx' },
     )
   } catch (error) {
@@ -482,6 +513,12 @@ export async function selftest() {
     assert.throws(() => publicHttps('https://user:password@id.example.org')),
   )
   test(() => assert.throws(() => plan({ ...base, template: 'unknown' })))
+  test(() =>
+    assert.deepEqual(
+      plan({ ...base, template: 'crisis-cell' }),
+      plan({ ...base, template: 'proximity' }),
+    ),
+  )
   test(() =>
     assert.throws(() =>
       plan({ cloud: true, org: 'Cinema', template: 'community' }),

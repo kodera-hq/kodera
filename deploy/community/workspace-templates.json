@@ -58,12 +58,15 @@
       "Member"
     ]
   },
-  "crisis-cell": {
+  "proximity": {
+    "aliases": [
+      "crisis-cell"
+    ],
     "channels": [
       "general",
       "incident-log",
       "field-bridge",
-      "urgence"
+      "proximity"
     ],
     "connectors": [
       "uptime-incident-bridge"
@@ -85,9 +88,7 @@
       "office-hours",
       "dev",
       "strategy",
-      "ops-oncall",
-      "partner-dinum",
-      "partner-octo"
+      "ops-oncall"
     ],
     "connectors": [],
     "roles": [
@@ -122,10 +123,7 @@
       {
         "name": "Design Partners",
         "visibility": "restricted",
-        "channels": [
-          "partner-dinum",
-          "partner-octo"
-        ]
+        "channels": []
       }
     ],
     "readOnlyChannels": [

@@ -21,6 +21,10 @@ sys.modules[spec.name] = check
 spec.loader.exec_module(check)
 TEMPLATE = Path(__file__).with_name('.env.example')
 WORKSPACE_TEMPLATES = json.loads(Path(__file__).with_name('workspace-templates.json').read_text())
+# A template keeps every identifier it ever had: `crisis-cell` selects `proximity`, permanently.
+TEMPLATE_ALIASES = {alias: template_id for template_id, template in WORKSPACE_TEMPLATES.items() for alias in template.get('aliases', ())}
+if set(TEMPLATE_ALIASES) & set(WORKSPACE_TEMPLATES) or TEMPLATE_ALIASES.get('crisis-cell') != 'proximity':
+    raise RuntimeError('workspace-templates.json must keep crisis-cell as an alias of proximity')
 
 
 def domain(value):
@@ -45,6 +49,7 @@ def https(value, origin=False):
 
 def generate(args):
     template_id = getattr(args, 'template', None)
+    template_id = TEMPLATE_ALIASES.get(template_id, template_id)
     if template_id is not None and template_id not in WORKSPACE_TEMPLATES:
         raise ValueError('Invalid workspace template')
     host = domain(args.domain)
@@ -81,7 +86,17 @@ def generate(args):
         entry.get('issuer') == staff and entry.get('lane') == 'staff' for entry in trust
     )):
         raise ValueError('Staff issuer must be admitted on the staff trust lane')
-    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_ENV_NAMES, check.SYNAPSE_OIDC_ENV_NAME)})
+    values.update({key: '' for key in (*check.COMMUNITY_KEYS, *check.AGENT_ENV_NAMES, check.SYNAPSE_OIDC_ENV_NAME,
+                                       check.SYNAPSE_OIDC_ISSUER_ENV_NAME, check.FEDERATION_ENV_NAME)})
+
+    def issued(key, option):
+        token_file = getattr(args, option, None)
+        if not token_file or Path(token_file).stat().st_size > 4096:
+            raise ValueError('Community bootstrap requires --' + option.replace('_', '-'))
+        token = Path(token_file).read_text().strip()
+        if not re.fullmatch(r'[A-Za-z0-9._~+/=-]{32,4096}', token):
+            raise ValueError('Invalid issued credential file for ' + key)
+        return token
     if template_id == 'community':
         if issuer != origin + '/realms/community':
             raise ValueError('Community bootstrap requires the canonical Community issuer')
@@ -93,13 +108,11 @@ def generate(args):
                       KODERA_DEFAULT_COMMUNITY_ISSUER=issuer,
                       KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID=owner)
         for key, option in (('KODERA_AGENT_TOKEN', 'agent_token_file'), ('KODERA_SYNAPSE_TOKEN', 'synapse_token_file'), (check.SYNAPSE_OIDC_ENV_NAME, 'synapse_oidc_secret_file')):
-            token_file = getattr(args, option, None)
-            if not token_file or Path(token_file).stat().st_size > 4096:
-                raise ValueError('Community bootstrap requires --' + option.replace('_', '-'))
-            token = Path(token_file).read_text().strip()
-            if not re.fullmatch(r'[A-Za-z0-9._~+/=-]{32,4096}', token):
-                raise ValueError('Invalid issued credential file for ' + key)
-            values[key] = token
+            values[key] = issued(key, option)
+    elif getattr(args, 'synapse_oidc_secret_file', None):
+        # An isolated self-host signs members in to Synapse with the realm it already trusts.
+        values[check.SYNAPSE_OIDC_ISSUER_ENV_NAME] = issuer
+        values[check.SYNAPSE_OIDC_ENV_NAME] = issued(check.SYNAPSE_OIDC_ENV_NAME, 'synapse_oidc_secret_file')
     lines = []
     for line in TEMPLATE.read_text().splitlines():
         if line.startswith('#') and 'CHANGE_ME_' in line:
@@ -147,6 +160,7 @@ def selftest():
     compose = Path(__file__).with_name('docker-compose.yml').read_text()
     assert not check.check_community_deploy(compose, TEMPLATE.read_text(), Path(__file__).with_name('Caddyfile').read_text())
     assert not check.check_synapse_policy_source(Path(__file__).with_name('configure_synapse.py').read_text())
+    assert not check.check_synapse_config(Path(__file__).with_name('configure_synapse.py').read_text())
     from configure_synapse import MODULE, configure
     configured = configure({'server_name': 'chat.example.org', 'modules': [{'module': 'operator.module'}]})
     assert configured['modules'][0] == {'module': 'operator.module'}
@@ -185,6 +199,11 @@ def selftest():
         raise AssertionError('Unrelated identity provider silently replaced')
     for guard in ('--no-index', 'PYTHONPATH: /tmp/kodera-policy', 'python /opt/community/configure_synapse.py /data/homeserver.yaml'):
         assert check.check_community_deploy(compose.replace(guard, 'removed'), TEMPLATE.read_text(), Path(__file__).with_name('Caddyfile').read_text())
+    hardened = configure({'server_name': 'chat.example.org', 'listeners': [{'type': 'http', 'resources': [{'names': ['client', 'federation']}]}]})
+    assert hardened['database']['name'] == 'psycopg2' and 'password' not in hardened['database']['args']
+    assert hardened['federation_domain_whitelist'] == [] and hardened['listeners'][0]['resources'][0]['names'] == ['client']
+    assert hardened['password_config'] == {'enabled': False} and 'oidc_providers' not in hardened
+    assert check.check_community_deploy(compose, TEMPLATE.read_text(), Path(__file__).with_name('Caddyfile').read_text().replace('/api/* /health/*', '/api/* /health/* /agent/*'))
     with tempfile.TemporaryDirectory(prefix='kodera-deploy-test-') as tmp:
         trust = Path(tmp)/'public-trust.json'
         trust.write_text(json.dumps([dict(lane='customer', issuer='https://id.example.org/realms/'+realm, public_jwks={'keys':[{'kty':'RSA','n':'public-test-modulus','e':'AQAB'}]}) for realm in ('studio', 'community')]))
@@ -197,6 +216,10 @@ def selftest():
             return argparse.Namespace(**(data | changes))
         path = generate(args())
         assert 'KODERA_MATRIX_DOMAIN=example.org' in generate(args(domain='example.org')).read_text()
+        assert 'KODERA_SYNAPSE_OIDC_ISSUER=\n' in path.read_text() and 'KODERA_MATRIX_FEDERATION_ALLOWLIST=\n' in path.read_text()
+        signed_in = generate(args(synapse_oidc_secret_file=str(credential))).read_text()
+        assert 'KODERA_SYNAPSE_OIDC_ISSUER=https://id.example.org/realms/studio\n' in signed_in
+        assert 'KODERA_SYNAPSE_OIDC_CLIENT_SECRET=synthetic-issued-token-for-test-only\n' in signed_in
         assert path.stat().st_mode & 0o777 == 0o600
         content = path.read_text()
         assert 'CHANGE_ME_' not in '\n'.join(line for line in content.splitlines() if not line.startswith('#'))
@@ -229,6 +252,10 @@ def selftest():
                 pass
             else:
                 raise AssertionError('Invalid Community bootstrap input accepted')
+        aliased = generate(args(template='crisis-cell'))
+        manifest = json.loads(Path(str(aliased) + '.workspace-template.json').read_text())
+        assert manifest['templateId'] == 'proximity' and 'proximity' in manifest['channels']
+        assert manifest == json.loads(Path(str(generate(args(template='proximity'))) + '.workspace-template.json').read_text())
         try:
             generate(args(template='unknown'))
         except ValueError:
@@ -252,7 +279,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['env-file', 'domain', 'matrix-domain', 'oidc-issuer', 'oidc-origin', 'support-mailbox', 'trust-file', 'oidc-client-id', 'owner-user-id', 'agent-token-file', 'synapse-token-file', 'synapse-oidc-secret-file', 'staff-issuer']:
         parser.add_argument('--'+name, default='kodera-generated.conf' if name == 'env-file' else None)
-    parser.add_argument('--template', choices=tuple(WORKSPACE_TEMPLATES))
+    parser.add_argument('--template', choices=(*WORKSPACE_TEMPLATES, *TEMPLATE_ALIASES))
     parser.add_argument('--generate-only', action='store_true')
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--selftest', action='store_true')
@@ -267,6 +294,8 @@ def main():
         # Arguments are quoted as data for an operator to inspect before execution.
         import shlex
         print('Generated configuration with mode 0600. External OIDC issuer required.')
+        if args.template != 'community' and not args.synapse_oidc_secret_file:
+            print('Matrix sign-in is not configured: pass --synapse-oidc-secret-file to sign members in to Synapse.')
         if args.template:
             print('Workspace template intent: '+str(target)+'.workspace-template.json (not remotely provisioned)')
         profile = ' --profile community-governance' if args.template == 'community' else ''

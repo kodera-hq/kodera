@@ -12,7 +12,13 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 
-	@api path /api/* /health/* /agent/*
+	# The agent API is for the tenant agent on the internal network only.
+	@internal path /agent /agent/*
+	handle @internal {
+		respond 404
+	}
+
+	@api path /api/* /health/*
 	handle @api {
 		reverse_proxy server:8000
 	}
@@ -23,9 +29,15 @@
 		reverse_proxy room-access:8095
 	}
 
-	@matrix path /_matrix/* /_synapse/client/*
+	# Client API only. Federation and key routes stay closed (README.md, "Federation").
+	@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*
 	handle @matrix {
 		reverse_proxy synapse:8008
+	}
+
+	@matrix_closed path /_matrix /_matrix/* /_synapse /_synapse/*
+	handle @matrix_closed {
+		respond 404
 	}
 
 	@livekit path /rtc /rtc/*

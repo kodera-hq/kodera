@@ -9,9 +9,11 @@ names at least one https issuer. It reports key names only, never a value.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
+import types
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -56,6 +58,7 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
 
 REQUIRED_SECRET_ENV_KEYS = (
     "POSTGRES_PASSWORD",
+    "SYNAPSE_POSTGRES_PASSWORD",
     "DJANGO_SECRET_KEY",
     "KODERA_CONTACT_SEAL_KEY",
     "KODERA_OUTBOX_SEAL_KEY",
@@ -66,7 +69,7 @@ REQUIRED_SECRET_ENV_KEYS = (
     "LIVEKIT_API_SECRET",
 )
 
-HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse")
+HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse", "synapse-db")
 
 # Public configuration that has no usable default: the operator's own identity provider.
 REQUIRED_PLACEHOLDER_KEYS = (
@@ -79,6 +82,36 @@ COMMUNITY_KEYS = (
 # Environment variable names only; credential values are never kept in these constants.
 AGENT_ENV_NAMES = ("KODERA_AGENT_TOKEN", "KODERA_SYNAPSE_TOKEN")
 SYNAPSE_OIDC_ENV_NAME = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
+SYNAPSE_OIDC_ISSUER_ENV_NAME = "KODERA_SYNAPSE_OIDC_ISSUER"
+SYNAPSE_DB_ENV_NAME = "SYNAPSE_POSTGRES_PASSWORD"
+FEDERATION_ENV_NAME = "KODERA_MATRIX_FEDERATION_ALLOWLIST"
+
+# What Caddy may route from the internet, per upstream. Anything else is refused: the agent API
+# (`/agent/*`) and Matrix federation, key and admin routes are not internet-facing by default.
+ALLOWED_PUBLIC_ROUTES: dict[str, frozenset[str]] = {
+    "server:8000": frozenset({"/api/*", "/health/*"}),
+    "room-access:8095": frozenset({"/_kodera/rooms/token"}),
+    "synapse:8008": frozenset({"/_matrix/client/*", "/_matrix/media/*", "/_synapse/client/*"}),
+    "livekit:7880": frozenset({"/rtc", "/rtc/*"}),
+}
+CATCH_ALL_UPSTREAM = "web:8080"
+CADDY_MATCHER_RE = re.compile(r"(?m)^[ \t]*@([a-z_]+)[ \t]+path[ \t]+(.+?)[ \t]*$")
+CADDY_HANDLE_RE = re.compile(r"(?ms)^[ \t]*handle(?:[ \t]+@([a-z_]+))?[ \t]*\{\n(.*?)^[ \t]*\}")
+COMPOSE_DEFAULT_RE = re.compile(r"(?=\$\{([A-Z][A-Z0-9_]*):-([^}$]*))")
+PUBLIC_SERVER_NAME_RE = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}")
+SECRET_LOOKING_VALUE_RES = (
+    re.compile(r"[0-9a-fA-F]{32,}"),
+    re.compile(r"(?=[A-Za-z0-9+/_=-]*[a-z])(?=[A-Za-z0-9+/_=-]*[A-Z])(?=[A-Za-z0-9+/_=-]*[0-9])[A-Za-z0-9+/_-]{40,}={0,2}"),
+    re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\..*"),
+    re.compile(r".*-----BEGIN [A-Z ]*PRIVATE KEY-----.*", re.DOTALL),
+)
+
+
+def looks_like_secret(value: str) -> bool:
+    """A committed default shaped like key material: long hex, a mixed 40+ character token,
+    a JWT or a private key block. Placeholders, hostnames and short labels are not."""
+    value = value.strip().strip("'\"")
+    return any(pattern.fullmatch(value) for pattern in SECRET_LOOKING_VALUE_RES)
 
 # A pulled image is pinned by tag and digest, so `docker compose pull` cannot drift.
 PINNED_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}$")
@@ -250,7 +283,29 @@ def check_community_deploy(
                     f"non-placeholder secret value in .env.example for {key} (must start with CHANGE_ME_)"
                 )
 
+    # 1b. No committed default is shaped like key material, whatever its variable is called.
+    for key, value in env_map.items():
+        if not value.startswith("CHANGE_ME_") and looks_like_secret(value):
+            errors.append(f"secret-looking default in .env.example for {key}")
+    for name, default in COMPOSE_DEFAULT_RE.findall(compose_text):
+        if default and (SECRET_SHAPED_NAME_RE.search(name) or looks_like_secret(default)):
+            errors.append(f"secret default in docker-compose.yml for {name}: use ${{{name}:?...}} or an empty default")
+
+    # 1c. Federation is closed unless the operator opens it: the template ships no allowlist.
+    if env_map.get(FEDERATION_ENV_NAME, "missing") != "":
+        errors.append(
+            f"federation must be closed by default: {FEDERATION_ENV_NAME} must be empty in .env.example"
+        )
+    if env_map.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "missing") != "":
+        errors.append(f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be empty in .env.example: it has no usable default")
+
     services = parse_compose_services(compose_text)
+    for svc in services.values():
+        for env_key, env_value in svc.environment.items():
+            if SECRET_SHAPED_NAME_RE.search(env_key.upper()) and "${" not in env_value:
+                errors.append(
+                    f"literal secret in docker-compose.yml: service '{svc.name}' sets {env_key} without a variable"
+                )
     for required_service in (
         "caddy",
         "db",
@@ -260,6 +315,7 @@ def check_community_deploy(
         "web",
         "room-access",
         "synapse",
+        "synapse-db",
         "livekit",
     ):
         if required_service not in services:
@@ -271,7 +327,7 @@ def check_community_deploy(
         if svc is None:
             continue
         raw_block = "\n".join(svc.raw_lines)
-        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME):
+        for forbidden in (*ISOLATED_ROOM_ACCESS_SECRETS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME, SYNAPSE_DB_ENV_NAME):
             if forbidden in svc.environment or forbidden in raw_block:
                 errors.append(
                     f"ADR-0003 isolation violation: forbidden secret '{forbidden}' in service '{core_svc_name}'"
@@ -402,7 +458,30 @@ def check_community_deploy(
             if guard not in block:
                 errors.append("service 'synapse' missing room-policy guard: " + guard)
 
-    # 5. Healthcheck coverage on db, valkey, server, synapse
+        # Synapse runs on its own PostgreSQL, never on SQLite and never on the server's database.
+        if synapse.depends_on_conditions.get("synapse-db") != "service_healthy":
+            errors.append("Synapse must run on PostgreSQL: service 'synapse' must wait for a healthy 'synapse-db'")
+        if not synapse.environment.get("PGPASSWORD", "").startswith("${" + SYNAPSE_DB_ENV_NAME + ":?"):
+            errors.append(f"Synapse must run on PostgreSQL: service 'synapse' must read PGPASSWORD from {SYNAPSE_DB_ENV_NAME}")
+        if "DATABASE_URL" in block or "${POSTGRES_PASSWORD" in block:
+            errors.append("Synapse must run on PostgreSQL: service 'synapse' must not hold the server's database credential")
+        if synapse.environment.get(FEDERATION_ENV_NAME) != "${" + FEDERATION_ENV_NAME + ":-}":
+            errors.append(f"federation must be closed by default: service 'synapse' must consume {FEDERATION_ENV_NAME} with an empty default")
+        if synapse.environment.get(SYNAPSE_OIDC_ISSUER_ENV_NAME) != "${" + SYNAPSE_OIDC_ISSUER_ENV_NAME + ":-}":
+            errors.append("service 'synapse' must consume " + SYNAPSE_OIDC_ISSUER_ENV_NAME)
+    synapse_db = services.get("synapse-db")
+    if synapse_db is not None:
+        if not (synapse_db.image or "").startswith("postgres:"):
+            errors.append("Synapse must run on PostgreSQL: service 'synapse-db' must be a postgres image")
+        if not synapse_db.environment.get("POSTGRES_PASSWORD", "").startswith("${" + SYNAPSE_DB_ENV_NAME + ":?"):
+            errors.append(f"Synapse must run on PostgreSQL: service 'synapse-db' must require {SYNAPSE_DB_ENV_NAME}")
+        initdb = synapse_db.environment.get("POSTGRES_INITDB_ARGS", "")
+        if "--lc-collate=C" not in initdb or "--lc-ctype=C" not in initdb:
+            errors.append("Synapse must run on PostgreSQL: service 'synapse-db' must initialise the C collation Synapse requires")
+    if "8448" in compose_text:
+        errors.append("federation must be closed by default: docker-compose.yml must not publish the federation port 8448")
+
+    # 5. Healthcheck coverage on db, valkey, server, synapse and its database
     for hc_service_name in HEALTHCHECK_REQUIRED_SERVICES:
         svc = services.get(hc_service_name)
         if svc is not None and (not svc.has_healthcheck or not svc.healthcheck_test):
@@ -423,7 +502,47 @@ def check_community_deploy(
         errors.append("Caddyfile must proxy room-access token endpoint to 'room-access:8095'")
     if "reverse_proxy server:8000" not in caddyfile_text:
         errors.append("Caddyfile must proxy API routes to 'server:8000'")
+    errors.extend(check_caddy_routes(caddyfile_text))
 
+    return errors
+
+
+def check_caddy_routes(caddyfile_text: str) -> list[str]:
+    """Every route Caddy proxies is on the reviewed list. The agent API and Matrix federation,
+    key and admin routes are refused by name."""
+    errors: list[str] = []
+    code = "\n".join(line for line in caddyfile_text.splitlines() if not line.strip().startswith("#"))
+    matchers = {name: paths.split() for name, paths in CADDY_MATCHER_RE.findall(code)}
+    proxied = 0
+    for matcher, body in CADDY_HANDLE_RE.findall(code):
+        upstreams = re.findall(r"reverse_proxy[ \t]+(\S+)", body)
+        proxied += len(upstreams)
+        for upstream in upstreams:
+            if not matcher:
+                if upstream != CATCH_ALL_UPSTREAM:
+                    errors.append(f"Caddyfile catch-all must proxy to '{CATCH_ALL_UPSTREAM}' only (got '{upstream}')")
+                continue
+            allowed = ALLOWED_PUBLIC_ROUTES.get(upstream)
+            if allowed is None:
+                errors.append(f"Caddyfile proxies '@{matcher}' to an unreviewed upstream '{upstream}'")
+                continue
+            if matcher not in matchers:
+                errors.append(f"Caddyfile handle '@{matcher}' has no path matcher")
+                continue
+            for path in matchers[matcher]:
+                if path in allowed:
+                    continue
+                if upstream == "server:8000" and path.startswith("/agent"):
+                    errors.append(f"Caddyfile must not expose the agent API to the internet (got '{path}')")
+                elif upstream == "synapse:8008":
+                    errors.append(
+                        "federation must be closed by default: Caddyfile must route only the Matrix client API, "
+                        f"never federation, key or admin routes (got '{path}')"
+                    )
+                else:
+                    errors.append(f"Caddyfile exposes an unreviewed route to '{upstream}': '{path}'")
+    if proxied != len(re.findall(r"reverse_proxy[ \t]", code)):
+        errors.append("Caddyfile has a reverse_proxy outside a reviewed handle block")
     return errors
 
 
@@ -441,6 +560,284 @@ def check_synapse_policy_source(source: str) -> list[str]:
     return ["Synapse configuration missing policy guard: " + guard for guard in required if guard not in source]
 
 
+SYNTHETIC_CREDENTIAL = "synthetic-issued-token-for-test-only"
+RATE_LIMIT_PATHS = (
+    ("rc_message",), ("rc_registration",),
+    ("rc_login", "address"), ("rc_login", "account"), ("rc_login", "failed_attempts"),
+    ("rc_joins", "local"), ("rc_joins", "remote"),
+    ("rc_invites", "per_room"), ("rc_invites", "per_user"), ("rc_invites", "per_issuer"),
+)
+PILOT_SETTINGS = {
+    "refreshable_access_token_lifetime": "5m",
+    "refresh_token_lifetime": "24h",
+    "forget_rooms_on_leave": True,
+    "enable_authenticated_media": True,
+    "encryption_enabled_by_default_for_room_type": "off",
+    "require_auth_for_profile_requests": True,
+    "allow_public_rooms_over_federation": False,
+    "allow_public_rooms_without_auth": False,
+}
+
+
+def _generated_homeserver() -> dict:
+    """What the Synapse image generates on a fresh volume: SQLite and an open federation listener."""
+    return {
+        "server_name": "chat.example.org",
+        "listeners": [{
+            "port": 8008, "tls": False, "type": "http", "x_forwarded": False,
+            "resources": [{"names": ["client", "federation"], "compress": False}],
+        }],
+        "database": {"name": "sqlite3", "args": {"database": "/data/homeserver.db"}},
+        "trusted_key_servers": [{"server_name": "matrix.org"}],
+        "modules": [{"module": "operator.module"}],
+    }
+
+
+def _refuses(call: Callable[[], object], kind: type[Exception] = ValueError) -> bool:
+    try:
+        call()
+    except kind:
+        return True
+    return False
+
+
+def check_synapse_config(source: str) -> list[str]:
+    """Run deploy/community/configure_synapse.py on a freshly generated homeserver and refuse a
+    result that is not the hardened one. It judges what Synapse would read, not the source text."""
+    module = types.ModuleType("community_configure_synapse")
+    try:
+        exec(compile(source, "configure_synapse.py", "exec"), module.__dict__)  # noqa: S102 - the repository's own file
+        configure = module.configure
+        closed = configure(_generated_homeserver(), {})
+    except Exception as error:  # noqa: BLE001 - any failure to evaluate is a refusal
+        return [f"configure_synapse.py could not be evaluated: {type(error).__name__}"]
+    errors: list[str] = []
+
+    def guarded(label: str, call: Callable[[], list[str]]) -> None:
+        try:
+            errors.extend(call())
+        except Exception as error:  # noqa: BLE001
+            errors.append(f"{label}: configure_synapse.py failed with {type(error).__name__}")
+
+    def listener_names(document: dict) -> list[str]:
+        return [name for listener in document.get("listeners", []) for resource in listener.get("resources", []) for name in resource.get("names", [])]
+
+    def database() -> list[str]:
+        found = closed.get("database") or {}
+        args = found.get("args") or {}
+        problems = []
+        if found.get("name") != "psycopg2" or args.get("host") != "synapse-db":
+            problems.append("Synapse must run on PostgreSQL, not SQLite")
+        if any(key in args for key in ("password", "passfile")):
+            problems.append("Synapse must run on PostgreSQL: its database password stays out of homeserver.yaml")
+        unported = {"database": {"name": "sqlite3", "args": {"database": "/data/homeserver.db"}}}
+        refuse = getattr(module, "refuse_unported_sqlite", None)
+        if refuse is None or not _refuses(lambda: refuse(unported, exists=lambda _path: True), RuntimeError):
+            problems.append("Synapse must refuse to abandon an existing SQLite database")
+        elif _refuses(lambda: refuse(unported, exists=lambda _path: False), RuntimeError) or _refuses(
+            lambda: refuse(closed, exists=lambda _path: True), RuntimeError
+        ):
+            problems.append("Synapse must start on a fresh volume and on an already ported one")
+        return problems
+
+    def federation() -> list[str]:
+        problems = []
+        if closed.get("federation_domain_whitelist") != [] or "federation" in listener_names(closed) or closed.get("trusted_key_servers") != []:
+            problems.append("Synapse federation must be closed by default (empty whitelist, no federation listener, no key server)")
+        opened = configure(_generated_homeserver(), {FEDERATION_ENV_NAME: "b.example.org, a.example.org"})
+        if opened.get("federation_domain_whitelist") != ["a.example.org", "b.example.org"] or "federation" not in listener_names(opened):
+            problems.append("Synapse federation opt-in must be the operator's explicit allowlist")
+        for unsafe in ("*", "localhost", "partner.internal", "a.example.org,*"):
+            if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), {FEDERATION_ENV_NAME: unsafe})):
+                problems.append("Synapse federation allowlist must refuse a wildcard or private server name")
+                break
+        return problems
+
+    def policy() -> list[str]:
+        wanted = {"module": "kodera_synapse_policy.KoderaPolicy", "config": {
+            "agent_user_id": "@kodera-agent:chat.example.org",
+            "room_access_user_id": "@kodera-rooms:chat.example.org",
+        }}
+        modules = closed.get("modules") or []
+        if modules.count(wanted) != 1 or {"module": "operator.module"} not in modules:
+            return ["Synapse room-policy module is missing or misconfigured"]
+        return []
+
+    def rate_limits() -> list[str]:
+        problems = []
+        for path in RATE_LIMIT_PATHS:
+            limit: object = closed
+            for key in path:
+                limit = limit.get(key) if isinstance(limit, dict) else None
+            per_second = limit.get("per_second") if isinstance(limit, dict) else None
+            burst = limit.get("burst_count") if isinstance(limit, dict) else None
+            if (
+                not isinstance(per_second, (int, float)) or isinstance(per_second, bool) or not 0 < per_second <= 1
+                or not isinstance(burst, int) or isinstance(burst, bool) or not 1 <= burst <= 50
+            ):
+                problems.append("Synapse rate limits must be set: " + ".".join(path))
+        if not all(listener.get("x_forwarded") is True for listener in closed.get("listeners", [])):
+            problems.append("Synapse rate limits must see each client: the listener must set x_forwarded")
+        return problems
+
+    def accounts() -> list[str]:
+        problems = []
+        if closed.get("enable_registration") is not False or (closed.get("password_config") or {}).get("enabled") is not False:
+            problems.append("Synapse must keep open registration and password sign-in off")
+        if "oidc_providers" in closed:
+            problems.append("Synapse must not invent an identity provider when none is configured")
+        for key, value in PILOT_SETTINGS.items():
+            if closed.get(key) != value:
+                problems.append(f"Synapse must keep the documented setting {key}")
+        if configure(copy.deepcopy(closed), {}) != closed:
+            problems.append("Synapse configuration must be idempotent across restarts")
+        return problems
+
+    def sign_in() -> list[str]:
+        problems = []
+        cases = (
+            ("kodera", {SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.org/realms/studio", SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL},
+             "https://id.example.org/realms/studio"),
+            ("community", {COMMUNITY_KEYS[0]: "community", COMMUNITY_KEYS[1]: "https://id.example.org/realms/community",
+                           SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL}, "https://id.example.org/realms/community"),
+        )
+        for idp_id, environment, issuer in cases:
+            signed = configure(_generated_homeserver(), environment)
+            providers = signed.get("oidc_providers") or []
+            provider = providers[0] if len(providers) == 1 else {}
+            mapping = (provider.get("user_mapping_provider") or {}).get("config") or {}
+            if (
+                provider.get("idp_id") != idp_id or provider.get("issuer") != issuer or provider.get("client_id") != "synapse"
+                or provider.get("client_secret") != SYNTHETIC_CREDENTIAL or provider.get("pkce_method") != "always"
+                or provider.get("allow_existing_users") is not False or provider.get("backchannel_logout_enabled") is not True
+                or mapping.get("localpart_template") != "{{ user.sub | lower }}" or mapping.get("subject_template") != "{{ user.sub }}"
+            ):
+                problems.append(f"Synapse OIDC sign-in is not wired as documented ({idp_id}: client synapse, PKCE, subject localpart)")
+            if (signed.get("sso") or {}).get("client_whitelist") != ["https://chat.example.org/"] or signed.get("public_baseurl") != "https://chat.example.org/":
+                problems.append(f"Synapse OIDC sign-in must return to the web origin with a trailing slash only ({idp_id})")
+            if (signed.get("password_config") or {}).get("enabled") is not False or signed.get("enable_registration") is not False:
+                problems.append(f"Synapse OIDC sign-in must keep password sign-in and registration off ({idp_id})")
+            if configure(copy.deepcopy(signed), environment) != signed:
+                problems.append(f"Synapse OIDC configuration must be idempotent across restarts ({idp_id})")
+            unrelated = dict(_generated_homeserver(), oidc_providers=[{"idp_id": "unrelated"}])
+            if not _refuses(lambda unrelated=unrelated, environment=environment: configure(unrelated, environment)):
+                problems.append(f"Synapse OIDC sign-in must not silently replace an unrelated identity provider ({idp_id})")
+        generic, community = cases[0][1], cases[1][1]
+        unsafe = (
+            dict(generic, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "http://id.example.org/realms/studio"}),
+            dict(generic, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.internal/realms/studio"}),
+            dict(generic, **{SYNAPSE_OIDC_ENV_NAME: ""}),
+            dict(generic, **{SYNAPSE_OIDC_ENV_NAME: "CHANGE_ME_ISSUED_SYNAPSE_CLIENT_SECRET"}),
+            dict(generic, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: ""}),
+            dict(community, **{COMMUNITY_KEYS[1]: "http://id.example.org/realms/community"}),
+            dict(community, **{SYNAPSE_OIDC_ENV_NAME: ""}),
+            dict(community, **{COMMUNITY_KEYS[0]: "other"}),
+            dict(community, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.org/realms/studio"}),
+        )
+        if not all(_refuses(lambda environment=environment: configure(_generated_homeserver(), environment)) for environment in unsafe):
+            problems.append("Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential")
+        return problems
+
+    for label, call in (
+        ("database", database), ("federation", federation), ("room policy", policy),
+        ("rate limits", rate_limits), ("accounts", accounts), ("sign-in", sign_in),
+    ):
+        guarded(label, call)
+    return errors
+
+
+# packages/create-kodera ships a copy of this stack's Compose assets. The copy is derived, never
+# edited: the only difference admitted is the path of the source checkout, because a generated
+# directory sits outside it. `packages/create-kodera/sync-assets.mjs` holds the same manifest.
+SCAFFOLDER_DIR = ROOT / "packages" / "create-kodera"
+SCAFFOLDER_MANIFEST: dict = {
+    "source": "deploy/community",
+    "files": [".env.example", "Caddyfile", "configure_synapse.py", "docker-compose.yml", "livekit.yaml"],
+    "rewrites": {
+        "docker-compose.yml": [["../..", "${KODERA_SOURCE_DIR:?Set the Community source checkout}"]],
+    },
+}
+
+
+def derive_scaffolder_asset(name: str, source: str) -> str:
+    for old, new in SCAFFOLDER_MANIFEST["rewrites"].get(name, []):
+        source = source.replace(old, new)
+    return source
+
+
+def check_scaffolder_parity(manifest: object, sources: dict[str, str], assets: dict[str, str]) -> list[str]:
+    """Every way packages/create-kodera/assets differs from deploy/community, by name."""
+    errors: list[str] = []
+    if manifest != SCAFFOLDER_MANIFEST:
+        errors.append("packages/create-kodera/assets.manifest.json is not the reviewed manifest")
+    for name in SCAFFOLDER_MANIFEST["files"]:
+        if name not in sources:
+            errors.append(f"deploy/community/{name} is missing")
+        elif name not in assets:
+            errors.append(f"create-kodera asset is missing: {name}")
+        elif assets[name] != derive_scaffolder_asset(name, sources[name]):
+            errors.append(f"create-kodera asset drifted from deploy/community: {name}")
+    for name in sorted(assets):
+        if name not in SCAFFOLDER_MANIFEST["files"]:
+            errors.append(f"create-kodera asset has no source in deploy/community: {name}")
+    return errors
+
+
+def read_scaffolder_state() -> tuple[object, dict[str, str], dict[str, str]]:
+    def texts(paths: list[Path]) -> dict[str, str]:
+        return {path.name: path.read_text(encoding="utf-8") for path in paths if path.is_file()}
+
+    try:
+        manifest: object = json.loads((SCAFFOLDER_DIR / "assets.manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = None
+    sources = texts([ROOT / "deploy" / "community" / name for name in SCAFFOLDER_MANIFEST["files"]])
+    assets_dir = SCAFFOLDER_DIR / "assets"
+    return manifest, sources, texts(sorted(assets_dir.iterdir()) if assets_dir.is_dir() else [])
+
+
+def run_scaffolder_selftest() -> int:
+    manifest, sources, assets = read_scaffolder_state()
+    baseline = check_scaffolder_parity(manifest, sources, assets)
+    if baseline:
+        for error in baseline:
+            print(f"[FAIL] baseline scaffolder parity invalid: {error}", file=sys.stderr)
+        return 1
+    widened = copy.deepcopy(SCAFFOLDER_MANIFEST)
+    widened["rewrites"]["Caddyfile"] = [["/api/* /health/*", "/api/* /health/* /agent/*"]]
+    cases: list[tuple[str, object, dict[str, str], str]] = [
+        ("the scaffolder routes the agent API again", manifest,
+         dict(assets, Caddyfile=assets["Caddyfile"].replace("/api/* /health/*", "/api/* /health/* /agent/*")),
+         "create-kodera asset drifted from deploy/community: Caddyfile"),
+        ("the scaffolder keeps Synapse on SQLite", manifest,
+         {**assets, "docker-compose.yml": assets["docker-compose.yml"].replace("  synapse-db:\n", "  synapse-cache:\n")},
+         "create-kodera asset drifted from deploy/community: docker-compose.yml"),
+        ("the scaffolder edits the Synapse configuration", manifest,
+         {**assets, "configure_synapse.py": assets["configure_synapse.py"].replace('"psycopg2"', '"sqlite3"')},
+         "create-kodera asset drifted from deploy/community: configure_synapse.py"),
+        ("the scaffolder ships a default secret", manifest,
+         {**assets, ".env.example": assets[".env.example"].replace("SYNAPSE_POSTGRES_PASSWORD=CHANGE_ME_", "SYNAPSE_POSTGRES_PASSWORD=synapse_")},
+         "create-kodera asset drifted from deploy/community: .env.example"),
+        ("an asset is deleted", manifest, {name: text for name, text in assets.items() if name != "livekit.yaml"},
+         "create-kodera asset is missing: livekit.yaml"),
+        ("an asset has no source", manifest, {**assets, "override.yml": "services: {}\n"},
+         "create-kodera asset has no source in deploy/community: override.yml"),
+        ("the manifest hides a difference", widened, assets,
+         "packages/create-kodera/assets.manifest.json is not the reviewed manifest"),
+        ("the manifest is unreadable", None, assets,
+         "packages/create-kodera/assets.manifest.json is not the reviewed manifest"),
+    ]
+    for label, case_manifest, case_assets, expected in cases:
+        if case_manifest == manifest and case_assets == assets:
+            print(f"[FAIL] scaffolder mutation '{label}' produced no change", file=sys.stderr)
+            return 1
+        if expected not in check_scaffolder_parity(case_manifest, sources, case_assets):
+            print(f"[FAIL] scaffolder mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
+            return 1
+    print(f"OK: create-kodera assets match deploy/community, {len(cases)} drift mutations refused by name.")
+    return 0
+
+
 def _deployable_issuer(issuer: object) -> bool:
     if not isinstance(issuer, str) or not issuer.startswith("https://"):
         return False
@@ -454,12 +851,20 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     actual, parse_errors = parse_env_example(env_text)
     community_enabled = bool(actual.get("KODERA_DEFAULT_COMMUNITY_ORG_SLUG", "").strip("'\""))
     errors = [err.replace(".env.example", ".env").split(":", 1)[0] + ": malformed or duplicate" for err in parse_errors]
+    synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
+    synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key == "KODERA_STAFF_ISSUER" and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME) and not actual.get(key, "").strip("'\""):
             continue
-        if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
+        if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
+            pass  # An isolated self-host may sign members in to Synapse with its own realm.
+        elif key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
             if actual.get(key, "").strip("'\""):
-                errors.append("Community issuer and owner require KODERA_DEFAULT_COMMUNITY_ORG_SLUG")
+                errors.append(
+                    f"{SYNAPSE_OIDC_ENV_NAME} requires {SYNAPSE_OIDC_ISSUER_ENV_NAME} or the canonical Community workspace"
+                    if key == SYNAPSE_OIDC_ENV_NAME
+                    else "Community issuer and owner require KODERA_DEFAULT_COMMUNITY_ORG_SLUG"
+                )
             continue
         value = actual.get(key, "").strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
@@ -484,6 +889,27 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
                     errors.append(f"KODERA_AUTH_TRUST entry {index} issuer is not a public https URL")
         elif key == "KODERA_OIDC_PROVIDER_ORIGIN" and not _deployable_issuer(value):
             errors.append("KODERA_OIDC_PROVIDER_ORIGIN is not a public https origin")
+        elif key == FEDERATION_ENV_NAME and not all(
+            PUBLIC_SERVER_NAME_RE.fullmatch(name.strip())
+            and not name.strip().endswith((".local", ".localhost", ".internal"))
+            for name in value.split(",")
+        ):
+            errors.append(f"{FEDERATION_ENV_NAME} must list public server names, comma-separated, with no wildcard")
+    if synapse_issuer:
+        try:
+            trust_entries = json.loads(actual.get("KODERA_AUTH_TRUST", "").strip("'\""))
+            trusted = isinstance(trust_entries, list) and any(
+                isinstance(entry, dict) and entry.get("lane") == "customer" and entry.get("issuer") == synapse_issuer
+                for entry in trust_entries
+            )
+        except ValueError:
+            trusted = False
+        if not _deployable_issuer(synapse_issuer) or not trusted:
+            errors.append(f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be a public https issuer admitted on the customer trust lane")
+        if not synapse_secret:
+            errors.append(f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} requires the issued {SYNAPSE_OIDC_ENV_NAME}")
+        if community_enabled and synapse_issuer != actual.get(COMMUNITY_KEYS[1], "").strip("'\""):
+            errors.append(f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be empty or the canonical Community issuer")
     if community_enabled:
         slug = actual.get(COMMUNITY_KEYS[0], "").strip("'\"")
         issuer = actual.get(COMMUNITY_KEYS[1], "").strip("'\"")
@@ -747,6 +1173,112 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         "tenant-agent must use Matrix-only reconciliation",
     ))
 
+    # Hardening invariants. Each mutation is refused by the name of the invariant it breaks.
+    synthetic_hex = "0123456789abcdef" * 4
+    synapse_db_password = "${" + SYNAPSE_DB_ENV_NAME + ":?Set " + SYNAPSE_DB_ENV_NAME + " in .env}"
+    mutations += [
+        (
+            "Synapse falls back to SQLite: its database dependency is removed",
+            lambda c, e, cf: (c.replace("    depends_on:\n      synapse-db:\n        condition: service_healthy\n", "", 1), e, cf),
+            "Synapse must run on PostgreSQL: service 'synapse' must wait for a healthy 'synapse-db'",
+        ),
+        (
+            "Synapse falls back to SQLite: its database credential is removed",
+            lambda c, e, cf: (c.replace("      PGPASSWORD: " + synapse_db_password + "\n", "", 1), e, cf),
+            "Synapse must run on PostgreSQL: service 'synapse' must read PGPASSWORD",
+        ),
+        (
+            "Synapse falls back to SQLite: its database service is removed",
+            lambda c, e, cf: (c.replace("  synapse-db:\n", "  synapse-cache:\n", 1), e, cf),
+            "missing required service 'synapse-db'",
+        ),
+        (
+            "Synapse shares the server's database credential",
+            lambda c, e, cf: (c.replace("      PGPASSWORD: " + synapse_db_password, "      PGPASSWORD: ${POSTGRES_PASSWORD:?shared}", 1), e, cf),
+            "Synapse must run on PostgreSQL: service 'synapse' must not hold the server's database credential",
+        ),
+        (
+            "Synapse's database loses the C collation",
+            lambda c, e, cf: (c.replace(" --lc-collate=C --lc-ctype=C", "", 1), e, cf),
+            "Synapse must run on PostgreSQL: service 'synapse-db' must initialise the C collation",
+        ),
+        (
+            "Synapse's database credential reaches the API",
+            lambda c, e, cf: (c.replace("      KODERA_EDITION: community\n", "      KODERA_EDITION: community\n      PGPASSWORD: ${" + SYNAPSE_DB_ENV_NAME + "}\n", 1), e, cf),
+            f"ADR-0003 isolation violation: forbidden secret '{SYNAPSE_DB_ENV_NAME}' in service 'server'",
+        ),
+        (
+            "federation is open by default: the template ships an allowlist",
+            lambda c, e, cf: (c, re.sub(r"(?m)^" + FEDERATION_ENV_NAME + r"=.*$", FEDERATION_ENV_NAME + "=matrix.org", e, count=1), cf),
+            "federation must be closed by default: " + FEDERATION_ENV_NAME + " must be empty in .env.example",
+        ),
+        (
+            "federation is open by default: compose defaults the allowlist",
+            lambda c, e, cf: (c.replace("${" + FEDERATION_ENV_NAME + ":-}", "${" + FEDERATION_ENV_NAME + ":-matrix.org}", 1), e, cf),
+            "federation must be closed by default: service 'synapse' must consume " + FEDERATION_ENV_NAME,
+        ),
+        (
+            "federation is open by default: Caddy routes every Matrix path",
+            lambda c, e, cf: (c, e, cf.replace("/_matrix/client/* /_matrix/media/*", "/_matrix/*", 1)),
+            "federation must be closed by default: Caddyfile must route only the Matrix client API",
+        ),
+        (
+            "federation is open by default: Caddy routes the federation API",
+            lambda c, e, cf: (c, e, cf.replace("/_synapse/client/*\n", "/_synapse/client/* /_matrix/federation/* /_matrix/key/*\n", 1)),
+            "never federation, key or admin routes (got '/_matrix/federation/*')",
+        ),
+        (
+            "the Synapse admin API is routed to the internet",
+            lambda c, e, cf: (c, e, cf.replace("/_synapse/client/*\n", "/_synapse/client/* /_synapse/admin/*\n", 1)),
+            "never federation, key or admin routes (got '/_synapse/admin/*')",
+        ),
+        (
+            "federation is open by default: the federation port is published",
+            lambda c, e, cf: (c.replace('      - "7881:7881"\n', '      - "7881:7881"\n      - "8448:8448"\n', 1), e, cf),
+            "docker-compose.yml must not publish the federation port 8448",
+        ),
+        (
+            "the agent API is exposed again",
+            lambda c, e, cf: (c, e, cf.replace("@api path /api/* /health/*", "@api path /api/* /health/* /agent/*", 1)),
+            "Caddyfile must not expose the agent API to the internet (got '/agent/*')",
+        ),
+        (
+            "the agent API is exposed through its own handle",
+            lambda c, e, cf: (c, e, cf.replace("\t\trespond 404\n\t}\n\n\t@api", "\t\treverse_proxy server:8000\n\t}\n\n\t@api", 1)),
+            "Caddyfile must not expose the agent API to the internet (got '/agent')",
+        ),
+        (
+            "an unreviewed route reaches the API",
+            lambda c, e, cf: (c, e, cf.replace("@api path /api/* /health/*", "@api path /api/* /health/* /admin/*", 1)),
+            "Caddyfile exposes an unreviewed route to 'server:8000': '/admin/*'",
+        ),
+        (
+            "the catch-all proxies to the API",
+            lambda c, e, cf: (c, e, cf.replace("reverse_proxy web:8080", "reverse_proxy server:8000", 1)),
+            "Caddyfile catch-all must proxy to 'web:8080' only",
+        ),
+        (
+            "a secret-looking default under an innocent name",
+            lambda c, e, cf: (c, re.sub(r"(?m)^KODERA_OIDC_CLIENT_ID=.*$", "KODERA_OIDC_CLIENT_ID=" + synthetic_hex, e, count=1), cf),
+            "secret-looking default in .env.example for KODERA_OIDC_CLIENT_ID",
+        ),
+        (
+            "a secret default in the compose file",
+            lambda c, e, cf: (c.replace("      POSTGRES_PASSWORD: " + synapse_db_password, "      POSTGRES_PASSWORD: ${" + SYNAPSE_DB_ENV_NAME + ":-synapse}", 1), e, cf),
+            f"secret default in docker-compose.yml for {SYNAPSE_DB_ENV_NAME}",
+        ),
+        (
+            "a literal secret in the compose file",
+            lambda c, e, cf: (c.replace("      POSTGRES_PASSWORD: " + synapse_db_password, "      POSTGRES_PASSWORD: synapse", 1), e, cf),
+            "literal secret in docker-compose.yml: service 'synapse-db' sets POSTGRES_PASSWORD",
+        ),
+        (
+            "the Synapse database password becomes a readable default",
+            lambda c, e, cf: (c, re.sub(r"(?m)^" + SYNAPSE_DB_ENV_NAME + r"=.*$", SYNAPSE_DB_ENV_NAME + "=synapse", e, count=1), cf),
+            f"non-placeholder secret value in .env.example for {SYNAPSE_DB_ENV_NAME}",
+        ),
+    ]
+
     preflight_cases: list[tuple[str, Callable[[str], str], str]] = [
         ("a placeholder is left", lambda env: env, "DJANGO_SECRET_KEY still holds a CHANGE_ME_ placeholder"),
         ("a key is missing", lambda env: re.sub(r"(?m)^LIVEKIT_API_SECRET=.*\n?", "", env), "LIVEKIT_API_SECRET is not set"),
@@ -767,7 +1299,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     filled = "\n".join(
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
-        else f"{key}=" if key == "KODERA_STAFF_ISSUER"
+        else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}=filled-value-{i}"
         for i, key in enumerate(parse_env_example(env_text)[0])
@@ -808,6 +1340,50 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             print("[FAIL] Community preflight mutation survived: " + label, file=sys.stderr)
             return 1
 
+    # Matrix sign-in and federation settings: the refusals first, then what is accepted.
+    def with_values(source: str, **values: str) -> str:
+        for key, value in values.items():
+            source = re.sub(r"(?m)^" + key + r"=.*$", lambda _match, key=key, value=value: key + "=" + value, source)
+        return source
+
+    generic_issuer = "https://id.example.net/realms/acme"
+    signed_in = with_values(filled, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: generic_issuer, SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL})
+    hardening_refusals = [
+        ("Synapse client secret without an issuer", with_values(filled, **{SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL}),
+         f"{SYNAPSE_OIDC_ENV_NAME} requires {SYNAPSE_OIDC_ISSUER_ENV_NAME}"),
+        ("Synapse issuer without its client secret", with_values(filled, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: generic_issuer}),
+         f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} requires the issued {SYNAPSE_OIDC_ENV_NAME}"),
+        ("Synapse issuer outside the trust registry", with_values(signed_in, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://other.example.net/realms/acme"}),
+         f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be a public https issuer admitted on the customer trust lane"),
+        ("Synapse issuer on the staff lane only", signed_in.replace('"lane":"customer"', '"lane":"staff"'),
+         f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be a public https issuer admitted on the customer trust lane"),
+        ("Synapse client secret left as a placeholder", with_values(signed_in, **{SYNAPSE_OIDC_ENV_NAME: "CHANGE_ME_ISSUED_SYNAPSE_CLIENT_SECRET"}),
+         f"{SYNAPSE_OIDC_ENV_NAME} still holds a CHANGE_ME_ placeholder"),
+        ("Community with a second Synapse issuer", with_values(canonical, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: generic_issuer}),
+         f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be empty or the canonical Community issuer"),
+        ("federation opened to every server", with_values(filled, **{FEDERATION_ENV_NAME: "*"}),
+         f"{FEDERATION_ENV_NAME} must list public server names"),
+        ("federation opened to a private name", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net,synapse.internal"}),
+         f"{FEDERATION_ENV_NAME} must list public server names"),
+    ]
+    for label, value, expected in hardening_refusals:
+        got = preflight_env(env_text, value)
+        if not any(expected in error for error in got):
+            print(f"[FAIL] preflight hardening case '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
+            return 1
+        if any("example.net" in error or SYNTHETIC_CREDENTIAL in error for error in got):
+            print(f"[FAIL] preflight hardening case '{label}' printed a value", file=sys.stderr)
+            return 1
+    hardening_accepted = [
+        ("isolated self-host with Matrix sign-in", signed_in),
+        ("federation opened to named servers", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net,other.example.net"})),
+        ("Community naming its own issuer for Synapse", with_values(canonical, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.net/realms/community"})),
+    ]
+    for label, value in hardening_accepted:
+        if preflight_env(env_text, value):
+            print(f"[FAIL] preflight refused '{label}': {preflight_env(env_text, value)}", file=sys.stderr)
+            return 1
+
     for label, mutate, expected_substring in mutations:
         m_compose, m_env, m_caddy = mutate(compose_text, env_text, caddyfile_text)
         if (m_compose, m_env, m_caddy) == (compose_text, env_text, caddyfile_text):
@@ -823,8 +1399,76 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
 
     print(
         f"OK: deploy/community stack valid, {len(mutations)} negative selftest mutations refused, "
-        f"{len(preflight_cases) + len(community_mutations)} preflight cases reported."
+        f"{len(preflight_cases) + len(community_mutations) + len(hardening_refusals) + len(hardening_accepted)} preflight cases reported."
     )
+    return 0
+
+
+# Each entry breaks one hardening invariant in configure_synapse.py; the behavioural check must
+# then name that invariant. (label, text to replace, replacement, expected refusal)
+SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
+    ("Synapse stays on SQLite", 'document["database"] = {"name": "psycopg2"', 'document["database_unused"] = {"name": "psycopg2"',
+     "Synapse must run on PostgreSQL, not SQLite"),
+    ("the database password is written to the configuration", '"host": DATABASE_HOST,', '"host": DATABASE_HOST, "password": "synapse",',
+     "its database password stays out of homeserver.yaml"),
+    ("an existing SQLite database is abandoned", 'if database.get("name") == "sqlite3" and', 'if database.get("name") == "never" and',
+     "Synapse must refuse to abandon an existing SQLite database"),
+    ("federation is open by default: no whitelist", 'document["federation_domain_whitelist"] = allowlist', 'document.pop("federation_domain_whitelist", None)',
+     "Synapse federation must be closed by default"),
+    ("federation is open by default: the listener stays", 'if name != "federation"]', 'if name]',
+     "Synapse federation must be closed by default"),
+    ("federation is open by default: the notary stays", 'document["trusted_key_servers"] = []', 'document.setdefault("trusted_key_servers", [])',
+     "Synapse federation must be closed by default"),
+    ("the federation allowlist accepts a wildcard", 'if not re.fullmatch(PUBLIC_DOMAIN, name) or name.endswith(PRIVATE_SUFFIXES):', 'if False:',
+     "Synapse federation allowlist must refuse a wildcard or private server name"),
+    ("the room-policy module is missing", '    modules.append({"module": MODULE, "config": {', '    dict({"module": MODULE, "config": {',
+     "Synapse room-policy module is missing or misconfigured"),
+    ("the room-access account is not named to the policy", '"room_access_user_id": f"@kodera-rooms:{server}",', '',
+     "Synapse room-policy module is missing or misconfigured"),
+    ("message rate limit removed", '    "rc_message": {"per_second": 0.2, "burst_count": 10},\n', '',
+     "Synapse rate limits must be set: rc_message"),
+    ("login rate limit loosened to a test value", '"address": {"per_second": 0.5, "burst_count": 50}', '"address": {"per_second": 50, "burst_count": 100}',
+     "Synapse rate limits must be set: rc_login.address"),
+    ("rate limits are never written", "        document[key] = copy.deepcopy(value)", "        pass",
+     "Synapse rate limits must be set: rc_invites.per_user"),
+    ("rate limits see the proxy, not the client", 'listener["x_forwarded"] = True', 'listener["x_forwarded"] = False',
+     "Synapse rate limits must see each client"),
+    ("password sign-in stays on", 'document["password_config"] = {"enabled": False}', 'document["password_config"] = {"enabled": True}',
+     "Synapse must keep open registration and password sign-in off"),
+    ("open registration", 'document["enable_registration"] = False', 'document["enable_registration"] = True',
+     "Synapse must keep open registration and password sign-in off"),
+    ("tokens never expire", 'document["refreshable_access_token_lifetime"] = "5m"', 'pass',
+     "Synapse must keep the documented setting refreshable_access_token_lifetime"),
+    ("room encryption by default", 'document["encryption_enabled_by_default_for_room_type"] = "off"', 'document["encryption_enabled_by_default_for_room_type"] = "all"',
+     "Synapse must keep the documented setting encryption_enabled_by_default_for_room_type"),
+    ("PKCE is optional", '"pkce_method": "always"', '"pkce_method": "never"',
+     "Synapse OIDC sign-in is not wired as documented"),
+    ("the Matrix ID comes from a mutable claim", '"localpart_template": "{{ user.sub | lower }}"', '"localpart_template": "{{ user.preferred_username }}"',
+     "Synapse OIDC sign-in is not wired as documented"),
+    ("the login token goes to a look-alike origin", 'client_whitelist=[f"https://{server}/"]', 'client_whitelist=[f"https://{server}"]',
+     "Synapse OIDC sign-in must return to the web origin with a trailing slash only"),
+    ("a plain-http issuer is accepted", 'r"https://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer', 'r"https?://" + PUBLIC_DOMAIN + r"(?:/[A-Za-z0-9._~/-]{0,512})?", issuer',
+     "Synapse OIDC sign-in accepts an unsafe issuer or a missing client credential"),
+    ("an unrelated identity provider is replaced", 'raise ValueError("Synapse sign-in refuses to replace an unrelated identity provider")', 'pass',
+     "Synapse OIDC sign-in must not silently replace an unrelated identity provider (kodera)"),
+)
+
+
+def run_synapse_config_selftest(source: str) -> int:
+    baseline = check_synapse_config(source)
+    if baseline:
+        for error in baseline:
+            print(f"[FAIL] baseline Synapse configuration invalid: {error}", file=sys.stderr)
+        return 1
+    for label, old, new, expected in SYNAPSE_CONFIG_MUTATIONS:
+        if source.count(old) != 1:
+            print(f"[FAIL] Synapse configuration mutation '{label}' does not apply exactly once", file=sys.stderr)
+            return 1
+        errors = check_synapse_config(source.replace(old, new))
+        if not any(expected in error for error in errors):
+            print(f"[FAIL] Synapse configuration mutation '{label}' did not trigger '{expected}' (got {errors})", file=sys.stderr)
+            return 1
+    print(f"OK: Synapse configuration hardened, {len(SYNAPSE_CONFIG_MUTATIONS)} configuration mutations refused by name.")
     return 0
 
 
@@ -875,7 +1519,7 @@ def main() -> int:
     caddyfile_text = args.caddyfile.read_text(encoding="utf-8")
 
     policy_source = (ROOT / "deploy/community/configure_synapse.py").read_text(encoding="utf-8")
-    source_errors = check_synapse_policy_source(policy_source)
+    source_errors = check_synapse_policy_source(policy_source) + check_synapse_config(policy_source)
     if source_errors:
         for error in source_errors:
             print("[FAIL] " + error, file=sys.stderr)
@@ -885,9 +1529,14 @@ def main() -> int:
             if not check_synapse_policy_source(policy_source.replace(guard, "removed")):
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1
-        return run_selftest(compose_text, env_text, caddyfile_text)
+        return (
+            run_synapse_config_selftest(policy_source)
+            or run_scaffolder_selftest()
+            or run_selftest(compose_text, env_text, caddyfile_text)
+        )
 
     errors = check_community_deploy(compose_text, env_text, caddyfile_text)
+    errors += check_scaffolder_parity(*read_scaffolder_state())
     if args.preflight is not None:
         if not args.preflight.is_file():
             print(f"[FAIL] .env not found: {args.preflight}", file=sys.stderr)
@@ -898,7 +1547,7 @@ def main() -> int:
             print(f"[FAIL] {err}", file=sys.stderr)
         return 1
 
-    print("OK: deploy/community passed all compose, .env.example, and Caddyfile checks.")
+    print("OK: deploy/community passed all compose, .env.example, Caddyfile, Synapse and scaffolder parity checks.")
     return 0
 
 
