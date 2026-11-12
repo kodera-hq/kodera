@@ -105,7 +105,13 @@ const { EspaceLiveView } = (await import(/* @vite-ignore */ source)) as {
     call: CallController
   }>
 }
-await import('@/i18n')
+// The catalogue is split by namespace, and only the entry namespaces travel with the application:
+// a screen's words arrive with its route (`ROUTE_UNITS` in `src/app/routeTree.ts`). This page has
+// no route, so it asks for what the workspace route would have brought before it draws the view;
+// without them the view refuses to draw a bare key and the proof never sees a face.
+const { ensureNamespaces } = await import('@/i18n')
+const { ORGANISATION_NAMESPACES } = await import('@/i18n/namespaces')
+await ensureNamespaces([...ORGANISATION_NAMESPACES, 'docs'])
 await import('@/index.css')
 
 let controller: CallController | null = null

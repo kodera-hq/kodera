@@ -7,7 +7,8 @@
 
 import { createElement, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import '@/i18n'
+import { ensureNamespaces } from '@/i18n'
+import { ORGANISATION_NAMESPACES } from '@/i18n/namespaces'
 import '@/index.css'
 import { EspaceLiveView, type EspaceStoreLike } from '@/features/espace/EspaceLiveView'
 import type { EspaceSnapshot, RoomSummary } from '@/features/espace/matrix/store'
@@ -145,6 +146,11 @@ function Navigating({ delay }: { delay: number }) {
       ),
   })
 }
+
+// The catalogue is split by namespace, and only the entry namespaces travel with the application:
+// a screen's words arrive with its route (`ROUTE_UNITS` in `src/app/routeTree.ts`). This page has
+// no route, so it asks for what the workspace route would have brought before it offers to draw.
+await ensureNamespaces([...ORGANISATION_NAMESPACES, 'docs'])
 
 const element = document.getElementById('root')
 if (element === null) throw Error('harness.html has no #root')
