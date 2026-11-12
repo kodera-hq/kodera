@@ -94,10 +94,7 @@ async function openConsoleAt(path: string) {
   // The browser's own address too: signing in again remembers
   // `window.location`, which a memory history alone would leave at `/`.
   window.history.replaceState(null, '', path)
-  const app = await createAppRouter()
-  const router = createRouter({
-    ...app.options,
-    routeTree: app.routeTree,
+  const router = await createAppRouter({
     history: createMemoryHistory({ initialEntries: [path] }),
   })
   invalidate = vi.spyOn(router, 'invalidate')

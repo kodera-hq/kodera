@@ -689,7 +689,9 @@ function load(control?: Control | CorrectionControl): Constructor {
   expect(Buffer.byteLength(converted.outputText), 'B_OUTPUT_CAP').toBeLessThanOrEqual(98304)
   const exports_: Record<string, unknown> = {}
   const allowedRequire = (specifier: string): unknown => {
-    if (specifier === 'oidc-client-ts') return sdk
+    // The adapter reaches the SDK through its loader; the harness hands it the SDK it owns.
+    if (specifier === './oidcSdk')
+      return { oidcSdkLoaded: () => true, oidcSdk: () => sdk, loadOidcSdk: () => Promise.resolve() }
     if (specifier === '../config')
       return { keycloakUrl: () => provider, oidcClientId: () => 'console' }
     throw new Error('B_SOURCE_IMPORT_REFUSED')
