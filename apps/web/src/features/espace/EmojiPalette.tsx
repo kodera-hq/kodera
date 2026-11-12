@@ -1,5 +1,6 @@
 // The composer's emoji palette (workspace audit item 4): « Insérer un émoji » opens a grid of 32
-// emoji, and choosing one writes it at the field's caret. No search: the « :nom: » shortcodes
+// emoji, then Kodera's own eight (`koderaShortcodes.ts`), and choosing one writes it at the field's
+// caret: a Unicode emoji as itself, a Kodera one as its code. No search: the « :nom: » shortcodes
 // (`emoji.ts`) reach every other emoji, and each button's tooltip is its code.
 //
 // Keyboard: one tab stop for the grid. The arrow keys move within it, `Home` and `End` go to its
@@ -10,7 +11,7 @@
 
 import { useNarrowViewport } from '../../app/useNarrowViewport'
 
-import { useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import type { KeyboardEvent, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cx } from '../../ui/cx'
@@ -18,6 +19,28 @@ import { EmojiIcon } from '../../ui/icons/Composer'
 import { Popover } from '../../ui/Popover/Popover'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
 import { PALETTE_EMOJI } from './emoji'
+import { KoderaEmoji } from './KoderaEmoji'
+import { KODERA_EMOJI, shortcodeOf } from './koderaShortcodes'
+
+/** Every cell of the grid: the Unicode emoji, then Kodera's own, written as their code. */
+const CELLS: readonly {
+  key: string
+  text: string
+  title: string
+  kodera?: (typeof KODERA_EMOJI)[number]
+}[] = [
+  ...PALETTE_EMOJI.map(({ emoji, names }) => ({
+    key: emoji,
+    text: emoji,
+    title: `:${names[0]!}:`,
+  })),
+  ...KODERA_EMOJI.map((name) => ({
+    key: name,
+    text: shortcodeOf(name),
+    title: shortcodeOf(name),
+    kodera: name,
+  })),
+]
 
 function moves(columns: number): Record<string, (at: number) => number> {
   return {
@@ -26,7 +49,7 @@ function moves(columns: number): Record<string, (at: number) => number> {
     ArrowDown: (at) => at + columns,
     ArrowUp: (at) => at - columns,
     Home: () => 0,
-    End: () => PALETTE_EMOJI.length - 1,
+    End: () => CELLS.length - 1,
   }
 }
 
@@ -58,7 +81,7 @@ export function EmojiPalette({
     const move = moves(narrow ? 6 : 8)[event.key]
     if (move === undefined) return
     event.preventDefault()
-    const next = Math.min(Math.max(move(active), 0), PALETTE_EMOJI.length - 1)
+    const next = Math.min(Math.max(move(active), 0), CELLS.length - 1)
     setActive(next)
     cells.current[next]?.focus()
   }
@@ -96,31 +119,37 @@ export function EmojiPalette({
       {/* The grid's own arrow keys; each cell is a button and stays one. */}
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
       <div className={cx('grid gap-1', narrow ? 'grid-cols-6' : 'grid-cols-8')} onKeyDown={keyDown}>
-        {PALETTE_EMOJI.map(({ emoji, names }, index) => (
-          <button
-            key={emoji}
-            ref={(element) => {
-              cells.current[index] = element
-            }}
-            type="button"
-            tabIndex={index === active ? 0 : -1}
-            title={`:${names[0]!}:`}
-            aria-label={t('console.workspace.composer.action-insert-emoji', { emoji })}
-            onFocus={() => setActive(index)}
-            onClick={() => {
-              // `onPick` focuses the field, outside the popover, so Radix leaves the focus there
-              // as the popover closes instead of returning it to the button.
-              onPick(emoji)
-              setOpen(false)
-            }}
-            className={cx(
-              'inline-flex h-8 w-8 items-center justify-center rounded-md text-lg',
-              'hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden',
-              TOUCH_TARGET
-            )}
-          >
-            {emoji}
-          </button>
+        {CELLS.map(({ key, text, title, kodera }, index) => (
+          <Fragment key={key}>
+            {index === PALETTE_EMOJI.length ? (
+              <p className="col-span-full pt-2 text-xs font-semibold text-c-ink-3">
+                {t('console.workspace.composer.label-kodera-emoji')}
+              </p>
+            ) : null}
+            <button
+              ref={(element) => {
+                cells.current[index] = element
+              }}
+              type="button"
+              tabIndex={index === active ? 0 : -1}
+              title={title}
+              aria-label={t('console.workspace.composer.action-insert-emoji', { emoji: text })}
+              onFocus={() => setActive(index)}
+              onClick={() => {
+                // `onPick` focuses the field, outside the popover, so Radix leaves the focus there
+                // as the popover closes instead of returning it to the button.
+                onPick(text)
+                setOpen(false)
+              }}
+              className={cx(
+                'inline-flex h-8 w-8 items-center justify-center rounded-md text-lg',
+                'hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden',
+                TOUCH_TARGET
+              )}
+            >
+              {kodera === undefined ? text : <KoderaEmoji name={kodera} />}
+            </button>
+          </Fragment>
         ))}
       </div>
     </Popover>

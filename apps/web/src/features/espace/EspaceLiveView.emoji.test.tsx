@@ -340,7 +340,8 @@ describe('« Insérer un émoji »', () => {
     await user.click(screen.getByRole('button', { name: 'Insérer un émoji' }))
     const palette = screen.getByRole('dialog', { name: 'Émojis' })
     const cells = within(palette).getAllByRole('button')
-    expect(cells).toHaveLength(32)
+    // 32 Unicode emoji, then Kodera's own 8.
+    expect(cells).toHaveLength(40)
     expect(cells.slice(0, 8).map((cell) => cell.textContent)).toEqual([
       '👍',
       '❤️',
@@ -391,9 +392,9 @@ describe('« Insérer un émoji »', () => {
     // The first cell holds: no wrap past either end.
     expect(cells[0]).toHaveFocus()
     await user.keyboard('{End}')
-    expect(cells[31]).toHaveFocus()
+    expect(cells[39]).toHaveFocus()
     await user.keyboard('{ArrowDown}{ArrowRight}')
-    expect(cells[31]).toHaveFocus()
+    expect(cells[39]).toHaveFocus()
     await user.keyboard('{Home}')
     expect(cells[0]).toHaveFocus()
     expect(cells.filter((cell) => cell.tabIndex === 0)).toEqual([cells[0]])
@@ -431,5 +432,27 @@ describe('« Insérer un émoji »', () => {
     await user.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}{Enter}')
     expect(composer).toHaveValue('Top 🎉')
     await waitFor(() => expect(composer).toHaveFocus())
+  })
+})
+
+describe("Kodera's own emoji", () => {
+  it('are offered after the others in the palette, and written as their code', async () => {
+    const user = userEvent.setup()
+    const store = makeStore()
+    const composer = renderView(store)
+    await user.click(screen.getByRole('button', { name: 'Insérer un émoji' }))
+    expect(screen.getByText('Émojis Kodera')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /:kodera_spark:/u }))
+    expect(composer).toHaveValue(':kodera_spark:')
+    await user.keyboard('{Enter}')
+    expect(store.send).toHaveBeenCalledWith(ROOM, ':kodera_spark:', {})
+  })
+
+  it('reach the end of the grid with End', async () => {
+    const user = userEvent.setup()
+    renderView(makeStore())
+    await user.click(screen.getByRole('button', { name: 'Insérer un émoji' }))
+    await user.keyboard('{End}')
+    expect(document.activeElement).toHaveAccessibleName(/:kodera_wave:/u)
   })
 })

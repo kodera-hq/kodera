@@ -52,6 +52,14 @@ A header button opens a field that searches the channel's loaded messages (`sear
 - **Results.** At most 50, newest first; a line says when more matched. The count is announced in a polite status. The list follows the field through `useDeferredValue`, so typing stays responsive in a long channel. Each message's folded text is computed once.
 - **Jumping.** Choosing a result works like choosing a pin.
 
+### Kodera emoji
+
+Kodera has eight emoji of its own, written `:kodera_mark:`, `:kodera_heart:`, `:kodera_check:`, `:kodera_spark:`, `:kodera_coop:`, `:kodera_sky:`, `:kodera_sun:` and `:kodera_wave:` (`koderaShortcodes.ts`). No Unicode emoji writes them, so a message's body keeps the code, and another Matrix client shows it as text.
+
+- **Drawing.** Kodera draws an exact, known, lower-case code as its glyph: an inline SVG at the text's size. The glyph has no colour of its own; it takes `currentColor`, coloured by the accent ink role, so it follows every theme. Its accessible name and tooltip are its code. An unknown code, another case, or a Unicode shortcode stays text, and the text around it keeps its inline Markdown.
+- **Loading.** The glyphs are a separate chunk (`KoderaEmojiGlyphs.tsx`, under 1 kB gzip), fetched the first time one is drawn. Until then the code shows. If the chunk cannot be fetched, the code stays: a message is never lost for a glyph.
+- **Writing.** The composer's palette lists the eight after the 32 Unicode emoji, under « Émojis Kodera ». The grid keeps one tab stop, and `End` reaches the last Kodera emoji. Choosing one writes its code at the caret.
+
 ## Acceptance
 
 Run `npx vitest run src/features/espace` and `npx playwright test -c playwright.espace.config.ts tests/espace/layout/scale.spec.ts tests/espace/layout/cache.spec.ts`.
@@ -67,6 +75,7 @@ Run `npx vitest run src/features/espace` and `npx playwright test -c playwright.
 - `searchMatching.test.ts` covers folding, the two-character floor, all-words matching by text and author, deleted messages, the 50-result cap, and 10,000 messages searched within a frame.
 - `store.pins.test.ts` runs the real SDK. Pins are read from the room's state, ids only and once each; pinning sends the whole list; nothing is sent for a pin already there; and a stopped store lets no one pin.
 - `EspaceLiveView.pins.test.tsx` pins and unpins from the menu, hides the item from a member without the right, lists pins latest first with the unloaded one said, finds messages regardless of accents, and focuses the message chosen.
+- `koderaShortcodes.test.ts`, `MessageText.test.tsx` and `EspaceLiveView.emoji.test.tsx` cover the emoji. Only exact known codes are cut out, and every code has a glyph and no glyph lacks one. A glyph is drawn, named by its code, with no colour literal, while unknown codes, Unicode codes and Markdown around them stay as sent. The palette offers the eight after the others, writes and sends the code, and `End` reaches the last.
 - `cache.spec.ts` runs on the browser's real IndexedDB. A room is read back at 200 messages for its member and for no one else, and ending the Matrix session wipes every record.
 
 ## Evidence
