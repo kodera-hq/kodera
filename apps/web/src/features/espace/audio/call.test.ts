@@ -281,6 +281,10 @@ describe('CallController', () => {
       // Whose ring the member's own microphone draws.
       self: ME,
       playbackBlocked: false,
+      // Video is the member's to turn on: never on at a join.
+      videos: [],
+      camera: 'off',
+      screen: 'off',
     })
   })
 
@@ -322,12 +326,14 @@ describe('CallController', () => {
     expect(mount.contains(element!)).toBe(false)
   })
 
-  it('ignores video tracks: audio rooms play sound only', async () => {
-    const { call, room } = setup()
+  it('never plays a video track as sound: it is drawn only where a screen asks for it', async () => {
+    const { call, room, mount } = setup()
     await call.join(STANDUP)
     const video = new FakeTrack('video')
     room().emit(RoomEvent.TrackSubscribed, video, new FakePublication(video), {})
     expect(video.attach).not.toHaveBeenCalled()
+    expect(mount.querySelectorAll('audio, video')).toHaveLength(0)
+    expect(call.getSnapshot().videos).toEqual([])
   })
 
   it('deafens: silences what plays, what arrives later, and the microphone; undeafening restores', async () => {

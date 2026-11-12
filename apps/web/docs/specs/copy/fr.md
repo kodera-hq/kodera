@@ -1645,6 +1645,39 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.audio.action-test-sound` | Tester le son |
 | `console.workspace.audio.problem-test-sound` | Le son de test n’a pas pu être joué sur cette sortie. Choisissez-en une autre, puis réessayez. |
 | `console.workspace.audio.problem-microphone-stuck` | Votre micro n’a pas pu être coupé : l’appel a été arrêté pour que personne ne vous entende. |
+| `console.workspace.audio.action-camera-on` | Activer la caméra |
+| `console.workspace.audio.action-camera-off` | Couper la caméra |
+| `console.workspace.audio.action-screen-on` | Partager l’écran |
+| `console.workspace.audio.action-screen-off` | Arrêter le partage d’écran |
+| `console.workspace.audio.label-stage` | Vidéo de l’appel |
+| `console.workspace.audio.label-camera-of` | Caméra de {name} |
+| `console.workspace.audio.label-screen-of` | Écran partagé par {name} |
+| `console.workspace.audio.label-your-camera` | Votre caméra |
+| `console.workspace.audio.label-your-screen` | Votre écran partagé |
+| `console.workspace.audio.action-spotlight` | Mettre en avant |
+| `console.workspace.audio.action-unspotlight` | Ne plus mettre en avant |
+| `console.workspace.audio.action-picture-in-picture` | Ouvrir en image dans l’image |
+| `console.workspace.audio.action-dock-stage` | Réduire la vidéo en vignette |
+| `console.workspace.audio.action-expand-stage` | Agrandir la vidéo |
+| `console.workspace.audio.problem-camera` | La caméra n’a pas pu démarrer. |
+| `console.workspace.audio.problem-camera-denied` | Le navigateur refuse la caméra à Kodera. Autorisez-la dans les réglages du site, puis réessayez. |
+| `console.workspace.audio.problem-camera-missing` | Aucune caméra n’est branchée. |
+| `console.workspace.audio.problem-camera-in-use` | La caméra est utilisée par une autre application. |
+| `console.workspace.audio.problem-screen` | L’écran n’a pas pu être partagé. |
+| `console.workspace.audio.problem-video-forbidden` | Dans ce salon, vous pouvez écouter mais pas prendre la parole : ni caméra ni partage d’écran. |
+| `console.workspace.audio.label-rejoin-waiting` | Connexion perdue. Nouvelle tentative bientôt (essai {attempt} sur {attempts}). |
+| `console.workspace.audio.label-rejoin-trying` | Reconnexion (essai {attempt} sur {attempts})… |
+| `console.workspace.audio.label-rejoin-offline` | Hors ligne : la reconnexion attend le retour du réseau. |
+| `console.workspace.audio.label-rejoin-gave-up` | La connexion n’a pas pu être rétablie. |
+| `console.workspace.audio.label-resuming` | Connexion instable : reprise en cours… |
+| `console.workspace.audio.action-rejoin-now` | Réessayer maintenant |
+| `console.workspace.audio.label-input-mode` | Prise de parole |
+| `console.workspace.audio.option-voice` | Micro ouvert |
+| `console.workspace.audio.option-push-to-talk` | Appuyer pour parler |
+| `console.workspace.audio.hint-push-to-talk` | Maintenez la touche située sous la touche d’échappement (² sur un clavier français) pour parler. |
+| `console.workspace.audio.label-noise-suppression` | Réduction du bruit |
+| `console.workspace.audio.status-push-to-talk` | Appuyer pour parler |
+| `console.workspace.audio.label-already-here` | Déjà dans le salon |
 | `console.workspace.audio.confirm-leave-title` | Quitter l’appel ? |
 | `console.workspace.audio.confirm-leave-body` | Quitter cette page mettra fin à votre appel. Les autres personnes restent dans le salon. |
 | `console.workspace.audio.action-confirm-leave` | Quitter l’appel |

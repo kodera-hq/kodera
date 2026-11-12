@@ -366,3 +366,64 @@ describe('AudioSettings (« Réglages audio »)', () => {
     engine.destroy()
   })
 })
+
+describe('AudioSettings: how the member speaks', () => {
+  it('switches to push-to-talk, says which key to hold, and remembers it', async () => {
+    const { CallPreferences } = await import('./audio/callPreferences')
+    const preferences = new CallPreferences()
+    const user = userEvent.setup()
+    render(
+      <AudioSettings
+        call={fakeCall()}
+        inputMissing={false}
+        meterRef={{ current: null }}
+        listDevices={async () => DEVICES}
+        watchDevices={() => () => undefined}
+        canChooseOutput
+        preferences={preferences}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Réglages audio' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Réglages audio' })
+    expect(within(dialog).getByRole('radio', { name: 'Micro ouvert' })).toBeChecked()
+    await user.click(within(dialog).getByRole('radio', { name: 'Appuyer pour parler' }))
+    expect(preferences.getSnapshot().inputMode).toBe('push-to-talk')
+    expect(
+      within(dialog).getByText(
+        'Maintenez la touche située sous la touche d’échappement (² sur un clavier français) pour parler.'
+      )
+    ).toBeInTheDocument()
+    window.localStorage.clear()
+  })
+
+  it('turns noise suppression off through the call, which applies it to the live microphone', async () => {
+    const { CallPreferences } = await import('./audio/callPreferences')
+    const preferences = new CallPreferences()
+    const user = userEvent.setup()
+    const call = {
+      ...fakeCall(),
+      setNoiseSuppression: vi.fn(async (on: boolean) =>
+        preferences.update({ noiseSuppression: on })
+      ),
+    }
+    render(
+      <AudioSettings
+        call={call}
+        inputMissing={false}
+        meterRef={{ current: null }}
+        listDevices={async () => DEVICES}
+        watchDevices={() => () => undefined}
+        canChooseOutput
+        preferences={preferences}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Réglages audio' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Réglages audio' })
+    const noise = within(dialog).getByRole('switch', { name: 'Réduction du bruit' })
+    expect(noise).toBeChecked()
+    await user.click(noise)
+    expect(call.setNoiseSuppression).toHaveBeenCalledWith(false)
+    await waitFor(() => expect(noise).not.toBeChecked())
+    window.localStorage.clear()
+  })
+})
