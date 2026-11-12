@@ -2874,10 +2874,852 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/moderation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Moderate workspace member
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited. A stored workspace moderator grant is required unless the caller is an owner or admin. Token-supplied moderator claims grant nothing.
+         */
+        post: operations["moderateWorkspaceMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List abuse reports
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited. A stored workspace moderator grant is required unless the caller is an owner or admin. Token-supplied moderator claims grant nothing.
+         */
+        get: operations["listAbuseReports"];
+        put?: never;
+        /**
+         * Create abuse report
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["createAbuseReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/reports/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Resolve abuse report
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited. A stored workspace moderator grant is required unless the caller is an owner or admin. Token-supplied moderator claims grant nothing.
+         */
+        patch: operations["resolveAbuseReport"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/invite-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace invite links
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["listWorkspaceInviteLinks"];
+        put?: never;
+        /**
+         * Create workspace invite link
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["createWorkspaceInviteLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/invite-links/{invite_link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke workspace invite link
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        delete: operations["revokeWorkspaceInviteLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace-invites/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview workspace invite
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["previewWorkspaceInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace-invites/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redeem workspace invite
+         * @description Rate limited; verified identity and email required. Lock the link row, check revocation, expiry and usesCount < maxUses, then add membership and increment usesCount atomically. Retries and existing members never consume another use. Codes never appear in URLs or logs.
+         */
+        post: operations["redeemWorkspaceInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/attachments/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create attachment upload
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["createAttachmentUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete attachment upload
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["completeAttachmentUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get attachment
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["getAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/unfurl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unfurl url
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["unfurlUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List notifications
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["listNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark notifications read
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["markNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get push public key
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["getPushPublicKey"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/push/subscriptions/{device_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put push subscription
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        put: operations["putPushSubscription"];
+        post?: never;
+        /**
+         * Delete push subscription
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        delete: operations["deletePushSubscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace documents
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["listWorkspaceDocuments"];
+        put?: never;
+        /**
+         * Create workspace document
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["createWorkspaceDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/documents/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get workspace document
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["getWorkspaceDocument"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete workspace document
+         * @description Editors only; reject deletion of non-empty parents with 409 conflict. Removal revokes collaboration tickets and closes active sessions.
+         */
+        delete: operations["deleteWorkspaceDocument"];
+        options?: never;
+        head?: never;
+        /**
+         * Update workspace document
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        patch: operations["updateWorkspaceDocument"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/documents/{document_id}/backlinks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List document backlinks
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["listDocumentBacklinks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/documents/{document_id}/collab-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create document collab session
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        post: operations["createDocumentCollabSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search workspace
+         * @description Organisation is derived from the verified issuer; current active membership and resource visibility are checked on every request. Responses are Cache-Control: no-store. All mutations are audited.
+         */
+        get: operations["searchWorkspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * WorkspaceModerationRequest
+         * @description Moderator actions are audited. Moderators cannot target owners or admins. Mute requires a future expiresAt, at most 30 days away; other actions refuse expiresAt. Bans block Core room tickets, Matrix joins and messages. Mutes are evaluated against server time on every publish and post.
+         */
+        WorkspaceModerationRequest: {
+            /** Format: uuid */
+            membershipId: string;
+            /** @enum {string} */
+            action: "kick" | "ban" | "unban" | "mute";
+            reason: string;
+            /** Format: date-time */
+            expiresAt?: string;
+        };
+        /**
+         * WorkspaceModeration
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "membershipId": "00000000-0000-7000-8000-000000000002",
+         *       "action": "mute",
+         *       "expiresAt": "2026-01-02T12:00:00Z",
+         *       "createdAt": "2026-01-01T12:00:00Z"
+         *     }
+         */
+        WorkspaceModeration: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            membershipId: string;
+            /** @enum {string} */
+            action: "kick" | "ban" | "unban" | "mute";
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** AbuseReportRequest */
+        AbuseReportRequest: {
+            /** Format: uuid */
+            membershipId: string;
+            /** Format: uuid */
+            channelId?: string;
+            eventId?: string;
+            reason: string;
+        };
+        /**
+         * AbuseReport
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "membershipId": "00000000-0000-7000-8000-000000000002",
+         *       "reason": "Unwanted messages",
+         *       "status": "open",
+         *       "resolution": null,
+         *       "createdAt": "2026-01-01T12:00:00Z"
+         *     }
+         */
+        AbuseReport: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            membershipId: string;
+            reason: string;
+            /** @enum {string} */
+            status: "open" | "resolved" | "dismissed";
+            resolution: string | null;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** ResolveAbuseReportRequest */
+        ResolveAbuseReportRequest: {
+            /** @enum {string} */
+            status: "resolved" | "dismissed";
+            resolution: string;
+        };
+        /**
+         * WorkspaceInviteLinkRequest
+         * @description Only owners/admins can grant moderator. Scope is restricted to this organisation; channel must belong to its workspace. Expiration is mandatory and no more than 30 days away.
+         */
+        WorkspaceInviteLinkRequest: {
+            /** Format: date-time */
+            expiresAt: string;
+            maxUses: number;
+            /** Format: uuid */
+            channelId?: string;
+            /** @enum {string} */
+            role?: "org_member" | "moderator";
+        };
+        /**
+         * WorkspaceInviteLink
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "expiresAt": "2026-01-02T12:00:00Z",
+         *       "maxUses": 10,
+         *       "usesCount": 0,
+         *       "revokedAt": null,
+         *       "channelId": null,
+         *       "role": "org_member"
+         *     }
+         */
+        WorkspaceInviteLink: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            expiresAt: string;
+            maxUses: number;
+            usesCount: number;
+            /** Format: date-time */
+            revokedAt: string | null;
+            /** Format: uuid */
+            channelId: string | null;
+            /** @enum {string} */
+            role: "org_member" | "moderator";
+        };
+        /**
+         * CreatedWorkspaceInviteLink
+         * @description The random code is disclosed only on creation, never on list. Store only its cryptographic digest. Redemptions serialize the usage counter and are idempotent per caller.
+         * @example {
+         *       "link": {
+         *         "id": "00000000-0000-7000-8000-000000000001",
+         *         "expiresAt": "2026-01-02T12:00:00Z",
+         *         "maxUses": 10,
+         *         "usesCount": 0,
+         *         "revokedAt": null,
+         *         "channelId": null,
+         *         "role": "org_member"
+         *       },
+         *       "code": "example-invite-code-do-not-redeem"
+         *     }
+         */
+        CreatedWorkspaceInviteLink: {
+            link: components["schemas"]["WorkspaceInviteLink"];
+            code: string;
+        };
+        /** WorkspaceInviteCodeRequest */
+        WorkspaceInviteCodeRequest: {
+            code: string;
+        };
+        /**
+         * WorkspaceInvitePreview
+         * @description Rate limited and non-consuming. Invalid, expired, revoked and exhausted codes return indistinguishable 404 problems. No member information is disclosed.
+         * @example {
+         *       "organisationName": "Example workspace",
+         *       "role": "org_member",
+         *       "expiresAt": "2026-01-02T12:00:00Z"
+         *     }
+         */
+        WorkspaceInvitePreview: {
+            organisationName: string;
+            /** @enum {string} */
+            role: "org_member" | "moderator";
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        /**
+         * WorkspaceInviteRedemption
+         * @example {
+         *       "organisationId": "00000000-0000-7000-8000-000000000001",
+         *       "membershipId": "00000000-0000-7000-8000-000000000002"
+         *     }
+         */
+        WorkspaceInviteRedemption: {
+            /** Format: uuid */
+            organisationId: string;
+            /** Format: uuid */
+            membershipId: string;
+        };
+        /**
+         * AttachmentUploadRequest
+         * @description SHA-256 is the lowercase hex digest. The upload signature binds checksum, content type and size to an organisation-scoped random object key. HTML and SVG are refused.
+         */
+        AttachmentUploadRequest: {
+            filename: string;
+            /** @enum {string} */
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" | "application/pdf" | "text/plain" | "application/octet-stream";
+            sizeBytes: number;
+            sha256: string;
+        };
+        /**
+         * AttachmentUploadTicket
+         * @description Short-lived presigned URL, no storage credentials. The client must send exactly these signed headers. Completion verifies the actual object before making metadata visible.
+         * @example {
+         *       "attachmentId": "00000000-0000-7000-8000-000000000001",
+         *       "uploadUrl": "https://storage.example.org/upload",
+         *       "method": "PUT",
+         *       "headers": {
+         *         "Content-Type": "image/png"
+         *       },
+         *       "expiresAt": "2026-01-01T12:00:00Z"
+         *     }
+         */
+        AttachmentUploadTicket: {
+            /** Format: uuid */
+            attachmentId: string;
+            /** Format: uri */
+            uploadUrl: string;
+            /** @enum {string} */
+            method: "PUT";
+            headers: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        /**
+         * Attachment
+         * @description Membership is checked on every metadata/download ticket request. Non-image MIME types force Content-Disposition attachment. Download URLs are short-lived and must not be logged.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "filename": "example.png",
+         *       "contentType": "image/png",
+         *       "sizeBytes": 1234,
+         *       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+         *       "downloadUrl": "https://storage.example.org/download",
+         *       "expiresAt": "2026-01-01T12:00:00Z",
+         *       "disposition": "inline"
+         *     }
+         */
+        Attachment: {
+            /** Format: uuid */
+            id: string;
+            filename: string;
+            contentType: string;
+            sizeBytes: number;
+            sha256: string;
+            /** Format: uri */
+            downloadUrl: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** @enum {string} */
+            disposition: "inline" | "attachment";
+        };
+        /**
+         * UnfurlRequest
+         * @description Only HTTP(S), ports 80/443. Resolve once per hop, reject every non-public address including mapped IPv6, pin TCP to the validated address while preserving TLS hostname verification, revalidate at most three redirects. Three-second total deadline and 256 KiB text/html maximum.
+         */
+        UnfurlRequest: {
+            /** Format: uri */
+            url: string;
+        };
+        /** UnfurlImage */
+        UnfurlImage: {
+            /** Format: uri */
+            url: string;
+            width: number;
+            height: number;
+            /** @enum {string} */
+            contentType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+        };
+        /**
+         * UnfurlResult
+         * @description All text is plain sanitized text. Canonical and image URLs pass the same public-target policy; unvalidated images are omitted. Never return HTML.
+         * @example {
+         *       "url": "https://example.org/article",
+         *       "canonicalUrl": "https://example.org/article",
+         *       "title": "Example article",
+         *       "description": "A public article.",
+         *       "siteName": "Example"
+         *     }
+         */
+        UnfurlResult: {
+            /** Format: uri */
+            url: string;
+            /** Format: uri */
+            canonicalUrl: string;
+            title: string;
+            description: string;
+            siteName: string;
+            image?: components["schemas"]["UnfurlImage"];
+        };
+        /** @description 403 RFC 9457 forbidden problem. reason distinguishes policy-blocked targets and private/reserved DNS answers without disclosing resolved addresses. */
+        UnfurlBlockedProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            type?: "https://kodera.io/problems/forbidden";
+            /** @enum {string} */
+            reason: "blocked-target" | "private-target";
+        };
+        /**
+         * Notification
+         * @description Authenticated inbox entry; no message plaintext is sent through Web Push.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "kind": "document",
+         *       "resourceId": "00000000-0000-7000-8000-000000000002",
+         *       "createdAt": "2026-01-01T12:00:00Z",
+         *       "readAt": null
+         *     }
+         */
+        Notification: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "mention" | "invitation" | "moderation" | "document";
+            /** Format: uuid */
+            resourceId: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            readAt: string | null;
+        };
+        /** MarkNotificationsReadRequest */
+        MarkNotificationsReadRequest: {
+            ids: string[];
+        };
+        /**
+         * PushPublicKey
+         * @description Base64url uncompressed P-256 VAPID public key. Wakeups have an empty body; clients fetch this authenticated inbox. No message, title, document text, or resource identifier is sent to the push provider.
+         * @example {
+         *       "publicKey": "example-public-key-placeholder",
+         *       "payloadMode": "empty"
+         *     }
+         */
+        PushPublicKey: {
+            publicKey: string;
+            /** @enum {string} */
+            payloadMode: "empty";
+        };
+        /**
+         * PushSubscriptionRequest
+         * @description Subscription belongs to this authenticated user and device only. Validate the decoded P-256 point and 16-byte auth secret. Endpoint uses the same public-address, pinned transport policy as unfurl; do not permit a push endpoint to become an SSRF proxy. Dead 404/410 subscriptions are pruned.
+         */
+        PushSubscriptionRequest: {
+            /** Format: uri */
+            endpoint: string;
+            p256dh: string;
+            auth: string;
+        };
+        /**
+         * WorkspaceDocumentRequest
+         * @description Maximum depth 16, same-workspace parent only. No chat-thread promotion endpoint exists.
+         */
+        WorkspaceDocumentRequest: {
+            title: string;
+            /** Format: uuid */
+            parentId?: string | null;
+            /** @enum {string} */
+            templateKey?: "spec" | "adr" | "meeting_notes" | "runbook";
+        };
+        /**
+         * WorkspaceDocumentPatch
+         * @description At least one field required. Reject cycles and descendant trees exceeding depth 16. Markdown replacement uses If-Match; collaboration snapshots remain authoritative.
+         */
+        WorkspaceDocumentPatch: {
+            title?: string;
+            /** Format: uuid */
+            parentId?: string | null;
+            markdown?: string;
+        };
+        /**
+         * WorkspaceDocument
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "parentId": null,
+         *       "title": "Example specification",
+         *       "markdown": "# Example specification\n",
+         *       "role": "editor",
+         *       "updatedAt": "2026-01-01T12:00:00Z"
+         *     }
+         */
+        WorkspaceDocument: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            parentId: string | null;
+            title: string;
+            markdown: string;
+            /** @enum {string} */
+            role: "editor" | "viewer";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * DocumentBacklink
+         * @example {
+         *       "documentId": "00000000-0000-7000-8000-000000000001",
+         *       "title": "Example specification"
+         *     }
+         */
+        DocumentBacklink: {
+            /** Format: uuid */
+            documentId: string;
+            title: string;
+        };
+        /**
+         * WorkspaceSearchResult
+         * @description Only resources visible to the authenticated membership; restricted channels and documents never leak via search or backlinks.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "kind": "document",
+         *       "title": "Example specification",
+         *       "excerpt": "Example"
+         *     }
+         */
+        WorkspaceSearchResult: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "document" | "channel";
+            title: string;
+            excerpt: string;
+        };
+        /**
+         * DocumentCollabSession
+         * @description Ticket lifetime at most 300 seconds, bound to one document, organisation and subject. Validate current membership and document policy before minting and room join. Viewer connections receive sync, updates and awareness, but client state updates are dropped and audited. Invalid/expired tickets close 4401; cross-org/wrong-doc/role violations close 4403. Ticket travels in the first frame, never a query string or logs.
+         * @example {
+         *       "wsUrl": "wss://api.example.org/documents/collab",
+         *       "token": "example-ticket-placeholder",
+         *       "expiresAt": "2026-01-01T12:00:00Z",
+         *       "role": "viewer"
+         *     }
+         */
+        DocumentCollabSession: {
+            /** Format: uri */
+            wsUrl: string;
+            token: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** @enum {string} */
+            role: "editor" | "viewer";
+        };
         InstantClaimTenantRequest: {
             organizationName: string;
             /** @description Platform names, community, xn-- and synth- prefixes are reserved. */
@@ -8856,6 +9698,11 @@ export interface components {
         };
     };
     parameters: {
+        ReportId: string;
+        InviteLinkId: string;
+        AttachmentId: string;
+        DocumentId: string;
+        DeviceId: string;
         /** @description Required compatibility header only for discoverRealm. Validate then discard. Every request is a fresh charged current lookup, including identical, different-body and concurrent reuse. This operation is explicitly exempt from generic 24-hour response replay, fingerprint, key-reuse and in-flight rules. No key or response is stored; no Idempotency-Replayed header or idempotency 409 is emitted. Other POST operations retain the generic IdempotencyKey parameter and rules. */
         DiscoveryCompatibilityKey: string;
         /**
@@ -14396,6 +15243,1195 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             502: components["responses"]["UpstreamUnavailable"];
+        };
+    };
+    moderateWorkspaceMember: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceModerationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceModeration"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listAbuseReports: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["AbuseReport"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createAbuseReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbuseReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbuseReport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    resolveAbuseReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                report_id: components["parameters"]["ReportId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveAbuseReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AbuseReport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaceInviteLinks: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+                status?: "active" | "revoked" | "all";
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["WorkspaceInviteLink"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createWorkspaceInviteLink: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceInviteLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedWorkspaceInviteLink"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokeWorkspaceInviteLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                invite_link_id: components["parameters"]["InviteLinkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    previewWorkspaceInvite: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceInviteCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceInvitePreview"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    redeemWorkspaceInvite: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceInviteCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceInviteRedemption"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createAttachmentUpload: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachmentUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentUploadTicket"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    completeAttachmentUpload: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                attachment_id: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                attachment_id: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    unfurlUrl: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnfurlRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnfurlResult"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description Blocked or private target. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["UnfurlBlockedProblem"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["Notification"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    markNotificationsRead: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkNotificationsReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getPushPublicKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushPublicKey"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    putPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: components["parameters"]["DeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushSubscriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deletePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: components["parameters"]["DeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaceDocuments: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Direct children of this parent; omitted returns all authorized pages as a flat tree with parentId edges. */
+                parentId?: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["WorkspaceDocument"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createWorkspaceDocument: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceDocumentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDocument"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getWorkspaceDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDocument"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteWorkspaceDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateWorkspaceDocument: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceDocumentPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceDocument"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listDocumentBacklinks: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["DocumentBacklink"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createDocumentCollabSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentCollabSession"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    searchWorkspace: {
+        parameters: {
+            query: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+                q: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["WorkspaceSearchResult"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
         };
     };
 }

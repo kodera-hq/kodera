@@ -34,7 +34,7 @@ const collections = operations.filter((op) => op.isList)
 describe('the generated handlers', () => {
   it('cover every operation in the contract', () => {
     // A count that silently drops to zero would make every assertion below vacuous.
-    expect(operations.length).toBe(116)
+    expect(operations.length).toBe(142)
     expect(collections.length).toBeGreaterThan(20)
   })
 
@@ -50,6 +50,14 @@ describe('the generated handlers', () => {
       expect(page).toHaveProperty('has_more')
     }
   )
+
+  it('replaces device subscriptions through PUT', async () => {
+    const op = EXAMPLES.putPushSubscription
+    expect(op.method).toBe('put')
+    const response = await fetch(`${BASE}${fill(op.path)}`, { method: 'PUT' })
+    expect(response.status).toBe(204)
+    expect(response.headers.get('X-Request-Id')).toBeTruthy()
+  })
 
   it('gives every response a fresh X-Request-Id', async () => {
     const first = await fetch(`${BASE}/me`)
@@ -122,7 +130,7 @@ describe('If-Match on PATCH', () => {
   it('every PATCH the contract declares requires If-Match', () => {
     // The contract's own count today (CONSOLE_RECONCILIATION §5.6): all eleven `PATCH`
     // operations. A count that silently drops to zero would make the tests below vacuous.
-    expect(patchOps.length).toBe(11)
+    expect(patchOps.length).toBe(13)
     expect(patchOps.every((op) => op.method === 'patch')).toBe(true)
   })
 
