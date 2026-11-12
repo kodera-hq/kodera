@@ -3,13 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { StatusPill, type StatusPillState } from '@/ui/StatusPill/StatusPill'
 import { ModuleGlyph } from '@/ui/icons/ModuleGlyph'
-import { EmergencyFrame, UuidV7, bytesToHex, truncateUtf8Bytes } from './codec'
+import { ProximityFrame, UuidV7, bytesToHex, truncateUtf8Bytes } from './codec'
 import { safetyStatusPriority } from './transport'
 import {
   type DeviceIdentitySigner,
-  type EmergencyRosterCheckIn,
-  MAX_EMERGENCY_TEXT_BYTES,
-  MAX_EMERGENCY_TTL_HOPS,
+  type ProximityRosterCheckIn,
+  MAX_PROXIMITY_TEXT_BYTES,
+  MAX_PROXIMITY_TTL_HOPS,
   SafetyStatus,
 } from './types'
 
@@ -20,22 +20,21 @@ import {
  * send: the proximity relay is in development, and a check-in must never look sent when it
  * went nowhere.
  */
-export interface EmergencyPanelTransport {
+export interface ProximityPanelTransport {
   readonly orgBeaconSalt: Uint8Array
   readonly unixSecs: number
   readonly localSigner: DeviceIdentitySigner
-  readonly initialRoster: readonly EmergencyRosterCheckIn[]
+  readonly initialRoster: readonly ProximityRosterCheckIn[]
   readonly defaultTtlHops?: number | undefined
 }
 
-export interface EmergencyRoomPanelProps {
+export interface ProximityRoomPanelProps {
   readonly channelName: string
-  readonly transport?: EmergencyPanelTransport | undefined
+  readonly transport?: ProximityPanelTransport | undefined
   readonly localDisplayName?: string | undefined
   readonly defaultRosterCollapsed?: boolean | undefined
   readonly onCheckIn?:
-    | ((checkIn: EmergencyRosterCheckIn, wireBytes: Uint8Array) => void)
-    | undefined
+    ((checkIn: ProximityRosterCheckIn, wireBytes: Uint8Array) => void) | undefined
 }
 
 const STATUS_KEYS = {
@@ -54,7 +53,7 @@ const STATUS_PILLS: Record<SafetyStatus, StatusPillState> = {
 
 const ACTIONS = [SafetyStatus.Safe, SafetyStatus.NeedAssistance, SafetyStatus.MusterPoint] as const
 
-export function EmergencyRoomPanel({ transport, ...props }: EmergencyRoomPanelProps) {
+export function ProximityRoomPanel({ transport, ...props }: ProximityRoomPanelProps) {
   return transport === undefined ? (
     <DisconnectedBar channelName={props.channelName} />
   ) : (
@@ -83,13 +82,15 @@ function DisconnectedBar({ channelName }: { readonly channelName: string }) {
   return (
     <section
       aria-labelledby={headingId}
-      data-testid="emergency-disconnected"
+      data-testid="proximity-disconnected"
       className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-sunken px-3 py-2"
     >
       <PanelTitle id={headingId} channelName={channelName} />
       <span className="flex items-center gap-2 text-xs text-c-ink-2">
         {t('console.workspace.emergency.disconnected-body')}
-        <StatusPill state="neutral">{t('console.workspace.emergency.state-disconnected')}</StatusPill>
+        <StatusPill state="neutral">
+          {t('console.workspace.emergency.state-disconnected')}
+        </StatusPill>
       </span>
     </section>
   )
@@ -101,18 +102,18 @@ function ConnectedPanel({
   localDisplayName,
   defaultRosterCollapsed = false,
   onCheckIn,
-}: EmergencyRoomPanelProps & { readonly transport: EmergencyPanelTransport }) {
+}: ProximityRoomPanelProps & { readonly transport: ProximityPanelTransport }) {
   const { t } = useTranslation()
   const headingId = useId()
   const messageInputId = useId()
   const { unixSecs, localSigner } = transport
   const ttl = Math.max(
     1,
-    Math.min(MAX_EMERGENCY_TTL_HOPS, transport.defaultTtlHops ?? MAX_EMERGENCY_TTL_HOPS)
+    Math.min(MAX_PROXIMITY_TTL_HOPS, transport.defaultTtlHops ?? MAX_PROXIMITY_TTL_HOPS)
   )
   const localName = localDisplayName ?? t('console.workspace.emergency.local-name')
 
-  const [peerRoster, setPeerRoster] = useState<readonly EmergencyRosterCheckIn[]>(
+  const [peerRoster, setPeerRoster] = useState<readonly ProximityRosterCheckIn[]>(
     transport.initialRoster
   )
   const [selectedStatus, setSelectedStatus] = useState<SafetyStatus | null>(null)
@@ -131,12 +132,12 @@ function ConnectedPanel({
   )
 
   function emit(status: SafetyStatus) {
-    const text = truncateUtf8Bytes(draftMessage.trim(), MAX_EMERGENCY_TEXT_BYTES)
+    const text = truncateUtf8Bytes(draftMessage.trim(), MAX_PROXIMITY_TEXT_BYTES)
     const timestampMs = unixSecs * 1000 + sequenceCounter
     const randBytes = new Uint8Array(10)
     randBytes[0] = sequenceCounter & 0xff
     randBytes[1] = status & 0xff
-    const frame = EmergencyFrame.newSigned(
+    const frame = ProximityFrame.newSigned(
       UuidV7.fromParts(timestampMs, randBytes),
       ttl,
       status,
@@ -145,7 +146,7 @@ function ConnectedPanel({
     )
     const wireBytes = frame.encode()
     const senderPublicKeyHex = bytesToHex(frame.senderPublicKey)
-    const checkIn: EmergencyRosterCheckIn = {
+    const checkIn: ProximityRosterCheckIn = {
       messageId: frame.messageId.toString(),
       senderPublicKeyHex,
       displayName: localName,
@@ -170,7 +171,9 @@ function ConnectedPanel({
         <CardBody className="flex flex-col gap-3 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <PanelTitle id={headingId} channelName={channelName} />
-            <StatusPill state="success">{t('console.workspace.emergency.state-connected')}</StatusPill>
+            <StatusPill state="success">
+              {t('console.workspace.emergency.state-connected')}
+            </StatusPill>
           </div>
 
           <div className="flex flex-col gap-1">
@@ -182,10 +185,10 @@ function ConnectedPanel({
               type="text"
               value={draftMessage}
               onChange={(event) =>
-                setDraftMessage(truncateUtf8Bytes(event.target.value, MAX_EMERGENCY_TEXT_BYTES))
+                setDraftMessage(truncateUtf8Bytes(event.target.value, MAX_PROXIMITY_TEXT_BYTES))
               }
               placeholder={t('console.workspace.emergency.message-placeholder')}
-              className="h-8 rounded-md border border-c-border-input bg-c-surface px-3 text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:outline-hidden focus-visible:ring"
+              className="h-8 rounded-md border border-c-border-input bg-c-surface px-3 text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
             />
           </div>
 
@@ -204,8 +207,8 @@ function ConnectedPanel({
                   onClick={() => emit(status)}
                   className={
                     isSelected
-                      ? 'flex items-center justify-between gap-2 rounded-md border border-c-accent-ink bg-c-accent-soft px-3 py-2 text-left text-xs font-semibold text-c-accent-ink focus-visible:outline-hidden focus-visible:ring'
-                      : 'flex items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-left text-xs font-semibold text-c-ink hover:bg-c-muted focus-visible:outline-hidden focus-visible:ring'
+                      ? 'flex items-center justify-between gap-2 rounded-md border border-c-accent-ink bg-c-accent-soft px-3 py-2 text-left text-xs font-semibold text-c-accent-ink focus-visible:ring focus-visible:outline-hidden'
+                      : 'flex items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-left text-xs font-semibold text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
                   }
                 >
                   {t(STATUS_KEYS[status])}
@@ -227,12 +230,14 @@ function ConnectedPanel({
           <div className="flex flex-col gap-2 border-t border-c-border-soft pt-2">
             <button
               type="button"
-              data-testid="emergency-roster-toggle"
+              data-testid="proximity-roster-toggle"
               aria-expanded={!isRosterCollapsed}
               onClick={() => setIsRosterCollapsed((prev) => !prev)}
-              className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 text-left text-xs font-semibold text-c-ink-2 hover:bg-c-muted focus-visible:outline-hidden focus-visible:ring"
+              className="flex items-center justify-between gap-2 rounded-sm px-2 py-1 text-left text-xs font-semibold text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden"
             >
-              <span>{t('console.workspace.emergency.roster-count', { count: sortedRoster.length })}</span>
+              <span>
+                {t('console.workspace.emergency.roster-count', { count: sortedRoster.length })}
+              </span>
               <span className="text-xs text-c-ink-3">
                 {t(
                   isRosterCollapsed

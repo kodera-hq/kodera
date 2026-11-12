@@ -3,15 +3,15 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
 import type { Workspace, WorkspaceChannel } from '../workspace/workspace'
-import { EmergencyRoomPanel } from '../emergency/EmergencyRoomPanel'
-import { EspaceLiveView, type EspaceStoreLike, isEmergencyChannel } from './EspaceLiveView'
+import { ProximityRoomPanel } from '../proximity/ProximityRoomPanel'
+import { EspaceLiveView, type EspaceStoreLike, isProximityChannel } from './EspaceLiveView'
 import type { ChannelRoom, EspaceSnapshot, MemberView } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 
 const GENERAL_ID = 'a1111111-1111-4111-8111-000000000001'
-const URGENCE_ID = 'a1111111-1111-4111-8111-000000000911'
+const PROXIMITY_ID = 'a1111111-1111-4111-8111-000000000911'
 const GENERAL_ROOM = '!general:matrix.acme.kodera.io'
-const URGENCE_ROOM = '!urgence:matrix.acme.kodera.io'
+const PROXIMITY_ROOM = '!proximity:matrix.acme.kodera.io'
 const ME = '@me:matrix.acme.kodera.io'
 const ALICE = '@marina.loiseau:matrix.acme.kodera.io'
 
@@ -25,10 +25,10 @@ const GENERAL_CHANNEL: WorkspaceChannel = {
   room_state: 'ready',
 }
 
-const URGENCE_CHANNEL: WorkspaceChannel = {
-  id: URGENCE_ID,
+const PROXIMITY_CHANNEL: WorkspaceChannel = {
+  id: PROXIMITY_ID,
   kind: 'text',
-  name: 'urgence',
+  name: 'proximity',
   template_key: null,
   topic: 'Continuité bâtiment et pointage de sécurité',
   lifecycle: 'active',
@@ -46,7 +46,7 @@ const WORKSPACE: Workspace = {
       id: 'cat-general',
       name: 'General',
       template_key: 'general',
-      channels: [GENERAL_CHANNEL, URGENCE_CHANNEL],
+      channels: [GENERAL_CHANNEL, PROXIMITY_CHANNEL],
     },
   ],
   uncategorised_channels: [],
@@ -76,7 +76,7 @@ function makeStore(): EspaceStoreLike {
     status: 'live',
     channels: new Map<string, ChannelRoom>([
       [GENERAL_ID, { state: 'resolved', roomId: GENERAL_ROOM }],
-      [URGENCE_ID, { state: 'resolved', roomId: URGENCE_ROOM }],
+      [PROXIMITY_ID, { state: 'resolved', roomId: PROXIMITY_ROOM }],
     ]),
     rooms: [
       {
@@ -89,8 +89,8 @@ function makeStore(): EspaceStoreLike {
         occupancy: null,
       },
       {
-        roomId: URGENCE_ROOM,
-        name: 'urgence',
+        roomId: PROXIMITY_ROOM,
+        name: 'proximity',
         alias: null,
         kind: 'text',
         unread: 0,
@@ -103,7 +103,7 @@ function makeStore(): EspaceStoreLike {
 
   const timelines: Record<string, readonly MessageView[]> = {
     [GENERAL_ROOM]: [makeMessage('$g1', ALICE, 'Bonjour dans #général')],
-    [URGENCE_ROOM]: [makeMessage('$u1', ALICE, 'Exercice incendie en cours')],
+    [PROXIMITY_ROOM]: [makeMessage('$u1', ALICE, 'Exercice incendie en cours')],
   }
 
   return {
@@ -121,25 +121,25 @@ function makeStore(): EspaceStoreLike {
   }
 }
 
-const FLAGGED: ReadonlySet<string> = new Set([URGENCE_ID])
+const FLAGGED: ReadonlySet<string> = new Set([PROXIMITY_ID])
 
 function renderPanel(channel: WorkspaceChannel) {
-  return <EmergencyRoomPanel channelName={channel.name} />
+  return <ProximityRoomPanel channelName={channel.name} />
 }
 
 describe('EspaceLiveView proximity room', () => {
   it('trusts only the server flag, never the channel name', () => {
-    expect(isEmergencyChannel(null, FLAGGED)).toBe(false)
-    expect(isEmergencyChannel(undefined, FLAGGED)).toBe(false)
-    expect(isEmergencyChannel(GENERAL_CHANNEL, FLAGGED)).toBe(false)
-    expect(isEmergencyChannel(URGENCE_CHANNEL, FLAGGED)).toBe(true)
-    // A channel its members called « urgence » or « around-me » is an ordinary channel.
-    expect(isEmergencyChannel(URGENCE_CHANNEL, undefined)).toBe(false)
-    expect(isEmergencyChannel({ ...GENERAL_CHANNEL, name: 'Urgence' }, FLAGGED)).toBe(false)
-    expect(isEmergencyChannel({ ...GENERAL_CHANNEL, name: 'around-me' }, FLAGGED)).toBe(false)
+    expect(isProximityChannel(null, FLAGGED)).toBe(false)
+    expect(isProximityChannel(undefined, FLAGGED)).toBe(false)
+    expect(isProximityChannel(GENERAL_CHANNEL, FLAGGED)).toBe(false)
+    expect(isProximityChannel(PROXIMITY_CHANNEL, FLAGGED)).toBe(true)
+    // A channel its members called « proximity » or « around-me » is an ordinary channel.
+    expect(isProximityChannel(PROXIMITY_CHANNEL, undefined)).toBe(false)
+    expect(isProximityChannel({ ...GENERAL_CHANNEL, name: 'Proximity' }, FLAGGED)).toBe(false)
+    expect(isProximityChannel({ ...GENERAL_CHANNEL, name: 'around-me' }, FLAGGED)).toBe(false)
   })
 
-  it('mounts nothing on a channel named « urgence » when the server flags no channel (the product today)', async () => {
+  it('mounts nothing on a channel named « proximity » when the server flags no channel (the product today)', async () => {
     const user = userEvent.setup()
     render(
       <EspaceLiveView
@@ -150,10 +150,10 @@ describe('EspaceLiveView proximity room', () => {
         store={makeStore()}
       />
     )
-    await user.click(screen.getByRole('link', { name: /urgence/i }))
+    await user.click(screen.getByRole('link', { name: /proximity/i }))
     expect(screen.getByText('Exercice incendie en cours')).toBeInTheDocument()
-    expect(screen.queryByTestId('espace-emergency-room-surface')).toBeNull()
-    expect(screen.queryByTestId('emergency-room-panel')).toBeNull()
+    expect(screen.queryByTestId('espace-proximity-room-surface')).toBeNull()
+    expect(screen.queryByTestId('proximity-room-panel')).toBeNull()
   })
 
   it('draws the flagged room’s panel above its timeline, « Non connecté » without a transport', async () => {
@@ -165,15 +165,15 @@ describe('EspaceLiveView proximity room', () => {
         workspace={WORKSPACE}
         channelId={GENERAL_ID}
         store={makeStore()}
-        emergencyChannelIds={FLAGGED}
-        renderEmergencyPanel={renderPanel}
+        proximityChannelIds={FLAGGED}
+        renderProximityPanel={renderPanel}
       />
     )
-    expect(screen.queryByTestId('emergency-room-panel')).toBeNull()
+    expect(screen.queryByTestId('proximity-room-panel')).toBeNull()
     expect(screen.getByText('Bonjour dans #général')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('link', { name: /urgence/i }))
-    const panel = screen.getByTestId('emergency-room-panel')
+    await user.click(screen.getByRole('link', { name: /proximity/i }))
+    const panel = screen.getByTestId('proximity-room-panel')
     expect(within(panel).getByRole('heading', { name: 'Autour de moi' })).toBeInTheDocument()
     expect(panel).toHaveTextContent('Non connecté')
     expect(within(panel).queryByRole('button')).toBeNull()

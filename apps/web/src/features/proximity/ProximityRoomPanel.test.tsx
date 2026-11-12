@@ -2,16 +2,16 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import '../../i18n'
-import { EmergencyRoomPanel } from './EmergencyRoomPanel'
-import { EmergencyFrame } from './codec'
-import { demoEmergencyTransport } from './demoFixture'
-import { MAX_EMERGENCY_FRAME_BYTES, MAX_EMERGENCY_TEXT_BYTES, SafetyStatus } from './types'
+import { ProximityRoomPanel } from './ProximityRoomPanel'
+import { ProximityFrame } from './codec'
+import { demoProximityTransport } from './demoFixture'
+import { MAX_PROXIMITY_FRAME_BYTES, MAX_PROXIMITY_TEXT_BYTES, SafetyStatus } from './types'
 
-describe('EmergencyRoomPanel', () => {
+describe('ProximityRoomPanel', () => {
   it('without a transport, draws one line « Non connecté » and offers nothing to send', () => {
-    render(<EmergencyRoomPanel channelName="around-me" />)
+    render(<ProximityRoomPanel channelName="around-me" />)
 
-    const bar = screen.getByTestId('emergency-disconnected')
+    const bar = screen.getByTestId('proximity-disconnected')
     expect(within(bar).getByRole('heading', { name: 'Autour de moi' })).toBeInTheDocument()
     expect(bar).toHaveTextContent('Non connecté')
     expect(bar).toHaveTextContent('Le relais de proximité est en développement.')
@@ -21,9 +21,9 @@ describe('EmergencyRoomPanel', () => {
   })
 
   it('claims no transport technology, signature scheme or frame format in its copy', () => {
-    const { container: disconnected } = render(<EmergencyRoomPanel channelName="around-me" />)
+    const { container: disconnected } = render(<ProximityRoomPanel channelName="around-me" />)
     const { container: connected } = render(
-      <EmergencyRoomPanel channelName="around-me" transport={demoEmergencyTransport()} />
+      <ProximityRoomPanel channelName="around-me" transport={demoProximityTransport()} />
     )
     for (const text of [disconnected.textContent ?? '', connected.textContent ?? '']) {
       expect(text).not.toMatch(/\bBLE\b|Wi-Fi Direct|Ed25519|HMAC|SHA-?256|KE v1|\bTTL\b/)
@@ -32,9 +32,7 @@ describe('EmergencyRoomPanel', () => {
   })
 
   it('with a transport, lists the people nearby by priority and names', () => {
-    render(
-      <EmergencyRoomPanel channelName="around-me" transport={demoEmergencyTransport()} />
-    )
+    render(<ProximityRoomPanel channelName="around-me" transport={demoProximityTransport()} />)
     expect(screen.getByText('Connecté')).toBeInTheDocument()
     const roster = screen.getByRole('list', { name: 'Personnes à proximité' })
     const items = within(roster).getAllByRole('listitem')
@@ -47,9 +45,9 @@ describe('EmergencyRoomPanel', () => {
     const user = userEvent.setup()
     const onCheckIn = vi.fn()
     render(
-      <EmergencyRoomPanel
+      <ProximityRoomPanel
         channelName="around-me"
-        transport={demoEmergencyTransport()}
+        transport={demoProximityTransport()}
         localDisplayName="Henri Duflot"
         onCheckIn={onCheckIn}
       />
@@ -69,7 +67,7 @@ describe('EmergencyRoomPanel', () => {
     ]
     expect(checkIn.status).toBe(SafetyStatus.NeedAssistance)
     expect(checkIn.ttlHops).toBe(6)
-    const decoded = EmergencyFrame.decode(wireBytes)
+    const decoded = ProximityFrame.decode(wireBytes)
     expect(decoded.status).toBe(SafetyStatus.NeedAssistance)
     expect(decoded.text).toBe('Porte bloquée aile ouest')
     expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('Henri Duflot')
@@ -79,17 +77,17 @@ describe('EmergencyRoomPanel', () => {
     const user = userEvent.setup()
     const onCheckIn = vi.fn()
     render(
-      <EmergencyRoomPanel
+      <ProximityRoomPanel
         channelName="around-me"
-        transport={demoEmergencyTransport()}
+        transport={demoProximityTransport()}
         onCheckIn={onCheckIn}
       />
     )
     const input = screen.getByLabelText('Message court (facultatif)') as HTMLInputElement
-    await user.type(input, 'x'.repeat(MAX_EMERGENCY_TEXT_BYTES + 25))
-    expect(input.value.length).toBe(MAX_EMERGENCY_TEXT_BYTES)
+    await user.type(input, 'x'.repeat(MAX_PROXIMITY_TEXT_BYTES + 25))
+    expect(input.value.length).toBe(MAX_PROXIMITY_TEXT_BYTES)
     await user.click(screen.getByRole('button', { name: 'En sécurité' }))
     const [, wireBytes] = onCheckIn.mock.calls[0] as [unknown, Uint8Array]
-    expect(wireBytes.length).toBe(MAX_EMERGENCY_FRAME_BYTES)
+    expect(wireBytes.length).toBe(MAX_PROXIMITY_FRAME_BYTES)
   })
 })

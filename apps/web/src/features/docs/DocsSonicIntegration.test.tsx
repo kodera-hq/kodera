@@ -29,9 +29,9 @@ import {
 } from './url'
 
 const GENERAL_ID = 'a1111111-1111-4111-8111-000000000001'
-const URGENCE_ID = 'a1111111-1111-4111-8111-000000000911'
+const PROXIMITY_ID = 'a1111111-1111-4111-8111-000000000911'
 const GENERAL_ROOM = '!general:matrix.acme.kodera.io'
-const URGENCE_ROOM = '!urgence:matrix.acme.kodera.io'
+const PROXIMITY_ROOM = '!proximity:matrix.acme.kodera.io'
 const ME = '@me:matrix.acme.kodera.io'
 const ALICE = '@henri.duflot:matrix.acme.kodera.io'
 
@@ -45,10 +45,10 @@ const GENERAL_CHANNEL: WorkspaceChannel = {
   room_state: 'ready',
 }
 
-const URGENCE_CHANNEL: WorkspaceChannel = {
-  id: URGENCE_ID,
+const PROXIMITY_CHANNEL: WorkspaceChannel = {
+  id: PROXIMITY_ID,
   kind: 'text',
-  name: 'urgence',
+  name: 'proximity',
   template_key: null,
   topic: 'Continuité bâtiment et pointage de sécurité',
   lifecycle: 'active',
@@ -66,7 +66,7 @@ const WORKSPACE: Workspace = {
       id: 'cat-general',
       name: 'General',
       template_key: 'general',
-      channels: [GENERAL_CHANNEL, URGENCE_CHANNEL],
+      channels: [GENERAL_CHANNEL, PROXIMITY_CHANNEL],
     },
   ],
   uncategorised_channels: [],
@@ -128,7 +128,7 @@ function GuardedDocsSurface({
   )
 }
 
-describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Docs + Espace #urgence', () => {
+describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Docs + Espace #proximity', () => {
   beforeEach(() => {
     localStorage.clear()
     clearSynthCache()
@@ -298,7 +298,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
       status: 'live',
       channels: new Map<string, ChannelRoom>([
         [GENERAL_ID, { state: 'resolved', roomId: GENERAL_ROOM }],
-        [URGENCE_ID, { state: 'resolved', roomId: URGENCE_ROOM }],
+        [PROXIMITY_ID, { state: 'resolved', roomId: PROXIMITY_ROOM }],
       ]),
       rooms: [
         {
@@ -311,8 +311,8 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
           occupancy: null,
         },
         {
-          roomId: URGENCE_ROOM,
-          name: 'urgence',
+          roomId: PROXIMITY_ROOM,
+          name: 'proximity',
           alias: null,
           kind: 'text',
           unread: 0,
@@ -430,7 +430,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
     })
   })
 
-  it('renders the sovereign DINUM Docs collaboration surface for https://docs.acme.kodera.io, builds deterministic channel-bound URLs, and fails closed (role="alert") on http://, credentialed, or localhost URLs alongside #urgence', async () => {
+  it('renders the sovereign DINUM Docs collaboration surface for https://docs.acme.kodera.io, builds deterministic channel-bound URLs, and fails closed (role="alert") on http://, credentialed, or localhost URLs alongside #proximity', async () => {
     const user = userEvent.setup()
     const docsOrigin = buildTenantDocsOrigin('acme')
     expect(docsOrigin).toBe('https://docs.acme.kodera.io')
@@ -453,7 +453,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
       )
     }
 
-    // Verify valid HTTPS tenant Docs surface coexists with Espace #urgence
+    // Verify valid HTTPS tenant Docs surface coexists with Espace #proximity
     const { rerender } = render(
       <div>
         <GuardedDocsSurface
@@ -533,12 +533,12 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
     expect(screen.getByRole('alert')).toHaveTextContent(/origin_mismatch/i)
     expect(screen.queryByRole('link', { name: /Ouvrir/i })).toBeNull()
 
-    // Also verify switching to #urgence in EspaceLiveView while DocsWorkspacePanel is mounted
+    // Also verify switching to #proximity in EspaceLiveView while DocsWorkspacePanel is mounted
     const snapshot: EspaceSnapshot = {
       status: 'live',
       channels: new Map<string, ChannelRoom>([
         [GENERAL_ID, { state: 'resolved', roomId: GENERAL_ROOM }],
-        [URGENCE_ID, { state: 'resolved', roomId: URGENCE_ROOM }],
+        [PROXIMITY_ID, { state: 'resolved', roomId: PROXIMITY_ROOM }],
       ]),
       rooms: [
         {
@@ -551,8 +551,8 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
           occupancy: null,
         },
         {
-          roomId: URGENCE_ROOM,
-          name: 'urgence',
+          roomId: PROXIMITY_ROOM,
+          name: 'proximity',
           alias: null,
           kind: 'text',
           unread: 0,
@@ -580,8 +580,8 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
       <div>
         <GuardedDocsSurface
           tenantSlug="acme"
-          channelId={URGENCE_ID}
-          channelName="urgence"
+          channelId={PROXIMITY_ID}
+          channelName="proximity"
         />
         <EspaceLiveView
           org="acme"
@@ -593,10 +593,10 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + DINUM Doc
       </div>
     )
 
-    const urgenceLink = screen.getByRole('link', { name: 'urgence' })
-    await user.click(urgenceLink)
+    const proximityLink = screen.getByRole('link', { name: 'proximity' })
+    await user.click(proximityLink)
 
-    // A channel named « urgence » is an ordinary channel until the server flags it.
-    expect(screen.queryByTestId('emergency-room-panel')).toBeNull()
+    // A channel named « proximity » is an ordinary channel until the server flags it.
+    expect(screen.queryByTestId('proximity-room-panel')).toBeNull()
   })
 })

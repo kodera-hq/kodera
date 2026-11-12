@@ -74,7 +74,7 @@ import { createLocalDrafts, useDraftChannel, useDraftSlice } from './draftChanne
 import {
   composing,
   displayNameOf,
-  isEmergencyChannel,
+  isProximityChannel,
   LIVE_CALL,
   NO_MESSAGES,
   noCallSnapshot,
@@ -96,7 +96,7 @@ import { useStableHandler, useStoreSlice } from './useStoreSlice'
 import { VoiceCallDock } from './VoiceCallDock'
 
 // The view's public names stay this module's, wherever their definitions live.
-export { isEmergencyChannel, mergeTimelineInserts } from './liveViewModel'
+export { isProximityChannel, mergeTimelineInserts } from './liveViewModel'
 export type { AudioCallLike, EspaceStoreLike, TimelineInsert } from './liveViewModel'
 
 const NO_CANDIDATES: readonly MentionCandidate[] = []
@@ -146,10 +146,10 @@ export interface EspaceLiveViewProps {
   readonly documents?: readonly ChannelDoc[]
   readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
   readonly docsCanvasSlot?: ReactNode | undefined
-  /** Channels the server flags as the proximity room; see `isEmergencyChannel`. */
-  readonly emergencyChannelIds?: ReadonlySet<string> | undefined
+  /** Channels the server flags as the proximity room; see `isProximityChannel`. */
+  readonly proximityChannelIds?: ReadonlySet<string> | undefined
   /** Draws the proximity panel above a flagged channel's timeline. */
-  readonly renderEmergencyPanel?: ((channel: WorkspaceChannel) => ReactNode) | undefined
+  readonly renderProximityPanel?: ((channel: WorkspaceChannel) => ReactNode) | undefined
   readonly onCreateInCategory?: ((category: WorkspaceCategory) => void) | undefined
   /** Items drawn in the channel's timeline at their own time, between the messages (polls). */
   readonly timelineInserts?: readonly TimelineInsert[] | undefined
@@ -310,8 +310,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   docsCanvasSlot,
   documents = NO_DOCUMENTS,
   onOpenDocument,
-  emergencyChannelIds,
-  renderEmergencyPanel,
+  proximityChannelIds,
+  renderProximityPanel,
   onCreateInCategory,
   timelineInserts,
   organisationActionSlot,
@@ -1177,7 +1177,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       activeChannelId={activeChannel?.id}
       canvasMode={activeCanvasMode ?? 'chat'}
       categoryDescriptions={categoryDescriptions}
-      emergencyChannelIds={emergencyChannelIds}
+      proximityChannelIds={proximityChannelIds}
       documents={documents}
       searchEntries={searchEntries}
       mentionCandidates={mentionCandidates}
@@ -1290,7 +1290,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   className="flex min-w-0 items-center gap-2 text-lg font-semibold text-c-ink"
                 >
                   <span aria-hidden="true" className="text-c-ink-3">
-                    {isEmergencyChannel(activeChannel, emergencyChannelIds) ? <AntennaIcon /> : '#'}
+                    {isProximityChannel(activeChannel, proximityChannelIds) ? <AntennaIcon /> : '#'}
                   </span>
                   <span className="min-w-0 truncate">{activeChannelName}</span>
                 </h1>
@@ -1405,11 +1405,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           ) : null}
           {activeChannel == null || activeCanvasMode === 'docs' ? null : (
             <>
-              {isEmergencyChannel(activeChannel, emergencyChannelIds) &&
-              renderEmergencyPanel !== undefined ? (
-                <div data-testid="espace-emergency-room-surface" className="flex flex-col gap-3">
-                  <div data-testid="emergency-room-panel">
-                    {renderEmergencyPanel(activeChannel)}
+              {isProximityChannel(activeChannel, proximityChannelIds) &&
+              renderProximityPanel !== undefined ? (
+                <div data-testid="espace-proximity-room-surface" className="flex flex-col gap-3">
+                  <div data-testid="proximity-room-panel">
+                    {renderProximityPanel(activeChannel)}
                   </div>
                 </div>
               ) : null}

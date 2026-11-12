@@ -59,10 +59,10 @@ export function mergeTimelineInserts<
 
 /**
  * Whether a channel is the organisation's proximity room (« Autour de moi »). Only a flag set by
- * the server may say so, never the channel's name: a channel its members called « urgence » is an
+ * the server may say so, never the channel's name: a channel its members called « proximity » is an
  * ordinary channel. Core flags no channel yet, so the product passes no set and none qualifies.
  */
-export function isEmergencyChannel(
+export function isProximityChannel(
   channel: WorkspaceChannel | null | undefined,
   flaggedChannelIds: ReadonlySet<string> | undefined
 ): boolean {

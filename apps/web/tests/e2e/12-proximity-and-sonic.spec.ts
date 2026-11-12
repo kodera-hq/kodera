@@ -1,4 +1,4 @@
-// Hermetic workspace E2E suite for the #urgence channel view and sonic preference storage,
+// Hermetic workspace E2E suite for the #proximity channel view and sonic preference storage,
 // verifying keyboard navigation, quick-switcher discovery, axe accessibility, and zero
 // CSP, console.error, or pageerror regressions.
 
@@ -11,7 +11,7 @@ import { useScenario } from './support/useScenario'
 
 const ORG = 'acme-sa'
 const SHELL = 'shell.single-organisation'
-const URGENCE_CHANNEL_ID = '019a6004-bedc-7911-8911-000000000911'
+const PROXIMITY_CHANNEL_ID = '019a6004-bedc-7911-8911-000000000911'
 
 const openWorkspace = (page: Page) => signIn(page, ORG, '/workspace')
 
@@ -78,8 +78,8 @@ async function expectZeroRuntimeRegressions(
   expect(telemetry.consoleErrors).toEqual([])
 }
 
-async function routeWorkspaceWithEmergencyChannel(page: Page): Promise<void> {
-  await page.addInitScript((urgenceId) => {
+async function routeWorkspaceWithProximityChannel(page: Page): Promise<void> {
+  await page.addInitScript((proximityId) => {
     const originalFetch = window.fetch.bind(window)
     window.fetch = async (input, init) => {
       const url = input instanceof Request ? input.url : String(input)
@@ -104,9 +104,9 @@ async function routeWorkspaceWithEmergencyChannel(page: Page): Promise<void> {
         }
         if (Array.isArray(body.categories) && body.categories[0] !== undefined) {
           body.categories[0].channels.push({
-            id: urgenceId,
+            id: proximityId,
             kind: 'text',
-            name: 'urgence',
+            name: 'proximity',
             template_key: null,
             topic: 'Continuité bâtiment et pointage de sécurité hors-ligne',
             lifecycle: 'active',
@@ -121,28 +121,28 @@ async function routeWorkspaceWithEmergencyChannel(page: Page): Promise<void> {
       }
       return response
     }
-  }, URGENCE_CHANNEL_ID)
+  }, PROXIMITY_CHANNEL_ID)
 }
 
-test('workspace/emergency: lists #urgence in the workspace sidebar, navigates to its channel view, and passes axe with zero CSP or console errors', async ({
+test('workspace/proximity: lists #proximity in the workspace sidebar, navigates to its channel view, and passes axe with zero CSP or console errors', async ({
   page,
 }) => {
   const telemetry = await attachRuntimeHygieneGuards(page)
   await useScenario(page, [SHELL, 'workspace.ready'])
-  await routeWorkspaceWithEmergencyChannel(page)
+  await routeWorkspaceWithProximityChannel(page)
   await openWorkspace(page)
 
   const nav = channels(page)
-  await expect(nav.getByRole('link')).toHaveText(['#bienvenue', '#général', '#urgence'])
+  await expect(nav.getByRole('link')).toHaveText(['#bienvenue', '#général', '#proximity'])
 
-  const urgenceLink = nav.getByRole('link', { name: 'urgence' })
-  await urgenceLink.click()
+  const proximityLink = nav.getByRole('link', { name: 'proximity' })
+  await proximityLink.click()
 
-  await expect(page).toHaveURL(new RegExp(`/${ORG}/workspace/${URGENCE_CHANNEL_ID}$`))
-  const heading = page.getByRole('heading', { level: 1, name: 'urgence' })
+  await expect(page).toHaveURL(new RegExp(`/${ORG}/workspace/${PROXIMITY_CHANNEL_ID}$`))
+  const heading = page.getByRole('heading', { level: 1, name: 'proximity' })
   await expect(heading).toBeVisible()
   await expect(heading).toBeFocused()
-  await expect(urgenceLink).toHaveAttribute('aria-current', 'page')
+  await expect(proximityLink).toHaveAttribute('aria-current', 'page')
   await expect(
     page.getByText('Continuité bâtiment et pointage de sécurité hors-ligne')
   ).toBeVisible()
@@ -151,12 +151,12 @@ test('workspace/emergency: lists #urgence in the workspace sidebar, navigates to
   await expectZeroRuntimeRegressions(page, telemetry)
 })
 
-test('workspace/emergency: opens #urgence from the quick-switcher search dialog and preserves sonic preference storage with zero runtime errors', async ({
+test('workspace/proximity: opens #proximity from the quick-switcher search dialog and preserves sonic preference storage with zero runtime errors', async ({
   page,
 }) => {
   const telemetry = await attachRuntimeHygieneGuards(page)
   await useScenario(page, [SHELL, 'workspace.ready'])
-  await routeWorkspaceWithEmergencyChannel(page)
+  await routeWorkspaceWithProximityChannel(page)
   await openWorkspace(page)
 
   await expect(page.getByRole('heading', { level: 1, name: 'bienvenue' })).toBeVisible()
@@ -188,14 +188,14 @@ test('workspace/emergency: opens #urgence from the quick-switcher search dialog 
   const dialog = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
   await expect(dialog).toBeVisible()
   await page.keyboard.type('urg')
-  await expect(dialog.getByRole('option')).toHaveText([/urgence/])
+  await expect(dialog.getByRole('option')).toHaveText([/proximity/])
   await expectAxeClean(page)
   await page.keyboard.press('Enter')
 
   await expect(dialog).toHaveCount(0)
-  const heading = page.getByRole('heading', { level: 1, name: 'urgence' })
+  const heading = page.getByRole('heading', { level: 1, name: 'proximity' })
   await expect(heading).toBeFocused()
-  await expect(channels(page).getByRole('link', { name: 'urgence' })).toHaveAttribute(
+  await expect(channels(page).getByRole('link', { name: 'proximity' })).toHaveAttribute(
     'aria-current',
     'page'
   )

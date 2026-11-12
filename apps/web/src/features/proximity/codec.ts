@@ -1,13 +1,13 @@
 import {
   BEACON_ROTATION_WINDOW_SECS,
   type DeviceIdentitySigner,
-  EMERGENCY_FIXED_OVERHEAD_BYTES,
-  EMERGENCY_PROTOCOL_VERSION,
-  EMERGENCY_REPLAY_ENTRIES,
-  EmergencyCodecError,
-  MAX_EMERGENCY_FRAME_BYTES,
-  MAX_EMERGENCY_TEXT_BYTES,
-  MAX_EMERGENCY_TTL_HOPS,
+  PROXIMITY_FIXED_OVERHEAD_BYTES,
+  PROXIMITY_PROTOCOL_VERSION,
+  PROXIMITY_REPLAY_ENTRIES,
+  ProximityCodecError,
+  MAX_PROXIMITY_FRAME_BYTES,
+  MAX_PROXIMITY_TEXT_BYTES,
+  MAX_PROXIMITY_TTL_HOPS,
   SafetyStatus,
   type SignatureVerifier,
 } from './types'
@@ -16,7 +16,10 @@ const HEX_CHARS = '0123456789abcdef'
 const UTF8_ENCODER = new TextEncoder()
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 
+// Historical wire data (beacon v1): the label MACed with the bucket. Never renamed.
 const BEACON_DOMAIN_PREFIX = UTF8_ENCODER.encode('kodera-beacon-v1')
+// Historical wire data (frame v1): the first 20 bytes of every signed input. It keeps the name the
+// feature had when v1 was frozen; changing one byte would invalidate every signature.
 const SIGNING_DOMAIN_PREFIX = UTF8_ENCODER.encode('kodera-emergency-v1:')
 
 const SHA256_K = new Uint32Array([
@@ -49,7 +52,7 @@ export function bytesToHex(bytes: Uint8Array): string {
 export function hexToBytes(hex: string): Uint8Array {
   const clean = hex.trim().toLowerCase()
   if (clean.length % 2 !== 0 || !/^[0-9a-f]*$/.test(clean)) {
-    throw new EmergencyCodecError('MalformedFrame', 'Invalid hexadecimal string')
+    throw new ProximityCodecError('MalformedFrame', 'Invalid hexadecimal string')
   }
   const out = new Uint8Array(clean.length / 2)
   for (let i = 0; i < out.length; i += 1) {
@@ -101,7 +104,7 @@ export function parseSafetyStatus(value: number): SafetyStatus {
     case SafetyStatus.MusterPoint:
       return SafetyStatus.MusterPoint
     default:
-      throw new EmergencyCodecError('InvalidStatusBadge')
+      throw new ProximityCodecError('InvalidStatusBadge')
   }
 }
 
@@ -118,14 +121,14 @@ export class UuidV7 {
 
   static fromParts(unixTsMs: number | bigint, randBytes: Uint8Array): UuidV7 {
     if (randBytes.length !== 10) {
-      throw new EmergencyCodecError(
+      throw new ProximityCodecError(
         'InvalidUuidV7',
         'UUIDv7 requires exactly 10 random octets'
       )
     }
     const ts = typeof unixTsMs === 'bigint' ? unixTsMs : BigInt(Math.trunc(unixTsMs))
     if (ts < 0n || ts > 0xffffffffffffn) {
-      throw new EmergencyCodecError('InvalidUuidV7', 'UUIDv7 timestamp out of 48-bit range')
+      throw new ProximityCodecError('InvalidUuidV7', 'UUIDv7 timestamp out of 48-bit range')
     }
 
     const out = new Uint8Array(16)
@@ -147,12 +150,12 @@ export class UuidV7 {
 
   static fromBytesChecked(bytes: Uint8Array): UuidV7 {
     if (bytes.length !== 16) {
-      throw new EmergencyCodecError('InvalidUuidV7')
+      throw new ProximityCodecError('InvalidUuidV7')
     }
     const b6 = bytes[6] ?? 0
     const b8 = bytes[8] ?? 0
     if (b6 >> 4 !== 0x07 || b8 >> 6 !== 0b10) {
-      throw new EmergencyCodecError('InvalidUuidV7')
+      throw new ProximityCodecError('InvalidUuidV7')
     }
     return new UuidV7(new Uint8Array(bytes))
   }
@@ -193,10 +196,10 @@ export class UuidV7 {
 }
 
 // ---------------------------------------------------------------------------
-// 2. `#urgence` Store-and-Forward Frame Codec (`EmergencyFrame`)
+// 2. Proximity Store-and-Forward Frame Codec (`ProximityFrame`), frame v1, frozen
 // ---------------------------------------------------------------------------
 
-export interface EmergencyFrameInit {
+export interface ProximityFrameInit {
   readonly messageId: UuidV7
   readonly senderPublicKey: Uint8Array
   readonly ttlHops: number
@@ -205,13 +208,14 @@ export interface EmergencyFrameInit {
   readonly signature: Uint8Array
 }
 
-export class EmergencyFrame {
+export class ProximityFrame {
+  // Historical wire data (frame v1): the two magic octets, "KE". Never renamed.
   static readonly MAGIC = new Uint8Array([0x4b, 0x45]) // "KE"
-  static readonly VERSION = EMERGENCY_PROTOCOL_VERSION
-  static readonly FIXED_OVERHEAD = EMERGENCY_FIXED_OVERHEAD_BYTES
-  static readonly MAX_EMERGENCY_FRAME_BYTES = MAX_EMERGENCY_FRAME_BYTES
-  static readonly MAX_EMERGENCY_TEXT_BYTES = MAX_EMERGENCY_TEXT_BYTES
-  static readonly MAX_EMERGENCY_TTL_HOPS = MAX_EMERGENCY_TTL_HOPS
+  static readonly VERSION = PROXIMITY_PROTOCOL_VERSION
+  static readonly FIXED_OVERHEAD = PROXIMITY_FIXED_OVERHEAD_BYTES
+  static readonly MAX_PROXIMITY_FRAME_BYTES = MAX_PROXIMITY_FRAME_BYTES
+  static readonly MAX_PROXIMITY_TEXT_BYTES = MAX_PROXIMITY_TEXT_BYTES
+  static readonly MAX_PROXIMITY_TTL_HOPS = MAX_PROXIMITY_TTL_HOPS
 
   readonly messageId: UuidV7
   readonly senderPublicKey: Uint8Array
@@ -220,7 +224,7 @@ export class EmergencyFrame {
   readonly text: string
   readonly signature: Uint8Array
 
-  constructor(init: EmergencyFrameInit) {
+  constructor(init: ProximityFrameInit) {
     this.messageId = init.messageId
     this.senderPublicKey = new Uint8Array(init.senderPublicKey)
     this.ttlHops = init.ttlHops
@@ -236,8 +240,10 @@ export class EmergencyFrame {
     textBytes: Uint8Array
   ): Uint8Array {
     if (senderPk.length !== 32) {
-      throw new EmergencyCodecError('MalformedFrame', 'senderPublicKey must be 32 bytes')
+      throw new ProximityCodecError('MalformedFrame', 'senderPublicKey must be 32 bytes')
     }
+    // Historical wire data (frame v1): the signed input's layout, label 0..20, id 20..36,
+    // sender 36..68, status 68, text length 69, text from 70.
     const out = new Uint8Array(70 + textBytes.length)
     out.set(SIGNING_DOMAIN_PREFIX, 0)
     out.set(messageId.asBytes(), 20)
@@ -254,22 +260,22 @@ export class EmergencyFrame {
     status: SafetyStatus,
     text: string,
     signer: DeviceIdentitySigner
-  ): EmergencyFrame {
-    if (!Number.isInteger(ttlHops) || ttlHops <= 0 || ttlHops > MAX_EMERGENCY_TTL_HOPS) {
-      throw new EmergencyCodecError('InvalidTtl')
+  ): ProximityFrame {
+    if (!Number.isInteger(ttlHops) || ttlHops <= 0 || ttlHops > MAX_PROXIMITY_TTL_HOPS) {
+      throw new ProximityCodecError('InvalidTtl')
     }
     const validatedStatus = parseSafetyStatus(status)
     const textBytes = UTF8_ENCODER.encode(text)
-    if (textBytes.length > MAX_EMERGENCY_TEXT_BYTES) {
-      throw new EmergencyCodecError('PayloadTooLarge')
+    if (textBytes.length > MAX_PROXIMITY_TEXT_BYTES) {
+      throw new ProximityCodecError('PayloadTooLarge')
     }
 
     const senderPublicKey = signer.publicKey()
     if (senderPublicKey.length !== 32) {
-      throw new EmergencyCodecError('CryptoFailure', 'Signer public key must be 32 bytes')
+      throw new ProximityCodecError('CryptoFailure', 'Signer public key must be 32 bytes')
     }
 
-    const transcript = EmergencyFrame.signingTranscript(
+    const transcript = ProximityFrame.signingTranscript(
       messageId,
       senderPublicKey,
       validatedStatus,
@@ -277,10 +283,10 @@ export class EmergencyFrame {
     )
     const signature = signer.sign(transcript)
     if (signature.length !== 64) {
-      throw new EmergencyCodecError('CryptoFailure', 'Ed25519 signature must be 64 bytes')
+      throw new ProximityCodecError('CryptoFailure', 'Ed25519 signature must be 64 bytes')
     }
 
-    return new EmergencyFrame({
+    return new ProximityFrame({
       messageId,
       senderPublicKey,
       ttlHops,
@@ -304,11 +310,11 @@ export class EmergencyFrame {
       }
     }
     if (!authorized) {
-      throw new EmergencyCodecError('UnauthorizedSender')
+      throw new ProximityCodecError('UnauthorizedSender')
     }
 
     const textBytes = UTF8_ENCODER.encode(this.text)
-    const transcript = EmergencyFrame.signingTranscript(
+    const transcript = ProximityFrame.signingTranscript(
       this.messageId,
       this.senderPublicKey,
       this.status,
@@ -316,16 +322,16 @@ export class EmergencyFrame {
     )
     const result = verifier.verify(this.senderPublicKey, transcript, this.signature)
     if (result === false) {
-      throw new EmergencyCodecError('InvalidSignature')
+      throw new ProximityCodecError('InvalidSignature')
     }
     return true
   }
 
-  decrementHop(): EmergencyFrame | null {
+  decrementHop(): ProximityFrame | null {
     if (this.ttlHops <= 1) {
       return null
     }
-    return new EmergencyFrame({
+    return new ProximityFrame({
       messageId: this.messageId,
       senderPublicKey: this.senderPublicKey,
       ttlHops: this.ttlHops - 1,
@@ -336,24 +342,26 @@ export class EmergencyFrame {
   }
 
   encode(): Uint8Array {
-    if (!Number.isInteger(this.ttlHops) || this.ttlHops <= 0 || this.ttlHops > MAX_EMERGENCY_TTL_HOPS) {
-      throw new EmergencyCodecError('InvalidTtl')
+    if (!Number.isInteger(this.ttlHops) || this.ttlHops <= 0 || this.ttlHops > MAX_PROXIMITY_TTL_HOPS) {
+      throw new ProximityCodecError('InvalidTtl')
     }
     const textBytes = UTF8_ENCODER.encode(this.text)
-    if (textBytes.length > MAX_EMERGENCY_TEXT_BYTES) {
-      throw new EmergencyCodecError('PayloadTooLarge')
+    if (textBytes.length > MAX_PROXIMITY_TEXT_BYTES) {
+      throw new ProximityCodecError('PayloadTooLarge')
     }
-    const total = EmergencyFrame.FIXED_OVERHEAD + textBytes.length
-    if (total > MAX_EMERGENCY_FRAME_BYTES) {
-      throw new EmergencyCodecError('PayloadTooLarge')
+    const total = ProximityFrame.FIXED_OVERHEAD + textBytes.length
+    if (total > MAX_PROXIMITY_FRAME_BYTES) {
+      throw new ProximityCodecError('PayloadTooLarge')
     }
     if (this.senderPublicKey.length !== 32 || this.signature.length !== 64) {
-      throw new EmergencyCodecError('MalformedFrame')
+      throw new ProximityCodecError('MalformedFrame')
     }
 
+    // Historical wire data (frame v1): the frame's layout, magic 0..2, version 2, id 3..19,
+    // sender 19..51, hops 51, status 52, text length 53, text from 54, then the signature.
     const out = new Uint8Array(total)
-    out.set(EmergencyFrame.MAGIC, 0)
-    out[2] = EmergencyFrame.VERSION
+    out.set(ProximityFrame.MAGIC, 0)
+    out[2] = ProximityFrame.VERSION
     out.set(this.messageId.asBytes(), 3)
     out.set(this.senderPublicKey, 19)
     out[51] = this.ttlHops
@@ -364,46 +372,46 @@ export class EmergencyFrame {
     return out
   }
 
-  static decode(raw: Uint8Array): EmergencyFrame {
+  static decode(raw: Uint8Array): ProximityFrame {
     if (
-      raw.length < EmergencyFrame.FIXED_OVERHEAD ||
-      raw.length > MAX_EMERGENCY_FRAME_BYTES
+      raw.length < ProximityFrame.FIXED_OVERHEAD ||
+      raw.length > MAX_PROXIMITY_FRAME_BYTES
     ) {
-      throw new EmergencyCodecError('MalformedFrame')
+      throw new ProximityCodecError('MalformedFrame')
     }
     if (
-      raw[0] !== EmergencyFrame.MAGIC[0] ||
-      raw[1] !== EmergencyFrame.MAGIC[1] ||
-      raw[2] !== EmergencyFrame.VERSION
+      raw[0] !== ProximityFrame.MAGIC[0] ||
+      raw[1] !== ProximityFrame.MAGIC[1] ||
+      raw[2] !== ProximityFrame.VERSION
     ) {
-      throw new EmergencyCodecError('MalformedFrame')
+      throw new ProximityCodecError('MalformedFrame')
     }
 
     const messageId = UuidV7.fromBytesChecked(raw.subarray(3, 19))
     const senderPublicKey = raw.slice(19, 51)
     const ttlHops = raw[51] ?? 0
-    if (ttlHops === 0 || ttlHops > MAX_EMERGENCY_TTL_HOPS) {
-      throw new EmergencyCodecError('InvalidTtl')
+    if (ttlHops === 0 || ttlHops > MAX_PROXIMITY_TTL_HOPS) {
+      throw new ProximityCodecError('InvalidTtl')
     }
 
     const status = parseSafetyStatus(raw[52] ?? 255)
     const textLen = raw[53] ?? 0
     if (
-      textLen > MAX_EMERGENCY_TEXT_BYTES ||
-      EmergencyFrame.FIXED_OVERHEAD + textLen !== raw.length
+      textLen > MAX_PROXIMITY_TEXT_BYTES ||
+      ProximityFrame.FIXED_OVERHEAD + textLen !== raw.length
     ) {
-      throw new EmergencyCodecError('MalformedFrame')
+      throw new ProximityCodecError('MalformedFrame')
     }
 
     let text: string
     try {
       text = UTF8_DECODER.decode(raw.subarray(54, 54 + textLen))
     } catch {
-      throw new EmergencyCodecError('MalformedFrame')
+      throw new ProximityCodecError('MalformedFrame')
     }
 
     const signature = raw.slice(54 + textLen, 54 + textLen + 64)
-    return new EmergencyFrame({
+    return new ProximityFrame({
       messageId,
       senderPublicKey,
       ttlHops,
@@ -413,7 +421,7 @@ export class EmergencyFrame {
     })
   }
 
-  equals(other: EmergencyFrame): boolean {
+  equals(other: ProximityFrame): boolean {
     return (
       this.messageId.equals(other.messageId) &&
       constantTimeEqual(this.senderPublicKey, other.senderPublicKey) &&
@@ -426,15 +434,15 @@ export class EmergencyFrame {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Deduplication Ring (`EmergencyReplayGuard`)
+// 3. Deduplication Ring (`ProximityReplayGuard`)
 // ---------------------------------------------------------------------------
 
-export class EmergencyReplayGuard {
+export class ProximityReplayGuard {
   private readonly seen = new Set<string>()
   readonly maxEntries: number
 
   constructor(maxEntries = 64) {
-    this.maxEntries = Math.min(EMERGENCY_REPLAY_ENTRIES, Math.max(64, Math.trunc(maxEntries)))
+    this.maxEntries = Math.min(PROXIMITY_REPLAY_ENTRIES, Math.max(64, Math.trunc(maxEntries)))
   }
 
   acceptOnce(id: UuidV7): boolean {
@@ -576,8 +584,9 @@ export function computeProximityBeacon(
   unixSecs: number
 ): Uint8Array {
   if (orgBeaconSalt.length !== 32) {
-    throw new EmergencyCodecError('CryptoFailure', 'orgBeaconSalt must be 32 bytes')
+    throw new ProximityCodecError('CryptoFailure', 'orgBeaconSalt must be 32 bytes')
   }
+  // Historical wire data (beacon v1): label 0..16, big-endian bucket 16..24, first 8 MAC bytes.
   const bucket = BigInt(Math.floor(Math.max(0, Math.trunc(unixSecs)) / BEACON_ROTATION_WINDOW_SECS))
   const msg = new Uint8Array(24)
   msg.set(BEACON_DOMAIN_PREFIX, 0)
@@ -593,7 +602,7 @@ export function createKeyedMacSigner(
   publicKey: Uint8Array
 ): DeviceIdentitySigner {
   if (secret.length !== 32 || publicKey.length !== 32) {
-    throw new EmergencyCodecError('CryptoFailure', 'Keyed MAC signer requires 32-byte keys')
+    throw new ProximityCodecError('CryptoFailure', 'Keyed MAC signer requires 32-byte keys')
   }
   const secretCopy = new Uint8Array(secret)
   const pkCopy = new Uint8Array(publicKey)
@@ -614,7 +623,7 @@ export function createKeyedMacSigner(
 
 export function createKeyedMacVerifier(secret: Uint8Array): SignatureVerifier {
   if (secret.length !== 32) {
-    throw new EmergencyCodecError('CryptoFailure', 'Keyed MAC verifier requires 32-byte secret')
+    throw new ProximityCodecError('CryptoFailure', 'Keyed MAC verifier requires 32-byte secret')
   }
   const secretCopy = new Uint8Array(secret)
   return {

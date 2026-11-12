@@ -3,15 +3,15 @@
 // and these fixed keys, this roster and this clock must never stand in for a real device.
 
 import { createKeyedMacSigner } from './codec'
-import type { EmergencyPanelTransport } from './EmergencyRoomPanel'
-import { type EmergencyRosterCheckIn, SafetyStatus } from './types'
+import type { ProximityPanelTransport } from './ProximityRoomPanel'
+import { type ProximityRosterCheckIn, SafetyStatus } from './types'
 
 export const DEMO_ORG_BEACON_SALT = new Uint8Array(32).fill(0x42)
 const DEMO_LOCAL_SECRET = new Uint8Array(32).fill(0x07)
 const DEMO_LOCAL_PUBLIC_KEY = new Uint8Array(32).fill(0x09)
 export const DEMO_UNIX_SECS = 1_762_520_100
 
-export const DEMO_PEER_ROSTER: readonly EmergencyRosterCheckIn[] = [
+export const DEMO_PEER_ROSTER: readonly ProximityRosterCheckIn[] = [
   {
     messageId: '019a6004-bedc-7101-8101-010101010101',
     senderPublicKeyHex: '11'.repeat(32),
@@ -36,9 +36,9 @@ export const DEMO_PEER_ROSTER: readonly EmergencyRosterCheckIn[] = [
   },
 ]
 
-export function demoEmergencyTransport(
-  overrides: Partial<EmergencyPanelTransport> = {}
-): EmergencyPanelTransport {
+export function demoProximityTransport(
+  overrides: Partial<ProximityPanelTransport> = {}
+): ProximityPanelTransport {
   return {
     orgBeaconSalt: DEMO_ORG_BEACON_SALT,
     unixSecs: DEMO_UNIX_SECS,

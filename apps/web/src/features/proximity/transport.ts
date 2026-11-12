@@ -1,5 +1,5 @@
 import {
-  EmergencyFrame,
+  ProximityFrame,
   UuidV7,
   bytesToHex,
   computeProximityBeacon,
@@ -10,21 +10,24 @@ import {
 import {
   BEACON_ROTATION_WINDOW_SECS,
   type BleGattTransportAdapter,
-  EMERGENCY_QUEUE_CAPACITY,
-  EMERGENCY_REPLAY_ENTRIES,
-  EMERGENCY_ROSTER_MEMBERS,
+  PROXIMITY_QUEUE_CAPACITY,
+  PROXIMITY_REPLAY_ENTRIES,
+  PROXIMITY_ROSTER_MEMBERS,
   type DeviceIdentitySigner,
-  EmergencyCodecError,
-  type EmergencyMemberDirectoryEntry,
-  type EmergencyMeshEnvelope,
-  type EmergencyRosterCheckIn,
-  MAX_EMERGENCY_TTL_HOPS,
+  ProximityCodecError,
+  type ProximityMemberDirectoryEntry,
+  type ProximityMeshEnvelope,
+  type ProximityRosterCheckIn,
+  MAX_PROXIMITY_TTL_HOPS,
   SafetyStatus,
   type SignatureVerifier,
   isTooFarAhead,
 } from './types'
 
-export const EMERGENCY_MESH_CHANNEL_NAME = 'kodera-emergency-mesh-v1'
+// Historical wire data: the name tabs of one browser meet under. Two tabs on different builds
+// must still hear each other, so the value keeps the feature's former name.
+export const PROXIMITY_MESH_CHANNEL_NAME = 'kodera-emergency-mesh-v1'
+// Historical wire data: the BLE service UUID, whose 16-bit part spells the frame's "KE" magic.
 export const KODERA_BLE_SERVICE_UUID = '00004b45-0000-1000-8000-00805f9b34fb'
 
 export interface BroadcastChannelLike {
@@ -34,7 +37,7 @@ export interface BroadcastChannelLike {
 }
 
 export interface QueuedRelayFrame {
-  readonly frame: EmergencyFrame
+  readonly frame: ProximityFrame
   readonly wireBytes: Uint8Array
   readonly priority: number
   readonly enqueuedOrder: number
@@ -43,8 +46,8 @@ export interface QueuedRelayFrame {
 export type IngestPeerFrameResult =
   | {
       readonly accepted: true
-      readonly checkIn: EmergencyRosterCheckIn
-      readonly relayedFrame: EmergencyFrame | null
+      readonly checkIn: ProximityRosterCheckIn
+      readonly relayedFrame: ProximityFrame | null
     }
   | {
       readonly accepted: false
@@ -58,11 +61,11 @@ export type IngestPeerFrameResult =
         | 'future_frame'
     }
 
-export interface EmergencyRoomControllerOptions {
+export interface ProximityRoomControllerOptions {
   readonly orgBeaconSalt: Uint8Array
   readonly localSigner: DeviceIdentitySigner
   readonly verifier: SignatureVerifier
-  readonly members: readonly EmergencyMemberDirectoryEntry[]
+  readonly members: readonly ProximityMemberDirectoryEntry[]
   readonly localDisplayName?: string | undefined
   readonly nowMs?: (() => number) | undefined
   readonly randomBytes?: ((length: number) => Uint8Array) | undefined
@@ -145,9 +148,9 @@ function defaultBroadcastChannelFactory(name: string): BroadcastChannelLike | nu
   }
 }
 
-const DEFAULT_MAX_QUEUE_CAPACITY = EMERGENCY_QUEUE_CAPACITY
+const DEFAULT_MAX_QUEUE_CAPACITY = PROXIMITY_QUEUE_CAPACITY
 const DEFAULT_MAX_REPLAY_ENTRIES = 1024
-const MAX_ALLOWED_REPLAY_ENTRIES = EMERGENCY_REPLAY_ENTRIES
+const MAX_ALLOWED_REPLAY_ENTRIES = PROXIMITY_REPLAY_ENTRIES
 
 function clampCapacity(
   value: number | undefined,
@@ -161,7 +164,7 @@ function clampCapacity(
   return Math.max(min, Math.min(max, Math.trunc(value)))
 }
 
-function compareRelayFrames(a: EmergencyFrame, b: EmergencyFrame): number {
+function compareRelayFrames(a: ProximityFrame, b: ProximityFrame): number {
   const prioDiff = safetyStatusPriority(a.status) - safetyStatusPriority(b.status)
   if (prioDiff !== 0) {
     return prioDiff
@@ -208,12 +211,12 @@ class BoundedReplayGuard {
   }
 }
 
-export class EmergencyRoomController {
+export class ProximityRoomController {
   private readonly orgBeaconSalt: Uint8Array
   private readonly localSigner: DeviceIdentitySigner
   private readonly verifier: SignatureVerifier
-  private readonly memberDirectory = new Map<string, EmergencyMemberDirectoryEntry>()
-  private readonly rosterBySender = new Map<string, EmergencyRosterCheckIn>()
+  private readonly memberDirectory = new Map<string, ProximityMemberDirectoryEntry>()
+  private readonly rosterBySender = new Map<string, ProximityRosterCheckIn>()
   private readonly replayGuard: BoundedReplayGuard
   private readonly maxQueueCapacity: number
   private readonly relayQueue: QueuedRelayFrame[] = []
@@ -228,9 +231,9 @@ export class EmergencyRoomController {
   private readonly localDisplayName: string
   private enqueueSeq = 0
 
-  constructor(options: EmergencyRoomControllerOptions) {
+  constructor(options: ProximityRoomControllerOptions) {
     if (options.orgBeaconSalt.length !== 32) {
-      throw new EmergencyCodecError('CryptoFailure', 'orgBeaconSalt must be 32 bytes')
+      throw new ProximityCodecError('CryptoFailure', 'orgBeaconSalt must be 32 bytes')
     }
     this.orgBeaconSalt = new Uint8Array(options.orgBeaconSalt)
     this.localSigner = options.localSigner
@@ -238,7 +241,7 @@ export class EmergencyRoomController {
     this.nowMs = options.nowMs ?? (() => Date.now())
     this.randomBytes = options.randomBytes ?? defaultRandomBytes
     this.bleAdapter = options.bleAdapter
-    this.defaultTtlHops = options.defaultTtlHops ?? MAX_EMERGENCY_TTL_HOPS
+    this.defaultTtlHops = options.defaultTtlHops ?? MAX_PROXIMITY_TTL_HOPS
     this.maxQueueCapacity = clampCapacity(
       options.maxQueueCapacity,
       DEFAULT_MAX_QUEUE_CAPACITY,
@@ -256,10 +259,10 @@ export class EmergencyRoomController {
       displayName: this.localDisplayName,
     })
 
-    if (options.members.length + 1 > EMERGENCY_ROSTER_MEMBERS) {
-      throw new EmergencyCodecError(
+    if (options.members.length + 1 > PROXIMITY_ROSTER_MEMBERS) {
+      throw new ProximityCodecError(
         'InvalidConfiguration',
-        `an emergency roster tracks at most ${EMERGENCY_ROSTER_MEMBERS} device keys`
+        `an proximity roster tracks at most ${PROXIMITY_ROSTER_MEMBERS} device keys`
       )
     }
     for (const member of options.members) {
@@ -268,7 +271,7 @@ export class EmergencyRoomController {
     }
 
     const factory = options.broadcastChannelFactory ?? defaultBroadcastChannelFactory
-    this.broadcastChannel = factory(EMERGENCY_MESH_CHANNEL_NAME)
+    this.broadcastChannel = factory(PROXIMITY_MESH_CHANNEL_NAME)
     if (this.broadcastChannel !== null) {
       this.broadcastChannel.onmessage = (event) => {
         this.handleMeshEnvelope(event.data)
@@ -309,10 +312,10 @@ export class EmergencyRoomController {
     status: SafetyStatus,
     text: string = '',
     ttlHops: number = this.defaultTtlHops
-  ): { readonly checkIn: EmergencyRosterCheckIn; readonly frame: EmergencyFrame; readonly wireBytes: Uint8Array } {
+  ): { readonly checkIn: ProximityRosterCheckIn; readonly frame: ProximityFrame; readonly wireBytes: Uint8Array } {
     const tsMs = this.nowMs()
     const messageId = UuidV7.fromParts(tsMs, this.randomBytes(10))
-    const frame = EmergencyFrame.newSigned(
+    const frame = ProximityFrame.newSigned(
       messageId,
       ttlHops,
       status,
@@ -325,7 +328,7 @@ export class EmergencyRoomController {
     }
 
     const member = this.memberDirectory.get(this.localPublicKeyHex)
-    const checkIn: EmergencyRosterCheckIn = {
+    const checkIn: ProximityRosterCheckIn = {
       messageId: frame.messageId.toString(),
       senderPublicKeyHex: this.localPublicKeyHex,
       displayName: member?.displayName ?? this.localDisplayName,
@@ -356,9 +359,9 @@ export class EmergencyRoomController {
       return { accepted: false, reason: 'invalid_beacon' }
     }
 
-    let frame: EmergencyFrame
+    let frame: ProximityFrame
     try {
-      frame = EmergencyFrame.decode(wireBytes)
+      frame = ProximityFrame.decode(wireBytes)
     } catch {
       return { accepted: false, reason: 'malformed_frame' }
     }
@@ -373,7 +376,7 @@ export class EmergencyRoomController {
     try {
       frame.verifySender(this.memberDirectory.keys(), this.verifier)
     } catch (error) {
-      if (error instanceof EmergencyCodecError && error.code === 'UnauthorizedSender') {
+      if (error instanceof ProximityCodecError && error.code === 'UnauthorizedSender') {
         return { accepted: false, reason: 'unauthorized_sender' }
       }
       return { accepted: false, reason: 'invalid_signature' }
@@ -397,7 +400,7 @@ export class EmergencyRoomController {
 
     const member = this.memberDirectory.get(senderHex)
     const timestampMs = frame.messageId.timestampMs()
-    const checkIn: EmergencyRosterCheckIn = {
+    const checkIn: ProximityRosterCheckIn = {
       messageId: messageIdStr,
       senderPublicKeyHex: senderHex,
       displayName: member?.displayName ?? `Appareil ${senderHex.slice(0, 8)}`,
@@ -419,7 +422,7 @@ export class EmergencyRoomController {
     return { accepted: true, checkIn, relayedFrame }
   }
 
-  private enqueueRelayFrame(frame: EmergencyFrame): boolean {
+  private enqueueRelayFrame(frame: ProximityFrame): boolean {
     if (this.containsMessageId(frame.messageId)) {
       return false
     }
@@ -478,7 +481,7 @@ export class EmergencyRoomController {
     return drained
   }
 
-  getRoster(): readonly EmergencyRosterCheckIn[] {
+  getRoster(): readonly ProximityRosterCheckIn[] {
     const entries = [...this.rosterBySender.values()]
     entries.sort((a, b) => {
       const prioDiff = safetyStatusPriority(b.status) - safetyStatusPriority(a.status)
@@ -507,7 +510,7 @@ export class EmergencyRoomController {
 
   private publishOverTransports(beacon: Uint8Array, wireBytes: Uint8Array): void {
     if (this.broadcastChannel !== null) {
-      const envelope: EmergencyMeshEnvelope = {
+      const envelope: ProximityMeshEnvelope = {
         beaconHex: bytesToHex(beacon),
         frameHex: bytesToHex(wireBytes),
       }

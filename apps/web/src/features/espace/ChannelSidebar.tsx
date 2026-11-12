@@ -21,7 +21,7 @@ import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspac
 import { AntennaIcon } from './AntennaIcon'
 import type { CallSnapshot } from './audio/call'
 import {
-  isEmergencyChannel,
+  isProximityChannel,
   noCallSnapshot,
   occupantsForRoom,
   roomForChannel,
@@ -186,8 +186,8 @@ export interface ChannelSidebarProps {
   canvasMode: 'chat' | 'docs'
   /** Optional presentation metadata; never an access grant. */
   categoryDescriptions: Readonly<Record<string, string>> | undefined
-  /** Channels the server flags as the proximity room; see `isEmergencyChannel`. */
-  emergencyChannelIds: ReadonlySet<string> | undefined
+  /** Channels the server flags as the proximity room; see `isProximityChannel`. */
+  proximityChannelIds: ReadonlySet<string> | undefined
   documents: readonly ChannelDoc[]
   searchEntries: readonly ChannelSearchEntry[]
   mentionCandidates: readonly MentionCandidate[]
@@ -226,7 +226,7 @@ function ChannelSidebarView({
   activeChannelId,
   canvasMode,
   categoryDescriptions,
-  emergencyChannelIds,
+  proximityChannelIds,
   documents,
   searchEntries,
   mentionCandidates,
@@ -289,7 +289,7 @@ function ChannelSidebarView({
       <ChannelRow
         key={channel.id}
         name={label}
-        leading={isEmergencyChannel(channel, emergencyChannelIds) ? <AntennaIcon /> : undefined}
+        leading={isProximityChannel(channel, proximityChannelIds) ? <AntennaIcon /> : undefined}
         // The channel's own address, so a copied link or a middle-click opens it; a click opens
         // it in place.
         href={`/${encodeURIComponent(org)}/workspace/${encodeURIComponent(channel.id)}`}
