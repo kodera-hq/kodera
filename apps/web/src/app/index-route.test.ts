@@ -13,7 +13,11 @@ const h = vi.hoisted(() => ({
   apps: ['visio', 'messaging'] as string[],
   status: 'ok' as 'ok' | 'down',
   tenantRead: 'ok' as 'ok' | 'down',
+  restored: true,
+  communityHost: false,
 }))
+
+vi.mock('./communityHost', () => ({ onCommunityHost: () => h.communityHost }))
 
 vi.mock('../features/status/queries', () => ({
   fetchFirstTenant: () =>
@@ -28,7 +32,7 @@ vi.mock('../features/status/queries', () => ({
 
 vi.mock('../auth/oidc', () => ({
   authAdapter: {
-    restoreSession: () => Promise.resolve(true),
+    restoreSession: () => Promise.resolve(h.restored),
     getSnapshot: () => ({ status: 'ready', generation: 1, credentialGeneration: 1 }),
     getAccessToken: () => 'synthetic-access',
   },
@@ -70,6 +74,8 @@ describe('the index route', () => {
     h.apps = ['visio', 'messaging']
     h.status = 'ok'
     h.tenantRead = 'ok'
+    h.restored = true
+    h.communityHost = false
     queryClient.clear()
   })
 
@@ -83,6 +89,22 @@ describe('the index route', () => {
       createStore: createLocalWorkspaceStore,
     })
     expect(await landing()).toMatchObject({ to: '/$org/workspace', params: { org: 'community' } })
+  })
+
+  it('sends a signed-out visitor of the community host to the community welcome', async () => {
+    h.restored = false
+    h.communityHost = true
+    expect(await landing()).toMatchObject({ to: '/login', search: { org: 'community' } })
+    h.communityHost = false
+    expect(await landing()).toEqual(expect.not.objectContaining({ search: expect.anything() }))
+  })
+
+  it('prefers the community membership on the community host, whatever its base domain', async () => {
+    h.includeCommunity = true
+    h.communityHost = true
+    expect(await landing()).toMatchObject({ to: '/$org/workspace', params: { org: 'community' } })
+    h.communityHost = false
+    expect(await landing()).toMatchObject({ to: '/$org/workspace', params: { org: 'acme-sa' } })
   })
 
   it('sends a member to Espace', async () => {
