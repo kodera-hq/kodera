@@ -74,6 +74,7 @@ interface Vectors {
   readonly valid: string[]
   readonly refuse: { name: string; text: string }[]
   readonly generated: { salt: string; sender: string; handle: string }[]
+  readonly fingerprints: { salt: string; sender: string; fingerprint: string }[]
   readonly rosters: Map<string, RosterLine[]>
 }
 
@@ -88,6 +89,7 @@ function parse(entries: readonly string[]): Vectors {
     valid: [],
     refuse: [],
     generated: [],
+    fingerprints: [],
     rosters: new Map(),
   }
   for (const line of entries) {
@@ -102,6 +104,8 @@ function parse(entries: readonly string[]): Vectors {
       vectors.refuse.push({ name: a, text: b === '-' ? '' : UTF8.decode(hexToBytes(b)) })
     else if (kind === 'generated' && fields.length === 4)
       vectors.generated.push({ salt: a, sender: b, handle: c })
+    else if (kind === 'fingerprint' && fields.length === 4 && /^[0-9a-f]{64}$/.test(c))
+      vectors.fingerprints.push({ salt: a, sender: b, fingerprint: c })
     else if (kind === 'roster' && fields.length === 8 && (g === 'present' || g === 'absent')) {
       const lines = vectors.rosters.get(a) ?? []
       lines.push({
@@ -241,6 +245,15 @@ async function checkVectors(implementation: HandleImplementation, vectors: Vecto
       throw new Error(`a generated handle differs from its vector (${derived}, expected ${handle})`)
   }
 
+  for (const { salt, sender, fingerprint } of vectors.fingerprints) {
+    const derived = await implementation.fingerprint(hexToBytes(salt), hexToBytes(sender))
+    if (derived !== fingerprint)
+      throw new Error(
+        `a fingerprint differs from its vector (${derived.slice(0, 16)}…, expected ` +
+          `${fingerprint.slice(0, 16)}…)`
+      )
+  }
+
   for (const [name, lines] of vectors.rosters) {
     const provisioned: ProvisionedProximitySender[] = []
     for (const line of lines) {
@@ -285,6 +298,7 @@ describe('proximity handle v1 vectors', () => {
     expect(VECTORS.valid.length).toBeGreaterThanOrEqual(12)
     expect(VECTORS.refuse.length).toBeGreaterThanOrEqual(31)
     expect(VECTORS.generated).toHaveLength(10)
+    expect(VECTORS.fingerprints).toHaveLength(10)
     expect([...VECTORS.rosters.keys()]).toEqual([
       'all_distinct',
       'shared_dedicated_handle',

@@ -19,6 +19,7 @@
 #   valid <handle>
 #   refuse <name> <utf8_hex|->          (`-` is the empty string)
 #   generated <organisation_salt_hex> <sender_hex> <handle>
+#   fingerprint <organisation_salt_hex> <sender_hex> <fingerprint_hex>
 #   roster <case> <organisation_salt_hex> <sender_hex> <dedicated_handle|-> <handle> <fingerprint|-> <present|absent>
 # Blank lines and lines starting with `#` are ignored. Any other line is an error.
 
@@ -151,11 +152,23 @@ generated 4343434343434343434343434343434343434343434343434343434343434343 00010
 #   lowercase hex of HMAC-SHA256(key = organisation beacon salt,
 #                                message = "kodera-proximity-fingerprint-v1:" || 32 sender bytes)
 # so that a member's fingerprint differs from one organisation to another. The source file is
-# being updated to this rule. Until its final entries are copied here, the fingerprint column of
-# the `roster` entries below was computed for this fixture (Web Crypto in the implementation,
-# Node's `crypto` as a second means), and the first two senders of
-# `fingerprints_extend_until_distinct` were searched for so that their keyed fingerprints share
-# their first 8 characters. Every other entry of this file is the source's, unchanged.
+# being updated to this rule. Until its final entries are copied here, three things below were
+# computed for this fixture (Web Crypto in the implementation, Node's `crypto` as a second means)
+# and are not yet the source's: the ten `fingerprint` entries
+#   fingerprint <organisation_salt_hex> <sender_hex> <fingerprint_hex>   (all 64 characters)
+# the fingerprint column of the `roster` entries, and the first two senders of
+# `fingerprints_extend_until_distinct`, searched for so that their keyed fingerprints share their
+# first 8 characters. Every other entry of this file is the source's, unchanged.
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a 95043981b19ae962c90146b1352d52b80a8fe7def49c8cf57ddd4c609fb1e226
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 0000000000000000000000000000000000000000000000000000000000000000 e53042a3934ad19e5603dbd28c2bfac8b81679343b6c27388deb5a50d269ddfc
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff 9163f1da3a03ffeabdfb0735ad5af835c169f7604e88c2d477c01505877aa2cf
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 790b4513273b2d873cb980cffa23bc388fce75cf62546fdffb848e8129b3dbbb
+fingerprint 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f a58cb2368707c0eb8726db192a99f47d46fd770ebbc28f3306f87ceb1d2b12cf
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a 80f17f3a96f22d4e7d8fc1331341f5198ae3b76c9da937b121c9151985a1ed51
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 0000000000000000000000000000000000000000000000000000000000000000 50c11123578132e13d4404942851586dd6e27b5db422100681048b5ad6e3067d
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff 39618b61c4744523e46df42bcb1b19de398317f842d0e55ddc36e9ddeb56b9bd
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 0909090909090909090909090909090909090909090909090909090909090909 efd69830ee598eb553fef319556fa64b3b141ce84dc253e7235846705d4a95c2
+fingerprint 4343434343434343434343434343434343434343434343434343434343434343 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f f1e95ae820b954f3ef3df80cf51fb94e96b6c265fd5752720ae8f73fb310261b
 roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a - gentle-ember-jn24grqyg - present
 roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 0909090909090909090909090909090909090909090909090909090909090909 - steady-brook-ah3fccbgh - present
 roster all_distinct 4242424242424242424242424242424242424242424242424242424242424242 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f north-wing-3 north-wing-3 - present
