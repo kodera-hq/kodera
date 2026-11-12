@@ -33,11 +33,11 @@ GitHub natif utilise sha256= sur rawBody, sans préfixe temporel SDK. L’adapta
 
 > Une signature valide ne constitue ni une autorisation de locataire ni une garantie antirejeu persistante.
 
-## Dix implémentations officielles
+## Dix implémentations de référence
 
 La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Frame.io route asset.ready vers les dailies et les commentaires/revues vers la post-production sans récupérer les médias.
 
-Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur officiel supplémentaire pour ces services.
+Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire pour ces services.
 
 > Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.
 

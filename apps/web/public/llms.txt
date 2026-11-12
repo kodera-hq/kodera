@@ -16,7 +16,7 @@ synapse-policy 0.1.5 enforces room policy. kodera-rs provides bounded native ide
 
 Clients/Rust/SDK: Apache-2.0. Server and Synapse policy: AGPL-3.0-or-later. Enterprise Edition: separate commercial licence. Never commit environment secrets, private keys or real tenant identifiers. No secrets belong in prompts, example payloads or theme codes.
 
-Exactly ten official connector implementations are indexed below; this is not a list of live connected accounts. Linear, Stripe and Sentry are potential custom SDK integrations, not additional official connectors in this checkout.
+Exactly ten reference connector implementations are indexed below; this is not a list of live connected accounts. Linear, Stripe and Sentry are potential custom SDK integrations, not additional reference connectors in this checkout.
 
 ## Developer guides
 
@@ -38,7 +38,7 @@ Exactly ten official connector implementations are indexed below; this is not a 
 
 - [Architecture & sécurité](/developer-docs/fr/security.md): Comprenez ce qui existe, ce qui est borné et ce qui reste à intégrer.
 
-## Official connectors
+## Reference connectors
 
 - [Hello Webhook](https://github.com/kodera-hq/kodera/blob/main/extensions/hello-webhook/README.md): hello-webhook
 

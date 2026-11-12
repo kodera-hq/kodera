@@ -152,10 +152,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Ten official implementations",
+            "title": "Ten reference implementations",
             "paragraphs": [
               "The connector list below describes repository implementations, not connected production accounts. Frame.io routes asset.ready to dailies and comment/review events to post-production without fetching assets.",
-              "Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional official connectors for those services."
+              "Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional reference connectors for those services."
             ],
             "callout": "HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.",
             "language": "",
@@ -366,10 +366,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Dix implémentations officielles",
+            "title": "Dix implémentations de référence",
             "paragraphs": [
               "La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Frame.io route asset.ready vers les dailies et les commentaires/revues vers la post-production sans récupérer les médias.",
-              "Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur officiel supplémentaire pour ces services."
+              "Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire pour ces services."
             ],
             "callout": "Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.",
             "language": "",

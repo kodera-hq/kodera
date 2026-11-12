@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import '../../i18n'
 import { ExtensionsCatalogPanel } from './ExtensionsCatalogPanel'
 import {
   EXTENSION_CATEGORY_FILTERS,
@@ -111,7 +112,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     }
   })
 
-  it('renders all 10 official extensions, filters by category pills, switches inspected extension, and fails closed on http:// or private IPs', async () => {
+  it('renders all 10 reference implementations, filters by category pills, switches inspected extension, and fails closed on http:// or private IPs', async () => {
     const user = userEvent.setup()
     const onWebhookValidated = vi.fn()
 
@@ -120,7 +121,14 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     expect(
       screen.getByRole('heading', { name: "Catalogue d'extensions Kodera v1" })
     ).toBeInTheDocument()
-    expect(screen.getByText('10 extensions officielles')).toBeInTheDocument()
+    expect(screen.getByText('10 implémentations de référence')).toBeInTheDocument()
+    expect(
+      screen.getByText('Exemples de départ à adapter : aucun compte externe n’est connecté.')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('list', { name: 'Implémentations de référence Kodera' })
+    ).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent(/officiel/i)
 
     // Verify all 5 category filter pills are rendered
     const filterGroup = screen.getByRole('group', { name: "Filtrer par catégorie d'extension" })

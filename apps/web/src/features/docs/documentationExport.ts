@@ -44,7 +44,7 @@ export function buildLlmsText(): string {
       `@kodera/extension-sdk ${content.versions.sdk} uses HMAC-SHA256, v1= signatures over timestamp.rawBody, a 300-second window, bounded in-memory signature/delivery replay protection and signed body routing metadata. Native GitHub sha256= signs rawBody and is not wire-compatible. Production needs durable idempotency and resolved-address egress policy; lexical SSRF checks do not pin DNS.`,
       `synapse-policy ${content.versions.policy} enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and ProximityFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.`,
       'Clients/Rust/SDK: Apache-2.0. Server and Synapse policy: AGPL-3.0-or-later. Enterprise Edition: separate commercial licence. Never commit environment secrets, private keys or real tenant identifiers. No secrets belong in prompts, example payloads or theme codes.',
-      'Exactly ten official connector implementations are indexed below; this is not a list of live connected accounts. Linear, Stripe and Sentry are potential custom SDK integrations, not additional official connectors in this checkout.',
+      'Exactly ten reference connector implementations are indexed below; this is not a list of live connected accounts. Linear, Stripe and Sentry are potential custom SDK integrations, not additional reference connectors in this checkout.',
       '## Developer guides',
       ...content.pages.en.map(
         (page) => `- [${page.title}](/developer-docs/en/${page.id}.md): ${page.summary}`
@@ -53,7 +53,7 @@ export function buildLlmsText(): string {
       ...content.pages.fr.map(
         (page) => `- [${page.title}](/developer-docs/fr/${page.id}.md): ${page.summary}`
       ),
-      '## Official connectors',
+      '## Reference connectors',
       ...content.connectors.map((c) => `- [${c.name}](${sourceUrl(c.path)}): ${c.slug}`),
       '## Optional',
       ...[

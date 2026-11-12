@@ -91,6 +91,13 @@ export type ExtensionWebhookValidationResult =
       readonly message: string
     }
 
+/**
+ * The starters this checkout ships: reference implementations to adapt, each a manifest and a
+ * sample command. None is a connector endorsed by the service it names, and listing one here
+ * connects no account. What the screen says of them is « implémentations de référence »
+ * (`console.onboarding.extensions.*`); the `Official` in these identifiers is only the name the
+ * code has had since before that wording, kept because modules outside this feature import it.
+ */
 export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[] = Object.freeze<
   readonly OfficialExtensionDescriptor[]
 >([
@@ -233,7 +240,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     version: '1.0.0',
     category: 'devops',
     description:
-      "Suit en temps réel l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans le salon.",
+      "Suit l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans le salon.",
     slashCommand: '/github-track',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',

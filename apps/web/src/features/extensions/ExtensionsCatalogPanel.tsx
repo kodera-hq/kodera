@@ -111,9 +111,16 @@ export function ExtensionsCatalogPanel({
                   </span>{' '}
                   • Moindre privilège et signature HMAC-SHA256
                 </p>
+                {/* What the list is, said where it is drawn: starters to adapt, connected to no
+                    account. Not an endorsement by the services they name. */}
+                <p className="text-sm font-regular text-c-ink-2">
+                  {t('console.onboarding.extensions.reference-note')}
+                </p>
               </div>
             </div>
-            <StatusPill state="success">{extensions.length} extensions officielles</StatusPill>
+            <StatusPill state="neutral">
+              {t('console.onboarding.extensions.count-reference', { count: extensions.length })}
+            </StatusPill>
           </div>
 
           <div
@@ -143,7 +150,7 @@ export function ExtensionsCatalogPanel({
           </div>
 
           <ul
-            aria-label="Extensions officielles Kodera"
+            aria-label={t('console.onboarding.extensions.list-label')}
             className="grid grid-cols-1 gap-3 md:grid-cols-2"
           >
             {filteredExtensions.map((ext) => {
