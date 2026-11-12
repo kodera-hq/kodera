@@ -65,6 +65,61 @@ test('creates a workspace, sends a message and returns to community', async ({ p
   await expect(page.getByRole('log')).toContainText('First message in our new workspace')
 })
 
+// The proximity template starts with one channel, as Core answers for it. A second one is not a
+// special kind of channel and has no screen of its own: whoever is in the workspace adds it with
+// the ordinary « Créer un salon » dialog and invites to it with the ordinary « Inviter » dialog.
+test('the proximity template starts with one channel; a second is created and invited to with the ordinary dialogs', async ({
+  page,
+}) => {
+  await page.goto('/community/workspace')
+  await page
+    .getByRole('button', { name: /changer d’organisation/ })
+    .last()
+    .click()
+  await page.getByRole('menuitem', { name: /Créer.*nouvel espace/ }).click()
+  await page.getByRole('textbox', { name: 'Nom de l’espace', exact: true }).fill('Equipe Terrain')
+  await page.getByRole('button', { name: 'Continuer', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('combobox').selectOption('proximity')
+  // The preview is the claim: one channel, under its French label.
+  await expect(dialog.getByRole('listitem')).toHaveText(['#proximité'])
+  await page.getByRole('button', { name: 'Continuer', exact: true }).click()
+  await page.getByRole('button', { name: 'Ouvrir l’espace', exact: true }).click()
+  await expect(page).toHaveURL(/\/equipe-terrain\/workspace/)
+  await expect(page.getByRole('heading', { name: 'proximité', exact: true })).toBeVisible()
+  const channels = page.getByRole('navigation', { name: 'Salons' })
+  await expect(channels.getByRole('link')).toHaveCount(1)
+  await expect(channels.getByRole('link')).toContainText(['proximité'])
+
+  // A second proximity channel, through the existing creation dialog.
+  await page
+    .getByRole('button', { name: 'Créer un salon dans Equipe Terrain', exact: true })
+    .click()
+  await page.getByRole('textbox', { name: 'Nom du salon', exact: true }).fill('Proximité Nord')
+  await page
+    .getByRole('textbox', { name: 'Description ou sujet (facultatif)', exact: true })
+    .fill('Présence, aile nord')
+  await page.getByRole('button', { name: 'Créer le salon', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'proximite-nord', exact: true })).toBeVisible()
+  await expect(channels.getByRole('link')).toHaveCount(2)
+  await expect(channels.getByRole('link')).toContainText(['proximité', 'proximite-nord'])
+
+  // People are invited to it through the existing invitation dialog.
+  await page.getByRole('button', { name: 'Inviter', exact: true }).click()
+  await page
+    .getByRole('textbox', { name: 'Identifiant Matrix', exact: true })
+    .fill('@lea:matrix.example')
+  await page.getByRole('button', { name: 'Envoyer l’invitation Matrix', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('Invitation Matrix envoyée')
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Membres', exact: true }).click()
+  await expect(
+    page
+      .getByRole('complementary', { name: 'Membres', exact: true })
+      .getByText('Lea', { exact: true })
+  ).toBeVisible()
+})
+
 test('creates text and voice channels with a topic', async ({ page }) => {
   await page.goto('/community/workspace')
   await page.getByRole('button', { name: 'Créer un salon dans Community', exact: true }).click()

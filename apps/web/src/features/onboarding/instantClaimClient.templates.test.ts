@@ -86,14 +86,15 @@ describe('the proximity template and its alias', () => {
     const stored = localClaim({ ...base, templateId: 'crisis-cell' })
     expect(stored).toEqual(canonical)
     expect(stored.payload.templateId).toBe('proximity')
-    expect(stored.channels.map((channel) => channel.name)).toContain('proximity')
-    expect(stored.channels.map((channel) => channel.name)).not.toContain('urgence')
+    // One default channel, as Core answers for the template: a text channel named `proximity`.
+    expect(stored.channels).toEqual([{ id: 'local-proximity', name: 'proximity', kind: 'text' }])
   })
 
   it('keeps a key for the alias where a stored identifier is looked up, with the same channels', () => {
     // `src/mocks/demo/localWorkspaces.ts` admits a stored claim by `Object.hasOwn` on this table.
     expect(Object.hasOwn(TEMPLATE_CHANNELS, 'crisis-cell')).toBe(true)
     expect(TEMPLATE_CHANNELS['crisis-cell']).toBe(TEMPLATE_CHANNELS.proximity)
+    expect(TEMPLATE_CHANNELS.proximity).toEqual(['proximity'])
   })
 
   it('refuses an identifier that names no template before anything is sent', async () => {

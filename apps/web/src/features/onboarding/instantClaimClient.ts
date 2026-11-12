@@ -25,7 +25,12 @@ type TemplateAlias = keyof typeof TEMPLATE_ALIASES
 /** A template identifier as this client writes it: never the alias. */
 export type CanonicalTemplateId = Exclude<TemplateId, TemplateAlias>
 
-const PROXIMITY_CHANNELS = ['general', 'incident-log', 'field-bridge', 'proximity'] as const
+/**
+ * The proximity template starts with one channel, `proximity`, a text channel: what Core answers
+ * for it (`{ name: "proximity", kind: "text" }`). Anything more is a channel its members add
+ * afterwards, through the same creation and invitation screens as any other channel.
+ */
+const PROXIMITY_CHANNELS = ['proximity'] as const
 
 /**
  * The channels each template starts with. The alias keeps a key of its own, with the very list of

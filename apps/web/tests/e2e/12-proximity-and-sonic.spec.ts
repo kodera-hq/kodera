@@ -106,9 +106,11 @@ async function routeWorkspaceWithProximityChannel(page: Page): Promise<void> {
           body.categories[0].channels.push({
             id: proximityId,
             kind: 'text',
+            // As Core answers for the proximity template: the channel is named `proximity` and
+            // carries the template's row key, which the console labels « proximité » in French.
             name: 'proximity',
-            template_key: null,
-            topic: 'Continuité bâtiment et pointage de sécurité hors-ligne',
+            template_key: 'proximity',
+            topic: 'Présence de proximité, pointage volontaire',
             lifecycle: 'active',
             room_state: 'ready',
           })
@@ -133,19 +135,17 @@ test('workspace/proximity: lists #proximity in the workspace sidebar, navigates 
   await openWorkspace(page)
 
   const nav = channels(page)
-  await expect(nav.getByRole('link')).toHaveText(['#bienvenue', '#général', '#proximity'])
+  await expect(nav.getByRole('link')).toHaveText(['#bienvenue', '#général', '#proximité'])
 
-  const proximityLink = nav.getByRole('link', { name: 'proximity' })
+  const proximityLink = nav.getByRole('link', { name: 'proximité' })
   await proximityLink.click()
 
   await expect(page).toHaveURL(new RegExp(`/${ORG}/workspace/${PROXIMITY_CHANNEL_ID}$`))
-  const heading = page.getByRole('heading', { level: 1, name: 'proximity' })
+  const heading = page.getByRole('heading', { level: 1, name: 'proximité' })
   await expect(heading).toBeVisible()
   await expect(heading).toBeFocused()
   await expect(proximityLink).toHaveAttribute('aria-current', 'page')
-  await expect(
-    page.getByText('Continuité bâtiment et pointage de sécurité hors-ligne')
-  ).toBeVisible()
+  await expect(page.getByText('Présence de proximité, pointage volontaire')).toBeVisible()
 
   await expectAxeClean(page)
   await expectZeroRuntimeRegressions(page, telemetry)
@@ -188,14 +188,14 @@ test('workspace/proximity: opens #proximity from the quick-switcher search dialo
   const dialog = page.getByRole('dialog', { name: 'Commandes et navigation rapide' })
   await expect(dialog).toBeVisible()
   await page.keyboard.type('prox')
-  await expect(dialog.getByRole('option')).toHaveText([/proximity/])
+  await expect(dialog.getByRole('option')).toHaveText([/proximité/])
   await expectAxeClean(page)
   await page.keyboard.press('Enter')
 
   await expect(dialog).toHaveCount(0)
-  const heading = page.getByRole('heading', { level: 1, name: 'proximity' })
+  const heading = page.getByRole('heading', { level: 1, name: 'proximité' })
   await expect(heading).toBeFocused()
-  await expect(channels(page).getByRole('link', { name: 'proximity' })).toHaveAttribute(
+  await expect(channels(page).getByRole('link', { name: 'proximité' })).toHaveAttribute(
     'aria-current',
     'page'
   )
