@@ -2,14 +2,15 @@
 // their own slice (`MessageTimeline` and its `MessageRow`s, `MessageComposer`, `ChannelSidebar`,
 // `VoiceCallDock`), so that writing a message draws the field being written in and nothing else.
 // This file counts draws, never time: a channel of two hundred messages is mounted, the member
-// types, and no `MessageRow` may be drawn again.
+// types, and no `MessageRow` may be drawn again. The log is virtual (`timelineWindow.ts`): of the
+// two hundred, it draws the rows its window holds, and those are the rows counted.
 //
 // How a draw is counted, with no seam in the product code: three modules are observed through
 // `vi.mock`, each wrapped by a plain function around the real, memoised component.
 //   - `MessageRow` renders exactly one `TimelineMessage`, and nothing else does in a channel's log:
 //     a call of the observed `TimelineMessage` is one draw of one `MessageRow`.
-//   - `MessageTimeline` hands each message to the observed `MessageRow`: a call of it for the first
-//     message is one draw of the log.
+//   - `MessageTimeline` hands each drawn message to the observed `MessageRow`: a call of it for the
+//     newest message at mount, which the log's window always holds, is one draw of the log.
 //   - the view hands the log to the observed `MessageTimeline`: a call of it is one draw of the view.
 //
 // A proof nobody has watched fail proves nothing (docs/dev/TESTING.md §« Writing a test that can
@@ -35,6 +36,7 @@ import { EspaceLiveView } from './EspaceLiveView'
 import type { EspaceStoreLike } from './EspaceLiveView'
 import type { ChannelRoom, EspaceSnapshot, MemberView } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
+import { MAX_DRAWN_ROWS } from './timelineWindow'
 
 /**
  * Each mutant breaks one guard, and nothing else, through the observed modules:
@@ -59,6 +61,8 @@ const probe = vi.hoisted(() => ({
   memory: null as unknown,
   viewDraws: 0,
   timelineDraws: 0,
+  /** The message whose draws count the log's: the newest at mount, which the window always holds. */
+  logMarker: '$m0',
   /** One entry per draw of a `MessageRow`: its author and its time. */
   rowDraws: [] as string[],
 }))
@@ -76,7 +80,8 @@ vi.mock('../../ui/TimelineMessage/TimelineMessage', async (original) => {
 vi.mock('./MessageRow', async (original) => {
   const actual = await original<typeof MessageRowModule>()
   function ObservedMessageRow(props: MessageRowModule.MessageRowProps) {
-    if (props.placement === 'timeline' && props.message.key === '$m0') probe.timelineDraws += 1
+    if (props.placement === 'timeline' && props.message.key === probe.logMarker)
+      probe.timelineDraws += 1
     if (probe.mutant === 'unstable-row-prop' || probe.mutant === 'unmemoised') {
       return (
         <actual.MessageRow
@@ -222,10 +227,12 @@ function makeStore(count: number) {
   let writing = false
   let timeline: readonly MessageView[] = history(count)
   const online = new Set<string>([ALICE])
-  const threadOf = timeline[5]!.eventId
+  // A recent message, in the log's window: its thread's opener is drawn.
+  const root = timeline[Math.max(0, count - 3)]!
+  const threadOf = root.eventId
   const threadReplies = [
-    reply('$t1', BOB, FIRST + 6 * 20 * 60_000 + 1),
-    reply('$t2', ELODIE, FIRST + 6 * 20 * 60_000 + 2),
+    reply('$t1', BOB, root.ts + 1),
+    reply('$t2', ELODIE, root.ts + 2),
   ]
   const members: readonly MemberView[] = [
     { userId: ALICE, name: 'Marina Loiseau' },
@@ -295,7 +302,10 @@ function makeStore(count: number) {
     receives(message: MessageView) {
       timeline = [...timeline, message]
     },
-    messagesOf: (sender: string) => timeline.filter((message) => message.sender === sender).length,
+    /** The drawn messages `sender` wrote: a virtual log draws only its window's rows. */
+    messagesOf: (sender: string) =>
+      timeline.filter((message) => message.sender === sender && drawnKeys().has(message.key))
+        .length,
   }
 }
 
@@ -357,8 +367,23 @@ function resetCounts() {
   probe.rowDraws = []
 }
 
+/** The keys of the rows the log has in the page now. */
+function drawnKeys(): Set<string> {
+  return new Set(
+    [...document.querySelectorAll('[data-timeline-row]')].map(
+      (row) => row.getAttribute('data-timeline-row') ?? ''
+    )
+  )
+}
+
+/** How many messages the log has in the page now. */
+function drawnMessages(): number {
+  return document.querySelectorAll('[role="log"] [data-timeline-row] article').length
+}
+
 function mount(count = MESSAGES) {
   const room = makeStore(count)
+  probe.logMarker = `$m${count - 1}`
   resetCounts()
   render(
     <EspaceLiveView
@@ -369,11 +394,14 @@ function mount(count = MESSAGES) {
       store={room.store}
     />
   )
-  // The probe is alive: every message was drawn, and, with no mutant at work, drawn once, by the
-  // one draw of the log and of the view.
-  expect(new Set(probe.rowDraws).size).toBe(count)
+  // The probe is alive: every message in the log's window was drawn, and, with no mutant at work,
+  // drawn once, by the one draw of the log and of the view. The window is a part of a long log.
+  const drawn = drawnMessages()
+  expect(drawn).toBeGreaterThan(0)
+  expect(drawn).toBeLessThanOrEqual(Math.min(count, MAX_DRAWN_ROWS))
+  expect(new Set(probe.rowDraws).size).toBe(drawn)
   if (probe.mutant === null) {
-    expect(probe.rowDraws).toHaveLength(count)
+    expect(probe.rowDraws).toHaveLength(drawn)
     expect(probe.timelineDraws).toBe(1)
     // Under the provider the view is drawn once more, when its lease on the room is attached:
     // that draw reaches neither the log nor a message.
@@ -389,6 +417,8 @@ interface TypingMeasure {
   viewDraws: number
   timelineDraws: number
   rowDraws: readonly string[]
+  /** How many messages the log had in the page. */
+  drawn: number
 }
 
 /** Mounts the channel, then types `text` in its composer, and reports what was drawn again. */
@@ -412,6 +442,7 @@ async function typeInComposer(
     viewDraws: probe.viewDraws,
     timelineDraws: probe.timelineDraws,
     rowDraws: [...probe.rowDraws],
+    drawn: drawnMessages(),
   }
 }
 
@@ -555,7 +586,7 @@ describe('the typing proof refuses each mutant', () => {
     SLOW,
     async () => {
       const measure = await typeInComposer(WORD, { mutant: 'unstable-row-prop', messages: 60 })
-      expect(measure.rowDraws).toHaveLength(60)
+      expect(measure.rowDraws).toHaveLength(measure.drawn)
     }
   )
 
@@ -568,6 +599,6 @@ describe('the typing proof refuses each mutant', () => {
 
   it('mutant unmemoised draws every message again at every keystroke', SLOW, async () => {
     const measure = await typeInComposer(WORD, { mutant: 'unmemoised', messages: 60 })
-    expect(measure.rowDraws.length).toBeGreaterThanOrEqual(WORD.length * 60)
+    expect(measure.rowDraws.length).toBeGreaterThanOrEqual(WORD.length * measure.drawn)
   })
 })

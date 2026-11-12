@@ -3,9 +3,14 @@
 // the store itself: it is drawn again when the room's messages, its members' presence or its
 // threads change, never when the member types, when a call's sound level moves or when a sidebar
 // is resized. Each row then draws only if its own message, or what is said about it, changed.
+//
+// Virtual (docs/specs/espace-timeline-scale.md): of a room's thousands of messages, only the rows
+// on screen and a margin around them are in the page, at most `MAX_DRAWN_ROWS`; two spacers hold
+// the others' place (`timelineVirtualizer.ts`). Each row carries its own top gap, so a row's
+// measured height is all the room it takes.
 
-import { memo, useSyncExternalStore } from 'react'
-import type { RefObject } from 'react'
+import { memo, useImperativeHandle, useSyncExternalStore } from 'react'
+import type { ReactNode, Ref, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { demoMessages } from '../../app/demoMessages'
 import { calendarDay, formatDayDivider, previousCalendarDay } from '../../i18n/format'
@@ -23,8 +28,30 @@ import {
 import type { History } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 import { MessageRow, type MessageRowActions } from './MessageRow'
-import { timelineRows } from './timelineRows'
+import { quarterHourDays, timelineRows, type TimelineRow } from './timelineRows'
+import { ROW_KEY_ATTRIBUTE, useTimelineVirtualizer } from './timelineVirtualizer'
 import { useCalendarToday } from './useCalendarToday'
+
+/** What the view can ask of the log: bring a message into sight, drawing it first. */
+export interface MessageTimelineHandle {
+  /** Scrolls to the message with this event id; false when it is not in the loaded history. */
+  showMessage: (eventId: string) => boolean
+}
+
+type LogRow = TimelineRow | { kind: 'insert'; key: string; node: ReactNode }
+
+/** A row's height before the browser has laid it out, its 8 px top gap included. */
+function estimateOf(row: LogRow | undefined): number {
+  if (row === undefined || row.kind === 'message') return 72
+  if (row.kind === 'insert') return 160
+  return 40
+}
+
+/** The calendar day of a moment, remembered per quarter hour across every log drawn. */
+const dayOfMessage = quarterHourDays(calendarDay)
+
+/** How long a message brought into sight stays marked. */
+const SHOWN_MARK_MS = 1600
 
 /** The top of the message log: how far back it reaches, and the way to read further. */
 function HistoryEdge({
@@ -63,12 +90,22 @@ function HistoryEdge({
   )
 }
 
+/** Each loaded message by event id, the first that carries it; built once per timeline. */
+const eventIndexes = new WeakMap<
+  readonly MessageView[],
+  { length: number; index: Map<string, MessageView> }
+>()
+
 /** The message a reply answers, among the loaded ones: the first that carries each event id. */
 function firstByEventId(timeline: readonly MessageView[]): ReadonlyMap<string, MessageView> {
+  const cached = eventIndexes.get(timeline)
+  // A store that changed its array in place changed its length too: built again.
+  if (cached !== undefined && cached.length === timeline.length) return cached.index
   const found = new Map<string, MessageView>()
   for (const message of timeline) {
     if (!found.has(message.eventId)) found.set(message.eventId, message)
   }
+  eventIndexes.set(timeline, { length: timeline.length, index: found })
   return found
 }
 
@@ -98,6 +135,8 @@ export interface MessageTimelineProps {
   logRef: RefObject<HTMLDivElement | null>
   onScroll: () => void
   onLoadOlder: () => void
+  /** Filled with what the view can ask of the log (`MessageTimelineHandle`). */
+  handleRef?: Ref<MessageTimelineHandle> | undefined
 }
 
 function MessageTimelineView({
@@ -119,6 +158,7 @@ function MessageTimelineView({
   logRef,
   onScroll,
   onLoadOlder,
+  handleRef,
 }: MessageTimelineProps) {
   const { t, i18n } = useTranslation()
   const locale = i18n.resolvedLanguage === 'en' ? 'en' : 'fr'
@@ -135,9 +175,41 @@ function MessageTimelineView({
       return t('console.workspace.channel.label-day-yesterday')
     return formatDayDivider(ts, locale, day.slice(0, 4) !== today.slice(0, 4))
   }
-  const rows = timelineRows(timeline, { dayOf: calendarDay, unreadFrom, me: viewerId })
+  // Read again at every draw, not memoised on the array: a store may hand back the same array
+  // changed in place, and the log must draw what it holds now.
   const byEventId = firstByEventId(timeline)
-  const shown = timeline.length === 0 ? [] : rows
+  const shown =
+    timeline.length === 0
+      ? []
+      : timelineRows(timeline, { dayOf: dayOfMessage, unreadFrom, me: viewerId })
+  const rows: readonly LogRow[] =
+    shown.length === 0 && inserts.length === 0 ? [] : mergeTimelineInserts(shown, inserts)
+  const keys = rows.map((row) => row.key)
+  const estimate = (index: number) => estimateOf(rows[index])
+  const { window, listRef, beforeRef, afterRef, layout } = useTimelineVirtualizer({
+    keys,
+    estimate,
+    scrollRef: logRef,
+  })
+  useImperativeHandle(
+    handleRef,
+    () => ({
+      showMessage(eventId) {
+        // Read when asked, not when drawn: the message may have arrived since.
+        const loaded = roomId === null ? NO_MESSAGES : store.getTimeline(roomId)
+        const message = firstByEventId(loaded).get(eventId)
+        if (message === undefined || !layout.scrollToKey(message.key)) return false
+        const element = layout.rowElement(message.key)
+        if (element !== undefined) {
+          element.dataset.shown = 'true'
+          setTimeout(() => delete element.dataset.shown, SHOWN_MARK_MS)
+          element.querySelector<HTMLElement>('article, [tabindex]')?.focus({ preventScroll: true })
+        }
+        return true
+      },
+    }),
+    [layout, store, roomId]
+  )
 
   return (
     <div
@@ -149,7 +221,7 @@ function MessageTimelineView({
       })}
       aria-busy={history === 'loading' ? true : undefined}
       // Conversation history begins under the header, matching the document canvas.
-      className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto py-2"
+      className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto py-2 [overflow-anchor:none]"
     >
       {history === undefined || (history === 'start' && timeline.length === 0) ? null : (
         <HistoryEdge history={history} channel={channelName} onLoadOlder={onLoadOlder} />
@@ -172,24 +244,30 @@ function MessageTimelineView({
           ) : null}
         </div>
       ) : null}
-      {shown.length === 0 && inserts.length === 0
-        ? null
-        : mergeTimelineInserts(shown, inserts).map((row) =>
-            row.kind === 'insert' ? (
-              <div key={row.key} data-testid="espace-timeline-insert">
-                {row.node}
-              </div>
+      <div ref={listRef} className="flex flex-col">
+        <div ref={beforeRef} aria-hidden="true" data-timeline-spacer="before" />
+        {rows.slice(window.start, window.end).map((row, offset) => (
+          <div
+            key={row.key}
+            {...{ [ROW_KEY_ATTRIBUTE]: row.key }}
+            {...(row.kind === 'insert' ? { 'data-testid': 'espace-timeline-insert' } : {})}
+            // The log's 8 px gap, carried by the row so its measured height is the room it takes.
+            className={`rounded-md transition-colors data-[shown=true]:bg-c-muted ${
+              window.start + offset === 0 ? '' : 'pt-2'
+            }`}
+          >
+            {row.kind === 'insert' ? (
+              row.node
             ) : row.kind === 'day' ? (
-              <TimelineDivider key={row.key}>{dayLabel(row.day, row.ts)}</TimelineDivider>
+              <TimelineDivider>{dayLabel(row.day, row.ts)}</TimelineDivider>
             ) : row.kind === 'new' ? (
-              <TimelineDivider key={row.key} tone="new">
+              <TimelineDivider tone="new">
                 {t('console.workspace.channel.label-new-messages')}
               </TimelineDivider>
             ) : (
               <MessageRow
                 profileRole={profileRoleIn(store, roomId, row.message.sender)}
                 onMention={onMention}
-                key={row.key}
                 onlineLabel={
                   store.isOnline?.(row.message.sender)
                     ? simulation
@@ -220,8 +298,11 @@ function MessageTimelineView({
                 onRemove={actions.onRemove}
                 onOpenThread={actions.onOpenThread}
               />
-            )
-          )}
+            )}
+          </div>
+        ))}
+        <div ref={afterRef} aria-hidden="true" data-timeline-spacer="after" />
+      </div>
     </div>
   )
 }
