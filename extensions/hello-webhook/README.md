@@ -1,6 +1,6 @@
 # `@kodera/ext-hello-webhook` — `< 15 min` Extension Starter Template
 
-Status: Active (`Apache-2.0`)
+Status: Reference implementation (`Apache-2.0`)
 
 Reference **Ring 2** Kodera slash-command & signed-webhook extension built on [`@kodera/extension-sdk`](../../packages/extension-sdk) with **zero runtime dependencies** and **zero server/database secrets**.
 

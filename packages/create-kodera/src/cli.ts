@@ -53,6 +53,7 @@ export const TEMPLATES = Object.freeze({
       'dev',
       'strategy',
       'ops-oncall',
+      'kodera-git-tracker',
     ],
     connectors: [],
     roles: ['Owner', 'Administrator', 'Member'],
@@ -74,7 +75,7 @@ export const TEMPLATES = Object.freeze({
       {
         name: 'Core Kodera',
         visibility: 'restricted',
-        channels: ['dev', 'strategy', 'ops-oncall'],
+        channels: ['dev', 'strategy', 'ops-oncall', 'kodera-git-tracker'],
       },
       {
         name: 'Design Partners',

@@ -14,7 +14,7 @@
     "ci.workflow_failed",
     "command.invoked"
   ],
-  "webhookUrl": "https://extensions.kodera.io/github-release-notifier/webhook",
+  "webhookUrl": "https://extensions.example.org/hooks/github-release-notifier",
   "commands": [
     {
       "name": "/release-notes",

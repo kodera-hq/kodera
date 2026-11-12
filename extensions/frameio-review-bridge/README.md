@@ -1,6 +1,6 @@
 # Frame.io Review Bridge
 
-Status: Local connector implementation
+Status: Reference implementation
 
 The `/frameio-review` command accepts a public Frame.io review URL and is restricted
 to the `post-production` and `dailies-rushes` channel bindings. Signed `asset.ready`

@@ -88,7 +88,8 @@
       "office-hours",
       "dev",
       "strategy",
-      "ops-oncall"
+      "ops-oncall",
+      "kodera-git-tracker"
     ],
     "connectors": [],
     "roles": [
@@ -117,7 +118,8 @@
         "channels": [
           "dev",
           "strategy",
-          "ops-oncall"
+          "ops-oncall",
+          "kodera-git-tracker"
         ]
       },
       {

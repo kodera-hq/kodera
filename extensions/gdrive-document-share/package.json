@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "Official Kodera extension sharing Google Drive files and folders with structured access-mode badges (lecture, commentaire, édition) and SSRF-safe HTTPS validation.",
+  "description": "Reference implementation: sharing Google Drive files and folders with structured access-mode badges (lecture, commentaire, édition) and SSRF-safe HTTPS validation.",
   "dependencies": {
     "@kodera/extension-sdk": "0.1.0"
   },

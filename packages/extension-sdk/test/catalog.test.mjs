@@ -1,0 +1,145 @@
+// The extensions catalogue is generated from the extension manifests, every starter is labelled
+// a reference implementation, and wording that claims more than the repository ships is refused.
+// Each refusal below mutates an in-memory copy of the tree and must be named by the check.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  CATALOG_PATH,
+  LABEL,
+  README_PATH,
+  build,
+  collect,
+  problemsIn,
+  serialise,
+  table,
+} from '../../../extensions/catalog.mjs';
+
+const files = await collect();
+const { catalog } = build(files);
+
+/** A copy of the tree with some paths replaced (a `null` value removes the path). */
+function tree(changes) {
+  const copy = new Map(files);
+  for (const [path, text] of Object.entries(changes)) {
+    if (text === null) copy.delete(path);
+    else copy.set(path, text);
+  }
+  return copy;
+}
+/** Regenerates the catalogue and the table for a mutated tree, so only the mutation is judged. */
+function regenerated(changes) {
+  const mutated = tree(changes);
+  const rebuilt = build(mutated).catalog;
+  mutated.set(CATALOG_PATH, serialise(rebuilt));
+  mutated.set(README_PATH, files.get(README_PATH).replace(table(catalog), table(rebuilt)));
+  return mutated;
+}
+const helloManifest = 'extensions/hello-webhook/kodera-extension.json';
+const edit = (path, change) => change(JSON.parse(files.get(path)));
+const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+
+test('catalogue: generated from the 11 manifests, with nothing to refuse', () => {
+  assert.deepEqual(problemsIn(files), []);
+  assert.equal(files.get(CATALOG_PATH), serialise(catalog));
+  assert.equal(catalog.extensions.length, 11);
+  for (const entry of catalog.extensions) {
+    assert.equal(entry.label, LABEL);
+    const manifest = JSON.parse(files.get(entry.manifest));
+    assert.equal(entry.name, manifest.name);
+    assert.equal(entry.description, manifest.description);
+    assert.equal(entry.version, manifest.version);
+    assert.ok(files.get(README_PATH).includes(`| ${entry.name.replaceAll('|', '\\|')} | *${LABEL}* |`), entry.slug);
+  }
+});
+
+test('catalogue refusal: a manifest changed without regenerating is drift', () => {
+  const renamed = tree({ [helloManifest]: json(edit(helloManifest, (m) => ({ ...m, name: 'Hello Webhook' }))) });
+  assert.deepEqual(problemsIn(renamed), [
+    `${CATALOG_PATH} drifted from the extension manifests`,
+    `${README_PATH} catalogue table drifted from the extension manifests`,
+  ]);
+  const scoped = tree({
+    [helloManifest]: json(edit(helloManifest, (m) => ({ ...m, scopes: [...m.scopes, 'threads:write'] }))),
+  });
+  assert.deepEqual(problemsIn(scoped), [`${CATALOG_PATH} drifted from the extension manifests`]);
+});
+
+test('catalogue refusal: a hand-edited catalogue or table is drift', () => {
+  const edited = structuredClone(catalog);
+  edited.extensions[0].label = 'Verified';
+  assert.deepEqual(problemsIn(tree({ [CATALOG_PATH]: serialise(edited) })), [
+    `${CATALOG_PATH} drifted from the extension manifests`,
+  ]);
+  const unlabelled = files.get(README_PATH).replace(`*${LABEL}*`, 'Available');
+  assert.deepEqual(problemsIn(tree({ [README_PATH]: unlabelled })), [
+    `${README_PATH} catalogue table drifted from the extension manifests`,
+  ]);
+  const removed = Object.fromEntries(
+    [...files.keys()].filter((path) => path.startsWith('extensions/hello-webhook/')).map((path) => [path, null]),
+  );
+  assert.ok(problemsIn(tree(removed)).includes(`${CATALOG_PATH} drifted from the extension manifests`));
+});
+
+test('catalogue refusal: a second manifest, a live endpoint or a foreign id', () => {
+  const second = tree({ 'extensions/hello-webhook/manifest.json': files.get(helloManifest) });
+  assert.ok(
+    problemsIn(second).includes('extensions/hello-webhook: exactly one manifest is the source (found 2)'),
+  );
+  const live = regenerated({
+    [helloManifest]: json(edit(helloManifest, (m) => ({ ...m, webhookUrl: 'https://extensions.kodera.io/hello-webhook/webhook' }))),
+  });
+  assert.deepEqual(problemsIn(live), [
+    `${helloManifest}: webhookUrl must be a reserved documentation host, not a live endpoint`,
+  ]);
+  const foreign = tree({ [helloManifest]: json(edit(helloManifest, (m) => ({ ...m, id: 'another-extension' }))) });
+  assert.ok(
+    problemsIn(foreign).includes(
+      `${helloManifest}: manifest id must be "hello-webhook" or "io.kodera.ext.hello-webhook"`,
+    ),
+  );
+});
+
+test('catalogue refusal: an extension that drops the reference label', () => {
+  const packagePath = 'extensions/qonto-treasury-feed/package.json';
+  const unlabelled = tree({
+    [packagePath]: json(edit(packagePath, (p) => ({ ...p, description: 'Streams corporate treasury movements.' }))),
+  });
+  assert.deepEqual(problemsIn(unlabelled), [`${packagePath}: description must start with "${LABEL}: "`]);
+  const readmePath = 'extensions/hello-webhook/README.md';
+  const active = tree({ [readmePath]: files.get(readmePath).replace(`Status: ${LABEL}`, 'Status: Active') });
+  assert.deepEqual(problemsIn(active), [`${readmePath}: must carry "Status: ${LABEL}"`]);
+});
+
+test('catalogue refusal: forbidden claims are named wherever they reappear', () => {
+  // The wording is assembled here so that this file never contains what it refuses.
+  const organisation = ['DIN', 'UM'].join('');
+  const consultancy = ['OC', 'TO'].join('');
+  const cases = [
+    [`Annonce les documents ${organisation} Docs dans un salon.`, 'an organisation named without its authorisation'],
+    [`Design partner: ${consultancy} Technology.`, 'an organisation named without its authorisation'],
+    [['This is a live', 'connector to the bank.'].join(' '), 'a connector presented as live'],
+    [['Un connecteur', 'en direct avec la banque.'].join(' '), 'a connector presented as live'],
+    [['Official', 'Kodera extension for treasury.'].join(' '), 'an extension presented as official'],
+    [['Pack de connecteurs', 'officiels.'].join(' '), 'an extension presented as official'],
+    [['A cert', 'ified integration.'].join(''), 'an extension presented with an endorsement it does not have'],
+    [['Production', 'ready treasury feed.'].join('-'), 'an extension presented with an endorsement it does not have'],
+  ];
+  const manifestPath = 'extensions/qonto-treasury-feed/manifest.json';
+  for (const [wording, claim] of cases) {
+    const inManifest = regenerated({
+      [manifestPath]: json(edit(manifestPath, (m) => ({ ...m, description: wording }))),
+    });
+    assert.deepEqual(
+      problemsIn(inManifest),
+      [`forbidden claim in ${CATALOG_PATH}: ${claim}`, `forbidden claim in ${manifestPath}: ${claim}`],
+      wording,
+    );
+    const inSource = tree({ 'packages/extension-sdk/README.md': `${files.get('packages/extension-sdk/README.md')}\n${wording}\n` });
+    assert.deepEqual(problemsIn(inSource), [`forbidden claim in packages/extension-sdk/README.md: ${claim}`], wording);
+  }
+  // Plain descriptions of what an example does are not claims.
+  const harmless = tree({
+    'extensions/git-tracker/README.md': `${files.get('extensions/git-tracker/README.md')}\nNo fixture feed is presented as live. October release notes.\n`,
+  });
+  assert.deepEqual(problemsIn(harmless), []);
+});
