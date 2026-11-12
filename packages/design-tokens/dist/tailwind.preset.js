@@ -9,7 +9,7 @@
 // not exist emits NO CSS and NO error — for `border-*` the element falls back
 // to preflight's `border: 0 solid #e5e7eb`, a light grey line on our page.
 //
-// The c-* colors follow the complete light/dark/black CSS theme boundary.
+// The c-* colors follow the complete light/dark/black/ciel/ciel-nuit CSS theme boundary.
 // Legacy colors remain static. The elevation shadows (raised, overlay, drawer,
 // dialog) follow the theme too. Breakpoints are supplied; z-index is not.
 
@@ -160,6 +160,14 @@ export default {
         "c-tag-5-fg": "var(--c-tag-5-fg)",
         "c-tag-6-bg": "var(--c-tag-6-bg)",
         "c-tag-6-fg": "var(--c-tag-6-fg)",
+        "material-bar": "var(--material-bar-bg)",
+        "material-bar-border": "var(--material-bar-border)",
+        "material-panel": "var(--material-panel-bg)",
+        "material-panel-border": "var(--material-panel-border)",
+        "material-popover": "var(--material-popover-bg)",
+        "material-popover-border": "var(--material-popover-border)",
+        "material-dialog": "var(--material-dialog-bg)",
+        "material-dialog-border": "var(--material-dialog-border)",
       },
       spacing: {
         "1": "4px",
@@ -228,6 +236,10 @@ export default {
         overlay: "var(--elevation-overlay)",
         drawer: "var(--elevation-drawer)",
         dialog: "var(--elevation-dialog)",
+        "material-bar": "var(--material-bar-shadow)",
+        "material-panel": "var(--material-panel-shadow)",
+        "material-popover": "var(--material-popover-shadow)",
+        "material-dialog": "var(--material-dialog-shadow)",
       },
       backgroundImage: {
         frost: "linear-gradient(115deg, #FFFFFF 0%, #FFFFFF 45%, #FFFFFF 100%)",
@@ -243,12 +255,18 @@ export default {
       },
       transitionTimingFunction: {
         out: "cubic-bezier(0.2, 0.7, 0.3, 1)",
+        "spring-snappy": "var(--spring-snappy)",
+        "spring-gentle": "var(--spring-gentle)",
+        "spring-bouncy": "var(--spring-bouncy)",
       },
       transitionDuration: {
         fast: "120ms",
         base: "200ms",
         slow: "320ms",
         DEFAULT: "200ms",
+        "spring-snappy": "var(--spring-snappy-duration)",
+        "spring-gentle": "var(--spring-gentle-duration)",
+        "spring-bouncy": "var(--spring-bouncy-duration)",
       },
       screens: {
         sm: "40rem",

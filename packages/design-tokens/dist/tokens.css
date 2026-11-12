@@ -255,6 +255,165 @@
   --theme-black-tag-5-fg: #EBCBF8;
   --theme-black-tag-6-bg: #151D0D;
   --theme-black-tag-6-fg: #D3E6B2;
+  --theme-ciel-page: #EEF5FC;
+  --theme-ciel-sky-zenith: #E0ECFB; /* The top of this theme's sky: the first stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-sky-horizon: #F9FCFF; /* The foot of this theme's sky: the last stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-page-grad: linear-gradient(180deg,#E0ECFB 0%,#EEF5FC 55%,#F9FCFF 100%);
+  --theme-ciel-surface: #FFFFFF;
+  --theme-ciel-sunken: #F5F9FD;
+  --theme-ciel-muted: #EEF2F6;
+  --theme-ciel-muted-2: #DCE6F0;
+  --theme-ciel-hairline: #F2F6FA;
+  --theme-ciel-border: #D9E1EA;
+  --theme-ciel-border-soft: #E4EAF1;
+  --theme-ciel-border-strong: #C9D3DE;
+  --theme-ciel-inverse: #111827;
+  --theme-ciel-inverse-2: #1D2535;
+  --theme-ciel-rail-line: #3A4559;
+  --theme-ciel-ink: #1E2933;
+  --theme-ciel-ink-2: #56626E;
+  --theme-ciel-ink-3: #5C6874;
+  --theme-ciel-ink-4: #7C8894;
+  --theme-ciel-on-inverse: #FFFFFF;
+  --theme-ciel-on-inverse-dim: #B4BFCC;
+  --theme-ciel-action: #2B4BDB;
+  --theme-ciel-action-hover: #2340C4;
+  --theme-ciel-accent-soft: #E4E9FB;
+  --theme-ciel-accent-ink: #2340C4;
+  --theme-ciel-ok-on-dark: #A8E5C4;
+  --theme-ciel-bad-on-dark: #FFC4BA;
+  --theme-ciel-ok: #2E8B57;
+  --theme-ciel-ok-soft: #E3F3EA;
+  --theme-ciel-ok-ink: #1B6B3C;
+  --theme-ciel-ok-border: #C7E4D3;
+  --theme-ciel-warn: #B7791F;
+  --theme-ciel-warn-soft: #FBF1DC;
+  --theme-ciel-warn-ink: #8A5A10;
+  --theme-ciel-bad: #C2372B;
+  --theme-ciel-bad-soft: #FBE5E2;
+  --theme-ciel-bad-ink: #B5321F;
+  --theme-ciel-shadow-1: rgba(30,64,104,.22);
+  --theme-ciel-shadow-2: rgba(30,64,104,.32);
+  --theme-ciel-t1-bg: #E4E9FB;
+  --theme-ciel-t1-fg: #2340C4;
+  --theme-ciel-t2-bg: #E3F3EA;
+  --theme-ciel-t2-fg: #1F7A45;
+  --theme-ciel-t3-bg: #FBF1DC;
+  --theme-ciel-t3-fg: #8A5A10;
+  --theme-ciel-t4-bg: #FBE5E2;
+  --theme-ciel-t4-fg: #B5321F;
+  --theme-ciel-t5-bg: #EEF2F6;
+  --theme-ciel-t5-fg: #56626E;
+  --theme-ciel-t6-bg: #DCE6F0;
+  --theme-ciel-t6-fg: #2F3A45;
+  --theme-ciel-scrim: rgba(47,58,69,.55);
+  --theme-ciel-cursor-1: #0E60A3;
+  --theme-ciel-cursor-1-soft: #E4F0FB;
+  --theme-ciel-cursor-2: #6336C2;
+  --theme-ciel-cursor-2-soft: #EFE9FC;
+  --theme-ciel-cursor-3: #0E6E78;
+  --theme-ciel-cursor-3-soft: #E3F4F6;
+  --theme-ciel-cursor-4: #A82468;
+  --theme-ciel-cursor-4-soft: #FAEAF2;
+  --theme-ciel-cursor-5: #AC4D0C;
+  --theme-ciel-cursor-5-soft: #FDF0E4;
+  --theme-ciel-cursor-6: #117556;
+  --theme-ciel-cursor-6-soft: #E4F5EE;
+  --theme-ciel-tag-1-bg: #F1EEFC;
+  --theme-ciel-tag-1-fg: #4D2CA6;
+  --theme-ciel-tag-2-bg: #E5F4F6;
+  --theme-ciel-tag-2-fg: #0E5E6A;
+  --theme-ciel-tag-3-bg: #F9EBF4;
+  --theme-ciel-tag-3-fg: #8A2465;
+  --theme-ciel-tag-4-bg: #E6F1FA;
+  --theme-ciel-tag-4-fg: #12517A;
+  --theme-ciel-tag-5-bg: #F5ECF9;
+  --theme-ciel-tag-5-fg: #6E2889;
+  --theme-ciel-tag-6-bg: #EEF3E6;
+  --theme-ciel-tag-6-fg: #3F571B;
+  --theme-ciel-glass: #FFFFFF; /* The tint of this theme's materials. Opaque: each material level carries its own alpha (`material.theme-*`). */
+  --theme-ciel-glass-edge: rgba(255,255,255,.72); /* The specular edge of a material: a hairline of light on its border. Decorative; a surface is never found by this edge alone. */
+  --theme-ciel-nuit-page: #0E1120;
+  --theme-ciel-nuit-sky-zenith: #0A0D1A; /* The top of this theme's sky: the first stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-nuit-sky-horizon: #1A1E3A; /* The foot of this theme's sky: the last stop of `page-grad`. A ground, so it is opaque and a backdrop extreme (contrast-pairs.json, backdropSets). */
+  --theme-ciel-nuit-page-grad: linear-gradient(180deg,#0A0D1A 0%,#0E1120 60%,#1A1E3A 100%);
+  --theme-ciel-nuit-surface: #141A2D;
+  --theme-ciel-nuit-sunken: #101524;
+  --theme-ciel-nuit-muted: #1D243A;
+  --theme-ciel-nuit-muted-2: #242C43;
+  --theme-ciel-nuit-hairline: #171C2E;
+  --theme-ciel-nuit-border: #242C42;
+  --theme-ciel-nuit-border-soft: #1D2438;
+  --theme-ciel-nuit-border-strong: #303B58;
+  --theme-ciel-nuit-inverse: #07090D;
+  --theme-ciel-nuit-inverse-2: #161B26;
+  --theme-ciel-nuit-rail-line: #2A3242;
+  --theme-ciel-nuit-ink: #EDF1F7;
+  --theme-ciel-nuit-ink-2: #B8C2D1;
+  --theme-ciel-nuit-ink-3: #97A3B5;
+  --theme-ciel-nuit-ink-4: #7D8A9D;
+  --theme-ciel-nuit-on-inverse: #F3F7FB;
+  --theme-ciel-nuit-on-inverse-dim: #A1ADBE;
+  --theme-ciel-nuit-action: #4361EE;
+  --theme-ciel-nuit-action-hover: #3A59E8;
+  --theme-ciel-nuit-accent-soft: #1A2350;
+  --theme-ciel-nuit-accent-ink: #AEBEFF;
+  --theme-ciel-nuit-ok-on-dark: #7FD1A3;
+  --theme-ciel-nuit-bad-on-dark: #F19183;
+  --theme-ciel-nuit-ok: #35A96A;
+  --theme-ciel-nuit-ok-soft: #122A1D;
+  --theme-ciel-nuit-ok-ink: #63CE93;
+  --theme-ciel-nuit-ok-border: #1F4B33;
+  --theme-ciel-nuit-warn: #D89B3C;
+  --theme-ciel-nuit-warn-soft: #2C2413;
+  --theme-ciel-nuit-warn-ink: #E4B265;
+  --theme-ciel-nuit-bad: #C2372B;
+  --theme-ciel-nuit-bad-soft: #331A1A;
+  --theme-ciel-nuit-bad-ink: #F19183;
+  --theme-ciel-nuit-shadow-1: rgba(2,4,16,.5);
+  --theme-ciel-nuit-shadow-2: rgba(2,4,16,.62);
+  --theme-ciel-nuit-t1-bg: #1C2540;
+  --theme-ciel-nuit-t1-fg: #A9BBFF;
+  --theme-ciel-nuit-t2-bg: #122A1D;
+  --theme-ciel-nuit-t2-fg: #63CE93;
+  --theme-ciel-nuit-t3-bg: #2C2413;
+  --theme-ciel-nuit-t3-fg: #E4B265;
+  --theme-ciel-nuit-t4-bg: #331A1A;
+  --theme-ciel-nuit-t4-fg: #F19183;
+  --theme-ciel-nuit-t5-bg: #212A33;
+  --theme-ciel-nuit-t5-fg: #B9C6D4;
+  --theme-ciel-nuit-t6-bg: #26303A;
+  --theme-ciel-nuit-t6-fg: #E8EFF6;
+  --theme-ciel-nuit-elevated: #1B2138;
+  --theme-ciel-nuit-border-input: #6E7D94;
+  --theme-ciel-nuit-placeholder: #8F9BAE;
+  --theme-ciel-nuit-scrim: rgba(0,0,0,.6);
+  --theme-ciel-nuit-cursor-1: #1671BA;
+  --theme-ciel-nuit-cursor-1-soft: #112536;
+  --theme-ciel-nuit-cursor-2: #7C52DC;
+  --theme-ciel-nuit-cursor-2-soft: #241B3E;
+  --theme-ciel-nuit-cursor-3: #147984;
+  --theme-ciel-nuit-cursor-3-soft: #0F262C;
+  --theme-ciel-nuit-cursor-4: #C1357B;
+  --theme-ciel-nuit-cursor-4-soft: #321728;
+  --theme-ciel-nuit-cursor-5: #B15310;
+  --theme-ciel-nuit-cursor-5-soft: #2E1E12;
+  --theme-ciel-nuit-cursor-6: #157B5B;
+  --theme-ciel-nuit-cursor-6-soft: #112922;
+  --theme-ciel-nuit-tag-1-bg: #231B3C;
+  --theme-ciel-nuit-tag-1-fg: #D5C8FA;
+  --theme-ciel-nuit-tag-2-bg: #10282E;
+  --theme-ciel-nuit-tag-2-fg: #9FE0EA;
+  --theme-ciel-nuit-tag-3-bg: #311728;
+  --theme-ciel-nuit-tag-3-fg: #F0B9DC;
+  --theme-ciel-nuit-tag-4-bg: #122638;
+  --theme-ciel-nuit-tag-4-fg: #A8D5F5;
+  --theme-ciel-nuit-tag-5-bg: #2B1836;
+  --theme-ciel-nuit-tag-5-fg: #E4BEF5;
+  --theme-ciel-nuit-tag-6-bg: #1E2814;
+  --theme-ciel-nuit-tag-6-fg: #C7DEA0;
+  --theme-ciel-nuit-glass: #121830; /* The tint of this theme's materials. Opaque: each material level carries its own alpha (`material.theme-*`). */
+  --theme-ciel-nuit-glass-edge: rgba(255,255,255,.14); /* The specular edge of a material: a hairline of light on its border. Decorative; a surface is never found by this edge alone. */
 
   /* semantic — surfaces and boundaries */
   --bg-page: linear-gradient(115deg, var(--white) 0%, var(--white) 45%, var(--white) 100%);
@@ -352,12 +511,26 @@
   --shadow-theme-black-overlay: 0px 20px 50px -20px rgba(0,0,0,.82);
   --shadow-theme-black-drawer: 0px 0px 64px -8px rgba(0,0,0,.82);
   --shadow-theme-black-dialog: 0px 32px 80px -24px rgba(0,0,0,.82);
+  --shadow-theme-ciel-raised: 0px 8px 24px -16px rgba(30,64,104,.22);
+  --shadow-theme-ciel-overlay: 0px 20px 50px -20px rgba(30,64,104,.32);
+  --shadow-theme-ciel-drawer: 0px 0px 64px -8px rgba(30,64,104,.32);
+  --shadow-theme-ciel-dialog: 0px 32px 80px -24px rgba(30,64,104,.32);
+  --shadow-theme-ciel-nuit-raised: 0px 8px 24px -16px rgba(2,4,16,.5);
+  --shadow-theme-ciel-nuit-overlay: 0px 20px 50px -20px rgba(2,4,16,.62);
+  --shadow-theme-ciel-nuit-drawer: 0px 0px 64px -8px rgba(2,4,16,.62);
+  --shadow-theme-ciel-nuit-dialog: 0px 32px 80px -24px rgba(2,4,16,.62);
 
   /* motion */
   --dur-fast: 120ms;
   --dur-base: 200ms;
   --dur-slow: 320ms;
   --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --spring-snappy: var(--ease-out);
+  --spring-snappy-duration: 400ms;
+  --spring-gentle: var(--ease-out);
+  --spring-gentle-duration: 650ms;
+  --spring-bouncy: var(--ease-out);
+  --spring-bouncy-duration: 700ms;
 
   /* breakpoints (min-width, mobile-first; not usable inside a media query) */
   --breakpoint-sm: 40rem; /* 640 px. A large phone held sideways, a small tablet. */
@@ -475,6 +648,38 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(47,58,69,.35);
   --elevation-drawer: 0px 0px 64px -8px rgba(47,58,69,.35);
   --elevation-dialog: 0px 32px 80px -24px rgba(47,58,69,.35);
+  --material-bar-tint: #FFFFFF;
+  --material-bar-fallback: #FFFFFF;
+  --material-bar-blur: 0px;
+  --material-bar-saturate: 1;
+  --material-bar-border: #D9E1EA;
+  --material-bar-shadow: 0px 8px 24px -16px rgba(47,58,69,.25);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: #FFFFFF;
+  --material-panel-fallback: #FFFFFF;
+  --material-panel-blur: 0px;
+  --material-panel-saturate: 1;
+  --material-panel-border: #D9E1EA;
+  --material-panel-shadow: 0px 8px 24px -16px rgba(47,58,69,.25);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: #FFFFFF;
+  --material-popover-fallback: #FFFFFF;
+  --material-popover-blur: 0px;
+  --material-popover-saturate: 1;
+  --material-popover-border: #D9E1EA;
+  --material-popover-shadow: 0px 20px 50px -20px rgba(47,58,69,.35);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: #FFFFFF;
+  --material-dialog-fallback: #FFFFFF;
+  --material-dialog-blur: 0px;
+  --material-dialog-saturate: 1;
+  --material-dialog-border: #D9E1EA;
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(47,58,69,.35);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
 }
 
 [data-theme="dark"] {
@@ -565,6 +770,38 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(0,0,0,.62);
   --elevation-drawer: 0px 0px 64px -8px rgba(0,0,0,.62);
   --elevation-dialog: 0px 32px 80px -24px rgba(0,0,0,.62);
+  --material-bar-tint: #131823;
+  --material-bar-fallback: #131823;
+  --material-bar-blur: 0px;
+  --material-bar-saturate: 1;
+  --material-bar-border: #262E3C;
+  --material-bar-shadow: 0px 8px 24px -16px rgba(0,0,0,.5);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: #131823;
+  --material-panel-fallback: #131823;
+  --material-panel-blur: 0px;
+  --material-panel-saturate: 1;
+  --material-panel-border: #262E3C;
+  --material-panel-shadow: 0px 8px 24px -16px rgba(0,0,0,.5);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: #1B2130;
+  --material-popover-fallback: #1B2130;
+  --material-popover-blur: 0px;
+  --material-popover-saturate: 1;
+  --material-popover-border: #262E3C;
+  --material-popover-shadow: 0px 20px 50px -20px rgba(0,0,0,.62);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: #1B2130;
+  --material-dialog-fallback: #1B2130;
+  --material-dialog-blur: 0px;
+  --material-dialog-saturate: 1;
+  --material-dialog-border: #262E3C;
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(0,0,0,.62);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
 }
 
 [data-theme="black"] {
@@ -655,4 +892,391 @@
   --elevation-overlay: 0px 20px 50px -20px rgba(0,0,0,.82);
   --elevation-drawer: 0px 0px 64px -8px rgba(0,0,0,.82);
   --elevation-dialog: 0px 32px 80px -24px rgba(0,0,0,.82);
+  --material-bar-tint: #0B0C0E;
+  --material-bar-fallback: #0B0C0E;
+  --material-bar-blur: 0px;
+  --material-bar-saturate: 1;
+  --material-bar-border: #24282D;
+  --material-bar-shadow: 0px 8px 24px -16px rgba(0,0,0,.7);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: #0B0C0E;
+  --material-panel-fallback: #0B0C0E;
+  --material-panel-blur: 0px;
+  --material-panel-saturate: 1;
+  --material-panel-border: #24282D;
+  --material-panel-shadow: 0px 8px 24px -16px rgba(0,0,0,.7);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: #141619;
+  --material-popover-fallback: #141619;
+  --material-popover-blur: 0px;
+  --material-popover-saturate: 1;
+  --material-popover-border: #24282D;
+  --material-popover-shadow: 0px 20px 50px -20px rgba(0,0,0,.82);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: #141619;
+  --material-dialog-fallback: #141619;
+  --material-dialog-blur: 0px;
+  --material-dialog-saturate: 1;
+  --material-dialog-border: #24282D;
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(0,0,0,.82);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
+}
+
+[data-theme="ciel"] {
+  --c-page: #EEF5FC;
+  --c-page-grad: linear-gradient(180deg,#E0ECFB 0%,#EEF5FC 55%,#F9FCFF 100%);
+  --c-surface: #FFFFFF;
+  --c-sunken: #F5F9FD;
+  --c-muted: #EEF2F6;
+  --c-muted-2: #DCE6F0;
+  --c-hairline: #F2F6FA;
+  --c-border: #D9E1EA;
+  --c-border-soft: #E4EAF1;
+  --c-border-strong: #C9D3DE;
+  --c-inverse: #111827;
+  --c-inverse-2: #1D2535;
+  --c-rail-line: #3A4559;
+  --c-ink: #1E2933;
+  --c-ink-2: #56626E;
+  --c-ink-3: #5C6874;
+  --c-ink-4: #7C8894;
+  --c-on-inverse: #FFFFFF;
+  --c-on-inverse-dim: #B4BFCC;
+  --c-action: #2B4BDB;
+  --c-action-hover: #2340C4;
+  --c-accent-soft: #E4E9FB;
+  --c-accent-ink: #2340C4;
+  --c-ok-on-dark: #A8E5C4;
+  --c-bad-on-dark: #FFC4BA;
+  --c-ok: #2E8B57;
+  --c-ok-soft: #E3F3EA;
+  --c-ok-ink: #1B6B3C;
+  --c-ok-border: #C7E4D3;
+  --c-warn: #B7791F;
+  --c-warn-soft: #FBF1DC;
+  --c-warn-ink: #8A5A10;
+  --c-bad: #C2372B;
+  --c-bad-soft: #FBE5E2;
+  --c-bad-ink: #B5321F;
+  --c-shadow-1: rgba(30,64,104,.22);
+  --c-shadow-2: rgba(30,64,104,.32);
+  --c-t1-bg: #E4E9FB;
+  --c-t1-fg: #2340C4;
+  --c-t2-bg: #E3F3EA;
+  --c-t2-fg: #1F7A45;
+  --c-t3-bg: #FBF1DC;
+  --c-t3-fg: #8A5A10;
+  --c-t4-bg: #FBE5E2;
+  --c-t4-fg: #B5321F;
+  --c-t5-bg: #EEF2F6;
+  --c-t5-fg: #56626E;
+  --c-t6-bg: #DCE6F0;
+  --c-t6-fg: #2F3A45;
+  --c-elevated: #FFFFFF;
+  --c-scrim: rgba(47,58,69,.55);
+  --c-border-input: #7C8894;
+  --c-placeholder: #5C6874;
+  --c-disabled: #EEF2F6;
+  --c-on-disabled: #5C6874;
+  --c-cursor-1: #0E60A3;
+  --c-cursor-1-soft: #E4F0FB;
+  --c-cursor-2: #6336C2;
+  --c-cursor-2-soft: #EFE9FC;
+  --c-cursor-3: #0E6E78;
+  --c-cursor-3-soft: #E3F4F6;
+  --c-cursor-4: #A82468;
+  --c-cursor-4-soft: #FAEAF2;
+  --c-cursor-5: #AC4D0C;
+  --c-cursor-5-soft: #FDF0E4;
+  --c-cursor-6: #117556;
+  --c-cursor-6-soft: #E4F5EE;
+  --c-tag-1-bg: #F1EEFC;
+  --c-tag-1-fg: #4D2CA6;
+  --c-tag-2-bg: #E5F4F6;
+  --c-tag-2-fg: #0E5E6A;
+  --c-tag-3-bg: #F9EBF4;
+  --c-tag-3-fg: #8A2465;
+  --c-tag-4-bg: #E6F1FA;
+  --c-tag-4-fg: #12517A;
+  --c-tag-5-bg: #F5ECF9;
+  --c-tag-5-fg: #6E2889;
+  --c-tag-6-bg: #EEF3E6;
+  --c-tag-6-fg: #3F571B;
+  --focus-ring: 0 0 0 2px #2340C4, 0 0 0 5px rgba(35, 64, 196, 0.35);
+  --focus-ring-color: #2340C4;
+  --focus-ring-on-inverse: 0 0 0 2px #FFFFFF, 0 0 0 5px rgba(255, 255, 255, 0.35);
+  --focus-ring-on-inverse-color: #FFFFFF;
+  --elevation-raised: 0px 8px 24px -16px rgba(30,64,104,.22);
+  --elevation-overlay: 0px 20px 50px -20px rgba(30,64,104,.32);
+  --elevation-drawer: 0px 0px 64px -8px rgba(30,64,104,.32);
+  --elevation-dialog: 0px 32px 80px -24px rgba(30,64,104,.32);
+  --material-bar-tint: rgba(255, 255, 255, 0.92);
+  --material-bar-fallback: #FEFEFF;
+  --material-bar-blur: 20px;
+  --material-bar-saturate: 1.4;
+  --material-bar-border: rgba(255,255,255,.72);
+  --material-bar-shadow: 0px 8px 24px -16px rgba(30,64,104,.22);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: rgba(255, 255, 255, 0.94);
+  --material-panel-fallback: #FEFEFF;
+  --material-panel-blur: 28px;
+  --material-panel-saturate: 1.4;
+  --material-panel-border: rgba(255,255,255,.72);
+  --material-panel-shadow: 0px 8px 24px -16px rgba(30,64,104,.22);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: rgba(255, 255, 255, 0.95);
+  --material-popover-fallback: #FEFFFF;
+  --material-popover-blur: 32px;
+  --material-popover-saturate: 1.5;
+  --material-popover-border: rgba(255,255,255,.72);
+  --material-popover-shadow: 0px 20px 50px -20px rgba(30,64,104,.32);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: rgba(255, 255, 255, 0.97);
+  --material-dialog-fallback: #FEFFFF;
+  --material-dialog-blur: 40px;
+  --material-dialog-saturate: 1.5;
+  --material-dialog-border: rgba(255,255,255,.72);
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(30,64,104,.32);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
+}
+
+[data-theme="ciel-nuit"] {
+  --c-page: #0E1120;
+  --c-page-grad: linear-gradient(180deg,#0A0D1A 0%,#0E1120 60%,#1A1E3A 100%);
+  --c-surface: #141A2D;
+  --c-sunken: #101524;
+  --c-muted: #1D243A;
+  --c-muted-2: #242C43;
+  --c-hairline: #171C2E;
+  --c-border: #242C42;
+  --c-border-soft: #1D2438;
+  --c-border-strong: #303B58;
+  --c-inverse: #07090D;
+  --c-inverse-2: #161B26;
+  --c-rail-line: #2A3242;
+  --c-ink: #EDF1F7;
+  --c-ink-2: #B8C2D1;
+  --c-ink-3: #97A3B5;
+  --c-ink-4: #7D8A9D;
+  --c-on-inverse: #F3F7FB;
+  --c-on-inverse-dim: #A1ADBE;
+  --c-action: #4361EE;
+  --c-action-hover: #3A59E8;
+  --c-accent-soft: #1A2350;
+  --c-accent-ink: #AEBEFF;
+  --c-ok-on-dark: #7FD1A3;
+  --c-bad-on-dark: #F19183;
+  --c-ok: #35A96A;
+  --c-ok-soft: #122A1D;
+  --c-ok-ink: #63CE93;
+  --c-ok-border: #1F4B33;
+  --c-warn: #D89B3C;
+  --c-warn-soft: #2C2413;
+  --c-warn-ink: #E4B265;
+  --c-bad: #C2372B;
+  --c-bad-soft: #331A1A;
+  --c-bad-ink: #F19183;
+  --c-shadow-1: rgba(2,4,16,.5);
+  --c-shadow-2: rgba(2,4,16,.62);
+  --c-t1-bg: #1C2540;
+  --c-t1-fg: #A9BBFF;
+  --c-t2-bg: #122A1D;
+  --c-t2-fg: #63CE93;
+  --c-t3-bg: #2C2413;
+  --c-t3-fg: #E4B265;
+  --c-t4-bg: #331A1A;
+  --c-t4-fg: #F19183;
+  --c-t5-bg: #212A33;
+  --c-t5-fg: #B9C6D4;
+  --c-t6-bg: #26303A;
+  --c-t6-fg: #E8EFF6;
+  --c-elevated: #1B2138;
+  --c-scrim: rgba(0,0,0,.6);
+  --c-border-input: #6E7D94;
+  --c-placeholder: #8F9BAE;
+  --c-disabled: #242C43;
+  --c-on-disabled: #97A3B5;
+  --c-cursor-1: #1671BA;
+  --c-cursor-1-soft: #112536;
+  --c-cursor-2: #7C52DC;
+  --c-cursor-2-soft: #241B3E;
+  --c-cursor-3: #147984;
+  --c-cursor-3-soft: #0F262C;
+  --c-cursor-4: #C1357B;
+  --c-cursor-4-soft: #321728;
+  --c-cursor-5: #B15310;
+  --c-cursor-5-soft: #2E1E12;
+  --c-cursor-6: #157B5B;
+  --c-cursor-6-soft: #112922;
+  --c-tag-1-bg: #231B3C;
+  --c-tag-1-fg: #D5C8FA;
+  --c-tag-2-bg: #10282E;
+  --c-tag-2-fg: #9FE0EA;
+  --c-tag-3-bg: #311728;
+  --c-tag-3-fg: #F0B9DC;
+  --c-tag-4-bg: #122638;
+  --c-tag-4-fg: #A8D5F5;
+  --c-tag-5-bg: #2B1836;
+  --c-tag-5-fg: #E4BEF5;
+  --c-tag-6-bg: #1E2814;
+  --c-tag-6-fg: #C7DEA0;
+  --focus-ring: 0 0 0 2px #AEBEFF, 0 0 0 5px rgba(174, 190, 255, 0.35);
+  --focus-ring-color: #AEBEFF;
+  --focus-ring-on-inverse: 0 0 0 2px #F3F7FB, 0 0 0 5px rgba(243, 247, 251, 0.35);
+  --focus-ring-on-inverse-color: #F3F7FB;
+  --elevation-raised: 0px 8px 24px -16px rgba(2,4,16,.5);
+  --elevation-overlay: 0px 20px 50px -20px rgba(2,4,16,.62);
+  --elevation-drawer: 0px 0px 64px -8px rgba(2,4,16,.62);
+  --elevation-dialog: 0px 32px 80px -24px rgba(2,4,16,.62);
+  --material-bar-tint: rgba(18, 24, 48, 0.9);
+  --material-bar-fallback: #12172E;
+  --material-bar-blur: 20px;
+  --material-bar-saturate: 1.4;
+  --material-bar-border: rgba(255,255,255,.14);
+  --material-bar-shadow: 0px 8px 24px -16px rgba(2,4,16,.5);
+  --material-bar-bg: var(--material-bar-fallback);
+  --material-bar-backdrop: none;
+  --material-panel-tint: rgba(18, 24, 48, 0.92);
+  --material-panel-fallback: #12172F;
+  --material-panel-blur: 28px;
+  --material-panel-saturate: 1.4;
+  --material-panel-border: rgba(255,255,255,.14);
+  --material-panel-shadow: 0px 8px 24px -16px rgba(2,4,16,.5);
+  --material-panel-bg: var(--material-panel-fallback);
+  --material-panel-backdrop: none;
+  --material-popover-tint: rgba(18, 24, 48, 0.94);
+  --material-popover-fallback: #12182F;
+  --material-popover-blur: 32px;
+  --material-popover-saturate: 1.5;
+  --material-popover-border: rgba(255,255,255,.14);
+  --material-popover-shadow: 0px 20px 50px -20px rgba(2,4,16,.62);
+  --material-popover-bg: var(--material-popover-fallback);
+  --material-popover-backdrop: none;
+  --material-dialog-tint: rgba(18, 24, 48, 0.96);
+  --material-dialog-fallback: #12182F;
+  --material-dialog-blur: 40px;
+  --material-dialog-saturate: 1.5;
+  --material-dialog-border: rgba(255,255,255,.14);
+  --material-dialog-shadow: 0px 32px 80px -24px rgba(2,4,16,.62);
+  --material-dialog-bg: var(--material-dialog-fallback);
+  --material-dialog-backdrop: none;
+}
+
+/* Materials: bar, panel, popover, dialog. Each theme block above declares every
+   level opaque: `--material-<level>-bg` is the fallback and `-backdrop` is
+   `none`. The glass is enabled here, only where the client can draw it, and
+   disabled again for a reader who asked for less transparency or more contrast,
+   or whose platform forces its colours. */
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-tint);
+    --material-bar-backdrop: blur(var(--material-bar-blur)) saturate(var(--material-bar-saturate));
+    --material-panel-bg: var(--material-panel-tint);
+    --material-panel-backdrop: blur(var(--material-panel-blur)) saturate(var(--material-panel-saturate));
+    --material-popover-bg: var(--material-popover-tint);
+    --material-popover-backdrop: blur(var(--material-popover-blur)) saturate(var(--material-popover-saturate));
+    --material-dialog-bg: var(--material-dialog-tint);
+    --material-dialog-backdrop: blur(var(--material-dialog-blur)) saturate(var(--material-dialog-saturate));
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-bar-backdrop: none;
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-panel-backdrop: none;
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-popover-backdrop: none;
+    --material-dialog-bg: var(--material-dialog-fallback);
+    --material-dialog-backdrop: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-bar-backdrop: none;
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-panel-backdrop: none;
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-popover-backdrop: none;
+    --material-dialog-bg: var(--material-dialog-fallback);
+    --material-dialog-backdrop: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :is([data-theme="ciel"], [data-theme="ciel-nuit"]) {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-bar-backdrop: none;
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-panel-backdrop: none;
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-popover-backdrop: none;
+    --material-dialog-bg: var(--material-dialog-fallback);
+    --material-dialog-backdrop: none;
+  }
+}
+
+.material-bar {
+  background-color: var(--material-bar-bg);
+  -webkit-backdrop-filter: var(--material-bar-backdrop);
+  backdrop-filter: var(--material-bar-backdrop);
+  border: 1px solid var(--material-bar-border);
+  box-shadow: var(--material-bar-shadow);
+}
+
+.material-panel {
+  background-color: var(--material-panel-bg);
+  -webkit-backdrop-filter: var(--material-panel-backdrop);
+  backdrop-filter: var(--material-panel-backdrop);
+  border: 1px solid var(--material-panel-border);
+  box-shadow: var(--material-panel-shadow);
+}
+
+.material-popover {
+  background-color: var(--material-popover-bg);
+  -webkit-backdrop-filter: var(--material-popover-backdrop);
+  backdrop-filter: var(--material-popover-backdrop);
+  border: 1px solid var(--material-popover-border);
+  box-shadow: var(--material-popover-shadow);
+}
+
+.material-dialog {
+  background-color: var(--material-dialog-bg);
+  -webkit-backdrop-filter: var(--material-dialog-backdrop);
+  backdrop-filter: var(--material-dialog-backdrop);
+  border: 1px solid var(--material-dialog-border);
+  box-shadow: var(--material-dialog-shadow);
+}
+
+/* Springs. `--spring-<name>` is declared above as the plain ease-out, which
+   every client can draw and which never overshoots. The sampled spring is
+   enabled here, only where `linear()` exists, and disabled again for a reader
+   who asked for reduced motion. Animate `transform` and `opacity` with it. */
+
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    --spring-snappy: linear(0, 0.0285, 0.0987, 0.1926, 0.2969, 0.4025, 0.5032, 0.5956, 0.6774, 0.7481, 0.8077, 0.8569, 0.8966, 0.9281, 0.9525, 0.971, 0.9846, 0.9944, 1.001, 1.0053, 1.0078, 1.0091, 1.0094, 1.0091, 1.0084, 1.0076, 1.0066, 1.0056, 1.0046, 1.0038, 1.003, 1.0023, 1);
+    --spring-gentle: linear(0, 0.0295, 0.0994, 0.1895, 0.2865, 0.3823, 0.4723, 0.554, 0.6263, 0.6892, 0.7431, 0.7888, 0.8272, 0.8592, 0.8857, 0.9076, 0.9254, 0.94, 0.9519, 0.9615, 0.9692, 0.9754, 0.9804, 0.9845, 0.9877, 0.9902, 0.9923, 0.9939, 0.9952, 0.9962, 0.997, 0.9976, 1);
+    --spring-bouncy: linear(0, 0.0625, 0.2146, 0.4092, 0.6098, 0.7909, 0.9375, 1.0437, 1.1103, 1.1422, 1.1471, 1.1331, 1.1081, 1.0786, 1.0494, 1.0239, 1.004, 0.99, 0.9818, 0.9784, 0.9786, 0.9813, 0.9853, 0.9897, 0.9939, 0.9974, 1.0001, 1.0019, 1.0029, 1.0032, 1.0031, 1.0026, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --spring-snappy: var(--ease-out);
+    --spring-gentle: var(--ease-out);
+    --spring-bouncy: var(--ease-out);
+  }
 }

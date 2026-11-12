@@ -43,8 +43,8 @@ from pathlib import Path
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
 TOKEN_FORMAT = "kodera-native-tokens/1"
-TOKEN_PRODUCER_COMMIT = "32270125fc9aeb5b37be4475700ddd3f64db34f9"
-TOKEN_SOURCE_SHA256 = "f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a"
+TOKEN_PRODUCER_COMMIT = "cf4e10dbd9aaab05f65deedfb50ca100fd0e3d73"
+TOKEN_SOURCE_SHA256 = "b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51"
 
 LANGUAGES = ("fr", "en")
 SOURCE_LANGUAGE = "fr"

@@ -1,6 +1,6 @@
 // GENERATED FILE — DO NOT EDIT. kodera-native-tokens/1
 // Public source checksum (SHA-256)
-// f1c8a079239f8d55336912d16fc3b7abbeda86af20cbdc462482883d68cd807a
+// b433e6661de2804471ba3f62715b21b9ef81e218a967bc83ca62132f82161e51
 // Source file: tokens.json
 
 import SwiftUI
@@ -326,6 +326,280 @@ public enum KoderaTokens {
         tag6Bg: Color(.sRGB, red: 0.08235294117647059, green: 0.11372549019607843, blue: 0.050980392156862744, opacity: 1.0),
         tag6Fg: Color(.sRGB, red: 0.8274509803921568, green: 0.9019607843137255, blue: 0.6980392156862745, opacity: 1.0)
     )
+    public static let ciel = Palette(
+        page: Color(.sRGB, red: 0.9333333333333333, green: 0.9607843137254902, blue: 0.9882352941176471, opacity: 1.0),
+        surface: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0),
+        sunken: Color(.sRGB, red: 0.9607843137254902, green: 0.9764705882352941, blue: 0.9921568627450981, opacity: 1.0),
+        muted: Color(.sRGB, red: 0.9333333333333333, green: 0.9490196078431372, blue: 0.9647058823529412, opacity: 1.0),
+        muted2: Color(.sRGB, red: 0.8627450980392157, green: 0.9019607843137255, blue: 0.9411764705882353, opacity: 1.0),
+        hairline: Color(.sRGB, red: 0.9490196078431372, green: 0.9647058823529412, blue: 0.9803921568627451, opacity: 1.0),
+        border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0),
+        borderSoft: Color(.sRGB, red: 0.8941176470588236, green: 0.9176470588235294, blue: 0.9450980392156862, opacity: 1.0),
+        borderStrong: Color(.sRGB, red: 0.788235294117647, green: 0.8274509803921568, blue: 0.8705882352941177, opacity: 1.0),
+        inverse: Color(.sRGB, red: 0.06666666666666667, green: 0.09411764705882353, blue: 0.15294117647058825, opacity: 1.0),
+        inverse2: Color(.sRGB, red: 0.11372549019607843, green: 0.1450980392156863, blue: 0.20784313725490197, opacity: 1.0),
+        railLine: Color(.sRGB, red: 0.22745098039215686, green: 0.27058823529411763, blue: 0.34901960784313724, opacity: 1.0),
+        ink: Color(.sRGB, red: 0.11764705882352941, green: 0.1607843137254902, blue: 0.2, opacity: 1.0),
+        ink2: Color(.sRGB, red: 0.33725490196078434, green: 0.3843137254901961, blue: 0.43137254901960786, opacity: 1.0),
+        ink3: Color(.sRGB, red: 0.3607843137254902, green: 0.40784313725490196, blue: 0.4549019607843137, opacity: 1.0),
+        ink4: Color(.sRGB, red: 0.48627450980392156, green: 0.5333333333333333, blue: 0.5803921568627451, opacity: 1.0),
+        onInverse: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0),
+        onInverseDim: Color(.sRGB, red: 0.7058823529411765, green: 0.7490196078431373, blue: 0.8, opacity: 1.0),
+        action: Color(.sRGB, red: 0.16862745098039217, green: 0.29411764705882354, blue: 0.8588235294117647, opacity: 1.0),
+        actionHover: Color(.sRGB, red: 0.13725490196078433, green: 0.25098039215686274, blue: 0.7686274509803922, opacity: 1.0),
+        accentSoft: Color(.sRGB, red: 0.8941176470588236, green: 0.9137254901960784, blue: 0.984313725490196, opacity: 1.0),
+        accentInk: Color(.sRGB, red: 0.13725490196078433, green: 0.25098039215686274, blue: 0.7686274509803922, opacity: 1.0),
+        okOnDark: Color(.sRGB, red: 0.6588235294117647, green: 0.8980392156862745, blue: 0.7686274509803922, opacity: 1.0),
+        badOnDark: Color(.sRGB, red: 1.0, green: 0.7686274509803922, blue: 0.7294117647058823, opacity: 1.0),
+        ok: Color(.sRGB, red: 0.1803921568627451, green: 0.5450980392156862, blue: 0.3411764705882353, opacity: 1.0),
+        okSoft: Color(.sRGB, red: 0.8901960784313725, green: 0.9529411764705882, blue: 0.9176470588235294, opacity: 1.0),
+        okInk: Color(.sRGB, red: 0.10588235294117647, green: 0.4196078431372549, blue: 0.23529411764705882, opacity: 1.0),
+        okBorder: Color(.sRGB, red: 0.7803921568627451, green: 0.8941176470588236, blue: 0.8274509803921568, opacity: 1.0),
+        warn: Color(.sRGB, red: 0.7176470588235294, green: 0.4745098039215686, blue: 0.12156862745098039, opacity: 1.0),
+        warnSoft: Color(.sRGB, red: 0.984313725490196, green: 0.9450980392156862, blue: 0.8627450980392157, opacity: 1.0),
+        warnInk: Color(.sRGB, red: 0.5411764705882353, green: 0.35294117647058826, blue: 0.06274509803921569, opacity: 1.0),
+        bad: Color(.sRGB, red: 0.7607843137254902, green: 0.21568627450980393, blue: 0.16862745098039217, opacity: 1.0),
+        badSoft: Color(.sRGB, red: 0.984313725490196, green: 0.8980392156862745, blue: 0.8862745098039215, opacity: 1.0),
+        badInk: Color(.sRGB, red: 0.7098039215686275, green: 0.19607843137254902, blue: 0.12156862745098039, opacity: 1.0),
+        shadow1: Color(.sRGB, red: 0.11764705882352941, green: 0.25098039215686274, blue: 0.40784313725490196, opacity: 0.22),
+        shadow2: Color(.sRGB, red: 0.11764705882352941, green: 0.25098039215686274, blue: 0.40784313725490196, opacity: 0.32),
+        t1Bg: Color(.sRGB, red: 0.8941176470588236, green: 0.9137254901960784, blue: 0.984313725490196, opacity: 1.0),
+        t1Fg: Color(.sRGB, red: 0.13725490196078433, green: 0.25098039215686274, blue: 0.7686274509803922, opacity: 1.0),
+        t2Bg: Color(.sRGB, red: 0.8901960784313725, green: 0.9529411764705882, blue: 0.9176470588235294, opacity: 1.0),
+        t2Fg: Color(.sRGB, red: 0.12156862745098039, green: 0.47843137254901963, blue: 0.27058823529411763, opacity: 1.0),
+        t3Bg: Color(.sRGB, red: 0.984313725490196, green: 0.9450980392156862, blue: 0.8627450980392157, opacity: 1.0),
+        t3Fg: Color(.sRGB, red: 0.5411764705882353, green: 0.35294117647058826, blue: 0.06274509803921569, opacity: 1.0),
+        t4Bg: Color(.sRGB, red: 0.984313725490196, green: 0.8980392156862745, blue: 0.8862745098039215, opacity: 1.0),
+        t4Fg: Color(.sRGB, red: 0.7098039215686275, green: 0.19607843137254902, blue: 0.12156862745098039, opacity: 1.0),
+        t5Bg: Color(.sRGB, red: 0.9333333333333333, green: 0.9490196078431372, blue: 0.9647058823529412, opacity: 1.0),
+        t5Fg: Color(.sRGB, red: 0.33725490196078434, green: 0.3843137254901961, blue: 0.43137254901960786, opacity: 1.0),
+        t6Bg: Color(.sRGB, red: 0.8627450980392157, green: 0.9019607843137255, blue: 0.9411764705882353, opacity: 1.0),
+        t6Fg: Color(.sRGB, red: 0.1843137254901961, green: 0.22745098039215686, blue: 0.27058823529411763, opacity: 1.0),
+        elevated: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0),
+        scrim: Color(.sRGB, red: 0.1843137254901961, green: 0.22745098039215686, blue: 0.27058823529411763, opacity: 0.55),
+        borderInput: Color(.sRGB, red: 0.48627450980392156, green: 0.5333333333333333, blue: 0.5803921568627451, opacity: 1.0),
+        placeholder: Color(.sRGB, red: 0.3607843137254902, green: 0.40784313725490196, blue: 0.4549019607843137, opacity: 1.0),
+        disabled: Color(.sRGB, red: 0.9333333333333333, green: 0.9490196078431372, blue: 0.9647058823529412, opacity: 1.0),
+        onDisabled: Color(.sRGB, red: 0.3607843137254902, green: 0.40784313725490196, blue: 0.4549019607843137, opacity: 1.0),
+        cursor1: Color(.sRGB, red: 0.054901960784313725, green: 0.3764705882352941, blue: 0.6392156862745098, opacity: 1.0),
+        cursor1Soft: Color(.sRGB, red: 0.8941176470588236, green: 0.9411764705882353, blue: 0.984313725490196, opacity: 1.0),
+        cursor2: Color(.sRGB, red: 0.38823529411764707, green: 0.21176470588235294, blue: 0.7607843137254902, opacity: 1.0),
+        cursor2Soft: Color(.sRGB, red: 0.9372549019607843, green: 0.9137254901960784, blue: 0.9882352941176471, opacity: 1.0),
+        cursor3: Color(.sRGB, red: 0.054901960784313725, green: 0.43137254901960786, blue: 0.47058823529411764, opacity: 1.0),
+        cursor3Soft: Color(.sRGB, red: 0.8901960784313725, green: 0.9568627450980393, blue: 0.9647058823529412, opacity: 1.0),
+        cursor4: Color(.sRGB, red: 0.6588235294117647, green: 0.1411764705882353, blue: 0.40784313725490196, opacity: 1.0),
+        cursor4Soft: Color(.sRGB, red: 0.9803921568627451, green: 0.9176470588235294, blue: 0.9490196078431372, opacity: 1.0),
+        cursor5: Color(.sRGB, red: 0.6745098039215687, green: 0.30196078431372547, blue: 0.047058823529411764, opacity: 1.0),
+        cursor5Soft: Color(.sRGB, red: 0.9921568627450981, green: 0.9411764705882353, blue: 0.8941176470588236, opacity: 1.0),
+        cursor6: Color(.sRGB, red: 0.06666666666666667, green: 0.4588235294117647, blue: 0.33725490196078434, opacity: 1.0),
+        cursor6Soft: Color(.sRGB, red: 0.8941176470588236, green: 0.9607843137254902, blue: 0.9333333333333333, opacity: 1.0),
+        tag1Bg: Color(.sRGB, red: 0.9450980392156862, green: 0.9333333333333333, blue: 0.9882352941176471, opacity: 1.0),
+        tag1Fg: Color(.sRGB, red: 0.30196078431372547, green: 0.17254901960784313, blue: 0.6509803921568628, opacity: 1.0),
+        tag2Bg: Color(.sRGB, red: 0.8980392156862745, green: 0.9568627450980393, blue: 0.9647058823529412, opacity: 1.0),
+        tag2Fg: Color(.sRGB, red: 0.054901960784313725, green: 0.3686274509803922, blue: 0.41568627450980394, opacity: 1.0),
+        tag3Bg: Color(.sRGB, red: 0.9764705882352941, green: 0.9215686274509803, blue: 0.9568627450980393, opacity: 1.0),
+        tag3Fg: Color(.sRGB, red: 0.5411764705882353, green: 0.1411764705882353, blue: 0.396078431372549, opacity: 1.0),
+        tag4Bg: Color(.sRGB, red: 0.9019607843137255, green: 0.9450980392156862, blue: 0.9803921568627451, opacity: 1.0),
+        tag4Fg: Color(.sRGB, red: 0.07058823529411765, green: 0.3176470588235294, blue: 0.47843137254901963, opacity: 1.0),
+        tag5Bg: Color(.sRGB, red: 0.9607843137254902, green: 0.9254901960784314, blue: 0.9764705882352941, opacity: 1.0),
+        tag5Fg: Color(.sRGB, red: 0.43137254901960786, green: 0.1568627450980392, blue: 0.5372549019607843, opacity: 1.0),
+        tag6Bg: Color(.sRGB, red: 0.9333333333333333, green: 0.9529411764705882, blue: 0.9019607843137255, opacity: 1.0),
+        tag6Fg: Color(.sRGB, red: 0.24705882352941178, green: 0.3411764705882353, blue: 0.10588235294117647, opacity: 1.0)
+    )
+    public static let cielNuit = Palette(
+        page: Color(.sRGB, red: 0.054901960784313725, green: 0.06666666666666667, blue: 0.12549019607843137, opacity: 1.0),
+        surface: Color(.sRGB, red: 0.0784313725490196, green: 0.10196078431372549, blue: 0.17647058823529413, opacity: 1.0),
+        sunken: Color(.sRGB, red: 0.06274509803921569, green: 0.08235294117647059, blue: 0.1411764705882353, opacity: 1.0),
+        muted: Color(.sRGB, red: 0.11372549019607843, green: 0.1411764705882353, blue: 0.22745098039215686, opacity: 1.0),
+        muted2: Color(.sRGB, red: 0.1411764705882353, green: 0.17254901960784313, blue: 0.2627450980392157, opacity: 1.0),
+        hairline: Color(.sRGB, red: 0.09019607843137255, green: 0.10980392156862745, blue: 0.1803921568627451, opacity: 1.0),
+        border: Color(.sRGB, red: 0.1411764705882353, green: 0.17254901960784313, blue: 0.25882352941176473, opacity: 1.0),
+        borderSoft: Color(.sRGB, red: 0.11372549019607843, green: 0.1411764705882353, blue: 0.2196078431372549, opacity: 1.0),
+        borderStrong: Color(.sRGB, red: 0.18823529411764706, green: 0.23137254901960785, blue: 0.34509803921568627, opacity: 1.0),
+        inverse: Color(.sRGB, red: 0.027450980392156862, green: 0.03529411764705882, blue: 0.050980392156862744, opacity: 1.0),
+        inverse2: Color(.sRGB, red: 0.08627450980392157, green: 0.10588235294117647, blue: 0.14901960784313725, opacity: 1.0),
+        railLine: Color(.sRGB, red: 0.16470588235294117, green: 0.19607843137254902, blue: 0.25882352941176473, opacity: 1.0),
+        ink: Color(.sRGB, red: 0.9294117647058824, green: 0.9450980392156862, blue: 0.9686274509803922, opacity: 1.0),
+        ink2: Color(.sRGB, red: 0.7215686274509804, green: 0.7607843137254902, blue: 0.8196078431372549, opacity: 1.0),
+        ink3: Color(.sRGB, red: 0.592156862745098, green: 0.6392156862745098, blue: 0.7098039215686275, opacity: 1.0),
+        ink4: Color(.sRGB, red: 0.49019607843137253, green: 0.5411764705882353, blue: 0.615686274509804, opacity: 1.0),
+        onInverse: Color(.sRGB, red: 0.9529411764705882, green: 0.9686274509803922, blue: 0.984313725490196, opacity: 1.0),
+        onInverseDim: Color(.sRGB, red: 0.6313725490196078, green: 0.6784313725490196, blue: 0.7450980392156863, opacity: 1.0),
+        action: Color(.sRGB, red: 0.2627450980392157, green: 0.3803921568627451, blue: 0.9333333333333333, opacity: 1.0),
+        actionHover: Color(.sRGB, red: 0.22745098039215686, green: 0.34901960784313724, blue: 0.9098039215686274, opacity: 1.0),
+        accentSoft: Color(.sRGB, red: 0.10196078431372549, green: 0.13725490196078433, blue: 0.3137254901960784, opacity: 1.0),
+        accentInk: Color(.sRGB, red: 0.6823529411764706, green: 0.7450980392156863, blue: 1.0, opacity: 1.0),
+        okOnDark: Color(.sRGB, red: 0.4980392156862745, green: 0.8196078431372549, blue: 0.6392156862745098, opacity: 1.0),
+        badOnDark: Color(.sRGB, red: 0.9450980392156862, green: 0.5686274509803921, blue: 0.5137254901960784, opacity: 1.0),
+        ok: Color(.sRGB, red: 0.20784313725490197, green: 0.6627450980392157, blue: 0.41568627450980394, opacity: 1.0),
+        okSoft: Color(.sRGB, red: 0.07058823529411765, green: 0.16470588235294117, blue: 0.11372549019607843, opacity: 1.0),
+        okInk: Color(.sRGB, red: 0.38823529411764707, green: 0.807843137254902, blue: 0.5764705882352941, opacity: 1.0),
+        okBorder: Color(.sRGB, red: 0.12156862745098039, green: 0.29411764705882354, blue: 0.2, opacity: 1.0),
+        warn: Color(.sRGB, red: 0.8470588235294118, green: 0.6078431372549019, blue: 0.23529411764705882, opacity: 1.0),
+        warnSoft: Color(.sRGB, red: 0.17254901960784313, green: 0.1411764705882353, blue: 0.07450980392156863, opacity: 1.0),
+        warnInk: Color(.sRGB, red: 0.8941176470588236, green: 0.6980392156862745, blue: 0.396078431372549, opacity: 1.0),
+        bad: Color(.sRGB, red: 0.7607843137254902, green: 0.21568627450980393, blue: 0.16862745098039217, opacity: 1.0),
+        badSoft: Color(.sRGB, red: 0.2, green: 0.10196078431372549, blue: 0.10196078431372549, opacity: 1.0),
+        badInk: Color(.sRGB, red: 0.9450980392156862, green: 0.5686274509803921, blue: 0.5137254901960784, opacity: 1.0),
+        shadow1: Color(.sRGB, red: 0.00784313725490196, green: 0.01568627450980392, blue: 0.06274509803921569, opacity: 0.5),
+        shadow2: Color(.sRGB, red: 0.00784313725490196, green: 0.01568627450980392, blue: 0.06274509803921569, opacity: 0.62),
+        t1Bg: Color(.sRGB, red: 0.10980392156862745, green: 0.1450980392156863, blue: 0.25098039215686274, opacity: 1.0),
+        t1Fg: Color(.sRGB, red: 0.6627450980392157, green: 0.7333333333333333, blue: 1.0, opacity: 1.0),
+        t2Bg: Color(.sRGB, red: 0.07058823529411765, green: 0.16470588235294117, blue: 0.11372549019607843, opacity: 1.0),
+        t2Fg: Color(.sRGB, red: 0.38823529411764707, green: 0.807843137254902, blue: 0.5764705882352941, opacity: 1.0),
+        t3Bg: Color(.sRGB, red: 0.17254901960784313, green: 0.1411764705882353, blue: 0.07450980392156863, opacity: 1.0),
+        t3Fg: Color(.sRGB, red: 0.8941176470588236, green: 0.6980392156862745, blue: 0.396078431372549, opacity: 1.0),
+        t4Bg: Color(.sRGB, red: 0.2, green: 0.10196078431372549, blue: 0.10196078431372549, opacity: 1.0),
+        t4Fg: Color(.sRGB, red: 0.9450980392156862, green: 0.5686274509803921, blue: 0.5137254901960784, opacity: 1.0),
+        t5Bg: Color(.sRGB, red: 0.12941176470588237, green: 0.16470588235294117, blue: 0.2, opacity: 1.0),
+        t5Fg: Color(.sRGB, red: 0.7254901960784313, green: 0.7764705882352941, blue: 0.8313725490196079, opacity: 1.0),
+        t6Bg: Color(.sRGB, red: 0.14901960784313725, green: 0.18823529411764706, blue: 0.22745098039215686, opacity: 1.0),
+        t6Fg: Color(.sRGB, red: 0.9098039215686274, green: 0.9372549019607843, blue: 0.9647058823529412, opacity: 1.0),
+        elevated: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.2196078431372549, opacity: 1.0),
+        scrim: Color(.sRGB, red: 0.0, green: 0.0, blue: 0.0, opacity: 0.6),
+        borderInput: Color(.sRGB, red: 0.43137254901960786, green: 0.49019607843137253, blue: 0.5803921568627451, opacity: 1.0),
+        placeholder: Color(.sRGB, red: 0.5607843137254902, green: 0.6078431372549019, blue: 0.6823529411764706, opacity: 1.0),
+        disabled: Color(.sRGB, red: 0.1411764705882353, green: 0.17254901960784313, blue: 0.2627450980392157, opacity: 1.0),
+        onDisabled: Color(.sRGB, red: 0.592156862745098, green: 0.6392156862745098, blue: 0.7098039215686275, opacity: 1.0),
+        cursor1: Color(.sRGB, red: 0.08627450980392157, green: 0.44313725490196076, blue: 0.7294117647058823, opacity: 1.0),
+        cursor1Soft: Color(.sRGB, red: 0.06666666666666667, green: 0.1450980392156863, blue: 0.21176470588235294, opacity: 1.0),
+        cursor2: Color(.sRGB, red: 0.48627450980392156, green: 0.3215686274509804, blue: 0.8627450980392157, opacity: 1.0),
+        cursor2Soft: Color(.sRGB, red: 0.1411764705882353, green: 0.10588235294117647, blue: 0.24313725490196078, opacity: 1.0),
+        cursor3: Color(.sRGB, red: 0.0784313725490196, green: 0.4745098039215686, blue: 0.5176470588235295, opacity: 1.0),
+        cursor3Soft: Color(.sRGB, red: 0.058823529411764705, green: 0.14901960784313725, blue: 0.17254901960784313, opacity: 1.0),
+        cursor4: Color(.sRGB, red: 0.7568627450980392, green: 0.20784313725490197, blue: 0.4823529411764706, opacity: 1.0),
+        cursor4Soft: Color(.sRGB, red: 0.19607843137254902, green: 0.09019607843137255, blue: 0.1568627450980392, opacity: 1.0),
+        cursor5: Color(.sRGB, red: 0.6941176470588235, green: 0.3254901960784314, blue: 0.06274509803921569, opacity: 1.0),
+        cursor5Soft: Color(.sRGB, red: 0.1803921568627451, green: 0.11764705882352941, blue: 0.07058823529411765, opacity: 1.0),
+        cursor6: Color(.sRGB, red: 0.08235294117647059, green: 0.4823529411764706, blue: 0.3568627450980392, opacity: 1.0),
+        cursor6Soft: Color(.sRGB, red: 0.06666666666666667, green: 0.1607843137254902, blue: 0.13333333333333333, opacity: 1.0),
+        tag1Bg: Color(.sRGB, red: 0.13725490196078433, green: 0.10588235294117647, blue: 0.23529411764705882, opacity: 1.0),
+        tag1Fg: Color(.sRGB, red: 0.8352941176470589, green: 0.7843137254901961, blue: 0.9803921568627451, opacity: 1.0),
+        tag2Bg: Color(.sRGB, red: 0.06274509803921569, green: 0.1568627450980392, blue: 0.1803921568627451, opacity: 1.0),
+        tag2Fg: Color(.sRGB, red: 0.6235294117647059, green: 0.8784313725490196, blue: 0.9176470588235294, opacity: 1.0),
+        tag3Bg: Color(.sRGB, red: 0.19215686274509805, green: 0.09019607843137255, blue: 0.1568627450980392, opacity: 1.0),
+        tag3Fg: Color(.sRGB, red: 0.9411764705882353, green: 0.7254901960784313, blue: 0.8627450980392157, opacity: 1.0),
+        tag4Bg: Color(.sRGB, red: 0.07058823529411765, green: 0.14901960784313725, blue: 0.2196078431372549, opacity: 1.0),
+        tag4Fg: Color(.sRGB, red: 0.6588235294117647, green: 0.8352941176470589, blue: 0.9607843137254902, opacity: 1.0),
+        tag5Bg: Color(.sRGB, red: 0.16862745098039217, green: 0.09411764705882353, blue: 0.21176470588235294, opacity: 1.0),
+        tag5Fg: Color(.sRGB, red: 0.8941176470588236, green: 0.7450980392156863, blue: 0.9607843137254902, opacity: 1.0),
+        tag6Bg: Color(.sRGB, red: 0.11764705882352941, green: 0.1568627450980392, blue: 0.0784313725490196, opacity: 1.0),
+        tag6Fg: Color(.sRGB, red: 0.7803921568627451, green: 0.8705882352941177, blue: 0.6274509803921569, opacity: 1.0)
+    )
+    public enum ThemeFamily: String, CaseIterable, Sendable { case givre = "givre"; case ciel = "ciel" }
+    public enum ThemeMode: String, CaseIterable, Sendable { case light = "light"; case dark = "dark"; case black = "black" }
+    public enum Theme: String, CaseIterable, Sendable {
+        case light = "light"
+        case dark = "dark"
+        case black = "black"
+        case ciel = "ciel"
+        case cielNuit = "ciel-nuit"
+        public static let defaultTheme: Theme = .light
+        public var family: ThemeFamily {
+            switch self {
+            case .light: return .givre
+            case .dark: return .givre
+            case .black: return .givre
+            case .ciel: return .ciel
+            case .cielNuit: return .ciel
+            }
+        }
+        public var mode: ThemeMode {
+            switch self {
+            case .light: return .light
+            case .dark: return .dark
+            case .black: return .black
+            case .ciel: return .light
+            case .cielNuit: return .dark
+            }
+        }
+        public var isDark: Bool {
+            switch self {
+            case .light: return false
+            case .dark: return true
+            case .black: return true
+            case .ciel: return false
+            case .cielNuit: return true
+            }
+        }
+        public var palette: Palette {
+            switch self {
+            case .light: return KoderaTokens.light
+            case .dark: return KoderaTokens.dark
+            case .black: return KoderaTokens.black
+            case .ciel: return KoderaTokens.ciel
+            case .cielNuit: return KoderaTokens.cielNuit
+            }
+        }
+        public var materials: Materials {
+            switch self {
+            case .light: return MaterialSet.light
+            case .dark: return MaterialSet.dark
+            case .black: return MaterialSet.black
+            case .ciel: return MaterialSet.ciel
+            case .cielNuit: return MaterialSet.cielNuit
+            }
+        }
+    }
+    public struct Material: Sendable {
+        public let tint: Color
+        public let alpha: Double
+        public let blur: CGFloat
+        public let saturation: Double
+        public let border: Color
+        public let fallback: Color
+    }
+    public struct Materials: Sendable {
+        public let bar: Material
+        public let panel: Material
+        public let popover: Material
+        public let dialog: Material
+    }
+    public enum MaterialSet {
+        public static let light = Materials(
+            bar: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.8509803921568627, green: 0.8823529411764706, blue: 0.9176470588235294, opacity: 1.0), fallback: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0))
+        )
+        public static let dark = Materials(
+            bar: Material(tint: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.07450980392156863, green: 0.09411764705882353, blue: 0.13725490196078433, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.14901960784313725, green: 0.1803921568627451, blue: 0.23529411764705882, opacity: 1.0), fallback: Color(.sRGB, red: 0.10588235294117647, green: 0.12941176470588237, blue: 0.18823529411764706, opacity: 1.0))
+        )
+        public static let black = Materials(
+            bar: Material(tint: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.043137254901960784, green: 0.047058823529411764, blue: 0.054901960784313725, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0), alpha: 1.0, blur: 0.0, saturation: 1.0, border: Color(.sRGB, red: 0.1411764705882353, green: 0.1568627450980392, blue: 0.17647058823529413, opacity: 1.0), fallback: Color(.sRGB, red: 0.0784313725490196, green: 0.08627450980392157, blue: 0.09803921568627451, opacity: 1.0))
+        )
+        public static let ciel = Materials(
+            bar: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.92, blur: 20.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 0.996078431372549, blue: 1.0, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.94, blur: 28.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 0.996078431372549, blue: 1.0, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.95, blur: 32.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 1.0, blue: 1.0, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 1.0), alpha: 0.97, blur: 40.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.72), fallback: Color(.sRGB, red: 0.996078431372549, green: 1.0, blue: 1.0, opacity: 1.0))
+        )
+        public static let cielNuit = Materials(
+            bar: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.9, blur: 20.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09019607843137255, blue: 0.1803921568627451, opacity: 1.0)),
+            panel: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.92, blur: 28.0, saturation: 1.4, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09019607843137255, blue: 0.1843137254901961, opacity: 1.0)),
+            popover: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.94, blur: 32.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.1843137254901961, opacity: 1.0)),
+            dialog: Material(tint: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.18823529411764706, opacity: 1.0), alpha: 0.96, blur: 40.0, saturation: 1.5, border: Color(.sRGB, red: 1.0, green: 1.0, blue: 1.0, opacity: 0.14), fallback: Color(.sRGB, red: 0.07058823529411765, green: 0.09411764705882353, blue: 0.1843137254901961, opacity: 1.0))
+        )
+    }
+    public struct Spring: Sendable {
+        public let stiffness: Double
+        public let damping: Double
+        public let mass: Double
+        public let dampingRatio: Double
+        public let response: Double
+        public let settlingDuration: Double
+    }
+    public enum Motion {
+        public static let snappy = Spring(stiffness: 420.0, damping: 34.0, mass: 1.0, dampingRatio: 0.8295, response: 0.3066, settlingDuration: 0.4)
+        public static let gentle = Spring(stiffness: 170.0, damping: 26.0, mass: 1.0, dampingRatio: 0.9971, response: 0.4819, settlingDuration: 0.65)
+        public static let bouncy = Spring(stiffness: 300.0, damping: 18.0, mass: 1.0, dampingRatio: 0.5196, response: 0.3628, settlingDuration: 0.7)
+    }
     public struct Family: Sendable {
         public let primary: String
         public let fallbacks: [String]
