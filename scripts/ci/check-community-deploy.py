@@ -2289,7 +2289,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             return 1
     for label, env, expected in topology_refused:
         got = preflight_env(env_text, env)
-        if expected not in got or any("example.net" in err or "example.com" in err for err in got):
+        if expected not in got or any(re.search(r"\bexample\.(?:net|com)\b", err) for err in got):
             print(f"[FAIL] preflight case '{label}' did not report '{expected}' without a value (got {got})", file=sys.stderr)
             return 1
     preflight_cases += [(label, lambda env: env, expected) for label, _env, expected in topology_refused]
