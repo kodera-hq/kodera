@@ -15,6 +15,7 @@ import {
   createClient,
   EventStatus,
   EventType,
+  HistoryVisibility,
   HttpApiEvent,
   MatrixError,
   MemoryStore,
@@ -1268,11 +1269,21 @@ export class EspaceStore {
       (roomId) => this.#client.getRoom(roomId)?.getMyMembership() === 'join'
     )
     if (held !== undefined) return held
+    // `private_chat`, not `trusted_private_chat`: the latter gives every invitee the creator's
+    // power level, so anyone in a group conversation could remove the others or change the room.
+    // Someone invited later reads only what is sent from their invitation on.
     const { room_id: roomId } = await this.#client.createRoom({
       is_direct: true,
       invite: people,
-      preset: Preset.TrustedPrivateChat,
+      preset: Preset.PrivateChat,
       visibility: Visibility.Private,
+      initial_state: [
+        {
+          type: EventType.RoomHistoryVisibility,
+          state_key: '',
+          content: { history_visibility: HistoryVisibility.Invited },
+        },
+      ],
     })
     await this.#client.setAccountData(EventType.Direct, withDirect(map, roomId, people) as never)
     return roomId

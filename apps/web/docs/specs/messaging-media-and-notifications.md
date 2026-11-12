@@ -39,6 +39,7 @@ Status: Implemented for review on Core API 0.43.0; service release remains separ
 - « Nouveau » opens a conversation with one to eight Matrix ids:
   - the joined room already held with exactly those people is reused;
   - otherwise a private, `is_direct` room is created, with those people invited, and listed under each of them in `m.direct`.
+  - The room uses the `private_chat` preset: invitees join at power level 0, so in a group conversation nobody but its creator can remove the others or change the room (`trusted_private_chat` would give each invitee the creator's power level). Its history is visible from each person's invitation on (`history_visibility: invited`), so someone invited later reads nothing sent before.
 - A direct conversation is drawn in the main view as a channel is, with its own timeline and composer. The address stays the channel's. Choosing a channel, or a change of address, leaves the direct conversation.
 
 ### Notifications

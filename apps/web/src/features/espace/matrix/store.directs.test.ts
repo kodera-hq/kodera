@@ -40,6 +40,16 @@ describe('direct conversations in the store', () => {
     expect(createRoom).toHaveBeenCalledWith(
       expect.objectContaining({ is_direct: true, invite: [ALICE, BOB], visibility: 'private' })
     )
+    // Invitees are not made administrators (`trusted_private_chat` would give each of them the
+    // creator's power level), and someone invited later reads nothing sent before their invite.
+    const [options] = createRoom.mock.calls[0]!
+    expect(options.preset).toBe('private_chat')
+    expect(options.power_level_content_override).toBeUndefined()
+    expect(options.initial_state).toContainEqual({
+      type: 'm.room.history_visibility',
+      state_key: '',
+      content: { history_visibility: 'invited' },
+    })
     expect(setAccountData).toHaveBeenCalledWith('m.direct', {
       [ALICE]: ['!a:example.test', '!new:example.test'],
       [BOB]: ['!new:example.test'],
