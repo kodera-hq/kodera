@@ -31,6 +31,37 @@ POLICY_CAPABILITIES = (
 )
 
 
+class WorkspaceQuota(StoredModel):
+    """An explicit server-owned policy snapshot; null is deliberately unlimited."""
+
+    workspace = models.OneToOneField("Workspace", on_delete=models.RESTRICT)
+    policy_ref = models.TextField()
+    seats = models.BigIntegerField(null=True)
+    media_bytes = models.BigIntegerField(null=True)
+    pages = models.BigIntegerField(null=True)
+    snapshot_bytes = models.BigIntegerField(default=2097152)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(seats__isnull=True) | models.Q(seats__gte=0),
+                name="workspace_seat_quota_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(media_bytes__isnull=True) | models.Q(media_bytes__gte=0),
+                name="workspace_media_quota_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(pages__isnull=True) | models.Q(pages__gte=0),
+                name="workspace_page_quota_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(snapshot_bytes__gte=1, snapshot_bytes__lte=2097152),
+                name="workspace_snapshot_quota_bound",
+            ),
+        ]
+
+
 # docs/specs/PILOT_WORKSPACE_ONBOARDING.md §2: the contract's WorkspaceTemplateKey pattern.
 TEMPLATE_KEY = r"^[a-z][a-z0-9_]{0,31}$"
 

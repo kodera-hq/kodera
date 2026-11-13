@@ -17,8 +17,9 @@ from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
 from apps.orgs import invitations as service
+from apps.workspaces.quota_http import respond_once
 from core.api import lanes, problems
-from core.api.idempotency import StoredResponse, respond_once
+from core.api.idempotency import StoredResponse
 from core.api.scopes import declares
 from core.db.ids import new_uuid7
 from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken

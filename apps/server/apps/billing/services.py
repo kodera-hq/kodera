@@ -297,7 +297,19 @@ def current_price(*, request: OrderRequest, now: datetime) -> Price:
 
 
 def _regime(profile: BillingProfile) -> Regime:
-    validated = profile.vat_number is not None and profile.vat_number_validated_at is not None
+    from .vat import EU_MEMBER_STATES
+    from .vies import current_consultation
+
+    validated = False
+    if profile.country in EU_MEMBER_STATES - {"FR"} and profile.vat_number:
+        consultation = current_consultation(profile)
+        if (
+            consultation is None
+            or consultation.status == "unavailable"
+            or consultation.next_check_at <= timezone.now()
+        ):
+            raise BillingValidationError("vat_number", "vies_evidence_required")
+        validated = consultation.status == "valid"
     return regime_for(
         country=profile.country, vat_number_validated=validated, exempt=profile.vat_exempt
     )
@@ -475,6 +487,7 @@ def place_order(
             vat_mention=vat.mention,
             issuer_legal_name=issuer.legal_name,
             issuer_address=issuer.address,
+            issuer_country=issuer.country,
             issuer_siren=issuer.siren,
             issuer_vat_number=issuer.vat_number,
             customer_legal_name=profile.legal_name,
@@ -722,6 +735,7 @@ def issue_credit_note(
         vat_mention=invoice.vat_mention,
         issuer_legal_name=invoice.issuer_legal_name,
         issuer_address=invoice.issuer_address,
+        issuer_country=invoice.issuer_country,
         issuer_siren=invoice.issuer_siren,
         issuer_vat_number=invoice.issuer_vat_number,
         customer_legal_name=invoice.customer_legal_name,

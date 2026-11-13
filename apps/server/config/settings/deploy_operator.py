@@ -1,13 +1,11 @@
 """Fixed command-only profile for the existing shared Core database.
 
 No local settings, HTTP entrypoint or infrastructure credentials. This graph adds
-the outbox to an already migrated API database; it is not a standalone schema. Billing, legal and
-tenancy are the API's own applications, installed here for billing's staff command
-`settle_complimentary_order`, the one billing command this profile supports. The engine intents
-application is installed for the tenant agent's staff commands, `enrol_tenant_agent` and
-`revoke_tenant_agent` (ADR-0016): the API image carries no management command, so this profile is
-the only one deployed that can issue or revoke an agent's credential. Its routes stay the API's:
-this profile routes nothing.
+the outbox to the shared Core database and installs the schemas required by explicit billing,
+erasure and tenant-agent operator commands. Fiscal/cutoff admission remains distinct from the
+periodic retention processing role. Notification schema is required by the erasure migration
+graph; its existing dispatch command still needs an explicitly supplied worker-only application
+key. Loading command help never reads such a key. This profile routes nothing.
 """
 
 import os
@@ -54,6 +52,10 @@ INSTALLED_APPS = [
     "apps.support",
     "apps.engine_intents",
     "apps.workspaces",
+    # Quota and erasure migrations share native content/notification schema without routing HTTP.
+    "apps.docs",
+    "apps.media",
+    "apps.notifications",
 ]
 
 KODERA_LOOPBACK_ISSUERS = False

@@ -16,9 +16,10 @@ from apps.workspaces.instant_claim import (
     claim_allocation,
     reauthorise_instant_claim,
 )
+from apps.workspaces.quota_http import respond_once
 from apps.workspaces.warm_pool import InstantClaimInputError, parse_instant_claim_request
 from core.api import lanes, problems
-from core.api.idempotency import StoredResponse, respond_once
+from core.api.idempotency import StoredResponse
 from core.api.scopes import Operation, declares
 from services.identity.access_tokens import TokenVerificationError
 from services.identity.trusted_issuers import verify_configured_token

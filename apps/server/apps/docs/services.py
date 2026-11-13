@@ -248,7 +248,11 @@ def create(
     row.markdown = result.markdown
     try:
         row.save(force_insert=True)
-    except IntegrityError:
+    except IntegrityError as error:
+        from apps.workspaces.quotas import is_guard
+
+        if is_guard(error):
+            raise
         raise RefusalError(409) from None
     DocumentSnapshot.objects.create(
         document=row, sequence=0, head_sequence=0, state=result.snapshot
@@ -329,7 +333,11 @@ def patch(
     row.revision += 1
     try:
         row.save(update_fields=["parent", "title", "markdown", "revision", "updated_at"])
-    except IntegrityError:
+    except IntegrityError as error:
+        from apps.workspaces.quotas import is_guard
+
+        if is_guard(error):
+            raise
         raise RefusalError(409) from None
     if transformed is not None:
         append(row, snapshot, transformed, principal)

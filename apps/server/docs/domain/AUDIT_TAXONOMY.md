@@ -143,6 +143,19 @@ records the authenticated actor identity; a `system` event records its authentic
 The writer locks all three legal rows, requires exact authority/scope equality and refuses the event
 unless all three rows receive the identical contract end and derived deadlines atomically.
 
+### Workspace erasure
+
+| Action | Actor | Target | Retention |
+| --- | --- | --- | --- |
+| `privacy.erasure_cutoff` | staff | `organisation` | standard |
+| `privacy.core_erased`, `privacy.erasure_completed` | system | `organisation` | standard |
+
+These events commit with the durable erasure journal transition. Metadata contains the
+request UUID, validated instruction reference/digest or aggregate row/domain counts. It
+contains no document text, contact, external endpoint, subject or provider credential. The
+system actor is the durable erasure request UUID. See
+[`CORE_ERASURE_AND_RETENTION.md`](../specs/CORE_ERASURE_AND_RETENTION.md).
+
 ### Tenancy
 
 | Action | Actor | Target | Retention |
@@ -210,11 +223,14 @@ that job and action do not exist yet.
 | `order.terminated` | system | `order` | standard |
 | `order.complimentary` | staff | `order` | standard |
 | `invoice.issued`, `invoice.sent`, `invoice.paid`, `invoice.overdue`, `invoice.voided` | staff, system | `invoice` | standard |
+| `invoice.download_requested` | tenant | `invoice`, `credit_note` | standard |
 | `credit_note.issued` | staff, system | `credit_note` | standard |
 | `credit_note.notice_enqueued` | system | `credit_note` | standard |
 | `payment.received`, `payment.failed`, `payment.refunded`, `payment.reconciled`, `payment.reconciliation_mismatch` | system | `payment` | standard |
 | `payment.placed_on_account`, `payment.allocated` | staff, system | `payment` | standard |
-| `dunning.reminder_sent`, `dunning.formal_notice_sent`, `dunning.suspension_notice_sent`, `dunning.suspended`, `dunning.terminated`, `dunning.cleared` | system | `organisation` | standard |
+| `dunning.reminder_sent`, `dunning.formal_notice_sent`, `dunning.suspension_notice_sent`, `dunning.suspended`, `dunning.terminated` | staff | `organisation` | standard |
+| `dunning.proposal_prepared`, `dunning.cleared` | system | `organisation` | standard |
+| `dunning.dispute_recorded` | staff | `invoice` | standard |
 | `vat.vies_checked`, `vat.regime_changed` | system, staff | `organisation` | standard |
 
 `payment.placed_on_account` and `payment.allocated` are the only allocation-decision actions. Each

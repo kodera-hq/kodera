@@ -26,6 +26,11 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 # Read by the intake path itself, or by an `INSERT ... RETURNING` of a column with a database
 # default, or by the deferred constraint triggers of orgs.0002 that run at commit.
 SELECT = (
+    "workspaces_workspacequota",
+    "docs_collection",
+    "docs_collectionrow",
+    "billing_billingartifact",
+    "billing_viesconsultation",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -99,6 +104,9 @@ SELECT = (
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
 INSERT = (
+    "docs_collection",
+    "docs_collectionrow",
+    "billing_viesconsultation",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -207,6 +215,22 @@ INSERT = (
 #   resending, revoking and accepting; never its address, role, token or inviter.
 # - orgs_membership.accepted_at: accepting revives a removed membership of the same person.
 UPDATE_COLUMNS = (
+    *(
+        ("docs_collection", c)
+        for c in (
+            "title",
+            "properties",
+            "views",
+            "revision",
+            "deleted_at",
+            "purge_after",
+            "updated_at",
+        )
+    ),
+    ("docs_collectionrow", "values"),
+    ("docs_collectionrow", "updated_at"),
+    ("billing_billingprofile", "vat_number_validated_at"),
+    ("billing_billingprofile", "updated_at"),
     # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
     ("workspaces_workspacememberrestriction", "banned"),
     ("workspaces_workspacememberrestriction", "kicked"),
@@ -321,6 +345,7 @@ UPDATE_COLUMNS = (
 # Markdown replacement refreshes outgoing wikilinks and prunes snapshot-covered journal updates
 # (trigger `docs_journal_guard` refuses deleting any uncovered update).
 DELETE = (
+    "docs_collectionrow",
     "idempotency_record",
     "workspaces_category",
     "workspaces_resourcepolicyrule",
@@ -328,6 +353,7 @@ DELETE = (
     "docs_documentupdate",
 )
 EXECUTE_FUNCTIONS = (
+    "workspace_quota_usage(uuid)",
     "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
     "docs_document_role(uuid, uuid, uuid, uuid, text, text)",
 )

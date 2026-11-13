@@ -18,6 +18,13 @@ dependencies = [
   "uuid6==2025.0.1",
 ]
 
+[project.optional-dependencies]
+billing-documents = [
+    "factur-x==7.9",
+    "reportlab==5.1.0",
+    "saxonche==13.1.1",
+]
+
 [tool.uv]
 # The runtime is an application, not a published wheel.
 package = false
