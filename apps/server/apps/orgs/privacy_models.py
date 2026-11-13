@@ -37,3 +37,65 @@ class PrivacyExport(StoredModel):
             models.Index(fields=["user", "-id"], name="privacy_export_person"),
             models.Index(fields=["status", "expires_at"], name="privacy_export_expiry"),
         ]
+
+
+class PrivacyErasure(StoredModel):
+    """Durable cutoff and aggregate-only progress; detached from erased customer rows."""
+
+    organisation_reference = models.UUIDField(unique=True)
+    instruction_ref = models.TextField()
+    instruction_sha256 = models.TextField()
+    cutoff_at = models.DateTimeField()
+    purge_not_before = models.DateTimeField()
+    inventory = models.JSONField(default=dict)
+    inventory_sha256 = models.TextField()
+    status = models.TextField(default="cutoff")
+    core_purged_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    counts = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["cutoff", "core_purged", "complete"]),
+                name="erasure_status",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(instruction_ref__regex=r"^[A-Z]{2,8}-[0-9]{1,8}$"),
+                name="erasure_instruction",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(instruction_sha256__regex=r"^[0-9a-f]{64}$"),
+                name="erasure_instruction_digest",
+            ),
+        ]
+
+
+class ErasureReceipt(StoredModel):
+    erasure = models.ForeignKey(PrivacyErasure, on_delete=models.RESTRICT)
+    domain = models.TextField()
+    cutoff_at = models.DateTimeField()
+    evidence_sha256 = models.TextField()
+    adapter_revision = models.TextField()
+    verified_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["erasure", "domain"], name="erasure_domain_receipt"),
+            models.CheckConstraint(
+                condition=models.Q(
+                    domain__in=[
+                        "matrix",
+                        "objects",
+                        "identity_provider",
+                        "private_exports",
+                        "external_extension_receivers",
+                    ]
+                ),
+                name="erasure_domain",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(evidence_sha256__regex=r"^[0-9a-f]{64}$"),
+                name="erasure_receipt_digest",
+            ),
+        ]

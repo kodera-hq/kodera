@@ -615,4 +615,8 @@ class Invitation(StoredModel):
 
 
 # Register the independently owned privacy persistence model with this application.
-from .privacy_models import PrivacyExport as PrivacyExport  # noqa: E402
+from .privacy_models import (  # noqa: E402
+    ErasureReceipt as ErasureReceipt,
+    PrivacyErasure as PrivacyErasure,
+    PrivacyExport as PrivacyExport,
+)

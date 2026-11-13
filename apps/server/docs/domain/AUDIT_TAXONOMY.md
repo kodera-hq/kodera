@@ -143,6 +143,19 @@ records the authenticated actor identity; a `system` event records its authentic
 The writer locks all three legal rows, requires exact authority/scope equality and refuses the event
 unless all three rows receive the identical contract end and derived deadlines atomically.
 
+### Workspace erasure
+
+| Action | Actor | Target | Retention |
+| --- | --- | --- | --- |
+| `privacy.erasure_cutoff` | staff | `organisation` | standard |
+| `privacy.core_erased`, `privacy.erasure_completed` | system | `organisation` | standard |
+
+These events commit with the durable erasure journal transition. Metadata contains the
+request UUID, validated instruction reference/digest or aggregate row/domain counts. It
+contains no document text, contact, external endpoint, subject or provider credential. The
+system actor is the durable erasure request UUID. See
+[`CORE_ERASURE_AND_RETENTION.md`](../specs/CORE_ERASURE_AND_RETENTION.md).
+
 ### Tenancy
 
 | Action | Actor | Target | Retention |
