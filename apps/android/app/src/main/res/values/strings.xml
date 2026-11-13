@@ -203,4 +203,111 @@
     <string name="preferences_local_member">Membre local simulé</string>
     <string name="preferences_untitled_draft">Brouillon local sans titre</string>
     <string name="preferences_begin_preview">Commencer un aperçu local</string>
+
+    <!-- Telecom / ConnectionService & payload-free push wakeup -->
+    <string name="telecom_push_badge">Relais sans contenu clair</string>
+    <string name="telecom_section_title">Appel système et réveil silencieux</string>
+    <string name="telecom_payload_free_notice">UnifiedPush et FCM ne transportent qu’un jeton opaque de réveil : aucun message, titre de salle ni nom d’appelant ne transite par un relais tiers.</string>
+    <string name="telecom_relay_unifiedpush">Relais UnifiedPush vérifié</string>
+    <string name="telecom_relay_fcm">Relais FCM opaque vérifié</string>
+    <string name="telecom_relay_standby">Relais en veille</string>
+    <string name="telecom_action_answer">Décrocher</string>
+    <string name="telecom_action_decline">Refuser</string>
+    <string name="telecom_action_mute">Couper le micro de l’appel</string>
+    <string name="telecom_action_unmute">Réactiver le micro de l’appel</string>
+    <string name="telecom_action_hold">Mettre l’appel en attente</string>
+    <string name="telecom_action_resume">Reprendre l’appel</string>
+    <string name="telecom_route_earpiece">Basculer sur l’écouteur</string>
+    <string name="telecom_route_speaker">Basculer sur le haut-parleur</string>
+    <string name="telecom_action_end">Raccrocher</string>
+    <string name="telecom_driver_ready">Pont ConnectionService prêt pour la session active.</string>
+    <string name="telecom_driver_unprovisioned">Aucun appel système actif. La machine d’état ConnectionService attend un réveil opaque authentifié.</string>
+    <string name="telecom_phase_idle">Aucun appel</string>
+    <string name="telecom_phase_wakeup_pending">Réveil opaque reçu</string>
+    <string name="telecom_phase_ringing">Sonnerie entrante</string>
+    <string name="telecom_phase_connecting">Connexion audio</string>
+    <string name="telecom_phase_connected">Appel connecté</string>
+    <string name="telecom_phase_on_hold">En attente</string>
+    <string name="telecom_phase_ended">Appel terminé</string>
+    <string name="telecom_phase_rejected">Réveil refusé</string>
+
+    <!-- #proximity v2 foreground BLE check-in lane -->
+    <string name="proximity_v2_consent_enabled">Consentement radio locale activé</string>
+    <string name="proximity_v2_consent_disabled">Consentement radio locale désactivé</string>
+    <string name="proximity_v2_lane_heading">Voie radio locale BLE v2 (écran actif uniquement)</string>
+    <string name="proximity_v2_lane_separation">Les pointages du canal Matrix en ligne et les trames radio BLE locales de 27 octets restent strictement séparés.</string>
+    <string name="proximity_v2_online_lane_badge">Canal Matrix en ligne</string>
+    <string name="proximity_v2_ble_lane_badge">Radio BLE locale KP v2</string>
+    <string name="proximity_v2_duty_budget_badge">Cycle %1$d%% · Batterie min. %2$d%%</string>
+    <string name="proximity_v2_consent_label">Autoriser la découverte BLE locale lorsque l’application est affichée</string>
+    <string name="proximity_v2_consent_hint">Désactivé par défaut. Suspendu dès que l’application quitte l’écran ou si l’économiseur d’énergie s’active.</string>
+    <string name="proximity_v2_rotating_pseudonym">Balise éphémère rotative : %1$s</string>
+    <string name="proximity_v2_radio_counters">Diffusions BLE locales : %1$d · Balises paires vérifiées : %2$d</string>
+    <string name="proximity_v2_posture_unprovisioned">Adaptateur radio BLE physique non raccordé pour cette session ; seules les trames signées en mémoire sont vérifiées.</string>
+    <string name="proximity_v2_posture_consent_required">Découverte BLE locale inactive : accordez un consentement explicite pour activer l’écoute à l’écran.</string>
+    <string name="proximity_v2_posture_suspended">Radio BLE suspendue tant que l’application n’est pas affichée à l’écran.</string>
+    <string name="proximity_v2_posture_ready">Radio BLE locale prête dans la fenêtre de rotation de cinq minutes.</string>
+    <string name="proximity_v2_posture_scanning">Fenêtre d’écoute BLE locale active.</string>
+    <string name="proximity_v2_posture_battery_guard">Radio BLE suspendue pour préserver la batterie de l’appareil.</string>
+    <string name="proximity_v2_posture_duty_throttled">Cadence BLE limitée par le budget d’écoute local.</string>
+
+    <!-- Universal Matrix invitations -->
+    <string name="invite_open_button">Inviter</string>
+    <string name="invite_clipboard_label">Invitation Matrix Kodera</string>
+    <string name="invite_sheet_title">Inviter dans #%1$s</string>
+    <string name="invite_sheet_subtitle">Liens Matrix standards interopérables avec Element, Tchap et Cinny, copiés dans l’application sans ouverture externe.</string>
+    <string name="invite_format_matrix_uri">URI Matrix conforme RFC</string>
+    <string name="invite_action_copy_uri">Copier l’URI Matrix</string>
+    <string name="invite_format_matrix_to">Lien universel matrix.to</string>
+    <string name="invite_action_copy_web">Copier le lien matrix.to</string>
+    <string name="invite_format_suggested_alias">Alias Matrix suggéré</string>
+    <string name="invite_format_canonical_alias">Identifiant Matrix canonique</string>
+    <string name="invite_action_copy_alias">Copier l’identifiant</string>
+    <string name="invite_copied_uri">URI Matrix copiée dans le presse-papiers.</string>
+    <string name="invite_copied_web">Lien matrix.to copié dans le presse-papiers.</string>
+    <string name="invite_copied_alias">Identifiant Matrix copié dans le presse-papiers.</string>
+    <string name="invite_direct_heading">Invitation directe fédérée</string>
+    <string name="invite_direct_label">Identifiant Matrix (@nom:domaine)</string>
+    <string name="invite_direct_placeholder">@partenaire:matrix.org</string>
+    <string name="invite_direct_submit">Valider l’invitation directe</string>
+    <string name="invite_status_sent">Invitation Matrix transmise à %1$s.</string>
+    <string name="invite_status_unprovisioned">Destinataire %1$s validé ; le transport d’invitation Matrix en direct n’est pas configuré dans cette version.</string>
+    <string name="invite_status_invalid_recipient">Identifiant Matrix refusé : utilisez le format strict @identifiant:domaine.</string>
+    <string name="invite_status_failed">L’invitation directe n’a pas pu être envoyée.</string>
+    <string name="invite_action_close">Fermer</string>
+
+    <!-- 3-category community workspace structure & federated partner badges -->
+    <string name="community_title">Architecture communautaire et partenaires</string>
+    <string name="community_subtitle">Organisation canonique en trois espaces : salons publics ouverts, équipe interne privée par défaut, et salons partenaires fédérés sur Matrix.</string>
+    <string name="community_private_internal_badge">Privé par défaut</string>
+    <string name="community_federated_badge">Fédération Matrix</string>
+    <string name="community_audience_public">Ouvert à la communauté, aux équipes auto-hébergées et aux contributeurs.</string>
+    <string name="community_audience_core">Salons internes de l’équipe Kodera, privés par défaut.</string>
+    <string name="community_audience_partners">Salons sur invitation fédérée accessibles depuis Element, Tchap ou Cinny.</string>
+    <string name="community_topic_releases">Notes de version et annonces produit.</string>
+    <string name="community_topic_developers">Intégrations SDK, API et architecture.</string>
+    <string name="community_topic_support">Entraide communautaire et diagnostic d’instance.</string>
+    <string name="community_topic_extensions">Connecteurs, bots et automatisations Matrix.</string>
+    <string name="community_topic_self_host">Déploiement souverain, fédération et exploitation.</string>
+    <string name="community_topic_show_tell">Démonstrations et retours d’usage des équipes.</string>
+    <string name="community_topic_office">Rendez-vous audio périodique avec l’équipe.</string>
+    <string name="community_topic_engineering">Coordination technique interne.</string>
+    <string name="community_topic_strategy">Feuille de route et arbitrages internes.</string>
+    <string name="community_topic_operations">Exploitation, astreinte et sécurité des infrastructures.</string>
+    <string name="community_topic_partner_onboarding">Accueil dédié des organisations partenaires en fédération.</string>
+    <string name="community_topic_partner_feedback">Retours terrain et validation conjointe des versions.</string>
+
+    <!-- Universal ES256 Passkey device binding -->
+    <string name="passkey_title">Clé d’accès Passkey universelle</string>
+    <string name="passkey_universal_disclosure">Vérification WebAuthn ES256 sans verrouillage d’AAGUID : compatible biométrie Android, coffre auto-hébergé Vaultwarden ou Bitwarden et clés matérielles FIDO2.</string>
+    <string name="passkey_badge_es256">ES256 P-256</string>
+    <string name="passkey_badge_biometric">Biométrie Android</string>
+    <string name="passkey_badge_vaultwarden">Vaultwarden · Citadel</string>
+    <string name="passkey_badge_fido2">Clé FIDO2</string>
+    <string name="passkey_posture_hardware">Clé liée à un seul support matériel vérifié.</string>
+    <string name="passkey_posture_backup_local">Clé éligible à la sauvegarde, stockée localement.</string>
+    <string name="passkey_posture_synced">Clé Passkey synchronisée multi-appareils vérifiée.</string>
+    <string name="passkey_posture_bound">Clé Passkey ES256 liée à cette organisation.</string>
+    <string name="passkey_verified_count">Assertions cryptographiques vérifiées : %1$d</string>
+    <string name="passkey_status_unbound">Aucune clé d’accès Passkey liée pour la session courante. Tous les fournisseurs conformes WebAuthn ES256 sont acceptés.</string>
 </resources>
