@@ -3,6 +3,8 @@
 from django.db import migrations
 
 FORWARD = r'''
+SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
 CREATE FUNCTION docs_collab_snapshot_admit(p_document uuid,p_bytes bigint) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE ceiling bigint;
@@ -22,4 +24,5 @@ REVOKE ALL ON FUNCTION docs_collab_snapshot_admit(uuid,bigint) FROM PUBLIC;
 
 class Migration(migrations.Migration):
     dependencies = [("docs", "0006_collection_scope"), ("workspaces", "0012_quota_enforcement")]
-    operations = [migrations.RunSQL(FORWARD, "DROP FUNCTION docs_collab_snapshot_admit(uuid,bigint);")]
+    operations = [migrations.RunSQL(FORWARD, "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'; "
+        "DROP FUNCTION docs_collab_snapshot_admit(uuid,bigint);")]

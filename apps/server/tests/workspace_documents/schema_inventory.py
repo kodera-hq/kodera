@@ -8,6 +8,8 @@ TABLES = frozenset(
         "docs_documentsnapshot",
         "docs_documentupdate",
         "docs_collaborationticket",
+        "docs_collection",
+        "docs_collectionrow",
     }
 )
 FUNCTIONS = frozenset(
@@ -21,6 +23,13 @@ FUNCTIONS = frozenset(
     }
 )
 
+COLLECTION_QUOTA_FUNCTIONS = frozenset(
+    {
+        ("docs_collection_scope_guard", ""),
+        ("docs_collab_snapshot_admit", "p_document uuid, p_bytes bigint"),
+    }
+)
+
 
 def without_documents(objects):
     # Exact ownership: changes to any older table/function remain in the comparison.
@@ -29,8 +38,15 @@ def without_documents(objects):
     present_functions = {key[1] for key in objects if key[0] == "function" and key[1] in FUNCTIONS}
     if present_functions != FUNCTIONS:
         raise AssertionError("document scope functions are missing from the current schema")
+    added_functions = {("function", *value) for value in COLLECTION_QUOTA_FUNCTIONS}
+    if not added_functions <= objects.keys():
+        raise AssertionError(
+            "document collection/quota functions are missing from the current schema"
+        )
     return {
         key: value
         for key, value in objects.items()
-        if key[1] not in TABLES and not (key[0] == "function" and key[1] in FUNCTIONS)
+        if key[1] not in TABLES
+        and not (key[0] == "function" and key[1] in FUNCTIONS)
+        and key not in added_functions
     }

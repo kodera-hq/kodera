@@ -4,6 +4,7 @@ from django.db import migrations
 
 FORWARD = r'''
 SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
 CREATE INDEX docs_collection_values_gin ON docs_collectionrow USING gin("values" jsonb_path_ops);
 ALTER TABLE docs_collection ADD CONSTRAINT docs_collection_schema_bound CHECK(
   jsonb_typeof(properties)='array' AND jsonb_array_length(properties)<=100
@@ -71,6 +72,8 @@ CREATE TRIGGER docs_collection_row_scope BEFORE INSERT OR UPDATE ON docs_collect
   FOR EACH ROW EXECUTE FUNCTION docs_collection_scope_guard();
 '''
 REVERSE = r'''
+SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
 DROP TRIGGER docs_collection_row_scope ON docs_collectionrow;
 DROP TRIGGER docs_collection_scope ON docs_collection;
 DROP FUNCTION docs_collection_scope_guard();
