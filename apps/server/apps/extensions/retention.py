@@ -191,3 +191,23 @@ def purge_workspace_metadata(*, organisation_id: UUID, limit: int = 100) -> dict
         counts[name] = query.filter(pk__in=ids)._raw_delete(query.db) if ids else 0
         remaining -= counts[name]
     return counts
+
+
+def worker_step(
+    *,
+    erasure_id: UUID,
+    organisation_id: UUID,
+    cutoff_at: datetime,
+    inventory_sha256: str,
+    limit: int = 100,
+) -> dict:
+    """One bound SQL definer call; the processing role receives no raw extension table grants."""
+    import json
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT public.extension_erasure_step(%s,%s,%s,%s,%s)",
+            [erasure_id, organisation_id, cutoff_at, inventory_sha256, limit],
+        )
+        value = cursor.fetchone()[0]
+    return json.loads(value) if isinstance(value, str) else value

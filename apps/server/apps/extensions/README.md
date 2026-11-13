@@ -89,15 +89,28 @@ locks, preserving only hashed idempotency/event digests and minimal outcome evid
 cannot be extended; a purged body cannot be restored. These are not accounting records and no
 ten-year statutory rule is applied to them.
 
-`retention.cutoff_workspace(organisation_id=..., cutoff_at=...)` requires an authorized caller's
-atomic erasure transaction and a database-clock cutoff. It records an immutable anti-resurrection
-marker, revokes installations/digest consent and shortens payload expiry. `purge_due` disposes
-bounded local bodies; `local_payloads_absent` verifies that limited condition. After the erasure
-coordinator has verified external receiver receipts, `purge_workspace_metadata` deletes bounded
-scoped decisions/attempts/deliveries, import mappings/reports, digest linkage and installation
-endpoints. It releases native document and membership FK blockers. The database permits this
-teardown only to the table owner after cutoff and payload absence; ordinary evidence edits and
-deletes remain refused. The minimal cutoff marker prevents later resurrection.
+`extension_erasure_step(erasure_id, organisation_id, cutoff_at, inventory_sha256, limit)` is
+one bounded `SECURITY DEFINER` operation for the separate restricted retention processing role.
+`retention.worker_step` calls that exact SQL boundary. The function fixes its search path, revokes
+PUBLIC execution, caps the shared payload/metadata row budget at 1,000 and sets local lock and
+statement bounds. It grants no raw extension reads or writes and cannot admit a new Core request.
+Missing Core journals, private inventory-digest helper or approved intent refuse before mutation.
+
+Every call verifies the immutable Core request, recomputes its inventory digest, and binds the
+organisation, exact cutoff and required provider domains. The first call captures an immutable
+local admission only when every receiver matches the authoritative inventory. Later progress may
+remove a subset of those receivers; a bare local cutoff marker cannot manufacture admission.
+It immediately fences installations and digest consent, but respects `purge_not_before` before
+erasure-driven payload or metadata deletion. Existing earlier ordinary TTLs are never extended.
+Metadata disposal requires local payload absence and all cutoff-bound verified provider receipts,
+including `external_extension_receivers`. A single missing receipt holds every metadata row.
+
+The scoped teardown removes decisions/attempts/deliveries, import mappings/reports, digest
+linkage and installation endpoints before Core document purge. Immutable admission and cutoff
+markers remain to prevent replay drift and resurrection. Ordinary evidence edits/deletes remain
+refused. Owner-local helpers (`cutoff_workspace`, `purge_due`, `purge_workspace_metadata`) remain
+available for explicitly authorized local transactions and tests; the least-privilege Core worker
+uses the request-bound definer rather than those owner-only helpers.
 
 Before deleting metadata, capture `receiver_inventory(organisation_id=...)`: each exact receiver
 is `urn:kodera:extension-installation:UUID:endpoint-sha256:HASH`. All installations, including
