@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     "apps.workspaces",
     # Quota and erasure migrations share native content/notification schema without routing HTTP.
     "apps.docs",
+    "apps.extensions",
     "apps.media",
     "apps.notifications",
 ]

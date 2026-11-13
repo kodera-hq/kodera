@@ -734,6 +734,26 @@ def _held_count(transport: MailTransport) -> int:
     return int(count)
 
 
+def send_claimed(transport: MailTransport, claimed: Claimed) -> SendResult:
+    """Digest consent is a send-time fence; other mail keeps its existing transport path."""
+    if claimed.template_id != "workspace_digest":
+        return smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
+    from django.apps import apps
+
+    if not apps.is_installed("apps.extensions"):
+        return SendResult(
+            outcome="permanent", smtp_code=None, error_class="DigestAuthorityUnavailable"
+        )
+    from apps.extensions.digest import send_guard
+
+    with send_guard(claimed.delivery_id, claimed.recipient) as allowed:
+        if not allowed:
+            return SendResult(
+                outcome="permanent", smtp_code=None, error_class="DigestConsentRevoked"
+            )
+        return smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
+
+
 def run_deliveries(
     transport: MailTransport,
     *,
@@ -762,7 +782,7 @@ def run_deliveries(
             break
         attempted.add(claimed.delivery_id)
         try:
-            result = smtp.send(transport, recipient=claimed.recipient, message=claimed.message)
+            result = send_claimed(transport, claimed)
         except Exception as error:  # noqa: BLE001 - send never raises; if it does, the outcome is unknown
             result = SendResult(
                 outcome="ambiguous", smtp_code=None, error_class=type(error).__name__

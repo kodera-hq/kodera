@@ -49,6 +49,7 @@ CUSTOMER_HTTP_APPS = (
     "apps.media",
     "apps.notifications",
     "apps.docs",
+    "apps.extensions",
 )
 INSTALLED_APPS = [*INSTALLED_APPS, *CUSTOMER_HTTP_APPS]
 # The deployable API profile: KODERA_LOOPBACK_ISSUERS, from config.settings.persistence, is False
