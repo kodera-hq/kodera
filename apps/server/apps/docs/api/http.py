@@ -10,13 +10,13 @@ from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
-from apps.workspaces.quota_http import respond_once
 from core.api import lanes
+from core.api.guarded_replay import respond_once
 from core.api.idempotency import StoredResponse
 from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken
 from services.identity.trusted_issuers import verify_configured_token
 
-from ..services import RefusalError, authorize
+from ..services import RefusalError, authorize, quota_replay_policy
 from . import responses
 
 Handler = Callable[[VerifiedAccessToken, str], HttpResponse]
@@ -137,6 +137,7 @@ def serve(
                 subject=verified.subject,
                 request_id=request_id,
                 handler=effect,
+                policy=quota_replay_policy(),
                 authority=lambda _: admit(verified),
             )
             if response.status_code == 503:
