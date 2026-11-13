@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "apps.workspaces",
     # Quota migrations share the native document/media schema without routing HTTP.
     "apps.docs",
+    "apps.extensions",
     "apps.media",
 ]
 

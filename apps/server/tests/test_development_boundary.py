@@ -360,6 +360,9 @@ def assert_image_boundary(ignore):
         "!apps/notifications/api/responses.py",
         "!apps/notifications/api/urls.py",
         "!apps/notifications/api/views.py",
+        "!apps/extensions/__init__.py",
+        "!apps/extensions/apps.py",
+        "!apps/extensions/models.py",
         "!apps/docs/__init__.py",
         "!apps/docs/apps.py",
         "!apps/docs/access.py",
@@ -944,3 +947,34 @@ def test_every_dev_controller_source_pin_matches_the_pinned_file():
         if hashlib.sha256((ROOT / path).read_bytes()).hexdigest() != digest
     ]
     assert stale == [], f"a dev controller pin is stale: {stale}"
+
+
+EXTENSION_PRIVATE_SOURCES = (
+    "apps/extensions/dispatcher.py",
+    "apps/extensions/services.py",
+    "apps/extensions/digest.py",
+    "apps/extensions/imports.py",
+    "apps/extensions/import_parsers.py",
+    "apps/extensions/retention.py",
+    "apps/extensions/wire.py",
+    "apps/extensions/management/caller.py",
+    "apps/extensions/management/commands/dispatch_extensions.py",
+)
+
+
+def test_extension_image_carries_only_inert_registration():
+    files = set(image_files(ROOT))
+    assert {
+        "apps/extensions/__init__.py",
+        "apps/extensions/apps.py",
+        "apps/extensions/models.py",
+    } <= files
+    assert files.isdisjoint(EXTENSION_PRIVATE_SOURCES)
+
+
+def test_extension_parent_directory_exception_is_not_an_inert_allowlist():
+    ignore = (ROOT / ".dockerignore").read_text().splitlines()
+    assert_image_boundary(ignore)
+    ignore = [*ignore, "!apps/extensions/"]
+    with pytest.raises(AssertionError, match="exact runtime allowlist"):
+        assert_image_boundary(ignore)
