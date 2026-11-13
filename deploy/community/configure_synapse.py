@@ -68,9 +68,12 @@ def topology(environment):
 def federation_allowlist(environment):
     """The servers federation is opened to. Empty, the default, keeps federation closed."""
     names = [name.strip() for name in environment.get("KODERA_MATRIX_FEDERATION_ALLOWLIST", "").split(",")]
-    names = sorted({name for name in names if name})
+    names = [name for name in names if name]
+    if len(names) > 32 or len(set(names)) != len(names):
+        raise ValueError("KODERA_MATRIX_FEDERATION_ALLOWLIST must be bounded and distinct")
+    names = sorted(names)
     for name in names:
-        if not re.fullmatch(PUBLIC_DOMAIN, name) or name.endswith(PRIVATE_SUFFIXES):
+        if len(name) > 253 or any(len(label) > 63 for label in name.split(".")) or not re.fullmatch(PUBLIC_DOMAIN, name) or name.endswith((*PRIVATE_SUFFIXES, ".invalid", ".test", ".example", ".onion")):
             raise ValueError("KODERA_MATRIX_FEDERATION_ALLOWLIST must list public server names")
     return names
 
@@ -123,6 +126,7 @@ def configure(document, environment=None):
     modules.append({"module": MODULE, "config": {
         "agent_user_id": f"@kodera-agent:{server}",
         "room_access_user_id": f"@kodera-rooms:{server}",
+        "federation_domain_allowlist": allowlist,
     }})
 
     # PostgreSQL only. The password is read by libpq from PGPASSWORD, never written here.
@@ -196,8 +200,8 @@ def configure(document, environment=None):
 if __name__ == "__main__":
     import yaml
 
-    if version("kodera-synapse-policy") != "0.1.5":
-        raise RuntimeError("Community requires room-policy version 0.1.5")
+    if version("kodera-synapse-policy") != "0.1.6":
+        raise RuntimeError("Community requires room-policy version 0.1.6")
     if not os.environ.get("PGPASSWORD") or os.environ["PGPASSWORD"].startswith("CHANGE_ME_"):
         raise RuntimeError("Synapse requires the PostgreSQL credential of its own database")
     config = Path(sys.argv[1])

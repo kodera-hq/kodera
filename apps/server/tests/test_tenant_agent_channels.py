@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from test_tenant_agent import ALICE, BOB, CAROL, FakeLiveKit, FakeRunner, member_set
 
-from tenant_agent.channels import CHANNEL_KIND, Channels
+from tenant_agent.channels import CHANNEL_KIND, JOIN_RULES, POWER_LEVELS, Channels, parse
 from tenant_agent.engines import Docs, EngineError, LiveKit, LiveKitUnavailableError, Meet
 from tenant_agent.guard import RosterGuard
 from tenant_agent.handlers import MEMBER_KIND, Handlers
@@ -82,9 +82,11 @@ class FakeHomeserver(Synapse):
             )
         if route.endswith("/createRoom"):
             assert body["room_version"] == "12"
+            assert sum(item["type"] == "m.room.server_acl" for item in body["initial_state"]) == 1
             assert AGENT not in body["power_level_content_override"]["users"]
             room_id = f"!r{len(self.rooms)}:{SERVER}"
             state = {(e["type"], e["state_key"]): e["content"] for e in body["initial_state"]}
+            state[("m.room.create", "")] = dict(body["creation_content"])
             state[("m.room.name", "")] = {"name": body["name"]}
             state[("m.room.topic", "")] = {"topic": body["topic"]}
             state[("m.room.power_levels", "")] = body["power_level_content_override"]
@@ -234,6 +236,10 @@ def test_a_channel_s_room_is_made_under_its_alias_with_its_policy_and_members(tm
         "listen_only": False,
         "may_publish": [],
         "archived": False,
+        "local_only": True,
+        "allow_member_invites": False,
+        "allow_federated_invites": False,
+        "federation_servers": [],
     }
     levels = room["state"][("m.room.power_levels", "")]
     assert (
@@ -1202,7 +1208,7 @@ def test_a_changed_name_re_applies_that_channel_only(tmp_path):
 
     second = room_id_of(homeserver, SECOND)
     state_reads = [r for r in homeserver.reads if "/state/" in r]
-    assert len(state_reads) == 5 and all(f"/rooms/{second}/" in r for r in state_reads)
+    assert len(state_reads) == 7 and all(f"/rooms/{second}/" in r for r in state_reads)
     assert homeserver.writes == [f"PUT /_matrix/client/v3/rooms/{second}/state/m.room.name/"]
     assert homeserver.room_of(SECOND)["state"][("m.room.name", "")] == {"name": "renamed"}
 
@@ -1220,7 +1226,7 @@ def test_the_full_re_application_ignores_the_fingerprints_and_repairs_drift(tmp_
 
     assert homeserver.room_of(SECOND)["state"][("m.room.topic", "")] == {"topic": ""}
     for i in (FIRST, SECOND):
-        assert sum(f"/rooms/{room_id_of(homeserver, i)}/state/" in r for r in homeserver.reads) == 5
+        assert sum(f"/rooms/{room_id_of(homeserver, i)}/state/" in r for r in homeserver.reads) == 7
 
 
 def test_a_channel_that_fails_records_no_fingerprint(tmp_path):
@@ -1245,7 +1251,7 @@ def test_a_channel_that_fails_records_no_fingerprint(tmp_path):
     assert not [
         r for r in homeserver.reads if f"/rooms/{room_id_of(homeserver, FIRST)}/state/" in r
     ]
-    assert sum(f"/rooms/{second}/state/" in r for r in homeserver.reads) == 5
+    assert sum(f"/rooms/{second}/state/" in r for r in homeserver.reads) == 7
     assert homeserver.room_of(SECOND)["state"][("m.room.name", "")] == {"name": "b"}
 
 
@@ -1679,3 +1685,186 @@ def test_public_audio_roster_lag_does_not_end_a_new_local_members_call(tmp_path,
     outcome = handlers.handle(CHANNEL_KIND, channel_set(2, entry))
     assert outcome.status == "succeeded"
     assert livekit.rooms_[livekit_room(room_id)] == [f"{late}|DEV"]
+
+
+def test_operator_partner_optin_is_exact_invite_only_and_retains_only_allowlisted_remote_members(
+    tmp_path,
+):
+    from tenant_agent import federation
+
+    homeserver = FakeHomeserver()
+    state = State(tmp_path)
+    state.keep(MemberSet(0, frozenset({ALICE, BOB, CAROL}), frozenset(), frozenset()))
+    channels = Channels(
+        homeserver, CallLiveKit({}), state, partner_channels=((TEXT, ("partner.example.org",)),)
+    )
+    desired = parse(channel_set(1, channel(audience="all", members=[])))
+    assert desired is not None
+    assert channels.apply(desired).failed == []
+    room = homeserver.room_of(TEXT)
+    assert room["state"][("m.room.create", "")] == {"m.federate": True, federation.MODE: "partner"}
+    assert room["state"][(JOIN_RULES, "")] == {"join_rule": "invite"}
+    assert room["state"][(POWER_LEVELS, "")]["invite"] == 0
+    assert room["state"][(POLICY, "")]["federation_servers"] == ["partner.example.org"]
+    approved, invited = "@approved:partner.example.org", "@invited:partner.example.org"
+    outsider = "@outsider:other.example.org"
+    room["members"].update({approved: "join", invited: "invite", outsider: "join"})
+    assert channels.apply(desired, full=True).failed == []
+    assert room["members"][approved] == "join" and room["members"][invited] == "invite"
+    assert room["members"][outsider] == "leave"
+    assert channels.apply(desired, full=True).channels_applied == 1
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"audience": "listed"},
+        {"read_only": True},
+        {"kind": "audio"},
+        {"archived": True},
+        {"denied": [BOB]},
+    ],
+)
+def test_partner_optin_never_widens_ineligible_core_policy(tmp_path, changes):
+    homeserver = FakeHomeserver()
+    state = State(tmp_path)
+    channels = Channels(
+        homeserver, CallLiveKit({}), state, partner_channels=((TEXT, ("partner.example.org",)),)
+    )
+    desired = (
+        parse(channel_set(1, channel(audience="all", members=[], **changes)))
+        if "audience" not in changes
+        else parse(channel_set(1, channel(**changes)))
+    )
+    assert desired is not None
+    assert channels.apply(desired).failed == [TEXT]
+    assert not homeserver.rooms
+
+
+def test_existing_internal_room_requires_replacement_before_partner_mode_and_writes_no_partner_policy(
+    tmp_path,
+):
+    handlers, homeserver, _, state = build(tmp_path)
+    original = parse(channel_set(1, channel(audience="all", members=[])))
+    assert original is not None
+    assert (
+        handlers.handle(CHANNEL_KIND, channel_set(1, channel(audience="all", members=[]))).status
+        == "succeeded"
+    )
+    channels = Channels(
+        homeserver, CallLiveKit({}), state, partner_channels=((TEXT, ("partner.example.org",)),)
+    )
+    homeserver.writes.clear()
+    assert channels.apply(original, full=True).failed == [TEXT]
+    assert not homeserver.room_of(TEXT)["state"][(POLICY, "")]["allow_federated_invites"]
+    assert not any("/state/" in call for call in homeserver.writes)
+
+
+def test_removing_partner_optin_kicks_foreign_members_but_holds_immutable_room_for_replacement(
+    tmp_path,
+):
+    homeserver = FakeHomeserver()
+    state = State(tmp_path)
+    desired = parse(channel_set(1, channel(audience="all", members=[])))
+    assert desired is not None
+    partnered = Channels(
+        homeserver, CallLiveKit({}), state, partner_channels=((TEXT, ("partner.example.org",)),)
+    )
+    assert partnered.apply(desired).failed == []
+    remote = "@outside:partner.example.org"
+    homeserver.room_of(TEXT)["members"][remote] = "join"
+    internal = Channels(homeserver, CallLiveKit({}), state)
+    assert internal.apply(desired, full=True).failed == [TEXT]
+    assert homeserver.room_of(TEXT)["members"][remote] == "leave"
+
+
+@pytest.mark.parametrize(
+    "raw,allowed",
+    [
+        ('{"not-a-uuid":["partner.example.org"]}', ("partner.example.org",)),
+        ('{"11111111-1111-4111-8111-111111111111":["*.example.org"]}', ("partner.example.org",)),
+        ('{"11111111-1111-4111-8111-111111111111":["127.0.0.1"]}', ("partner.example.org",)),
+        (
+            '{"11111111-1111-4111-8111-111111111111":["partner.example.org:8448"]}',
+            ("partner.example.org",),
+        ),
+        (
+            '{"11111111-1111-4111-8111-111111111111":["unlisted.example.org"]}',
+            ("partner.example.org",),
+        ),
+        (
+            '{"11111111-1111-4111-8111-111111111111":[],"11111111-1111-4111-8111-111111111111":[]}',
+            ("partner.example.org",),
+        ),
+    ],
+)
+def test_operator_partner_configuration_refuses_invalid_or_unbounded_targets(raw, allowed):
+    from tenant_agent import federation
+
+    with pytest.raises(ValueError):
+        federation.parse(raw, allowed)
+
+
+def test_partner_configuration_is_closed_by_default_and_bound_at_startup(tmp_path):
+    from test_tenant_agent import AGENT_ENV
+
+    from tenant_agent.config import Config, ConfigError
+
+    env = {
+        **AGENT_ENV,
+        "KODERA_AGENT_STATE_DIR": str(tmp_path),
+        "KODERA_APPS": "matrix",
+        "KODERA_SYNAPSE_URL": "http://synapse:8008",
+        "KODERA_SYNAPSE_TOKEN": "synthetic",
+        "KODERA_MATRIX_SERVER_NAME": SERVER,
+    }
+    assert Config.from_env(env).partner_channels == ()
+    selected = '{"' + TEXT + '":["partner.example.org"]}'
+    configured = {
+        **env,
+        "KODERA_MATRIX_PARTNER_CHANNELS": selected,
+        "KODERA_MATRIX_FEDERATION_ALLOWLIST": "partner.example.org",
+    }
+    assert Config.from_env(configured).partner_channels == ((TEXT, ("partner.example.org",)),)
+    for changes in (
+        {"KODERA_MATRIX_FEDERATION_ALLOWLIST": ""},
+        {"KODERA_MATRIX_FEDERATION_ALLOWLIST": "127.0.0.1"},
+        {"KODERA_MATRIX_PARTNER_CHANNELS": '{"everyone":["partner.example.org"]}'},
+        {"KODERA_MATRIX_SERVER_NAME": "partner.example.org"},
+    ):
+        with pytest.raises(
+            ConfigError, match="bounded channel UUIDs and explicitly allowlisted public servers"
+        ):
+            Config.from_env({**configured, **changes})
+    with pytest.raises(ConfigError, match="requires the matrix app"):
+        Config.from_env({**configured, "KODERA_APPS": "docs"})
+
+
+def test_transport_emits_one_exact_acl_and_refuses_widening_before_http():
+    from tenant_agent import federation
+
+    server = FakeHomeserver()
+    exact = {"type": "m.room.server_acl", "state_key": "", "content": federation.acl(SERVER)}
+    room = server.create(TEXT, "synthetic", "", [exact], {"users": {}})
+    assert server.rooms[room]["state"][("m.room.server_acl", "")] == federation.acl(SERVER)
+    before = server.calls
+    for states in (
+        [exact, exact],
+        [{**exact, "content": {"allow": ["*"]}}],
+        [{**exact, "state_key": "other"}],
+    ):
+        with pytest.raises(EngineError, match="initial server ACL must exactly match"):
+            server.create(AUDIO, "synthetic", "", states, {})
+    assert server.calls == before
+
+
+def test_agent_replaces_stale_acl_extra_fields_instead_of_preserving_them(tmp_path):
+    handlers, server, _, _ = build(tmp_path)
+    desired = channel_set(1, channel())
+    assert handlers.handle(CHANNEL_KIND, desired).status == "succeeded"
+    room = server.room_of(TEXT)
+    room["state"][("m.room.server_acl", "")]["unexpected"] = "stale"
+    channels = Channels(server, CallLiveKit({}), State(tmp_path))
+    parsed = parse(desired)
+    assert parsed is not None and not channels.apply(parsed, full=True).failed
+    assert "unexpected" not in room["state"][("m.room.server_acl", "")]

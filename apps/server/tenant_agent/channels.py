@@ -55,6 +55,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import federation
 from .engines import EngineError, LiveKit, LiveKitUnavailableError
 from .synapse import OCCUPANCY, POLICY, Synapse, SynapseUnavailableError, livekit_room
 
@@ -274,6 +275,8 @@ class _Wanted:
     ]  # (event type, content): policy, levels, name, topic
     digest: str
     public: bool = False
+    federation_servers: tuple[str, ...] = ()
+    federation_blocked: bool = False
 
     @property
     def closing(self) -> tuple[tuple[str, dict[str, Any]], ...]:
@@ -297,10 +300,17 @@ class _Owed:
 
 class Channels:
     def __init__(
-        self, synapse: Synapse, livekit: LiveKit, state: Any, workers: int = REMOVAL_WORKERS
+        self,
+        synapse: Synapse,
+        livekit: LiveKit,
+        state: Any,
+        workers: int = REMOVAL_WORKERS,
+        *,
+        partner_channels: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> None:
         self._synapse, self._livekit, self._state = synapse, livekit, state
         self._workers = max(1, workers)
+        self._partner_channels = dict(partner_channels)
         # Who the last application could not join for want of an account. In memory only: the
         # agent re-applies the set in force when it starts, which finds them again.
         self.waiting: frozenset[str] = frozenset()
@@ -488,8 +498,17 @@ class Channels:
             }
             users = users - banned_users
         exempt = sorted(u for s in channel["exempt"] if (u := synapse.user_id(s)) in users)
-        public = native_public(channel, synapse)
+        requested = self._partner_channels.get(channel["channel_id"], ())
+        partners = requested if federation.eligible(channel) else ()
+        blocked = bool(requested and not partners)
+        public = native_public(channel, synapse) and not requested
         governance = policy(channel, exempt, users)
+        governance.update(
+            local_only=not bool(partners),
+            allow_member_invites=bool(partners),
+            allow_federated_invites=bool(partners),
+            federation_servers=list(partners),
+        )
         if moderation is not None and moderation.moderation_present:
             governance["banned"] = sorted(
                 u
@@ -503,15 +522,19 @@ class Channels:
             }
         if public:
             governance["local_only"] = True
+        levels = power_levels(channel, synapse, exempt)
+        if partners:
+            levels["invite"] = 0
         state = (
             (POLICY, governance),
-            (POWER_LEVELS, power_levels(channel, synapse, exempt)),
+            (POWER_LEVELS, levels),
             ("m.room.name", {"name": channel["name"]}),
             ("m.room.topic", {"topic": channel["topic"]}),
             (JOIN_RULES, {"join_rule": "public" if public else "invite"}),
+            ("m.room.server_acl", federation.acl(synapse.server_name, partners)),
         )
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
-        return _Wanted(users, state, digest, public)
+        return _Wanted(users, state, digest, public, partners, blocked)
 
     # -- phase 1: take access away -----------------------------------------------------------
 
@@ -598,7 +621,12 @@ class Channels:
 
     def _removed(self, wanted: _Wanted, present: set[str], keep: set[str]) -> list[str]:
         if not wanted.public:
-            return sorted(present - wanted.users - keep)
+            return sorted(
+                user
+                for user in present - wanted.users - keep
+                if not federation.remote_user(user, wanted.federation_servers)
+                or user in self._barred
+            )
         # Local authenticated users join natively before Core's next member-set poll.
         # Absence from an older roster cannot revoke that join; explicit revocation does.
         current = self._state.member_set()
@@ -661,6 +689,10 @@ class Channels:
     ) -> str:
         synapse = self._synapse
         channel_id = channel["channel_id"]
+        if wanted.federation_blocked:
+            raise EngineError(
+                "partner opt-in requires an unrestricted non-read-only active text channel"
+            )
         room_id = rooms.get(channel_id)
         if not fresh or room_id is None:
             room_id = synapse.resolve(channel_id)
@@ -681,8 +713,10 @@ class Channels:
                         if kind in (POLICY, JOIN_RULES)
                     ],
                     wanted.state[1][1],
+                    federation_servers=wanted.federation_servers,
                 )
             else:
+                synapse.require_federation_mode(room_id, wanted.federation_servers)
                 self._put_state(room_id, wanted.state)
             if rooms.get(channel_id) != room_id:
                 # Recorded at once: a deleted channel's room is then emptied even if this pass stops.
@@ -711,7 +745,7 @@ class Channels:
                     room_id, self._admitted(channel, wanted, present), result
                 )
                 owed.rooms.discard(room_id)
-        if not native_public(channel, synapse):
+        if not wanted.public:
             for user in sorted(wanted.users - present):
                 self._join(room_id, user, result.waiting)
         access = synapse.room_access_user
@@ -745,9 +779,19 @@ class Channels:
         for event_type, desired in state:
             check()
             current = synapse.state(room_id, event_type)
-            if current is None or any(current.get(k) != v for k, v in desired.items()):
+            if current is None or (
+                current != desired
+                if event_type == "m.room.server_acl"
+                else any(current.get(k) != v for k, v in desired.items())
+            ):
                 check()
-                synapse.put_state(room_id, event_type, {**(current or {}), **desired})
+                synapse.put_state(
+                    room_id,
+                    event_type,
+                    desired
+                    if event_type == "m.room.server_acl"
+                    else {**(current or {}), **desired},
+                )
 
     def _end_calls(self, room_id: str, admitted: frozenset[str], result: Applied) -> int:
         """Remove from the room's live call everyone whose Matrix user is not `admitted`. LiveKit

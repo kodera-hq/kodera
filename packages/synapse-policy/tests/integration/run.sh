@@ -8,6 +8,19 @@ IMAGE="matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb1
 NAME="kodera-policy-it-$$"
 PORT="${PORT:-18448}"
 HERE="$(cd "$(dirname "$0")/../.." && pwd)"
+# Machine-wide bounded heavy-job admission; never removes another runner's claim.
+python3 -c 'import shutil,sys; sys.exit(0 if shutil.disk_usage(".").free >= 20*1024**3 else "refused: less than 20 GiB free")'
+POLICY_LOCK=""
+mkdir -p /tmp/kodera-heavy
+for policy_slot in 1 2; do
+  policy_candidate="/tmp/kodera-heavy/slot-${policy_slot}.heavy"
+  if mkdir "$policy_candidate" 2>/dev/null; then
+    POLICY_LOCK="$policy_candidate"
+    echo "single-homeserver-policy-proof pid $$" > "$POLICY_LOCK/owner"
+    break
+  fi
+done
+[ -n "$POLICY_LOCK" ] || { echo "refused: both machine-wide heavy slots occupied"; exit 2; }
 DATA="$(mktemp -d)"
 # Synapse writes /data as UID:GID. Running it as the caller keeps the generated files writable here:
 # on Linux the image's default user (991) would own them and the appends below would fail.
@@ -16,6 +29,8 @@ cleanup() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   # `trash` exists on macOS only; elsewhere the directory is removed.
   trash "$DATA" 2>/dev/null || rm -rf "$DATA"
+  rm "$POLICY_LOCK/owner"
+  rmdir "$POLICY_LOCK"
 }
 trap cleanup EXIT
 

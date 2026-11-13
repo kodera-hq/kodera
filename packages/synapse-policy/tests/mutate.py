@@ -24,8 +24,8 @@ MUTANTS = [
     ("workspace mute posting open", "if event.type in {'m.room.message', 'm.sticker'} and _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
     ("archived native join open", 'if content.get("archived", False) is not False:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("archived event posting open", 'if content.get("archived") is True:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
-    ("public native remote join open", 'if content.get("local_only") is True and not self._api.is_mine(user):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
-    ("public federated member event open", 'if not _is_valid_user_id(target) or not self._api.is_mine(target):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
+    ("public native remote join open", 'if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
+    ("public federated member event open", 'if not _is_valid_user_id(target) or not self._api.is_mine(target):', 'if False:', "test_agent_event_bypass_never_admits_remote_membership_to_internal_room"),
     ("malformed local-only flag open", 'if type(content.get("local_only", False)) is not bool:', 'if False:', "test_public_local_only_flag_must_be_boolean"),
     ("agent may not create", "if user_id == self._agent:\n            return NOT_SPAM", "if False:\n            return NOT_SPAM", "test_agent_creates_any_room"),
     ("any is_direct accepted", 'config.get("is_direct") is not True', "False", "test_member_cannot_create_anything_but_a_direct_message"),
@@ -64,7 +64,7 @@ MUTANTS = [
     ("channel member invites open without policy", 'policy_content.get("allow_member_invites") is True', "True", "test_channel_without_allow_member_invites_refuses_member_invites"),
     ("non-joined member invites into channel", '_membership_of(state.get(("m.room.member", inviter))) != "join"', "False", "test_non_joined_member_cannot_invite_into_policy_authorized_channel"),
     ("federated channel invites refused when allowed", 'or policy_content.get("allow_federated_invites") is True', "", "test_joined_member_invites_federated_user_when_federated_invites_allowed"),
-    ("federated channel invites open without federated policy", 'policy_content.get("allow_federated_invites") is True', "True", "test_joined_member_cannot_invite_federated_user_without_federated_policy"),
+    ("federated channel invites open without federated policy", 'if not self._api.is_mine(invitee) and not self._partner_federation_allowed(state, invitee):', "if False:", "test_agent_cannot_invite_remote_users_into_internal_rooms"),
     ("announcement posting open", 'if content["read_only"] and (', 'if False and (', "test_announcement_member_cannot_post_or_edit_even_with_permissive_levels"),
     ("private membership open", 'if target not in content["members"]:', 'if False:', "test_private_room_refuses_unlisted_membership_even_with_invitation"),
     ("private invites open", 'if policy_content.get("audience") == "listed" and (', 'if False and (', "test_private_room_cannot_be_opened_through_member_invite_policy"),
@@ -72,23 +72,45 @@ MUTANTS = [
     ("malformed governance open", 'if not self._governance_valid(policy_event):\n            return False', 'if not self._governance_valid(policy_event):\n            return True', "test_malformed_governance_fails_closed"),
     ("private join callback open", 'if content["audience"] == "listed" and user not in content["members"]:', 'if False:', "test_private_room_cannot_be_opened_through_member_invite_policy"),
     ("frozen policy ignored", 'return isinstance(content, Mapping) and any(', 'return isinstance(content, dict) and any(', "test_frozen_synapse_event_content_enforces_governance"),
+    ('agent remote invitation bypass', 'if inviter == self._agent and self._api.is_mine(invitee):', 'if inviter == self._agent:', 'test_agent_cannot_invite_remote_users_into_internal_rooms'),
+    ('agent governance bypass before federation boundary', '        if not self._federation_boundary_allows(event, state):\n            return False', '        if event.sender != self._agent and not self._federation_boundary_allows(event, state):\n            return False', 'test_agent_event_bypass_never_admits_remote_membership_to_internal_room'),
+    ('stale remote timeline sender admitted', '        if not self._api.is_mine(event.sender):', '        if False:', 'test_previously_joined_remote_sender_cannot_post_inside_internal_room'),
+    ('partner global allowlist ignored', 'or not set(servers) <= self._federation_servers', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
+    ('partner immutable creation ignored', '            and creation_mode(getattr(create, "content", None)) == "partner"', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
+    ('partner ACL ignored', '            and acl_matches(getattr(state.get(("m.room.server_acl", "")), "content", None), expected)', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
+    ('partner trusted creator ignored', '            and getattr(create, "sender", None) == self._agent', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
+    ('partner audience widened', '            and content.get("audience") == "all"', '', 'test_partner_policy_field_mutations_fail_closed'),
+    ('partner announcement widened', '            and content.get("read_only") is False', '', 'test_partner_policy_field_mutations_fail_closed'),
+    ('creation default federation open', 'creation = dict(creation, **{"m.federate": partner, MODE: "partner" if partner else "internal"})', 'creation = dict(creation, **{"m.federate": True, MODE: "partner" if partner else "internal"})', 'test_creation_defaults_to_immutable_internal_mode_and_local_acl'),
+    ('partner creation trusted agent ignored', 'if creator != self._agent or not partners or creation.get("m.federate") is not True', 'if not partners or creation.get("m.federate") is not True', 'test_partner_creation_refusals_have_expected_diagnostic'),
+    ('partner creation ACL widened', 'if len(acls) > 1 or (acls and acls[0].get("content") != expected):', 'if False:', 'test_partner_creation_refusals_have_expected_diagnostic'),
+    ('immutable federation policy upgrade allowed', 'if creation_mode(creation) != "partner" or self._partner_content(event.content, allow_archived=True) is None:', 'if self._partner_content(event.content, allow_archived=True) is None:', 'test_internal_mode_cannot_be_upgraded_by_valid_mutable_partner_policy'),
+    ('agent server ACL boundary widened', 'if not acl_matches(event.content, acl(self._server, partners or ())):', 'if False:', 'test_agent_acl_write_cannot_widen_exact_partner_boundary'),
+('partner join rule widened by agent', 'if creation_mode(creation) == "partner" and event.type == "m.room.join_rules" and event.content.get(\'join_rule\') != "invite":', 'if False:', 'test_partner_join_rule_is_invite_only_even_for_agent'),
+    ('initial ACL bootstrap untrusted creator admitted', 'if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not set(partners) <= self._federation_servers:', 'if not partners:', 'test_initial_acl_bootstrap_uses_trusted_immutable_servers_without_remote_admission'),
+    ('initial approved servers not bound immutably', 'creation["io.kodera.room.initial_partner_servers"] = list(partners)', 'creation["io.kodera.room.initial_partner_servers"] = []', 'test_explicit_partner_creation_has_pinned_mode_policy_and_server_acl'),
 ]
 
 
+HELPER_MUTANTS = [('public homeserver validation omitted', 'return isinstance(value, str) and len(value) <= 253 and PUBLIC_SERVER.fullmatch(value) is not None and not value.endswith(PRIVATE_SUFFIXES)', 'return True', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist bound removed', 'len(value) > MAX_SERVERS', 'len(value) > 100', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist duplicates accepted', 'or len(set(value)) != len(value)', '', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('immutable federation disabled ignored', 'and content.get("m.federate") is True', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'), ('frozen ACL not recognized', 'isinstance(content, Mapping) and set(content) == set(expected)', 'isinstance(content, dict) and set(content) == set(expected)', 'test_frozen_partner_state_preserves_bounded_federation')]
+
+
 def main() -> int:
-    original = SOURCE.read_text()
     survivors = []
-    for name, before, after, owner in MUTANTS:
+    all_mutants = [(SOURCE, *mutation) for mutation in MUTANTS] + [(SOURCE.with_name("federation.py"), *mutation) for mutation in HELPER_MUTANTS]
+    for source, name, before, after, owner in all_mutants:
+        original = source.read_text()
         if original.count(before) != 1:
             print(f"BROKEN MUTANT {name!r}: its text occurs {original.count(before)} times")
             return 2
         with tempfile.TemporaryDirectory() as tmp:
             package = pathlib.Path(tmp) / "src" / "kodera_synapse_policy"
             package.mkdir(parents=True)
-            (package / "__init__.py").write_text(original.replace(before, after))
+            shutil.copytree(SOURCE.parent, package, dirs_exist_ok=True)
+            (package / source.name).write_text(original.replace(before, after))
             shutil.copytree(ROOT / "tests", pathlib.Path(tmp) / "tests")
             result = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py"],
+                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py", "tests/test_federation.py"],
                 cwd=tmp,
                 env={"PYTHONPATH": str(pathlib.Path(tmp) / "src"), "PATH": "/usr/bin:/bin"},
                 capture_output=True,
@@ -99,7 +121,7 @@ def main() -> int:
         print(f"{'killed ' if caught else 'SURVIVED'} {name} (expected {owner})")
         if not caught:
             survivors.append(name)
-    print(f"{len(MUTANTS) - len(survivors)}/{len(MUTANTS)} mutants killed by their named test")
+    print(f"{len(all_mutants) - len(survivors)}/{len(all_mutants)} mutants killed by their named test")
     return 1 if survivors else 0
 
 
