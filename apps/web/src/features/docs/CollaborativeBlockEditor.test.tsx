@@ -50,6 +50,8 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
     // Strict CSP check: zero <style> elements and zero inline style attributes anywhere!
     expect(container.querySelectorAll('style')).toHaveLength(0)
     expect(container.querySelectorAll('[style]')).toHaveLength(0)
+    // A library may inject into <head>, outside the render container: the policy refuses that too.
+    expect(document.head.querySelectorAll('style')).toHaveLength(0)
     expect(onMarkdownChange).toHaveBeenCalled()
   })
 

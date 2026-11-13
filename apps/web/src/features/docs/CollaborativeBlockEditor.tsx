@@ -159,6 +159,9 @@ export function CollaborativeBlockEditor({
   const editor = useEditor(
     {
       editable: isEditable,
+      // TipTap's default appends a `<style>` element to `<head>`, which the strict style CSP
+      // refuses; its base rules ship in `src/index.css` instead.
+      injectCSS: false,
       extensions: [
         StarterKit.configure({
           // Disable prosemirror-dropcursor because it sets `element.style.cssText` inline,
