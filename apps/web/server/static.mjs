@@ -18,11 +18,14 @@ const REQUIRED = [
 // `--allow-loopback`, which no deployment passes, and which is refused without one of them, so a
 // deployment that carries it by mistake does not start.
 const OPTIONAL = ['--homeserver-origin', '--livekit-origin']
+// Where members' attachments are stored: the presigned uploads go there, and to that path only
+// (docs/specs/messaging-media-and-notifications.md). A deployment without it offers no upload.
+const ATTACHMENT_BASE = '--attachment-base'
 // The address to listen on: loopback unless a container passes `0.0.0.0`, where loopback is
 // unreachable from the edge in front of it. No other address is accepted.
 const HOST = '--host'
 const HOSTS = ['127.0.0.1', '0.0.0.0']
-const FLAGS = [...REQUIRED, ...OPTIONAL, HOST]
+const FLAGS = [...REQUIRED, ...OPTIONAL, ATTACHMENT_BASE, HOST]
 // A flag without a value.
 const ALLOW_LOOPBACK = '--allow-loopback'
 const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]']
@@ -137,6 +140,18 @@ function configuredLoopbackOrigin(value, schemes) {
   return origin
 }
 
+// An https origin and a path below it that ends in `/`: never a bare origin, which would open the
+// whole host to the page's requests.
+function configuredBase(value) {
+  if (typeof value !== 'string' || !value.endsWith('/')) throw new Error('Invalid configuration')
+  const lead = 'https://'
+  const authorityEnd = value.indexOf('/', lead.length)
+  if (authorityEnd === -1) throw new Error('Invalid configuration')
+  const origin = configuredOrigin(value.slice(0, authorityEnd))
+  const path = configuredPath(value.slice(authorityEnd, -1), false)
+  return `${origin}${path}/`
+}
+
 async function configuration(arguments_) {
   const values = new Map()
   let allowLoopback = false
@@ -180,6 +195,16 @@ async function configuration(arguments_) {
   const liveKitOrigin = values.has('--livekit-origin')
     ? configuredLoopbackOrigin(values.get('--livekit-origin'), ['ws'])
     : null
+  const attachmentBase = values.has(ATTACHMENT_BASE)
+    ? configuredBase(values.get(ATTACHMENT_BASE))
+    : null
+  // The store is its own host: under Core's or the identity provider's, it would open their paths.
+  if (
+    attachmentBase !== null &&
+    [coreOrigin, providerOrigin].includes(new URL(attachmentBase).origin)
+  ) {
+    throw new Error('Invalid configuration')
+  }
   const host = values.has(HOST) ? values.get(HOST) : '127.0.0.1'
   if (!HOSTS.includes(host)) throw new Error('Invalid configuration')
   const root = await realpath(values.get('--root'))
@@ -195,6 +220,7 @@ async function configuration(arguments_) {
     matrixDomain,
     homeserverOrigin,
     liveKitOrigin,
+    attachmentBase,
   }
 }
 
@@ -232,6 +258,7 @@ function headers(config, path) {
       ...(config.liveKitOrigin === null
         ? []
         : LIVEKIT_PATHS.map((path) => `${config.liveKitOrigin}${path}`)),
+      ...(config.attachmentBase === null ? [] : [config.attachmentBase]),
     ].join(' '),
     `frame-src 'self' ${config.providerOrigin}/realms/`,
     `frame-ancestors ${ordinaryCallback ? "'self'" : "'none'"}`,

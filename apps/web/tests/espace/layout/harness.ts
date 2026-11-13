@@ -6,6 +6,7 @@
 // place on the screen can be measured.
 
 import { createElement, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { ensureNamespaces } from '@/i18n'
 import { ORGANISATION_NAMESPACES } from '@/i18n/namespaces'
@@ -23,6 +24,13 @@ export interface LayoutHarness {
    * as the router's does (shortcuts.spec.ts).
    */
   navigating(delay: number): void
+  /**
+   * Draws #général with `count` messages over a store that publishes, as a sync does, for
+   * scale.spec.ts: `append` then adds one message and returns how long, in milliseconds, the view
+   * took to draw it — React's render, the log's measuring and the layout it forces.
+   */
+  live(count: number): void
+  append(): number
 }
 
 declare global {
@@ -92,6 +100,9 @@ function message(index: number): MessageView {
 
 const idle = async () => undefined
 
+/** The live store `live` draws, and the way to publish one more message to it. */
+let publishOne: (() => void) | null = null
+
 function storeWith(messages: readonly MessageView[]): EspaceStoreLike {
   return {
     subscribe: () => () => undefined,
@@ -156,6 +167,28 @@ const element = document.getElementById('root')
 if (element === null) throw Error('harness.html has no #root')
 const root = createRoot(element)
 
+function liveStore(initial: number): EspaceStoreLike {
+  let messages: readonly MessageView[] = Array.from({ length: initial }, (_, index) =>
+    message(index)
+  )
+  let snapshot = SNAPSHOT
+  const listeners = new Set<() => void>()
+  publishOne = () => {
+    messages = [...messages, message(messages.length)]
+    snapshot = { ...snapshot }
+    for (const listener of [...listeners]) listener()
+  }
+  return {
+    ...storeWith(messages),
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    getSnapshot: () => snapshot,
+    getTimeline: (roomId) => (roomId === ROOM ? messages : []),
+  }
+}
+
 window.layoutHarness = {
   show(count) {
     const messages = Array.from({ length: count }, (_, index) => message(index))
@@ -173,6 +206,28 @@ window.layoutHarness = {
         })
       )
     )
+  },
+  live(count) {
+    root.render(
+      createElement(
+        'div',
+        { key: `live-${count}`, className: 'flex h-screen' },
+        createElement(EspaceLiveView, {
+          org: 'acme',
+          organisationName: 'Acme SA',
+          workspace: WORKSPACE,
+          channelId: CHANNEL,
+          store: liveStore(count),
+        })
+      )
+    )
+  },
+  append() {
+    const publish = publishOne
+    if (publish === null) throw Error('append() before live()')
+    const started = performance.now()
+    flushSync(publish)
+    return performance.now() - started
   },
   navigating(delay) {
     root.render(

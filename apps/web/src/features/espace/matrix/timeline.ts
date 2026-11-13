@@ -4,6 +4,12 @@
 // it points at, a redaction empties a message, reactions count per key, a thread reply stays in
 // its thread.
 
+import {
+  attachmentRefsOf,
+  attachmentsFallback,
+  type AttachmentRef,
+} from '../../messaging/attachments/attachmentRefs'
+
 /** A Matrix event as the client-server API delivers it, the part Espace reads. */
 export interface RawEvent {
   event_id: string
@@ -42,6 +48,8 @@ export interface MessageView {
   /** Structured references supplied by workspace adapters. */
   document?: { id: string; title: string }
   attachment?: { name: string }
+  /** Files stored by Core that the message carries, checked (`attachmentRefs.ts`). */
+  attachments?: AttachmentRef[]
   ts: number
   /** Replaced by a later edit from its own sender. */
   edited: boolean
@@ -111,6 +119,19 @@ function collectRelations(events: readonly TimelineEvent[]) {
   return { edits, reactions }
 }
 
+/** The text and files a message shows: the files' fallback line is not shown as text twice. */
+function messageText(
+  event: TimelineEvent,
+  redacted: boolean,
+  edited: string | undefined
+): { body: string; attachments?: AttachmentRef[] } {
+  if (redacted) return { body: '' }
+  const body = edited ?? text(event.content) ?? ''
+  const attachments = attachmentRefsOf(event.content)
+  if (attachments.length === 0) return { body }
+  return { body: body === attachmentsFallback(attachments) ? '' : body, attachments }
+}
+
 function toMessageView(
   event: TimelineEvent,
   me: string,
@@ -130,7 +151,7 @@ function toMessageView(
     eventId: event.event_id,
     sender: event.sender,
     ...(event.sender_name === undefined ? {} : { senderName: event.sender_name }),
-    body: redacted ? '' : (edit?.body ?? text(event.content) ?? ''),
+    ...messageText(event, redacted, edit?.body),
     ...(!redacted &&
     ['m.file', 'm.image', 'm.audio', 'm.video'].includes(String(event.content.msgtype))
       ? { attachment: { name: text(event.content) ?? '' } }

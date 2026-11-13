@@ -3,6 +3,7 @@
 // each part (`MessageTimeline`, `MessageComposer`, `ChannelSidebar`, `VoiceCallDock`) imports the
 // rules without importing another part.
 
+import type { DirectSummary } from './matrix/directs'
 import type { KeyboardEvent, ReactNode } from 'react'
 import type { ChannelDoc, ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
 import type { MemberProfileRole } from '../profile/UserProfilePopover'
@@ -83,6 +84,10 @@ export interface EspaceStoreLike {
   getUserId: () => string
   getTimeline: (roomId: string) => readonly MessageView[]
   getThread: (roomId: string, rootEventId: string) => readonly MessageView[]
+  /** The member's direct conversations (`m.direct`); absent where there are none, as in the demo. */
+  getDirects?: () => readonly DirectSummary[]
+  /** Opens, or starts, the direct conversation with these people; resolves to its room id. */
+  openDirect?: (userIds: readonly string[]) => Promise<string>
   send: (roomId: string, body: string, options?: SendOptions) => Promise<void>
   edit: (roomId: string, eventId: string, body: string) => Promise<void>
   remove: (roomId: string, eventId: string) => Promise<void>
@@ -118,6 +123,12 @@ export interface EspaceStoreLike {
   getTyping?: (roomId: string) => readonly MemberView[]
   /** Tells the room the member is typing, or no longer is. */
   setTyping?: (roomId: string, typing: boolean) => void
+  /** The room's pinned events (`m.room.pinned_events`), oldest pin first. */
+  getPinned?: (roomId: string) => readonly string[]
+  /** Whether the member may change the room's pins. */
+  canPin?: (roomId: string) => boolean
+  /** Pins or unpins one of the room's events. */
+  setPinned?: (roomId: string, eventId: string, pinned: boolean) => Promise<void>
 }
 
 /** The audio call, as the view reads and drives it (`audio/call.ts`). */

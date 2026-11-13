@@ -32,9 +32,15 @@ export function WorkspaceSettingsHost(props: WorkspaceSettingsProps) {
         show()
       } else if (
         event.detail?.command === 'settings' &&
-        ['profile', 'appearance', 'audio', 'members', 'extensions', 'hosting'].includes(
-          event.detail.section
-        )
+        [
+          'profile',
+          'appearance',
+          'audio',
+          'members',
+          'moderation',
+          'extensions',
+          'hosting',
+        ].includes(event.detail.section)
       ) {
         setInitialSection(event.detail.section)
         show()

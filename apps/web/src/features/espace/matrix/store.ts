@@ -3,22 +3,31 @@
 // being imported anywhere else. Screens read through `subscribe`, `getSnapshot` (the sidebar:
 // one summary per room) and `getTimeline` (one room's messages), all with stable identities, so
 // React re-renders only what an event changed. Tokens live in memory only (design §2.4): the
-// SDK gets an in-memory store, never the browser's storage.
+// SDK gets an in-memory store, never the browser's storage. What a room last showed is kept on
+// the device (`timelineCache.ts`): sent message views only, no token, wiped at sign-out.
 
+import {
+  ATTACHMENTS_FIELD,
+  attachmentsFallback,
+  type AttachmentRef,
+} from '../../messaging/attachments/attachmentRefs'
 import {
   ClientEvent,
   createClient,
   EventStatus,
   EventType,
+  HistoryVisibility,
   HttpApiEvent,
   MatrixError,
   MemoryStore,
   MsgType,
   NotificationCountType,
+  Preset,
   PendingEventOrdering,
   RoomEvent,
   RoomStateEvent,
   SyncState,
+  Visibility,
   type MatrixClient,
   type MatrixEvent,
   type Room,
@@ -27,6 +36,14 @@ import {
 import { clearMatrixSession } from '@/auth/matrix'
 import { channelRoomAlias, isChannelId, serverNameOf } from '../homeserver'
 import { isMatrixUserId } from '../roomInvitations'
+import {
+  directMap,
+  directPeople,
+  directRooms,
+  existingDirect,
+  withDirect,
+  type DirectSummary,
+} from './directs'
 import { NotRenewable, RefreshRefused, refreshingFetch } from './refresh'
 export { RefreshRefused }
 import {
@@ -37,6 +54,7 @@ import {
   type Occupancy,
   type TimelineEvent,
 } from './timeline'
+import { openTimelineCache, type TimelineCache } from './timelineCache'
 
 export type SyncStatus = 'starting' | 'live' | 'reconnecting' | 'signed-out' | 'stopped'
 
@@ -51,6 +69,8 @@ export interface SendOptions {
   mentions?: string[]
   replyTo?: string
   threadRootId?: string
+  /** Files already stored by Core, named by id (docs/specs/messaging-media-and-notifications.md). */
+  attachments?: AttachmentRef[]
 }
 
 /** A joined room, as the sidebar draws it. */
@@ -139,6 +159,16 @@ const POLICY = 'io.kodera.room.policy'
 const FIRST_SYNC_WAIT_MS = 10_000
 const OCCUPANCY = 'io.kodera.room.occupancy'
 const NONE: readonly MessageView[] = Object.freeze([])
+const NO_PINS: readonly string[] = Object.freeze([])
+
+/** The room's pinned events (`m.room.pinned_events`), in the order the room keeps them. */
+export function pinnedOf(content: unknown): readonly string[] {
+  if (content === null || typeof content !== 'object') return NO_PINS
+  const pinned = (content as { pinned?: unknown }).pinned
+  if (!Array.isArray(pinned)) return NO_PINS
+  const ids = pinned.filter((id): id is string => typeof id === 'string' && id.startsWith('$'))
+  return ids.length === 0 ? NO_PINS : [...new Set(ids)]
+}
 const NO_MEMBERS: readonly MemberView[] = Object.freeze([])
 const NO_CHANNELS: ReadonlyMap<string, ChannelRoom> = new Map()
 /** The events asked for with each page back: the SDK's default. */
@@ -210,6 +240,12 @@ function same(a: unknown, b: unknown): boolean {
 
 /** `next`, but with every element equal to the previous one's reused, and the previous array
  * itself when nothing changed: a screen memoised on identity re-renders only what moved. */
+const PINNED_EVENTS = 'm.room.pinned_events'
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index])
+}
+
 function reuse<T extends object>(
   previous: readonly T[] | undefined,
   next: T[],
@@ -245,7 +281,12 @@ export class EspaceStore {
   readonly #services: ReadonlySet<string>
   #snapshot: EspaceSnapshot = { status: 'starting', rooms: [], invites: [], channels: NO_CHANNELS }
   readonly #timelines = new Map<string, readonly MessageView[]>()
+  /** What this device kept of each room, shown until the room's first sync replaces it. */
+  readonly #cached = new Map<string, readonly MessageView[]>()
+  readonly #cache: TimelineCache | undefined
   readonly #threads = new Map<string, Map<string, readonly MessageView[]>>()
+  /** Each joined room's pinned events: the same array until the room's pins change. */
+  readonly #pins = new Map<string, readonly string[]>()
   readonly #eventsByRoom = new Map<string, TimelineEvent[]>()
   /** Relations seen before a redaction erased them (see timelineView). */
   readonly #relations = new Map<string, Relation>()
@@ -306,8 +347,18 @@ export class EspaceStore {
   #presenceChanged = false
   /** When the member's last « typing » notice went to each room it still stands in. */
   readonly #typingSent = new Map<string, number>()
+  /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
+  #directsChanged = false
+  #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
 
-  constructor(session: EspaceSession, base: typeof fetch = globalThis.fetch.bind(globalThis)) {
+  constructor(
+    session: EspaceSession,
+    base: typeof fetch = globalThis.fetch.bind(globalThis),
+    options: EspaceStoreOptions = {}
+  ) {
+    // No cache given: this browser's, where it has IndexedDB. `null`: none.
+    this.#cache =
+      options.cache === undefined ? openTimelineCache(session.userId) : (options.cache ?? undefined)
     this.#accessToken = session.accessToken
     this.#refreshToken = session.refreshToken
     this.#refresh = session.refresh
@@ -420,6 +471,11 @@ export class EspaceStore {
       this.#presenceChanged = true
       this.#schedule()
     })
+    on(ClientEvent.AccountData, (event: MatrixEvent) => {
+      if (this.#stopped || event.getType() !== 'm.direct') return
+      this.#directsChanged = true
+      this.#schedule()
+    })
     on(ClientEvent.Sync, (state: SyncState) => {
       this.#status = this.#statusOf(state)
       // The first full sync: every room is new.
@@ -442,6 +498,8 @@ export class EspaceStore {
       touch(this.#client.getRoom(state.roomId))
     )
     on(HttpApiEvent.SessionLoggedOut, () => this.stop('signed-out'))
+    // What the device kept is shown while the first sync is on its way; it does not hold it up.
+    void this.#cache?.loadAll().then((rooms) => this.#hydrate(rooms))
     await this.#client.startClient({
       initialSyncLimit: 50,
       lazyLoadMembers: true,
@@ -451,6 +509,20 @@ export class EspaceStore {
     // Stopped while starting (React mounts, unmounts and remounts an effect): only now has the
     // client a sync to stop.
     if (this.#stopped) this.#halt()
+  }
+
+  #hydrate(rooms: ReadonlyMap<string, readonly MessageView[]>): void {
+    if (this.#stopped) return
+    let changed = false
+    for (const [roomId, messages] of rooms) {
+      if (this.#timelines.has(roomId)) continue
+      this.#cached.set(roomId, messages)
+      changed = true
+    }
+    if (!changed) return
+    // The snapshot is the token for the timeline getters: a new one makes the screens read again.
+    this.#snapshot = { ...this.#snapshot }
+    this.#emit()
   }
 
   #halt(): void {
@@ -492,7 +564,11 @@ export class EspaceStore {
     if (this.#starting === null || this.#started) this.#halt()
     else this.#starting.catch(() => this.#halt())
     if (status === 'signed-out') {
+      this.#cached.clear()
+      void this.#cache?.wipe()
       clearMatrixSession()
+    } else {
+      void this.#cache?.close()
     }
     for (const timer of this.#askAgain.values()) clearTimeout(timer)
     this.#askAgain.clear()
@@ -511,7 +587,8 @@ export class EspaceStore {
   getUserId = (): string => this.#me
 
   /** One room's messages, oldest first; the same array until one of them changes. */
-  getTimeline = (roomId: string): readonly MessageView[] => this.#timelines.get(roomId) ?? NONE
+  getTimeline = (roomId: string): readonly MessageView[] =>
+    this.#timelines.get(roomId) ?? this.#cached.get(roomId) ?? NONE
 
   /** How far back one room's timeline reaches; it changes with the snapshot, as messages do. */
   getHistory = (roomId: string): History => this.#histories.get(roomId) ?? 'more'
@@ -608,7 +685,11 @@ export class EspaceStore {
         messageDataChanged ||=
           this.#timelines.has(roomId) || this.#threads.has(roomId) || this.#eventsByRoom.has(roomId)
         this.#timelines.delete(roomId)
+        // Out of the room: what this device kept of it goes too.
+        if (this.#cached.delete(roomId)) messageDataChanged = true
+        this.#cache?.forget(roomId)
         this.#threads.delete(roomId)
+        this.#pins.delete(roomId)
         this.#eventsByRoom.delete(roomId)
         this.#histories.delete(roomId)
         this.#members.delete(roomId)
@@ -619,9 +700,15 @@ export class EspaceStore {
       this.#eventsByRoom.set(roomId, events)
       this.#histories.set(roomId, this.#historyOf(room))
       const next = timelineView(events, this.#me)
-      this.#timelines.set(
+      const timeline = reuse(this.#timelines.get(roomId), next, (m) => m.key)
+      this.#timelines.set(roomId, timeline)
+      this.#cached.delete(roomId)
+      this.#cache?.save(roomId, timeline)
+      const pins = pinnedOf(room.currentState.getStateEvents(PINNED_EVENTS, '')?.getContent())
+      const knownPins = this.#pins.get(roomId)
+      this.#pins.set(
         roomId,
-        reuse(this.#timelines.get(roomId), next, (m) => m.key)
+        knownPins !== undefined && sameIds(knownPins, pins) ? knownPins : pins
       )
       const prevThreads = this.#threads.get(roomId)
       const nextThreads = new Map<string, readonly MessageView[]>()
@@ -662,9 +749,12 @@ export class EspaceStore {
     if (status === 'live') this.#recheck(rooms, invites)
     const typingChanged = this.#typingChanged
     this.#typingChanged = false
+    const directsChanged = this.#directsChanged
+    this.#directsChanged = false
     if (
       messageDataChanged ||
       typingChanged ||
+      directsChanged ||
       this.#presenceChanged ||
       rooms !== this.#snapshot.rooms ||
       invites !== this.#snapshot.invites ||
@@ -813,6 +903,29 @@ export class EspaceStore {
     const roster = reuse(this.#rosters.get(roomId), next, (member) => member.userId)
     this.#rosters.set(roomId, roster)
     return roster
+  }
+
+  /** The room's pinned events, oldest pin first; the same array until they change. */
+  getPinned = (roomId: string): readonly string[] => this.#pins.get(roomId) ?? NO_PINS
+
+  /** Whether the room's power levels let the member change its pins. */
+  canPin = (roomId: string): boolean => {
+    const room = this.#client.getRoom(roomId)
+    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
+  }
+
+  /** Pins or unpins one event; the room's next state answers with the new list. */
+  async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
+    const current = this.getPinned(roomId)
+    if (current.includes(eventId) === pinned) return
+    const next = pinned ? [...current, eventId] : current.filter((id) => id !== eventId)
+    await this.#client.sendStateEvent(
+      roomId,
+      PINNED_EVENTS as Parameters<MatrixClient['sendStateEvent']>[1],
+      { pinned: next } as Parameters<MatrixClient['sendStateEvent']>[2],
+      ''
+    )
   }
 
   getMemberRole = (roomId: string, userId: string): 'admin' | 'member' => {
@@ -1120,9 +1233,12 @@ export class EspaceStore {
               'm.in_reply_to': { event_id: options.replyTo },
             }
           : undefined
+    const attachments = options.attachments ?? []
     await this.#client.sendMessage(roomId, {
       msgtype: MsgType.Text,
-      body,
+      // Other clients show the files' names when the message has no text of its own.
+      body: body === '' && attachments.length > 0 ? attachmentsFallback(attachments) : body,
+      ...(attachments.length === 0 ? {} : { [ATTACHMENTS_FIELD]: attachments }),
       ...(options.mentions === undefined ? {} : { 'm.mentions': { user_ids: options.mentions } }),
       ...(relatesTo === undefined ? {} : { 'm.relates_to': relatesTo }),
     } as never)
@@ -1188,6 +1304,73 @@ export class EspaceStore {
     } else {
       await this.react(roomId, eventId, key)
     }
+  }
+
+  /**
+   * The member's direct conversations, from `m.direct`, joined rooms only, by name. The same list
+   * for the same snapshot, so a screen that reads it redraws only when it changes.
+   */
+  getDirects = (): readonly DirectSummary[] => {
+    const snapshot = this.#snapshot
+    if (this.#directs?.snapshot === snapshot) return this.#directs.list
+    const rooms = directRooms(
+      directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
+    )
+    const list: DirectSummary[] = []
+    for (const [roomId, userIds] of rooms) {
+      const summary = snapshot.rooms.find((room) => room.roomId === roomId)
+      const room = this.#client.getRoom(roomId)
+      if (summary === undefined || room === null) continue
+      const names = userIds.map((userId) => displayName(room, userId) ?? userId)
+      list.push({ roomId, userIds, name: names.join(', '), unread: summary.unread })
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name))
+    const previous = this.#directs?.list
+    const same =
+      previous !== undefined &&
+      previous.length === list.length &&
+      previous.every(
+        (item, at) =>
+          item.roomId === list[at]!.roomId &&
+          item.name === list[at]!.name &&
+          item.unread === list[at]!.unread
+      )
+    this.#directs = { snapshot, list: same ? previous : list }
+    return this.#directs.list
+  }
+
+  /**
+   * The direct conversation with these people: the joined one already held, else a new private
+   * room, invited and listed in `m.direct` under each of them. Resolves to its room id.
+   */
+  async openDirect(userIds: readonly string[]): Promise<string> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const people = directPeople(userIds, this.#me)
+    const map = directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
+    const held = existingDirect(
+      directRooms(map),
+      people,
+      (roomId) => this.#client.getRoom(roomId)?.getMyMembership() === 'join'
+    )
+    if (held !== undefined) return held
+    // `private_chat`, not `trusted_private_chat`: the latter gives every invitee the creator's
+    // power level, so anyone in a group conversation could remove the others or change the room.
+    // Someone invited later reads only what is sent from their invitation on.
+    const { room_id: roomId } = await this.#client.createRoom({
+      is_direct: true,
+      invite: people,
+      preset: Preset.PrivateChat,
+      visibility: Visibility.Private,
+      initial_state: [
+        {
+          type: EventType.RoomHistoryVisibility,
+          state_key: '',
+          content: { history_visibility: HistoryVisibility.Invited },
+        },
+      ],
+    })
+    await this.#client.setAccountData(EventType.Direct, withDirect(map, roomId, people) as never)
+    return roomId
   }
 
   async inviteToRoom(roomId: string, userId: string): Promise<void> {
@@ -1256,9 +1439,15 @@ export class EspaceStore {
   }
 }
 
+export interface EspaceStoreOptions {
+  /** Where the rooms' last messages are kept; `null` keeps none. Defaults to this browser's. */
+  cache?: TimelineCache | null
+}
+
 export function createEspaceStore(
   session: EspaceSession,
-  base: typeof fetch = globalThis.fetch.bind(globalThis)
+  base: typeof fetch = globalThis.fetch.bind(globalThis),
+  options: EspaceStoreOptions = {}
 ): EspaceStore {
-  return new EspaceStore(session, base)
+  return new EspaceStore(session, base, options)
 }

@@ -61,3 +61,27 @@ export function timelineRows(
   })
   return rows
 }
+
+/** Every time zone's offset from UTC is a whole number of quarter hours. */
+const QUARTER_HOUR_MS = 15 * 60_000
+/** Past this many remembered quarters, the memory starts over: a few months of a busy channel. */
+const REMEMBERED_QUARTERS = 20_000
+
+/**
+ * `dayOf`, remembered per quarter hour. Formatting a calendar day costs a few microseconds, which a
+ * ten-thousand-message log would pay at every new message; local midnight always falls on a UTC
+ * quarter hour, so every moment of one quarter is on the same day.
+ */
+export function quarterHourDays(dayOf: (ts: number) => string): (ts: number) => string {
+  const known = new Map<number, string>()
+  return (ts) => {
+    const quarter = Math.floor(ts / QUARTER_HOUR_MS)
+    let day = known.get(quarter)
+    if (day === undefined) {
+      if (known.size >= REMEMBERED_QUARTERS) known.clear()
+      day = dayOf(quarter * QUARTER_HOUR_MS)
+      known.set(quarter, day)
+    }
+    return day
+  }
+}

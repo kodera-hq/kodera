@@ -1,10 +1,70 @@
 import { withdrawn } from '../workspace/ChannelSearch'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MentionInput, type MentionInputProps } from '../espace/MentionInput'
 import { communitySupportPath } from '../command-palette/support'
 import { composerCopy } from './composerMessages'
 import { formatSelection, stagedFiles, type Format } from './formatting'
+import type { AttachmentQueue, QueuedFile } from './attachments/attachmentQueue'
+
+const NO_QUEUE: readonly QueuedFile[] = []
+const noSubscription = () => () => {}
+
+/** The files a live composer is sending, each with where it stands. */
+function UploadTray({
+  files,
+  onRemove,
+  hintId,
+}: {
+  files: readonly QueuedFile[]
+  onRemove: (key: string) => void
+  hintId: string
+}) {
+  const { i18n } = useTranslation()
+  const copy = composerCopy(i18n.resolvedLanguage)
+  return (
+    <section
+      aria-label={copy.uploads}
+      className="flex flex-col gap-2 rounded-md border border-c-border p-2"
+    >
+      <p id={hintId} className="text-sm text-c-ink-2">
+        {copy.uploadsHint}
+      </p>
+      <ul>
+        {files.map((file) => (
+          <li key={file.key} className="flex items-center gap-2 py-1 text-sm text-c-ink">
+            <span className="min-w-0 flex-1 break-all">
+              {file.filename} ({Math.max(1, Math.ceil(file.sizeBytes / 1024))} KB)
+            </span>
+            <span
+              className={
+                file.status === 'refused' || file.status === 'failed'
+                  ? 'text-c-bad-ink'
+                  : 'text-c-ink-2'
+              }
+            >
+              {file.status === 'uploading'
+                ? copy.uploading
+                : file.status === 'ready'
+                  ? copy.uploaded
+                  : file.status === 'failed'
+                    ? copy.failed
+                    : copy.refused[file.reason]}
+            </span>
+            <button
+              type="button"
+              className={TOOL}
+              aria-label={`${copy.remove} ${file.filename}`}
+              onClick={() => onRemove(file.key)}
+            >
+              {copy.remove}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
 
 const TOOL =
   'min-h-10 rounded-sm border border-c-border px-2 text-sm text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden disabled:text-c-on-disabled'
@@ -53,11 +113,14 @@ export function RichComposerInput({
   scope = 'default',
   onInvite,
   onKeyDown,
+  uploads,
   ...props
 }: MentionInputProps & {
   onStagingChange: (staged: boolean) => void
   scope?: string
   onInvite?: (() => void) | undefined
+  /** A live workspace's uploads: dropped, pasted and chosen files are sent, not only shown. */
+  uploads?: AttachmentQueue | null
 }) {
   const surface = useRef<HTMLDivElement>(null)
   const { i18n } = useTranslation()
@@ -65,6 +128,11 @@ export function RichComposerInput({
   const [staging, setStaging] = useState<{ scope: string; files: File[] }>({ scope, files: [] })
   if (staging.scope !== scope) setStaging({ scope, files: [] })
   const files = staging.scope === scope ? staging.files : []
+  const queued = useSyncExternalStore(
+    uploads?.subscribe ?? noSubscription,
+    () => uploads?.files(scope) ?? NO_QUEUE
+  )
+  const uploadHintId = useId()
   const setFiles = (next: File[]) => setStaging({ scope, files: next })
   const [notice, setNotice] = useState('')
   const [active, setActive] = useState(0)
@@ -140,7 +208,11 @@ export function RichComposerInput({
     props.onValueChange(next.text)
   }
   function stage(incoming: File[]) {
-    if (props.readOnly) return
+    if (props.readOnly || incoming.length === 0) return
+    if (uploads) {
+      void uploads.add(scope, incoming)
+      return
+    }
     const result = stagedFiles(files, incoming)
     setFiles(result.files)
     onStagingChange(result.files.length > 0)
@@ -195,9 +267,21 @@ export function RichComposerInput({
       <MentionInput
         {...props}
         multiline
+        onPaste={(event) => {
+          // A pasted screenshot or file is attached; pasted text stays the field's own.
+          const pasted = Array.from(event.clipboardData.files)
+          if (pasted.length === 0) return
+          event.preventDefault()
+          stage(pasted)
+        }}
         aria-describedby={
-          [props['aria-describedby'], files.length ? noticeId : ''].filter(Boolean).join(' ') ||
-          undefined
+          [
+            props['aria-describedby'],
+            files.length ? noticeId : '',
+            queued.length ? uploadHintId : '',
+          ]
+            .filter(Boolean)
+            .join(' ') || undefined
         }
         {...(choices.length
           ? {
@@ -279,6 +363,13 @@ export function RichComposerInput({
             </li>
           ))}
         </ul>
+      ) : null}
+      {queued.length ? (
+        <UploadTray
+          files={queued}
+          hintId={uploadHintId}
+          onRemove={(key) => uploads?.remove(scope, key)}
+        />
       ) : null}
       {files.length ? (
         <section

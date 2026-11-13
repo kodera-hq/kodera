@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { calendarDay } from '../../i18n/format'
 import type { MessageView } from './matrix/timeline'
-import { NEW_MESSAGES_KEY, timelineRows } from './timelineRows'
+import { NEW_MESSAGES_KEY, quarterHourDays, timelineRows } from './timelineRows'
 
 const ME = '@me:acme-sa.kodera.test'
 const ALICE = '@alice:acme-sa.kodera.test'
@@ -168,5 +168,30 @@ describe('« Nouveaux messages »', () => {
     expect(rows.filter((row) => row.kind === 'new')).toEqual([
       { kind: 'new', key: NEW_MESSAGES_KEY },
     ])
+  })
+})
+
+describe('quarterHourDays', () => {
+  it('asks once per quarter hour and answers every moment of it', () => {
+    const asked: number[] = []
+    const dayOf = quarterHourDays((ts) => {
+      asked.push(ts)
+      return new Date(ts).toISOString().slice(0, 10)
+    })
+    const quarter = Date.UTC(2026, 10, 2, 23, 45)
+    expect(dayOf(quarter + 1)).toBe('2026-11-02')
+    expect(dayOf(quarter + 14 * 60_000)).toBe('2026-11-02')
+    expect(dayOf(quarter + 15 * 60_000)).toBe('2026-11-03')
+    expect(asked).toEqual([quarter, quarter + 15 * 60_000])
+  })
+
+  it('keeps the day a zone a quarter or half an hour off UTC gives at its midnight', () => {
+    // Kathmandu, UTC+5:45: local midnight on 3 November is 18:15 UTC on 2 November.
+    const kathmandu = (ts: number) =>
+      new Date(ts + (5 * 60 + 45) * 60_000).toISOString().slice(0, 10)
+    const dayOf = quarterHourDays(kathmandu)
+    const midnight = Date.UTC(2026, 10, 2, 18, 15)
+    expect(dayOf(midnight - 1)).toBe('2026-11-02')
+    expect(dayOf(midnight)).toBe('2026-11-03')
   })
 })

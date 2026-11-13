@@ -687,6 +687,23 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
     }
   })
 
+  it.each([
+    [
+      'https://objects.fixture.test/kodera-attachments/',
+      'https://objects.fixture.test/kodera-attachments/',
+    ],
+    ['HTTPS://Objects.Fixture.Test/a/b/', 'https://objects.fixture.test/a/b/'],
+  ])('names the attachment store %s in connect-src, on its path only', async (base, expected) => {
+    const withStore = await start([...args(root), '--attachment-base', base])
+    try {
+      const document = await http(withStore.port, '/console/acme-sa/home')
+      expect(document.status).toBe(200)
+      security(document.headers, "'none'", [expected])
+    } finally {
+      await stop(withStore)
+    }
+  })
+
   const loopbackSources = (homeserver: string | null, liveKit: string | null) => [
     ...(homeserver === null ? [] : [`${homeserver}/_matrix/`, `${homeserver}/_kodera/rooms/token`]),
     ...(liveKit === null ? [] : LIVEKIT_PATHS.map((path) => `${liveKit}${path}`)),
@@ -765,6 +782,35 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
         ]
     ),
     ['a repeated --allow-loopback', ['--allow-loopback', '--allow-loopback']],
+    ...(
+      [
+        'https://objects.fixture.test',
+        'https://objects.fixture.test/',
+        'https://objects.fixture.test/attachments',
+        'http://objects.fixture.test/attachments/',
+        'https://*.fixture.test/attachments/',
+        'https://user@objects.fixture.test/attachments/',
+        'https://objects.fixture.test/a/../b/',
+        'https://objects.fixture.test/a//',
+        'https://objects.fixture.test/a/?x/',
+        'https://objects.fixture.test/a/ https://elsewhere.test/',
+        'https://objects.fixture.test/a/;',
+        CORE + '/attachments/',
+        PROVIDER + '/attachments/',
+        '',
+      ] as const
+    ).map(
+      (value) => [`--attachment-base=${value}`, ['--attachment-base', value]] as [string, string[]]
+    ),
+    [
+      'a repeated attachment store',
+      [
+        '--attachment-base',
+        'https://a.fixture.test/x/',
+        '--attachment-base',
+        'https://a.fixture.test/x/',
+      ],
+    ],
     // A flag that opens nothing is a deployment that carries it by mistake.
     ['--allow-loopback without a loopback origin', ['--allow-loopback']],
     [
@@ -927,7 +973,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = 'c58931759c51608850cd1b1e154f2dfe44617a3e613889cfcf3dfed920e9983a'
+const PRISTINE_SHA = '51a807012b21efcdfc988073cada4680527fa28dd936717f364b6978e6cfa391'
 type Scenario =
   | 'referrer'
   | 'directive'

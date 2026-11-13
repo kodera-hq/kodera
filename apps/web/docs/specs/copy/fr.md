@@ -1696,6 +1696,24 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.message.action-open-thread` | Ouvrir le fil |
 | `console.workspace.message.action-edit` | Modifier |
 | `console.workspace.message.action-delete` | Supprimer |
+| `console.workspace.message.action-pin` | Épingler |
+| `console.workspace.message.action-unpin` | Désépingler |
+
+## Workspace pins, search and Kodera emoji
+
+| Key | Text |
+|---|---|
+| `console.workspace.pins.action-open` | Messages épinglés ({count}) |
+| `console.workspace.pins.title` | Messages épinglés |
+| `console.workspace.pins.empty` | Aucun message épinglé dans ce salon. Épinglez-en un depuis son menu « ··· ». |
+| `console.workspace.pins.not-loaded` | Message plus ancien que l’historique chargé. |
+| `console.workspace.find.action-open` | Rechercher dans ce salon |
+| `console.workspace.find.field-label` | Mots à chercher |
+| `console.workspace.find.hint` | Dans les messages chargés, sans tenir compte des accents ni des majuscules. |
+| `console.workspace.find.empty` | Aucun message chargé ne contient ces mots. |
+| `console.workspace.find.count-results` | {count, plural, one {{count} message trouvé} many {{count} messages trouvés} other {{count} messages trouvés}} |
+| `console.workspace.find.label-more` | Seuls les {count} plus récents sont listés. |
+| `console.workspace.composer.label-kodera-emoji` | Émojis Kodera |
 
 ## Live workspace message controls
 
@@ -1890,3 +1908,98 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.channel-invite.copy` | Copier : {label} |
 | `console.workspace.channel-invite.copied` | Copié |
 | `console.workspace.channel-invite.copy-error` | La copie a échoué. Sélectionnez le lien pour le copier manuellement. |
+
+## Messaging media and notifications
+
+| Key | Text |
+|---|---|
+| `console.workspace.attachments.label-list` | Pièces jointes du message |
+| `console.workspace.attachments.action-open` | Ouvrir {name} dans un nouvel onglet |
+| `console.workspace.attachments.problem-open` | Ce fichier n’a pas pu être ouvert. Il a peut-être été retiré ; réessayez dans un instant. |
+| `console.workspace.unfurl.label-link` | Aperçu du lien : {title} (nouvel onglet) |
+| `console.workspace.notifications.title` | Notifications |
+| `console.workspace.notifications.action-open` | Notifications |
+| `console.workspace.notifications.action-open-unread` | Notifications, {count} non lues |
+| `console.workspace.notifications.action-mark-read` | Tout marquer comme lu |
+| `console.workspace.notifications.empty` | Aucune notification pour l’instant. |
+| `console.workspace.notifications.problem-unavailable` | Les notifications ne sont pas joignables pour l’instant. Elles seront mises à jour d’ici une minute. |
+| `console.workspace.notifications.label-unread` | (non lue) |
+| `console.workspace.notifications.kind-mention` | Quelqu’un vous a mentionné |
+| `console.workspace.notifications.kind-invitation` | Vous avez reçu une invitation |
+| `console.workspace.notifications.kind-moderation` | Une décision de modération vous concerne |
+| `console.workspace.notifications.kind-document` | Un document vous a été partagé |
+| `console.workspace.notifications.push-label` | Notifications sur cet appareil |
+| `console.workspace.notifications.push-hint` | Le message ne passe jamais par le service de notification de votre navigateur : seule l’arrivée d’une nouveauté est signalée. |
+| `console.workspace.notifications.push-unsupported` | Ce navigateur ne reçoit pas de notifications en arrière-plan. |
+| `console.workspace.notifications.push-problem` | Les notifications n’ont pas pu être modifiées. Vérifiez les autorisations du navigateur, puis réessayez. |
+| `console.workspace.notifications.push-title` | Kodera |
+| `console.workspace.notifications.push-body` | Du nouveau dans votre espace. |
+| `console.workspace.directs.title` | Messages directs |
+| `console.workspace.directs.action-new` | Nouveau |
+| `console.workspace.directs.field-people` | Avec qui ? |
+| `console.workspace.directs.help-people` | Un à huit identifiants Matrix, séparés par des virgules : @prenom.nom:example.org |
+| `console.workspace.directs.action-open` | Ouvrir la conversation |
+| `console.workspace.directs.empty` | Aucune conversation directe. |
+| `console.workspace.directs.label-unread` | {count} non lus |
+| `console.workspace.directs.problem-id` | Saisissez des identifiants Matrix complets au format @utilisateur:domaine.tld. |
+| `console.workspace.directs.problem-open` | La conversation n’a pas pu être ouverte. Vérifiez les identifiants, puis réessayez. |
+| `console.workspace.invite-links.title` | Liens d’invitation |
+| `console.workspace.invite-links.hint` | Un lien permet de rejoindre l’espace jusqu’à sa date d’expiration ou son nombre d’utilisations. Révoquez-le dès qu’il n’est plus utile. |
+| `console.workspace.invite-links.field-days` | Valable (jours) |
+| `console.workspace.invite-links.field-uses` | Utilisations au plus |
+| `console.workspace.invite-links.field-role` | Rôle à l’arrivée |
+| `console.workspace.invite-links.role-member` | Membre |
+| `console.workspace.invite-links.role-moderator` | Modérateur |
+| `console.workspace.invite-links.action-create` | Créer un lien |
+| `console.workspace.invite-links.label-new` | Nouveau lien d’invitation |
+| `console.workspace.invite-links.action-copy` | Copier le lien |
+| `console.workspace.invite-links.label-copied` | Copié |
+| `console.workspace.invite-links.hint-once` | Ce lien n’est affiché qu’une fois : copiez-le maintenant. |
+| `console.workspace.invite-links.label-row` | {uses} sur {max} utilisations, jusqu’au {date} |
+| `console.workspace.invite-links.action-revoke` | Révoquer |
+| `console.workspace.invite-links.empty` | Aucun lien d’invitation actif. |
+| `console.workspace.invite-links.problem-list` | Les liens d’invitation ne sont pas joignables pour l’instant. |
+| `console.workspace.invite-links.problem-create` | Le lien n’a pas pu être créé. Vérifiez la durée (1 à 30 jours) et le nombre d’utilisations (1 à 10 000). |
+| `console.workspace.invite-links.problem-revoke` | Le lien n’a pas pu être révoqué. Réessayez. |
+| `console.workspace.invite-links.problem-copy` | La copie a échoué. Sélectionnez le lien pour le copier manuellement. |
+| `console.workspace.reports.title` | Signalements |
+| `console.workspace.reports.empty` | Aucun signalement en attente. |
+| `console.workspace.reports.field-resolution` | Décision, en quelques mots |
+| `console.workspace.reports.action-resolve` | Traiter |
+| `console.workspace.reports.action-dismiss` | Classer sans suite |
+| `console.workspace.reports.label-decided` | Décision enregistrée. |
+| `console.workspace.reports.problem-resolution` | Écrivez la décision avant de traiter ou de classer le signalement. |
+| `console.workspace.reports.problem-decided` | Un autre modérateur a déjà statué sur ce signalement. |
+| `console.workspace.reports.problem-resolve` | La décision n’a pas pu être enregistrée. Réessayez. |
+| `console.workspace.reports.problem-list` | Les signalements ne sont pas joignables pour l’instant. |
+| `console.workspace.moderation.title` | Modérer un membre |
+| `console.workspace.moderation.hint` | Chaque décision est enregistrée avec son motif dans le journal de l’espace. |
+| `console.workspace.moderation.field-membership` | Identifiant d’adhésion |
+| `console.workspace.moderation.problem-membership` | Saisissez l’identifiant d’adhésion du membre, tel que sa fiche l’affiche. |
+| `console.workspace.moderation.field-action` | Mesure |
+| `console.workspace.moderation.action-mute` | Rendre muet |
+| `console.workspace.moderation.action-kick` | Exclure |
+| `console.workspace.moderation.action-ban` | Bannir |
+| `console.workspace.moderation.action-unban` | Lever le bannissement |
+| `console.workspace.moderation.field-days` | Durée (jours) |
+| `console.workspace.moderation.field-reason` | Motif |
+| `console.workspace.moderation.action-apply` | Appliquer |
+| `console.workspace.moderation.label-done` | Mesure appliquée. |
+| `console.workspace.moderation.problem-apply` | La mesure n’a pas pu être appliquée. Vérifiez vos droits, puis réessayez. |
+
+## Workspace invite links
+
+| Key | Text |
+|---|---|
+| `console.invitation.join.title` | Rejoindre un espace |
+| `console.invitation.join.checking` | Vérification du lien… |
+| `console.invitation.join.ready` | Ce lien vous invite à rejoindre {name}. Il est valable jusqu’au {date}. |
+| `console.invitation.join.role-member` | Vous y entrerez comme membre. |
+| `console.invitation.join.role-moderator` | Vous y entrerez comme modérateur. |
+| `console.invitation.join.action-join` | Rejoindre {name} |
+| `console.invitation.join.joined` | Vous avez rejoint {name}. |
+| `console.invitation.join.action-home` | Aller à l’accueil |
+| `console.invitation.join.missing` | Ce lien est incomplet. Rouvrez le lien d’invitation tel qu’il vous a été envoyé. |
+| `console.invitation.join.sign-in` | Connectez-vous à Kodera, puis rouvrez le lien d’invitation. |
+| `console.invitation.join.gone` | Ce lien d’invitation a expiré, a été révoqué ou a déjà servi autant de fois que prévu. Demandez-en un nouveau. |
+| `console.invitation.join.failed` | Le lien n’a pas pu être vérifié. Réessayez dans un instant. |
