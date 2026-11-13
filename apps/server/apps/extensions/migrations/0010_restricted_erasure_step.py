@@ -3,6 +3,8 @@
 from django.db import migrations
 
 FORWARD = r"""
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+
 CREATE TRIGGER extension_erasure_admission_immutable BEFORE INSERT OR UPDATE OR DELETE ON extensions_erasureadmission
  FOR EACH ROW EXECUTE FUNCTION extension_cutoff_immutable();
 
@@ -12,7 +14,7 @@ SET lock_timeout='2s' SET statement_timeout='5s' AS $$
 DECLARE journal record; admission record; marked timestamptz; target_workspace uuid; current_receivers jsonb;
  computed_digest text; operation_now timestamptz:=statement_timestamp(); item record; n integer;
  payload_count integer:=0; metadata_count integer:=0; budget integer; receipts_complete boolean;
- payloads_complete boolean; metadata_complete boolean; step_counts jsonb:='{}'; table_name text; select_sql text;
+ payloads_complete boolean; metadata_complete boolean; step_counts jsonb:='{}'; table_name text;
 BEGIN
  IF p_erasure IS NULL OR p_org IS NULL OR p_cutoff IS NULL OR p_inventory_sha256 IS NULL
  OR p_inventory_sha256 !~ '^[a-f0-9]{64}$' OR p_limit IS NULL OR p_limit<1 OR p_limit>1000 THEN
@@ -24,13 +26,13 @@ BEGIN
  OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute WHERE attrelid=to_regclass('public.orgs_privacyerasure')
    AND attname='inventory_sha256' AND NOT attisdropped) THEN
   RAISE EXCEPTION 'extension erasure authoritative Core intent unavailable' USING ERRCODE='23514'; END IF;
- EXECUTE 'SELECT * FROM public.orgs_privacyerasure WHERE id=$1 FOR UPDATE' INTO journal USING p_erasure;
+ SELECT * INTO journal FROM public.orgs_privacyerasure WHERE id=p_erasure FOR UPDATE;
  IF journal.id IS NULL OR journal.organisation_reference IS DISTINCT FROM p_org
  OR journal.cutoff_at IS DISTINCT FROM p_cutoff OR journal.inventory_sha256 IS DISTINCT FROM p_inventory_sha256
  OR journal.status NOT IN ('cutoff','core_purged','complete') OR journal.purge_not_before IS NULL
  OR journal.purge_not_before<journal.cutoff_at OR journal.cutoff_at>operation_now THEN
   RAISE EXCEPTION 'extension erasure Core scope binding refused' USING ERRCODE='23514'; END IF;
- EXECUTE 'SELECT public.retention_inventory_digest($1)' INTO computed_digest USING journal.inventory;
+ SELECT public.retention_inventory_digest(journal.inventory) INTO computed_digest;
  IF computed_digest IS DISTINCT FROM p_inventory_sha256
  OR jsonb_typeof(journal.inventory->'required_domains') IS DISTINCT FROM 'array'
  OR jsonb_typeof(journal.inventory->'extension_receivers') IS DISTINCT FROM 'array' THEN
@@ -91,32 +93,54 @@ BEGIN
  END LOOP;
  SELECT NOT EXISTS(SELECT 1 FROM public.extensions_delivery d JOIN public.extensions_installation i ON i.id=d.installation_id
   WHERE i.workspace_id=target_workspace AND (d.purged_at IS NULL OR octet_length(d.event)<>0)) INTO payloads_complete;
- EXECUTE 'SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text($1) domain WHERE NOT EXISTS(
-  SELECT 1 FROM public.orgs_erasurereceipt r WHERE r.erasure_id=$2 AND r.domain=domain.value
-  AND r.cutoff_at=$3 AND r.verified_at>=$3 AND r.verified_at<=$4))' INTO receipts_complete
-  USING journal.inventory->'required_domains',p_erasure,p_cutoff,operation_now;
+ SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(journal.inventory->'required_domains') domain
+  WHERE NOT EXISTS(SELECT 1 FROM public.orgs_erasurereceipt r
+   WHERE r.erasure_id=p_erasure AND r.domain=domain.value AND r.cutoff_at=p_cutoff
+   AND r.verified_at>=p_cutoff AND r.verified_at<=operation_now)) INTO receipts_complete;
  IF NOT payloads_complete OR NOT receipts_complete THEN
   RETURN jsonb_build_object('held',false,'payloads_purged',payload_count,'metadata_purged',0,
    'payloads_complete',payloads_complete,'metadata_complete',false,'external_receipts_complete',receipts_complete);
  END IF;
  budget:=p_limit-payload_count;
- -- Every identifier below comes from this fixed whitelist, never from caller input. Each
- -- DELETE keeps its original workspace join and consumes one shared global row budget.
- FOREACH table_name IN ARRAY ARRAY['extensions_deliverydecision','extensions_deliveryattempt','extensions_delivery',
-  'extensions_importedobject','extensions_importbatch','extensions_digestjob','extensions_digestconsent','extensions_installation'] LOOP
-  select_sql:=CASE table_name
-   WHEN 'extensions_deliverydecision' THEN 'SELECT x.id FROM public.extensions_deliverydecision x JOIN public.extensions_delivery d ON d.id=x.delivery_id JOIN public.extensions_installation i ON i.id=d.installation_id WHERE i.workspace_id=$1'
-   WHEN 'extensions_deliveryattempt' THEN 'SELECT x.id FROM public.extensions_deliveryattempt x JOIN public.extensions_delivery d ON d.id=x.delivery_id JOIN public.extensions_installation i ON i.id=d.installation_id WHERE i.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM public.extensions_deliverydecision c WHERE c.attempt_id=x.id)'
-   WHEN 'extensions_delivery' THEN 'SELECT x.id FROM public.extensions_delivery x JOIN public.extensions_installation i ON i.id=x.installation_id WHERE i.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM public.extensions_deliveryattempt a WHERE a.delivery_id=x.id)'
-   WHEN 'extensions_importedobject' THEN 'SELECT x.id FROM public.extensions_importedobject x WHERE x.workspace_id=$1'
-   WHEN 'extensions_importbatch' THEN 'SELECT x.id FROM public.extensions_importbatch x WHERE x.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM public.extensions_importedobject o WHERE o.batch_id=x.id)'
-   WHEN 'extensions_digestjob' THEN 'SELECT x.id FROM public.extensions_digestjob x JOIN public.extensions_digestconsent c ON c.id=x.consent_id JOIN public.orgs_membership m ON m.id=c.membership_id JOIN public.workspaces_workspace w ON w.organisation_id=m.organisation_id WHERE w.id=$1'
-   WHEN 'extensions_digestconsent' THEN 'SELECT x.id FROM public.extensions_digestconsent x JOIN public.orgs_membership m ON m.id=x.membership_id JOIN public.workspaces_workspace w ON w.organisation_id=m.organisation_id WHERE w.id=$1 AND NOT EXISTS(SELECT 1 FROM public.extensions_digestjob j WHERE j.consent_id=x.id)'
-   WHEN 'extensions_installation' THEN 'SELECT x.id FROM public.extensions_installation x WHERE x.workspace_id=$1 AND NOT EXISTS(SELECT 1 FROM public.extensions_delivery d WHERE d.installation_id=x.id)'
-  END;
+ -- Every branch names its relation and original workspace join literally, and all
+ -- branches consume the same global row budget in dependency order.
+ FOREACH table_name IN ARRAY ARRAY['extensions_deliverydecision','extensions_deliveryattempt','extensions_delivery','extensions_importedobject','extensions_importbatch','extensions_digestjob','extensions_digestconsent','extensions_installation'] LOOP
   IF budget>0 THEN
-   EXECUTE 'WITH doomed AS ('||select_sql||' ORDER BY x.id LIMIT $2 FOR UPDATE OF x SKIP LOCKED) DELETE FROM public.'
-    ||quote_ident(table_name)||' t USING doomed WHERE t.id=doomed.id' USING target_workspace,budget;
+   CASE table_name
+   WHEN 'extensions_deliverydecision' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_deliverydecision x JOIN public.extensions_delivery d ON d.id=x.delivery_id JOIN public.extensions_installation i ON i.id=d.installation_id WHERE i.workspace_id=target_workspace
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_deliverydecision t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_deliveryattempt' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_deliveryattempt x JOIN public.extensions_delivery d ON d.id=x.delivery_id JOIN public.extensions_installation i ON i.id=d.installation_id WHERE i.workspace_id=target_workspace AND NOT EXISTS(SELECT 1 FROM public.extensions_deliverydecision c WHERE c.attempt_id=x.id)
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_deliveryattempt t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_delivery' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_delivery x JOIN public.extensions_installation i ON i.id=x.installation_id WHERE i.workspace_id=target_workspace AND NOT EXISTS(SELECT 1 FROM public.extensions_deliveryattempt a WHERE a.delivery_id=x.id)
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_delivery t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_importedobject' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_importedobject x WHERE x.workspace_id=target_workspace
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_importedobject t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_importbatch' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_importbatch x WHERE x.workspace_id=target_workspace AND NOT EXISTS(SELECT 1 FROM public.extensions_importedobject o WHERE o.batch_id=x.id)
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_importbatch t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_digestjob' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_digestjob x JOIN public.extensions_digestconsent c ON c.id=x.consent_id JOIN public.orgs_membership m ON m.id=c.membership_id JOIN public.workspaces_workspace w ON w.organisation_id=m.organisation_id WHERE w.id=target_workspace
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_digestjob t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_digestconsent' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_digestconsent x JOIN public.orgs_membership m ON m.id=x.membership_id JOIN public.workspaces_workspace w ON w.organisation_id=m.organisation_id WHERE w.id=target_workspace AND NOT EXISTS(SELECT 1 FROM public.extensions_digestjob j WHERE j.consent_id=x.id)
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_digestconsent t USING doomed WHERE t.id=doomed.id;
+   WHEN 'extensions_installation' THEN
+    WITH doomed AS (SELECT x.id FROM public.extensions_installation x WHERE x.workspace_id=target_workspace AND NOT EXISTS(SELECT 1 FROM public.extensions_delivery d WHERE d.installation_id=x.id)
+     ORDER BY x.id LIMIT budget FOR UPDATE OF x SKIP LOCKED)
+    DELETE FROM public.extensions_installation t USING doomed WHERE t.id=doomed.id;
+   ELSE RAISE EXCEPTION 'extension erasure metadata relation refused' USING ERRCODE='23514';
+   END CASE;
    GET DIAGNOSTICS n=ROW_COUNT;
    budget:=budget-n; metadata_count:=metadata_count+n;
    step_counts:=step_counts||jsonb_build_object(table_name,n);
