@@ -133,7 +133,10 @@ WITHOUT_MODULE=1 bash tests/integration/run.sh
   PyJWT package is mounted read-only for the real provisioning client; nothing is installed. The runner
   publishes no host ports, serves native well-known discovery on internal TLS 443, and
   acquires a machine-wide heavy slot and refuses below 20 GiB free. Ephemeral TLS verification
-  exceptions exist only inside that disposable network. `WITHOUT_MODULE=1` must fail.
+  exceptions and ordinary `m.login.dummy` account registration exist only inside that disposable
+  network. The fixture has no administrator accounts or shared registration credentials; its
+  private directories use mode 0700 and configuration/TLS inputs use mode 0600. Production
+  registration settings are not changed. `WITHOUT_MODULE=1` must fail.
   This is standard Matrix protocol evidence; no Element, Tchap or Cinny client build is claimed
   tested by this harness.
 

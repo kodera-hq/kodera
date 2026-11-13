@@ -6,8 +6,6 @@ Synthetic TLS verification exceptions exist only inside this isolated test netwo
 """
 
 import datetime
-import hashlib
-import hmac
 import json
 import os
 import pathlib
@@ -80,35 +78,19 @@ def expect(label, answer, status):
     return answer[1]
 
 
-def register(port, secret, username, admin=False):
-    nonce = expect(
-        "registration nonce", call(port, "GET", "/_synapse/admin/v1/register"), 200
-    )["nonce"]
-    password = secrets.token_urlsafe(24)
-    digest = hmac.new(secret.encode(), digestmod=hashlib.sha1)
-    digest.update(
-        (
-            nonce
-            + "\0"
-            + username
-            + "\0"
-            + password
-            + "\0"
-            + ("admin" if admin else "notadmin")
-        ).encode()
-    )
+def register(port, username):
+    # This standard client flow is enabled only on the disposable internal Docker network.
+    # No account needs homeserver-administrator privileges or shared registration credentials.
     result = expect(
         "synthetic account",
         call(
             port,
             "POST",
-            "/_synapse/admin/v1/register",
+            "/_matrix/client/v3/register",
             body={
-                "nonce": nonce,
                 "username": username,
-                "password": password,
-                "admin": admin,
-                "mac": digest.hexdigest(),
+                "password": secrets.token_urlsafe(24),
+                "auth": {"type": "m.login.dummy"},
             },
         ),
         200,
@@ -132,10 +114,10 @@ def wait_message(port, token, room, event_id):
     raise AssertionError("federated event did not arrive within 20 seconds")
 
 
-def scenario(homeport, peerport, home_secret, peer_secret):
-    agent = register(homeport, home_secret, "kodera-agent", True)
-    alice = register(homeport, home_secret, "alice")
-    bob = register(peerport, peer_secret, "bob")
+def scenario(homeport, peerport):
+    agent = register(homeport, "kodera-agent")
+    alice = register(homeport, "alice")
+    bob = register(peerport, "bob")
     client = Synapse(BASES[homeport], agent, HOME)
     entries = []
     state = State(pathlib.Path("/data/proof-state"))
@@ -382,6 +364,7 @@ def main():
     network = prefix + "-net"
     running = []
     made_network = False
+    previous_umask = os.umask(0o077)
     try:
         docker("image", "inspect", IMAGE)  # no implicit image pulls
         import jwt
@@ -395,10 +378,16 @@ def main():
             folder = pathlib.Path(temp)
             docker("network", "create", "--internal", network)
             made_network = True
-            secret = [secrets.token_urlsafe(32), secrets.token_urlsafe(32)]
+            if (
+                docker("network", "inspect", "--format", "{{.Internal}}", network)
+                != "true"
+            ):
+                raise RuntimeError(
+                    "refused: fixture registration requires an internal network"
+                )
             for index, server in enumerate((HOME, PEER)):
                 data = folder / str(index)
-                data.mkdir()
+                data.mkdir(mode=0o700)
                 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
                 name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, server)])
                 now = datetime.datetime.now(datetime.UTC)
@@ -438,9 +427,10 @@ def main():
                         "args": {"database": "/data/homeserver.db"},
                     },
                     "signing_key_path": "/data/signing.key",
-                    "registration_shared_secret": secret[index],
-                    "macaroon_secret_key": secrets.token_urlsafe(32),
-                    "form_secret": secrets.token_urlsafe(32),
+                    # Fixture-only registration: no published ports, an internal network,
+                    # disposable ordinary users, and no shared registration secret.
+                    "enable_registration": True,
+                    "enable_registration_without_verification": True,
                     "listeners": [
                         {
                             "port": 8008,
@@ -485,6 +475,17 @@ def main():
                         }
                     ]
                 (data / "homeserver.yaml").write_text(json.dumps(config))
+                if data.stat().st_mode & 0o777 != 0o700 or any(
+                    path.stat().st_mode & 0o777 != 0o600
+                    for path in (
+                        data / "tls.key",
+                        data / "tls.crt",
+                        data / "homeserver.yaml",
+                    )
+                ):
+                    raise RuntimeError(
+                        "refused: fixture inputs require private file modes"
+                    )
                 name = prefix + f"-{index}"
                 docker(
                     "run",
@@ -516,6 +517,14 @@ def main():
                     IMAGE,
                 )
                 running.append(name)
+                if json.loads(
+                    docker(
+                        "inspect", "--format", "{{json .HostConfig.PortBindings}}", name
+                    )
+                ) not in (None, {}):
+                    raise RuntimeError(
+                        "refused: fixture registration cannot publish host ports"
+                    )
             print("Started disposable homeserver containers", flush=True)
             for index in range(2):
                 for _ in range(90):
@@ -551,7 +560,6 @@ def main():
                     "/proof/federation.py",
                     "--scenario",
                 ],
-                input=json.dumps(secret),
                 text=True,
                 check=True,
                 timeout=180,
@@ -561,6 +569,7 @@ def main():
             print(docker("logs", "--tail", "40", container), file=sys.stderr)
         raise
     finally:
+        os.umask(previous_umask)
         for container in running:
             docker("rm", "-f", container)
         if made_network:
@@ -571,6 +580,6 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--scenario"]:
-        scenario("home", "peer", *json.load(sys.stdin))
+        scenario("home", "peer")
     else:
         main()
