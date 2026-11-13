@@ -1,17 +1,12 @@
 """Durable scoped work and consent references; app signing secrets never enter the database."""
 
-from datetime import timedelta
-
 from django.db import models
 from django.db.models import F, Q
-from django.utils import timezone
 
 from core.db.ids import new_uuid7
 from core.db.models import StoredModel
 
-
-def delivery_expiry():
-    return timezone.now() + timedelta(days=7)
+from .expiry import delivery_expiry as delivery_expiry
 
 
 class Installation(StoredModel):
