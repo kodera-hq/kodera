@@ -2,7 +2,7 @@
 
 from django.db import transaction
 
-from apps.audit.models import AuditEvent
+from apps.audit.services import record_workspace_quota_configured
 from apps.docs.errors import RefusalError
 from apps.identity.selectors import current_staff_grant
 from apps.identity.staff import is_staff_principal
@@ -50,14 +50,10 @@ def configure(*, principal, organisation_id, policy_ref, limits, snapshot_bytes)
             "snapshot_bytes": snapshot_bytes,
         },
     )
-    AuditEvent.objects.create(
-        action="workspace.quota.configured",
-        actor_type="staff",
+    record_workspace_quota_configured(
         actor_id=principal.identity_id,
-        actor_label=f"urn:kodera:identity:{principal.identity_id}",
         organisation_id=organisation_id,
-        target_urn=f"urn:kodera:workspace-resource:{row.id}",
-        retention_class="standard",
-        metadata={"policy_ref": policy_ref},
+        quota_id=row.id,
+        policy_ref=policy_ref,
     )
     return row
