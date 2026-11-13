@@ -4,6 +4,7 @@ from django.db import migrations
 
 FORWARD = r'''
 SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
 CREATE FUNCTION workspace_quota_usage(p_workspace uuid) RETURNS jsonb
 LANGUAGE sql VOLATILE SET search_path=pg_catalog,public AS $$
 SELECT jsonb_build_object(
@@ -125,6 +126,8 @@ CREATE TRIGGER docs_update_quota BEFORE INSERT ON docs_documentupdate
 '''
 
 REVERSE = r'''
+SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
 DROP TRIGGER docs_update_quota ON docs_documentupdate;
 DROP TRIGGER docs_snapshot_quota ON docs_documentsnapshot;
 DROP FUNCTION workspace_snapshot_quota_guard();
