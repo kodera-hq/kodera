@@ -67,21 +67,9 @@ def verified(issuer, subject):
 def world(*, state="active", profile=True, fiscal_authority=True, **profile_values):
     """An organisation, its owner's identity and token, and (by default) a French profile."""
     if fiscal_authority:
-        # Explicit synthetic issuer authority belongs to these disposable fixtures only.
-        from apps.billing.models import FiscalPeriod
+        from billing_fiscal_fixtures import register_test_fiscal_periods
 
-        if not FiscalPeriod.objects.filter(issuer_siren="000000000").exists():
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT clock_timestamp()")
-                current_year = cursor.fetchone()[0].year
-            for year in range(current_year - 2, current_year + 2):
-                FiscalPeriod.objects.create(
-                    issuer_siren="000000000",
-                    starts_at=datetime(year, 1, 1, tzinfo=UTC),
-                    closed_at=datetime(year + 1, 1, 1, tzinfo=UTC),
-                    timezone="UTC",
-                    authority_ref=f"TESTFIN-{year}",
-                )
+        register_test_fiscal_periods()
     models = anchor_models()
     slug = f"billing{next(_slugs):04d}"
     organisation, _, owners = anchor(models, slug=slug, state=state)
