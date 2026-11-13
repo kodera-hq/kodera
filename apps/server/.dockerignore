@@ -259,3 +259,10 @@ config/settings/deploy_worker.py
 !apps/identity/community.py
 !apps/tenancy/community.py
 !apps/workspaces/community.py
+# Workspace moderation and bounded invites; operator commands and workers stay excluded.
+!apps/orgs/workspace_members.py
+!apps/workspaces/moderation.py
+!apps/workspaces/moderation_policy.py
+!apps/workspaces/moderation_wire.py
+!apps/workspaces/api/moderation.py
+!apps/workspaces/api/moderation_urls.py
