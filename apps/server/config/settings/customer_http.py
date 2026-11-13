@@ -28,6 +28,7 @@ from config.environment import (
     mutation_rate_per_minute,
     tenant_app_urls,
 )
+from config.workspace_features import media_gateway_socket, notification_settings
 from core.sealing import key_from_environment
 
 from .persistence import *
@@ -43,6 +44,8 @@ CUSTOMER_HTTP_APPS = (
     "core.idempotency",
     "apps.engine_intents",
     "apps.support",
+    "apps.media",
+    "apps.notifications",
 )
 INSTALLED_APPS = [*INSTALLED_APPS, *CUSTOMER_HTTP_APPS]
 # The deployable API profile: KODERA_LOOPBACK_ISSUERS, from config.settings.persistence, is False
@@ -94,3 +97,7 @@ KODERA_MUTATION_RATE_PER_MINUTE = mutation_rate_per_minute(os.environ)
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
+
+# Application keys only; the API never loads object-storage or VAPID private credentials.
+KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
+(KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)

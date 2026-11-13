@@ -258,6 +258,13 @@ SECRET_SHAPED = re.compile(r"KEY|SECRET|PASSWORD|PASSWD|TOKEN|CREDENTIAL|PRIVATE
 ALLOWED_SECRETS = {
     "SECRET_KEY": "the application signing key",
     "KODERA_CONTACT_SEAL_KEY": "an application secret: the key contacts are sealed with",
+    "KODERA_NOTIFICATION_SEAL_KEY": (
+        "an application secret: the key device push subscriptions are sealed with"
+    ),
+    "KODERA_PUSH_VAPID_PUBLIC_KEY": (
+        "public information: the uncompressed P-256 VAPID discovery point, validated by "
+        "apps/notifications/push.py"
+    ),
     "KODERA_MEMBERSHIP_CURSOR_KEY": "an application secret: the membership cursors' key",
     "KODERA_DISCOVERY_HMAC_KEY": "an application secret: realm discovery's HMAC key",
     # tests/test_billing_restricted_key.py proves the refusal of a full secret key.

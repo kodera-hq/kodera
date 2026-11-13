@@ -30,6 +30,7 @@ from apps.outbox.mail.seal import key_from_environment
 from apps.outbox.mail.transport import transport_from_environment
 from apps.outbox.realm.keycloak import origins_from_environment as realm_origins_from_environment
 from config.environment import auth_trust, billing_enabled, intake_admitted, legal_text_origin
+from config.workspace_features import media_gateway_socket, notification_settings
 from core.sealing import key_from_environment as sealing_key_from_environment
 
 from .persistence import *
@@ -48,6 +49,8 @@ INSTALLED_APPS = [
     *REPLAY_APPS,
     "apps.engine_intents",
     "apps.support",
+    "apps.media",
+    "apps.notifications",
 ]
 
 # Plaintext SMTP only to a loopback address or `localhost` here; no deployed name is exempt.
@@ -99,3 +102,5 @@ KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
 KODERA_UNPAID_LAPSE_ENABLED = os.environ.get("KODERA_UNPAID_LAPSE_ENABLED") == "1"
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
+KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
+(KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)

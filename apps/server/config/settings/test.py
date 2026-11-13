@@ -88,3 +88,8 @@ KODERA_PAYMENT_PROVIDER = "fake"
 KODERA_STRIPE_SECRET_KEY = None
 KODERA_STRIPE_WEBHOOK_SECRET = None
 KODERA_FAKE_PROVIDER_SECRET = hashlib.sha256(b"test-only fake payment provider secret").digest()
+
+# Tests never inherit optional worker endpoints or application keys from the host.
+KODERA_MEDIA_GATEWAY_SOCKET = None
+KODERA_NOTIFICATION_SEAL_KEY = None
+KODERA_PUSH_VAPID_PUBLIC_KEY = None

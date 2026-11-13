@@ -32,7 +32,11 @@ SELECT = (
     "workspaces_workspaceinvitelink",
     "workspaces_workspaceinviteredemption",
     "workspaces_workspaceabusereport",
-
+    # Media attachment metadata, notification inbox and sealed push subscriptions/outbox enqueue.
+    "media_attachment",
+    "notifications_notification",
+    "notifications_pushsubscription",
+    "notifications_pushoutbox",
     "identity_user",
     "identity_identity",
     "identity_staffrole",
@@ -95,7 +99,11 @@ INSERT = (
     "workspaces_workspaceinvitelink",
     "workspaces_workspaceinviteredemption",
     "workspaces_workspaceabusereport",
-
+    # Media attachment sessions, notification inbox entries, push subscriptions and wakeup outbox.
+    "media_attachment",
+    "notifications_notification",
+    "notifications_pushsubscription",
+    "notifications_pushoutbox",
     "orgs_organisation",
     "orgs_slugreservation",
     "orgs_organisationintake",
@@ -200,7 +208,17 @@ UPDATE_COLUMNS = (
     ("workspaces_workspaceabusereport", "resolution"),
     ("workspaces_workspaceabusereport", "resolved_by_id"),
     ("workspaces_workspaceabusereport", "updated_at"),
-
+    # Attachment completion, inbox read marks, and device subscription rotation/revocation;
+    # checksums, sizes, MIME types, recipients, resource_ids and push outbox leases stay immutable.
+    ("media_attachment", "completed_at"),
+    ("media_attachment", "updated_at"),
+    ("notifications_notification", "read_at"),
+    ("notifications_notification", "updated_at"),
+    ("notifications_pushsubscription", "version"),
+    ("notifications_pushsubscription", "endpoint_digest"),
+    ("notifications_pushsubscription", "sealed_subscription"),
+    ("notifications_pushsubscription", "revoked_at"),
+    ("notifications_pushsubscription", "updated_at"),
     ("identity_staffrole", "created_at"),
     ("orgs_organisation", "owner_guard_revision"),
     ("jobs_job", "lock_requested_at"),
