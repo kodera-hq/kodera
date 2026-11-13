@@ -9,12 +9,43 @@ from django.utils import timezone
 from test_workspace_onboarding import call
 from workspace_safety.test_moderation import world as world
 
+from apps.docs.models import Document
 from apps.media.models import Attachment
 from apps.workspaces.models import WorkspaceQuota
 from workspace_documents.test_collections import PROPS, VIEWS, make_doc
 from workspace_documents.test_http import auth_headers, http as http, http_signer as http_signer
+from workspace_documents.test_services import native_engine as native_engine
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def test_terminal_quota_refusal_replays_after_operator_raises_limit(world, http, native_engine):
+    org, workspace, _, _ = world
+    client, credentials = http
+    WorkspaceQuota.objects.filter(workspace=workspace).update(pages=0)
+    path = f"/api/v1/organisations/{org.id}/workspace/documents"
+    payload = json.dumps({"title": "Terminal quota refusal"})
+    key = str(uuid4())
+
+    def submit(request_key):
+        return client.post(
+            path,
+            data=payload,
+            content_type="application/json",
+            **auth_headers(credentials[3], idempotency_key=request_key),
+        )
+
+    denied = submit(key)
+    assert denied.status_code == 402
+    assert denied.json()["request_id"] == denied["X-Request-Id"]
+    assert not Document.objects.filter(workspace=workspace).exists()
+    WorkspaceQuota.objects.filter(workspace=workspace).update(pages=1)
+    replayed = submit(key)
+    assert replayed.status_code == 402 and replayed["Idempotency-Replayed"] == "true"
+    assert replayed.content == denied.content
+    assert not Document.objects.filter(workspace=workspace).exists()
+    fresh = submit(str(uuid4()))
+    assert fresh.status_code == 201 and Document.objects.filter(workspace=workspace).count() == 1
 
 
 def test_signed_collection_rows_obey_contract_and_conditional_creation(world, http):
