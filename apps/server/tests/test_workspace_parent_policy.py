@@ -992,9 +992,10 @@ DEFERRED = " DEFERRABLE INITIALLY DEFERRED"
 def without_warm_pool(objects):
     """0008 owns only the warm-pool table; retain every unrelated schema object."""
     from workspace_documents.schema_inventory import without_documents
+    from workspace_quotas.schema_inventory import without_quotas
     from workspace_safety.schema_inventory import without_moderation
 
-    objects = without_moderation(without_documents(objects))
+    objects = without_moderation(without_documents(without_quotas(objects)))
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
     return {key: value for key, value in objects.items() if key[1] != WARM_POOL_TABLE}
