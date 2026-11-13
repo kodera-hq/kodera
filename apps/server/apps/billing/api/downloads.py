@@ -10,9 +10,8 @@ from django.http import HttpRequest, HttpResponse
 from apps.billing import downloads, events, selectors
 from apps.billing.access import read_as_member, record_member_denial, record_staff_denial
 from apps.billing.actors import Actor
-from apps.billing.callers import BillingForbiddenError
+from apps.billing.callers import BillingCaller, BillingForbiddenError
 from apps.billing.pagination import InvalidListQueryError
-from apps.orgs.actor_selectors import TenantCaller
 from core.api import lanes
 from core.api.scopes import Operation, declares
 from services.identity.trusted_issuers import verify_configured_token
@@ -42,7 +41,7 @@ def _download(
             )
             raise views._RefusedError()
 
-        def sign(caller: TenantCaller) -> tuple[TenantCaller, dict[str, object]]:
+        def sign(caller: BillingCaller) -> tuple[BillingCaller, dict[str, object]]:
             if set(request.GET) - {"format"} or len(request.GET.getlist("format")) > 1:
                 raise InvalidListQueryError()
             format = request.GET.get("format", "pdf")

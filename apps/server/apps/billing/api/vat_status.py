@@ -17,7 +17,6 @@ from apps.billing.access import (
     record_member_denial,
 )
 from apps.billing.callers import require_role, tenant_caller
-from apps.billing.models import BillingProfile
 from core.api import lanes, problems
 from core.api.idempotency import (
     KEY_HEADER,
@@ -89,10 +88,9 @@ def _validate(request: HttpRequest, organisation_id: UUID, request_id: str) -> H
         vies.normalise(country, number)
     except (ValueError, TypeError):
         return views._problem(400, request_id)
-    profile = BillingProfile.objects.filter(
-        organisation_id=organisation_id, country=country, vat_number=number
-    ).first()
-    if profile is None:
+    if not vies.profile_matches(
+        organisation_id=organisation_id, country_code=country, vat_number=number
+    ):
         return views._conflict(request_id, "VAT request must match the current billing profile.")
     key = request.headers.get(KEY_HEADER, "")
     answer = vies.Answer(

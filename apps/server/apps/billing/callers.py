@@ -5,6 +5,7 @@ token claim or the request. Read in the caller's transaction, so the rows the op
 or writes are those the caller was authorised against.
 """
 
+from typing import Protocol
 from uuid import UUID
 
 from apps.orgs.actor_selectors import (
@@ -14,6 +15,16 @@ from apps.orgs.actor_selectors import (
     read_tenant_caller,
 )
 from services.identity.access_tokens import VerifiedAccessToken
+
+
+class BillingCaller(Protocol):
+    """The billing API's scoped caller values, without another application's types."""
+
+    @property
+    def identity_id(self) -> UUID: ...
+
+    @property
+    def organisation_id(self) -> UUID: ...
 
 
 class BillingCallerUnknownError(Exception):
