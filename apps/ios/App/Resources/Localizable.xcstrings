@@ -4198,13 +4198,13 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Profil strict ES256 (drapeau 0x05 UP+UV, compteur monotone, refus des clés synchronisées et des défis expirés)."
+            "value": "Profil universel ES256 WebAuthn L3 (drapeaux 0x05, 0x0D et 0x1D avec UP+UV, compteur monotone, refus de 0x15 et des défis expirés)."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Strict ES256 profile (0x05 UP+UV flag, monotonic counter, rejecting synced credentials and expired challenges)."
+            "value": "Universal ES256 WebAuthn L3 profile (0x05, 0x0D and 0x1D UP+UV flags, monotonic counter, rejecting 0x15 and expired challenges)."
           }
         }
       }
