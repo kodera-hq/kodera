@@ -10,11 +10,18 @@ import { verify } from '../tickets.mjs'
 const input = JSON.parse(await new Promise(resolve => {
   let text = '';process.stdin.setEncoding('utf8');process.stdin.on('data', value => { text += value });process.stdin.on('end', () => resolve(text))
 }))
-const pool = new pg.Pool({connectionString: process.env.KODERA_TEST_DATABASE_URL, max: 2, options: '-c role=' + input.role})
+const login = new URL(process.env.KODERA_TEST_DATABASE_URL)
+login.username = input.role;login.password = input.rolePassword;login.search = ''
+const pool = new pg.Pool({connectionString: login.href, max: 2})
 const owner = new pg.Pool({connectionString: process.env.KODERA_TEST_DATABASE_URL, max: 1})
+const maskedOwner = new URL(process.env.KODERA_TEST_DATABASE_URL)
+maskedOwner.searchParams.set('options', '-c role=' + input.role)
+const masked = new pg.Pool({connectionString: maskedOwner.href, max: 1})
 try {
   await assert.rejects(assertDatabaseBoundary(owner), /collaboration database role refused/)
+  await assert.rejects(assertDatabaseBoundary(masked), /collaboration database role refused/)
   await assertDatabaseBoundary(pool)
+  assert.deepEqual((await pool.query('SELECT session_user,current_user')).rows[0], {session_user: input.role, current_user: input.role})
   const claims = verify(input.ticket, Buffer.from(process.env.KODERA_TEST_COLLAB_KEY, 'base64url'))
   const store = new Store(pool), initial = await store.load(claims)
   const document = new Y.Doc()
@@ -58,4 +65,4 @@ try {
 } catch (error) {
   process.stderr.write(JSON.stringify({error: error.name, message: error.message, cause: error.cause?.message}))
   process.exitCode = 1
-} finally { await pool.end();await owner.end() }
+} finally { await pool.end();await owner.end();await masked.end() }

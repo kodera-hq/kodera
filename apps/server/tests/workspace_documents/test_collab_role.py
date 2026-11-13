@@ -203,10 +203,13 @@ def test_restricted_native_store_persists_and_redeems_one_nonce(
     import base64
     import json
     import os
+    import secrets
     import shutil
     import subprocess
     from pathlib import Path
     from urllib.parse import quote
+
+    from psycopg import sql
 
     org, _, _, tokens = world
     created = services.create(
@@ -224,6 +227,13 @@ def test_restricted_native_store_persists_and_redeems_one_nonce(
         request_id=str(uuid4()),
     )
     database = connection.settings_dict
+    role_password = secrets.token_urlsafe(32)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("ALTER ROLE {} LOGIN CONNECTION LIMIT 5 PASSWORD {}").format(
+                sql.Identifier(collab_role), sql.Literal(role_password)
+            )
+        )
     url = (
         "postgresql://"
         + quote(database["USER"], safe="")
@@ -250,7 +260,9 @@ def test_restricted_native_store_persists_and_redeems_one_nonce(
                 settings.KODERA_COLLAB_TICKET_KEY
             ).decode(),
         },
-        input=json.dumps({"role": collab_role, "ticket": ticket["token"]}).encode(),
+        input=json.dumps(
+            {"role": collab_role, "rolePassword": role_password, "ticket": ticket["token"]}
+        ).encode(),
         capture_output=True,
         timeout=60,
     )

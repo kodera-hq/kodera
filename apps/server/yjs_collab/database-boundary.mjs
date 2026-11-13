@@ -1,6 +1,7 @@
 /** Refuse privileged database identities before opening any listener. */
 export async function assertDatabaseBoundary(pool) {
   const result = await pool.query(`SELECT
+    session_user=current_user AND
     NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit)
     AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid)
     AND NOT has_database_privilege(current_database(),'CREATE')
