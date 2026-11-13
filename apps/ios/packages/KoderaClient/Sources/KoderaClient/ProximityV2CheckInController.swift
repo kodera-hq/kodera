@@ -76,6 +76,9 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
     private var activeEmissionWindow: UInt32?
     private var emissionsInCurrentWindow = 0
     private var generation: UInt64 = 1
+    private var scanIntent: UUID?
+    private var radioOperations: [UUID: Task<Void, Error>] = [:]
+    private var radioRetirement: Task<Void, Never>?
 
     public init(
         battery: ProximityBatterySnapshot = .nominal,
@@ -91,6 +94,7 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
         provisioning: ProximityV2RadioProvisioning? = nil,
         onlineMatrixRoomId: String? = nil
     ) {
+        retireRadioOperations()
         advanceGeneration()
         hasForegroundConsent = false
         verifiedLocalBroadcastCount = 0
@@ -138,11 +142,8 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
         guard isForegroundActive != active else { return }
         isForegroundActive = active
         if !active {
-            let activeTransport = transport
+            retireRadioOperations()
             advanceGeneration()
-            if let activeTransport {
-                Task { await activeTransport.stopScanWindow() }
-            }
         }
         refreshRadioStatus()
     }
@@ -160,13 +161,10 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
     }
 
     public func revokeConsent() {
-        let activeTransport = transport
+        retireRadioOperations()
         hasForegroundConsent = false
         lastError = nil
         advanceGeneration()
-        if let activeTransport {
-            Task { await activeTransport.stopScanWindow() }
-        }
         refreshRadioStatus()
     }
 
@@ -197,12 +195,14 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
             refreshRadioStatus()
             throw ProximityBeaconV2Error.foregroundConsentRequired
         }
+        try await awaitRadioRetirement()
         guard let transport, isProvisionedForLocalRadio else {
             lastError = .invalidInput
             refreshRadioStatus()
             throw ProximityBeaconV2Error.invalidInput
         }
 
+        guard scanIntent == nil else { throw ProximityBeaconV2Error.dutyCycleThrottled }
         do {
             try budget.validateScanStart(
                 battery: battery,
@@ -216,13 +216,33 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
         }
 
         let capturedGeneration = generation
-        try await transport.startScanWindow(durationSeconds: budget.maxScanWindowSeconds)
+        let operationId = UUID()
+        // Reserve before suspension. An uncertain transport failure does not refund radio duty.
+        scanIntent = operationId
+        lastScanStartedAt = nowUnixSeconds
+        let duration = budget.maxScanWindowSeconds
+        let operation = Task {
+            try Task.checkCancellation()
+            try await transport.startScanWindow(durationSeconds: duration)
+        }
+        radioOperations[operationId] = operation
+        defer {
+            radioOperations.removeValue(forKey: operationId)
+            if scanIntent == operationId { scanIntent = nil }
+        }
+        do {
+            try await operation.value
+        } catch {
+            guard generation == capturedGeneration, isForegroundActive, hasForegroundConsent else {
+                throw ProximityBeaconV2Error.foregroundConsentRequired
+            }
+            throw error
+        }
         guard generation == capturedGeneration, isForegroundActive, hasForegroundConsent else {
-            await transport.stopScanWindow()
+            // Retirement owns cleanup. A stale caller must never stop a replacement window.
             throw ProximityBeaconV2Error.foregroundConsentRequired
         }
 
-        lastScanStartedAt = nowUnixSeconds
         lastError = nil
         localRadioStatus = .scanningWindowActive(
             startedAtUnixSeconds: nowUnixSeconds,
@@ -246,6 +266,7 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
             refreshRadioStatus()
             throw ProximityBeaconV2Error.foregroundConsentRequired
         }
+        try await awaitRadioRetirement()
         guard var nextSender = sender, let transport else {
             lastError = .invalidInput
             refreshRadioStatus()
@@ -264,15 +285,29 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
 
         let beacon = try nextSender.emit(atUnixSeconds: nowUnixSeconds)
         let capturedGeneration = generation
-        try await transport.broadcastBeacon(beacon, status: status)
-
+        // Consume sequence and budget before suspension, even if delivery later becomes uncertain.
+        sender = nextSender
+        activeEmissionWindow = currentWindow
+        emissionsInCurrentWindow = windowCount + 1
+        let operationId = UUID()
+        let operation = Task {
+            try Task.checkCancellation()
+            try await transport.broadcastBeacon(beacon, status: status)
+        }
+        radioOperations[operationId] = operation
+        defer { radioOperations.removeValue(forKey: operationId) }
+        do {
+            try await operation.value
+        } catch {
+            guard generation == capturedGeneration, isForegroundActive, hasForegroundConsent else {
+                throw ProximityBeaconV2Error.foregroundConsentRequired
+            }
+            throw error
+        }
         guard generation == capturedGeneration, isForegroundActive, hasForegroundConsent else {
             throw ProximityBeaconV2Error.foregroundConsentRequired
         }
 
-        sender = nextSender
-        activeEmissionWindow = currentWindow
-        emissionsInCurrentWindow = windowCount + 1
         verifiedLocalBroadcastCount += 1
         _ = prepareDraft(status)
         lastError = nil
@@ -331,6 +366,33 @@ public final class ProximityV2CheckInController: WorkspacePreferencesObservable 
             return
         }
         localRadioStatus = .readyForLocalRadio
+    }
+
+    private func awaitRadioRetirement() async throws {
+        let capturedGeneration = generation
+        await radioRetirement?.value
+        guard generation == capturedGeneration, organisationId != nil,
+              isForegroundActive, hasForegroundConsent else {
+            throw ProximityBeaconV2Error.foregroundConsentRequired
+        }
+    }
+
+    private func retireRadioOperations() {
+        let previous = radioRetirement
+        let oldTransport = transport
+        let operations = Array(radioOperations.values)
+        radioOperations.removeAll()
+        scanIntent = nil
+        for operation in operations { operation.cancel() }
+        guard oldTransport != nil || !operations.isEmpty else { return }
+        radioRetirement = Task {
+            await previous?.value
+            await oldTransport?.stopScanWindow()
+            // An adapter may finish a start after the first stop. Quiesce it before new IO,
+            // including when the same adapter instance is provisioned for the next generation.
+            for operation in operations { _ = try? await operation.value }
+            if !operations.isEmpty { await oldTransport?.stopScanWindow() }
+        }
     }
 
     private func advanceGeneration() {
