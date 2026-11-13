@@ -14,6 +14,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='DunningCase',
             fields=[
@@ -88,5 +92,9 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='dunningdispute',
             constraint=models.CheckConstraint(condition=models.Q(('amount_minor__gt', 0)), name='billing_dunning_dispute_amount'),
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]
