@@ -6,9 +6,9 @@ from typing import Any
 from django.db import connection, transaction
 from django.utils import timezone
 
-from apps.docs import services
-
+from .channel_sets import lock_workspace
 from .models import WorkspaceQuota
+from .moderation import RefusalError, authorise_workspace
 
 
 def is_guard(error: Exception) -> bool:
@@ -50,10 +50,13 @@ def violation(error: Exception) -> dict[str, Any] | None:
 
 @transaction.atomic
 def read(*, verified, organisation_id):
-    workspace_id, _ = services.context(verified, organisation_id)
+    workspace_id = lock_workspace(organisation_id)
+    if workspace_id is None:
+        raise RefusalError(404)
+    authorise_workspace(verified=verified, organisation_id=organisation_id)
     policy = WorkspaceQuota.objects.filter(workspace_id=workspace_id).first()
     if policy is None:
-        raise services.RefusalError(503, "service-unavailable")
+        raise RefusalError(503, "service-unavailable")
     with connection.cursor() as cursor:
         cursor.execute("SELECT workspace_quota_usage(%s)", [workspace_id])
         usage = cursor.fetchone()[0]
@@ -66,7 +69,7 @@ def read(*, verified, organisation_id):
         ):
             raise ValueError
     except (ValueError, TypeError):
-        raise services.RefusalError(503, "service-unavailable") from None
+        raise RefusalError(503, "service-unavailable") from None
     return {
         "usage": usage,
         "limits": {"seats": policy.seats, "mediaBytes": policy.media_bytes, "pages": policy.pages},
