@@ -832,3 +832,15 @@ def record_workspace_resource_event(
         retention_class="standard",
         metadata={},
     )
+    if action in {
+        "workspace.member.kick",
+        "workspace.member.ban",
+        "workspace.member.unban",
+        "workspace.member.mute",
+    }:
+        from django.apps import apps
+
+        if apps.is_installed("apps.notifications"):
+            from apps.notifications.services import record_moderation
+
+            record_moderation(organisation_id=organisation_id, membership_id=target_id)

@@ -23,6 +23,7 @@ from config.environment import (
     tenant_app_urls,
     trusted_edge,
 )
+from config.workspace_features import media_gateway_socket, notification_settings
 from core.sealing import key_from_environment
 
 from .base import *
@@ -47,6 +48,8 @@ INSTALLED_APPS = [
     "core.idempotency",
     "apps.engine_intents",
     "apps.support",
+    "apps.media",
+    "apps.notifications",
 ]
 KODERA_LOOPBACK_ISSUERS = False
 KODERA_AUTH_TRUST = auth_trust(os.environ)
@@ -97,3 +100,7 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 # this deployment cannot reconcile; enabling it requires a route and replay tests.
 if KODERA_PAYMENT_PROVIDER == "stripe":
     raise ImproperlyConfigured("Stripe payments require a routed reconciliation webhook")
+
+# Application keys only; the API never loads object-storage or VAPID private credentials.
+KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
+(KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)

@@ -40,8 +40,8 @@ htmlcov/
 rendered/
 *.log
 *.sqlite3
-media/
-staticfiles/
+/media/
+/staticfiles/
 
 # --- Assistant and agent tooling ---------------------------------------------
 # Local, per-developer session state from coding assistants. None of it is

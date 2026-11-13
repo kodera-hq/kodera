@@ -27,6 +27,11 @@
       "path": "/slug-availability"
     },
     {
+      "operation_id": "completeAttachmentUpload",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/complete"
+    },
+    {
       "operation_id": "consumeOwnerClaim",
       "method": "POST",
       "path": "/owner-claims/actions/consume"
@@ -40,6 +45,11 @@
       "operation_id": "createAbuseReport",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/reports"
+    },
+    {
+      "operation_id": "createAttachmentUpload",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/attachments/uploads"
     },
     {
       "operation_id": "createCategory",
@@ -87,6 +97,11 @@
       "path": "/organisations/{organisation_id}/workspace/categories/{category_id}"
     },
     {
+      "operation_id": "deletePushSubscription",
+      "method": "DELETE",
+      "path": "/push/subscriptions/{device_id}"
+    },
+    {
       "operation_id": "discoverRealm",
       "method": "POST",
       "path": "/auth/discover"
@@ -95,6 +110,11 @@
       "operation_id": "generateDpa",
       "method": "POST",
       "path": "/organisations/{organisation_id}/dpa"
+    },
+    {
+      "operation_id": "getAttachment",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}"
     },
     {
       "operation_id": "getChannelAccess",
@@ -177,6 +197,11 @@
       "path": "/invoices/{invoice_id}/payment-link"
     },
     {
+      "operation_id": "getPushPublicKey",
+      "method": "GET",
+      "path": "/push/public-key"
+    },
+    {
       "operation_id": "getSubscription",
       "method": "GET",
       "path": "/subscriptions/{subscription_id}"
@@ -252,6 +277,11 @@
       "path": "/organisations/{organisation_id}/memberships"
     },
     {
+      "operation_id": "listNotifications",
+      "method": "GET",
+      "path": "/notifications"
+    },
+    {
       "operation_id": "listOrders",
       "method": "GET",
       "path": "/organisations/{organisation_id}/orders"
@@ -285,6 +315,11 @@
       "operation_id": "listWorkspaceInviteLinks",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/invite-links"
+    },
+    {
+      "operation_id": "markNotificationsRead",
+      "method": "POST",
+      "path": "/notifications/read"
     },
     {
       "operation_id": "moderateWorkspaceMember",
@@ -327,6 +362,11 @@
       "path": "/workspace-invites/preview"
     },
     {
+      "operation_id": "putPushSubscription",
+      "method": "PUT",
+      "path": "/push/subscriptions/{device_id}"
+    },
+    {
       "operation_id": "redeemWorkspaceInvite",
       "method": "POST",
       "path": "/workspace-invites/redeem"
@@ -360,6 +400,11 @@
       "operation_id": "unarchiveChannel",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/unarchive"
+    },
+    {
+      "operation_id": "unfurlUrl",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/unfurl"
     }
   ]
 }

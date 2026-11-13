@@ -38,6 +38,8 @@ from .urls import urlpatterns as diagnostics
 urlpatterns = [
     *diagnostics,
     path("", include("apps.workspaces.api.moderation_urls")),
+    path("", include("apps.media.api.urls")),
+    path("", include("apps.notifications.api.urls")),
     path("api/v1/me", me),
     path("api/v1/workspaces/instant-claim", instant_claim),
     path("api/v1/auth/discover", discovery),
