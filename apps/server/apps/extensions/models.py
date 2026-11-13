@@ -232,3 +232,23 @@ class WorkspaceCutoff(models.Model):
 
     def __str__(self) -> str:
         return f"extension cutoff {self.organisation_id}"
+
+
+class ErasureAdmission(models.Model):
+    """Immutable local admission bound to the authoritative Core erasure inventory."""
+
+    erasure_id = models.UUIDField(primary_key=True)
+    organisation_id = models.UUIDField(unique=True)
+    cutoff_at = models.DateTimeField()
+    inventory_sha256 = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="extension_erasure_inventory_digest",
+                condition=Q(inventory_sha256__regex=r"^[a-f0-9]{64}$"),
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"extension erasure admission {self.erasure_id}"
