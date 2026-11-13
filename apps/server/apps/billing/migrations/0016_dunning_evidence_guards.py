@@ -69,7 +69,17 @@ CREATE TRIGGER billing_dunning_dispute_guard BEFORE INSERT OR UPDATE OR DELETE O
 
 class Migration(migrations.Migration):
     dependencies = [("billing", "0015_dunning_checkpoints")]
-    operations = [migrations.RunSQL(FORWARD, '''DROP TRIGGER billing_dunning_dispute_guard ON billing_dunningdispute;
+    operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+migrations.RunSQL(FORWARD, '''DROP TRIGGER billing_dunning_dispute_guard ON billing_dunningdispute;
 DROP FUNCTION billing_dunning_dispute_guard();
 DROP TRIGGER billing_dunning_action_guard ON billing_dunningaction;
-DROP FUNCTION billing_dunning_action_guard();''')]
+DROP FUNCTION billing_dunning_action_guard();'''),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+    ]
