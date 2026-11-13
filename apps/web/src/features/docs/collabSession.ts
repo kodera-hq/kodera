@@ -388,7 +388,13 @@ export class CollabSessionController {
       } catch {
         this.transitionStatus('offline-buffered')
       }
-    } else if (this.fetchSession !== undefined && this.status !== 'forbidden') {
+    } else if (
+      this.fetchSession !== undefined &&
+      this.status !== 'forbidden' &&
+      // `local` is final: the server declined collaboration and nothing reconnects, so the page is
+      // saved as Markdown over REST. Marking an edit there as buffered would stop that save.
+      this.status !== 'local'
+    ) {
       this.transitionStatus('offline-buffered')
     }
   }

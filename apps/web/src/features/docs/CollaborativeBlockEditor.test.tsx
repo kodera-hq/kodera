@@ -237,4 +237,83 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
 
     expect(container.querySelectorAll('[style]')).toHaveLength(0)
   })
+
+  describe('a server-backed page before its realtime state arrives', () => {
+    const page: WorkspacePageRecord = {
+      id: 'doc-live',
+      parentId: null,
+      title: 'Runbook',
+      markdown: 'A long runbook the editor has not received yet.',
+      role: 'editor',
+      updatedAt: '2026-01-01T00:00:00Z',
+    }
+    const neverOpens = () => ({
+      binaryType: 'arraybuffer' as BinaryType,
+      readyState: 0,
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      send: () => undefined,
+      close: () => undefined,
+    })
+
+    // The edit waits for the page's tag and for the session status the case is about, so a
+    // missing tag or an edit made before the status settled cannot be what keeps REST silent.
+    const editOnce = async (
+      collab: () => ReturnType<typeof docsApi.createWorkspaceDocumentCollabSession>,
+      statusLabel: RegExp
+    ) => {
+      const user = userEvent.setup()
+      vi.spyOn(docsApi, 'listWorkspaceDocuments').mockResolvedValue([page])
+      const get = vi
+        .spyOn(docsApi, 'getWorkspaceDocument')
+        .mockResolvedValue({ document: page, etag: '"t-1"' })
+      vi.spyOn(docsApi, 'listWorkspaceDocumentBacklinks').mockResolvedValue([])
+      vi.spyOn(docsApi, 'createWorkspaceDocumentCollabSession').mockImplementation(collab)
+      const put = vi
+        .spyOn(docsApi, 'updateWorkspaceDocument')
+        .mockResolvedValue({ document: page, etag: '"t-2"' })
+      render(
+        <WorkspaceCollaborativeDocs
+          organisationId="org-1"
+          currentUser={{ id: 'u-1', name: 'Alex' }}
+          webSocketFactory={neverOpens}
+        />
+      )
+      await waitFor(() => expect(get).toHaveBeenCalledWith('org-1', 'doc-live', expect.anything()))
+      await get.mock.results[0]?.value
+      await waitFor(() =>
+        expect(screen.getByTestId('docs-collab-status-pill')).toHaveTextContent(statusLabel)
+      )
+      await user.click(await screen.findByRole('button', { name: /Insérer un bloc/i }))
+      await user.click(screen.getByTestId('docs-slash-item-diagram'))
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      return put
+    }
+
+    it('never writes the unseeded editor body over REST, which would replace the page', async () => {
+      const put = await editOnce(async () => ({
+        wsUrl: 'wss://collab.example.org/documents/collab',
+        token: 'ticket',
+        expiresAt: '2099-01-01T00:00:00Z',
+        role: 'editor',
+      }), /Connexion en cours/)
+      expect(put).not.toHaveBeenCalled()
+    })
+
+    it('still saves Markdown over REST when the server declines collaboration', async () => {
+      const put = await editOnce(async () => {
+        throw new ApiProblem({ type: null, status: 501, title: 'Not Implemented' })
+      }, /Édition locale/)
+      await waitFor(() =>
+        expect(put).toHaveBeenCalledWith(
+          'org-1',
+          'doc-live',
+          '"t-1"',
+          expect.objectContaining({ markdown: expect.any(String) })
+        )
+      )
+    })
+  })
 })

@@ -469,11 +469,14 @@ export function WorkspaceCollaborativeDocs({
     commitDocs((prev) =>
       prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: nextMarkdown } : d))
     )
-    // While the realtime session is synced, the collaboration server commits the body and its
-    // Markdown itself. A second REST write of the same body carried the tag read on open, which
-    // that commit had already made stale: it failed with 412 and showed a save error on every
-    // edit, and it would replace the whole fragment under a collaborator typing at the same time.
-    if (collabSnapshot.status === 'synced') return
+    // With a server session the body travels over the realtime socket only. While it is synced the
+    // collaboration server commits the body and its Markdown itself: a second REST write carried
+    // the tag read on open, which that commit had made stale, so it failed with 412 on every edit
+    // and would replace the whole fragment under a collaborator typing at the same time. Before
+    // the server state arrives (connecting, reconnecting, offline) the editor is not seeded, so
+    // the body it serializes is a fragment of the page and a REST write would replace the page
+    // with it. Markdown goes over REST only when it is the document: the same rule as seeding.
+    if (!maySeedFromMarkdown(isRemoteMode, collabSnapshot.status)) return
     scheduleRemotePatch(currentDoc.id, { markdown: nextMarkdown })
   }
 
