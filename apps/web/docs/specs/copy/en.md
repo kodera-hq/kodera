@@ -1631,6 +1631,39 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.audio.action-test-sound` | Test the sound |
 | `console.workspace.audio.problem-test-sound` | The test sound could not play on this output. Choose another, then try again. |
 | `console.workspace.audio.problem-microphone-stuck` | Your microphone could not be turned off: the call was ended so that no one can hear you. |
+| `console.workspace.audio.action-camera-on` | Turn camera on |
+| `console.workspace.audio.action-camera-off` | Turn camera off |
+| `console.workspace.audio.action-screen-on` | Share screen |
+| `console.workspace.audio.action-screen-off` | Stop sharing screen |
+| `console.workspace.audio.label-stage` | Call video |
+| `console.workspace.audio.label-camera-of` | {name}’s camera |
+| `console.workspace.audio.label-screen-of` | Screen shared by {name} |
+| `console.workspace.audio.label-your-camera` | Your camera |
+| `console.workspace.audio.label-your-screen` | Your shared screen |
+| `console.workspace.audio.action-spotlight` | Spotlight |
+| `console.workspace.audio.action-unspotlight` | Remove spotlight |
+| `console.workspace.audio.action-picture-in-picture` | Open picture-in-picture |
+| `console.workspace.audio.action-dock-stage` | Shrink video to a thumbnail |
+| `console.workspace.audio.action-expand-stage` | Expand video |
+| `console.workspace.audio.problem-camera` | The camera could not start. |
+| `console.workspace.audio.problem-camera-denied` | The browser does not allow Kodera to use the camera. Allow it in the site settings, then try again. |
+| `console.workspace.audio.problem-camera-missing` | No camera is connected. |
+| `console.workspace.audio.problem-camera-in-use` | The camera is in use by another application. |
+| `console.workspace.audio.problem-screen` | The screen could not be shared. |
+| `console.workspace.audio.problem-video-forbidden` | In this room you can listen but not speak: no camera or screen sharing. |
+| `console.workspace.audio.label-rejoin-waiting` | Connection lost. Trying again shortly (attempt {attempt} of {attempts}). |
+| `console.workspace.audio.label-rejoin-trying` | Reconnecting (attempt {attempt} of {attempts})… |
+| `console.workspace.audio.label-rejoin-offline` | Offline: reconnecting waits for the network to come back. |
+| `console.workspace.audio.label-rejoin-gave-up` | The connection could not be restored. |
+| `console.workspace.audio.label-resuming` | Unstable connection: resuming… |
+| `console.workspace.audio.action-rejoin-now` | Try again now |
+| `console.workspace.audio.label-input-mode` | Speaking |
+| `console.workspace.audio.option-voice` | Open microphone |
+| `console.workspace.audio.option-push-to-talk` | Push to talk |
+| `console.workspace.audio.hint-push-to-talk` | Hold the key below the escape key to speak. |
+| `console.workspace.audio.label-noise-suppression` | Noise suppression |
+| `console.workspace.audio.status-push-to-talk` | Push to talk |
+| `console.workspace.audio.label-already-here` | Already in the room |
 | `console.workspace.audio.confirm-leave-title` | Leave the call? |
 | `console.workspace.audio.confirm-leave-body` | Leaving this page will end your call. Everyone else stays in the room. |
 | `console.workspace.audio.action-confirm-leave` | Leave the call |

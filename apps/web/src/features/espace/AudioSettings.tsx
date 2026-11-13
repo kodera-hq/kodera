@@ -1,15 +1,17 @@
 // « Réglages audio »: the member's microphone and output, the meter, and « Tester le son »
-// (spec 11, « Choosing the microphone and the output »). A popover from the call dock: the call
-// goes on behind it.
+// (spec 11, « Choosing the microphone and the output »), how the member speaks (open microphone or
+// push-to-talk) and the browser's noise suppression (docs/specs/espace-video-and-screenshare.md).
+// A popover from the call dock: the call goes on behind it.
 
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
-import { useEffect, useId, useMemo, useState, type Ref } from 'react'
+import { useEffect, useId, useMemo, useState, useSyncExternalStore, type Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { EspaceGlyph } from '../../ui/icons/EspaceGlyph'
 import { Popover } from '../../ui/Popover/Popover'
 import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { Select } from '../../ui/Select/Select'
+import { Switch } from '../../ui/Switch/Switch'
 import { cx } from '../../ui/cx'
 import { initialCssProperty } from '../../ui/cssom'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
@@ -25,6 +27,7 @@ import {
   type AudioDeviceChoice,
   type AudioDevices,
 } from './audio/devices'
+import { callPreferences, type CallInputMode, type CallPreferences } from './audio/callPreferences'
 
 /** A Select value cannot be empty: this one stands for the system's default. */
 const DEFAULT = 'default'
@@ -40,7 +43,11 @@ export interface AudioSettingsCall {
   getDeviceChoice: () => AudioDeviceChoice
   chooseInput: (input: string | null) => Promise<void>
   chooseOutput: (output: string | null) => Promise<void>
+  /** Applies noise suppression to the live microphone too; without it, the next capture has it. */
+  setNoiseSuppression?: (on: boolean) => Promise<void>
 }
+
+const INPUT_MODES: readonly CallInputMode[] = ['voice', 'push-to-talk']
 
 export interface AudioSettingsProps {
   embedded?: boolean
@@ -57,6 +64,8 @@ export interface AudioSettingsProps {
   playTone?: (output: string | null) => Promise<void>
   /** The sound engine for pack selection, mode controls and previews; shared singleton by default. */
   engine?: SoundEngine
+  /** How the member speaks, and noise suppression: this browser's preferences by default. */
+  preferences?: CallPreferences
 }
 
 function watchMediaDevices(listener: () => void): () => void {
@@ -76,7 +85,9 @@ export function AudioSettings({
   canChooseOutput: outputChoosable = canChooseOutput(),
   playTone = playTestTone,
   engine = soundEngine,
+  preferences = callPreferences,
 }: AudioSettingsProps) {
+  const speaking = useSyncExternalStore(preferences.subscribe, preferences.getSnapshot)
   // Starts empty, then the meter scales it; never a `style` attribute (src/ui/cssom.ts).
   const meterFillRef = useMemo(
     () => initialCssProperty<HTMLSpanElement>('transform', 'scaleX(0)', meterRef),
@@ -176,6 +187,14 @@ export function AudioSettings({
         setDeviceError(true)
       })
   }
+  const chooseInputMode = (value: string) => {
+    const mode = INPUT_MODES.find((candidate) => candidate === value)
+    if (mode !== undefined) preferences.update({ inputMode: mode })
+  }
+  const chooseNoiseSuppression = (on: boolean) => {
+    if (call.setNoiseSuppression === undefined) preferences.update({ noiseSuppression: on })
+    else void call.setNoiseSuppression(on).catch(() => setDeviceError(true))
+  }
   const handlePackChange = (value: string) => {
     const nextPack = SOUND_PACK_IDS.find((candidate) => candidate === value)
     if (!nextPack) return
@@ -230,6 +249,25 @@ export function AudioSettings({
             </span>
           </>
         )}
+      </div>
+      <div className="flex flex-col gap-3">
+        <RadioGroup
+          label={t('console.workspace.audio.label-input-mode')}
+          value={speaking.inputMode}
+          onValueChange={chooseInputMode}
+          options={[
+            { value: 'voice', label: t('console.workspace.audio.option-voice') },
+            { value: 'push-to-talk', label: t('console.workspace.audio.option-push-to-talk') },
+          ]}
+          {...(speaking.inputMode === 'push-to-talk'
+            ? { help: t('console.workspace.audio.hint-push-to-talk') }
+            : {})}
+        />
+        <Switch
+          label={t('console.workspace.audio.label-noise-suppression')}
+          checked={speaking.noiseSuppression}
+          onCheckedChange={chooseNoiseSuppression}
+        />
       </div>
       <div className="flex flex-col gap-2">
         {outputChoosable ? (

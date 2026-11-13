@@ -14,6 +14,12 @@
 //
 // Who is in a room is not read from here: the sidebar keeps reading the room's occupancy state
 // event, which everyone in the workspace sees, not only those in the call.
+//
+// Video is the member's to turn on, and never carried from one room to the next: the camera and a
+// shared screen start off in every call, stop their capture the moment the member turns them off,
+// and stop with the call (docs/specs/espace-video-and-screenshare.md). A screen is shared with the
+// `detail` content hint, so text and lines stay sharp rather than smooth. A screen reads the
+// feeds through `videos` and draws each in its own `<video>` (`attachVideo`); the SDK stays here.
 
 import {
   ConnectionState,
@@ -25,11 +31,17 @@ import {
   setLogLevel,
   Track,
   type LocalTrack,
+  type LocalTrackPublication,
   type Participant,
   type RemoteTrack,
   type RemoteTrackPublication,
   type RoomEventCallbacks,
   type RoomOptions,
+  type ScreenShareCaptureOptions,
+  type TrackPublication,
+  type TrackPublishOptions,
+  type VideoCaptureOptions,
+  VideoPresets,
 } from 'livekit-client'
 import {
   fetchRoomGrant,
@@ -40,6 +52,7 @@ import {
 import { SILENT_METER, webAudioMeter, type MicMeter } from './meter'
 import { readDeviceChoice, saveDeviceChoice, type AudioDeviceChoice } from './devices'
 import { soundEngine, type SoundEngine } from '../../sounds/SoundEngine'
+import { callPreferences, type CallPreferences } from './callPreferences'
 
 export type CallStatus = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'ended' | 'failed'
 
@@ -67,6 +80,37 @@ export type CallProblem =
    * ended so that nothing the member says reaches the room.
    */
   | 'microphone-stuck'
+
+/** What a video feed shows: a person's camera, or a screen they share. */
+export type VideoSource = 'camera' | 'screen'
+
+/** A video the call can draw: `attachVideo(key, element)` puts it in a `<video>`. */
+export interface VideoFeed {
+  /** LiveKit's id for the track; stable while it is published. */
+  readonly key: string
+  /** Whose it is, by Matrix user id. */
+  readonly userId: string
+  readonly source: VideoSource
+  /** The member's own camera or screen. */
+  readonly local: boolean
+}
+
+/** The member's camera or screen: off, being turned on (a permission prompt, say), or on. */
+export type MediaState = 'off' | 'starting' | 'on'
+
+export type VideoProblem =
+  /** The camera would not start, for a reason the browser did not say. */
+  | 'camera'
+  /** The browser refuses the camera to this site. */
+  | 'camera-denied'
+  /** The browser finds no camera. */
+  | 'camera-missing'
+  /** The camera is held by another application. */
+  | 'camera-in-use'
+  /** The screen could not be shared (a refusal of the picker is not a problem: it is a choice). */
+  | 'screen'
+  /** The member may listen and not speak in this room: no video either. */
+  | 'video-forbidden'
 
 export interface CallSnapshot {
   status: CallStatus
@@ -111,6 +155,18 @@ export interface CallSnapshot {
    * the choice is kept for when it is back. Optional so that a screen's own snapshot need not.
    */
   inputMissing?: boolean
+  /**
+   * The videos the call can draw: shared screens first, then cameras, the member's own last. A
+   * camera turned off (muted) is not listed. Optional, like the fields below, so that a screen's
+   * own idle snapshot need not.
+   */
+  videos?: readonly VideoFeed[]
+  /** The member's camera. */
+  camera?: MediaState
+  /** The member's shared screen. */
+  screen?: MediaState
+  /** Why the camera or the screen is off when the member asked for it. */
+  videoProblem?: VideoProblem
 }
 
 /** What the controller uses of a LiveKit `Room`; tests hand it a fake. */
@@ -158,6 +214,8 @@ export interface CallControllerOptions {
   }
   /** Where the call's interface cues play: the shared sound engine by default. */
   sounds?: CallSoundPort
+  /** The member's call preferences (noise suppression): this browser's by default. */
+  preferences?: Pick<CallPreferences, 'getSnapshot' | 'update'>
 }
 
 /** Muting stops the capture at once and is confirmed within a tick: this is for a stuck SDK. */
@@ -175,7 +233,72 @@ const IDLE: CallSnapshot = Object.freeze({
   participants: Object.freeze([]) as readonly string[],
   self: null,
   playbackBlocked: false,
+  videos: Object.freeze([]) as readonly VideoFeed[],
+  camera: 'off',
+  screen: 'off',
 })
+
+/** The camera, at 720p: enough for a tile, and kind to the uplink of a call of several. */
+const CAMERA_CAPTURE: VideoCaptureOptions = Object.freeze({
+  resolution: VideoPresets.h720.resolution,
+})
+
+/**
+ * A shared screen: no sound, the `detail` content hint (text and lines kept sharp, frames dropped
+ * rather than detail), and Kodera's own tab not offered, so the member does not share the call
+ * into itself. No resolution is asked: Safari captures at a low one when any is.
+ */
+export const SCREEN_CAPTURE: ScreenShareCaptureOptions = Object.freeze({
+  audio: false,
+  contentHint: 'detail',
+  selfBrowserSurface: 'exclude',
+  surfaceSwitching: 'include',
+  systemAudio: 'exclude',
+})
+
+/** A shared screen keeps its resolution when the network is short, and loses frames instead. */
+const SCREEN_PUBLISH: TrackPublishOptions = Object.freeze({
+  degradationPreference: 'maintain-resolution',
+})
+
+const SOURCE_OF: Record<VideoSource, Track.Source> = {
+  camera: Track.Source.Camera,
+  screen: Track.Source.ScreenShare,
+}
+
+function videoSourceOf(source: Track.Source): VideoSource | null {
+  if (source === Track.Source.Camera) return 'camera'
+  if (source === Track.Source.ScreenShare) return 'screen'
+  return null
+}
+
+function cameraProblemOf(error: unknown): VideoProblem {
+  switch (MediaDeviceFailure.getFailure(error)) {
+    case MediaDeviceFailure.PermissionDenied:
+      return 'camera-denied'
+    case MediaDeviceFailure.NotFound:
+      return 'camera-missing'
+    case MediaDeviceFailure.DeviceInUse:
+      return 'camera-in-use'
+    default:
+      return 'camera'
+  }
+}
+
+/** A screen the member chose not to share (the picker closed) says nothing; anything else does. */
+function screenProblemOf(error: unknown): VideoProblem | undefined {
+  return (error as { name?: unknown } | null)?.name === 'NotAllowedError' ? undefined : 'screen'
+}
+
+/** What the controller needs of a video track: to be drawn in an element, and to stop. */
+interface VideoEntry {
+  readonly track: Pick<Track, 'attach' | 'detach'> & Partial<Pick<LocalTrack, 'stop'>>
+  readonly userId: string
+  readonly source: VideoSource
+  readonly local: boolean
+  muted: boolean
+  readonly elements: Set<HTMLMediaElement>
+}
 
 /**
  * The Matrix user id of a LiveKit identity. The room-access service names every participant
@@ -307,6 +430,12 @@ interface Session {
   cutting: number
   /** This call's level reader, closed with it. */
   readonly meter: MicMeter
+  /** The videos the call can draw, by track id. */
+  readonly videos: Map<string, VideoEntry>
+  /** What the member asked of the camera and the screen in this call: never carried to the next. */
+  readonly videoWanted: Record<VideoSource, boolean>
+  /** Counts the member's operations on each: the outcome of a replaced one says nothing. */
+  readonly videoGeneration: Record<VideoSource, number>
 }
 
 export class CallController {
@@ -320,6 +449,7 @@ export class CallController {
   readonly #createMeter: () => MicMeter
   readonly #saveChoice: (choice: AudioDeviceChoice) => boolean
   readonly #sounds: NonNullable<CallControllerOptions['sounds']>
+  readonly #preferences: NonNullable<CallControllerOptions['preferences']>
   /** The microphone and output the member chose, applied to every call. */
   #deviceChoice: AudioDeviceChoice
   readonly #listeners = new Set<() => void>()
@@ -364,6 +494,7 @@ export class CallController {
     this.#saveChoice = options.deviceChoice?.save ?? saveDeviceChoice
     this.#deviceChoice = (options.deviceChoice?.read ?? readDeviceChoice)()
     this.#sounds = options.sounds ?? soundEngine
+    this.#preferences = options.preferences ?? callPreferences
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -421,7 +552,11 @@ export class CallController {
         session = this.#open()
         this.#session = session
         this.#mutedBeforeDeafen = this.#chosenMuted
-        this.#reset({ status: 'connecting', roomId, ...this.#choices() })
+        const choices = this.#choices()
+        // Push-to-talk: the microphone stays off until the key is held, from the join on, so it
+        // never opens for the moment between connecting and the key's binding.
+        if (this.#preferences.getSnapshot().inputMode === 'push-to-talk') choices.muted = true
+        this.#reset({ status: 'connecting', roomId, ...choices })
         // Autoplay policies: playback is allowed once started from a user gesture, which is now.
         void session.room.startAudio().catch(() => undefined)
       } finally {
@@ -598,6 +733,234 @@ export class CallController {
     } catch {
       // A browser that cannot choose plays on the system's output; the panel says so.
     }
+  }
+
+  /**
+   * Turns the member's camera on or off in the call they are in. Off stops the capture at once,
+   * before LiveKit unpublishes it, so the browser's camera light goes out with the click. On asks
+   * the browser (a prompt, the first time), and says why when it refuses (`videoProblem`).
+   */
+  setCameraEnabled = (on: boolean): Promise<void> => this.#setVideo('camera', on)
+
+  /**
+   * Shares a screen the member picks, or stops sharing it. The browser's own « Arrêter le
+   * partage » ends it too. Closing the picker without choosing is not a problem: it is a choice.
+   */
+  setScreenShareEnabled = (on: boolean): Promise<void> => this.#setVideo('screen', on)
+
+  /**
+   * Draws the feed `key` (from `videos`) in `element`, muted (the call's sound plays through its
+   * own hidden elements), and returns how to stop drawing it there. A feed gone, or no call, draws
+   * nothing.
+   */
+  attachVideo = (key: string, element: HTMLVideoElement): (() => void) => {
+    const session = this.#session
+    const entry = session?.videos.get(key)
+    if (session == null || session.closed || entry === undefined) return () => undefined
+    element.muted = true
+    element.playsInline = true
+    element.autoplay = true
+    entry.track.attach(element)
+    entry.elements.add(element)
+    return () => {
+      if (!entry.elements.delete(element)) return
+      try {
+        entry.track.detach(element)
+      } catch {
+        // The element is the caller's, and goes with it.
+      }
+    }
+  }
+
+  /** Whether the browser's noise suppression cleans the member's microphone. */
+  getNoiseSuppression = (): boolean => this.#preferences.getSnapshot().noiseSuppression
+
+  /**
+   * Turns the browser's noise suppression on or off, for the microphone capturing now and every
+   * one after, and remembers it. A browser that cannot change it on a live capture applies it at
+   * the next.
+   */
+  setNoiseSuppression = async (on: boolean): Promise<void> => {
+    this.#preferences.update({ noiseSuppression: on })
+    const session = this.#session
+    if (session === null || session.closed) return
+    let capture: MediaStreamTrack | undefined
+    try {
+      capture = session.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track
+        ?.mediaStreamTrack
+    } catch {
+      return
+    }
+    if (capture === undefined || capture.readyState === 'ended') return
+    try {
+      await capture.applyConstraints({ ...capture.getConstraints(), noiseSuppression: on })
+    } catch {
+      // Applied at the next capture.
+    }
+  }
+
+  /** The capture's processing, as the member chose it: only what differs from the default. */
+  #processing(): { noiseSuppression?: false } {
+    return this.#preferences.getSnapshot().noiseSuppression ? {} : { noiseSuppression: false }
+  }
+
+  async #setVideo(source: VideoSource, on: boolean): Promise<void> {
+    const session = this.#session
+    if (session === null || session.closed || !this.#live()) return
+    if (!on) {
+      ++session.videoGeneration[source]
+      session.videoWanted[source] = false
+      this.#set({ [source]: 'off', videoProblem: undefined })
+      await this.#stopVideo(session, source)
+      return
+    }
+    if (this.#snapshot.listenOnly) {
+      this.#set({ videoProblem: 'video-forbidden' })
+      return
+    }
+    // Already on, or on its way: a second press is not a second operation.
+    if (session.videoWanted[source]) return
+    const generation = ++session.videoGeneration[source]
+    session.videoWanted[source] = true
+    this.#set({ [source]: 'starting', videoProblem: undefined })
+    const local = session.room.localParticipant
+    let publication: LocalTrackPublication | undefined
+    try {
+      publication =
+        source === 'camera'
+          ? await local.setCameraEnabled(true, CAMERA_CAPTURE)
+          : await local.setScreenShareEnabled(true, SCREEN_CAPTURE, SCREEN_PUBLISH)
+    } catch (error) {
+      if (this.#session !== session || session.closed) return
+      if (generation !== session.videoGeneration[source]) return
+      session.videoWanted[source] = false
+      const problem = source === 'camera' ? cameraProblemOf(error) : screenProblemOf(error)
+      this.#set({ [source]: 'off', videoProblem: problem })
+      // Whatever it left capturing goes too.
+      await this.#stopVideo(session, source)
+      return
+    }
+    if (this.#session !== session || session.closed) return
+    if (generation !== session.videoGeneration[source] || !session.videoWanted[source]) {
+      // Turned off while it started (a prompt open): it goes now.
+      await this.#stopVideo(session, source)
+      return
+    }
+    publication ??= local.getTrackPublication(SOURCE_OF[source])
+    if (publication?.track === undefined) {
+      session.videoWanted[source] = false
+      this.#set({ [source]: 'off' })
+      return
+    }
+    this.#localVideoPublished(session, source, publication)
+  }
+
+  /** The member's camera or screen, published: drawn, or stopped if they no longer want it. */
+  #localVideoPublished(
+    session: Session,
+    source: VideoSource,
+    publication: LocalTrackPublication
+  ): void {
+    const track = publication.track
+    if (track === undefined) return
+    if (!session.videoWanted[source]) {
+      // Published for an operation the member has since replaced, or never asked in this call.
+      void this.#stopVideo(session, source)
+      return
+    }
+    if (source === 'screen') {
+      try {
+        // LiveKit sets it from `SCREEN_CAPTURE`; a browser that dropped it gets it again.
+        if (track.mediaStreamTrack.contentHint !== 'detail') {
+          track.mediaStreamTrack.contentHint = 'detail'
+        }
+      } catch {
+        // The hint is advice; the share goes on without it.
+      }
+    }
+    const userId = matrixUserOf(session.room.localParticipant.identity)
+    if (userId !== null && !session.videos.has(publication.trackSid)) {
+      session.videos.set(publication.trackSid, {
+        track,
+        userId,
+        source,
+        local: true,
+        muted: false,
+        elements: new Set(),
+      })
+    }
+    this.#set({ [source]: 'on', videos: this.#feeds(session) })
+  }
+
+  /**
+   * Stops the member's camera or screen: its capture ends at once, through LiveKit and on the
+   * browser's track, before it is unpublished. A shared screen's sound goes with it.
+   */
+  async #stopVideo(session: Session, source: VideoSource): Promise<void> {
+    const local = session.room.localParticipant
+    const sources =
+      source === 'camera'
+        ? [Track.Source.Camera]
+        : [Track.Source.ScreenShare, Track.Source.ScreenShareAudio]
+    const unpublishing: Promise<unknown>[] = []
+    for (const trackSource of sources) {
+      let publication: LocalTrackPublication | undefined
+      try {
+        publication = local.getTrackPublication(trackSource)
+      } catch {
+        continue
+      }
+      const track = publication?.track
+      if (publication === undefined || track === undefined) continue
+      endCapture(track)
+      this.#removeVideo(session, publication.trackSid)
+      unpublishing.push(local.unpublishTrack(track, true).catch(() => undefined))
+    }
+    if (
+      this.#session === session &&
+      this.#snapshot[source] !== 'off' &&
+      !session.videoWanted[source]
+    ) {
+      this.#set({ [source]: 'off' })
+    }
+    await Promise.all(unpublishing)
+  }
+
+  #addVideo(session: Session, key: string, entry: VideoEntry): void {
+    const previous = session.videos.get(key)
+    if (previous !== undefined) this.#detachVideo(previous)
+    session.videos.set(key, entry)
+    this.#set({ videos: this.#feeds(session) })
+  }
+
+  #removeVideo(session: Session, key: string): void {
+    const entry = session.videos.get(key)
+    if (entry === undefined) return
+    session.videos.delete(key)
+    this.#detachVideo(entry)
+    if (this.#session === session) this.#set({ videos: this.#feeds(session) })
+  }
+
+  #detachVideo(entry: VideoEntry): void {
+    for (const element of entry.elements) {
+      try {
+        entry.track.detach(element)
+      } catch {
+        // The element is the caller's.
+      }
+    }
+    entry.elements.clear()
+  }
+
+  /** Shared screens first, then cameras; the member's own after the others'. Muted ones hidden. */
+  #feeds(session: Session): VideoFeed[] {
+    const feeds: VideoFeed[] = []
+    for (const [key, entry] of session.videos) {
+      if (entry.muted) continue
+      feeds.push({ key, userId: entry.userId, source: entry.source, local: entry.local })
+    }
+    const rank = (feed: VideoFeed) => (feed.source === 'screen' ? 0 : 2) + (feed.local ? 1 : 0)
+    return feeds.sort((a, b) => rank(a) - rank(b))
   }
 
   /**
@@ -791,6 +1154,9 @@ export class CallController {
       cutting: 0,
       // From the join's click: a meter's audio context made later would start suspended.
       meter: this.#meter(),
+      videos: new Map(),
+      videoWanted: { camera: false, screen: false },
+      videoGeneration: { camera: 0, screen: 0 },
     }
     const on = <E extends keyof RoomEventCallbacks>(event: E, handler: RoomEventCallbacks[E]) => {
       room.on(event, handler)
@@ -802,16 +1168,44 @@ export class CallController {
     const { output } = this.#deviceChoice
     if (output !== null) void room.switchActiveDevice('audiooutput', output).catch(() => undefined)
 
-    on(RoomEvent.TrackSubscribed, (track, publication) => {
-      if (!mine() || track.kind !== Track.Kind.Audio) return
+    on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (!mine()) return
+      if (track.kind === Track.Kind.Video) {
+        const source = videoSourceOf(publication.source)
+        const identity: unknown = participant?.identity
+        const userId = typeof identity === 'string' ? matrixUserOf(identity) : null
+        if (source === null || userId === null) return
+        this.#addVideo(session, publication.trackSid, {
+          track,
+          userId,
+          source,
+          local: false,
+          muted: publication.isMuted,
+          elements: new Set(),
+        })
+        return
+      }
+      if (track.kind !== Track.Kind.Audio) return
       this.#attach(session, track, publication)
     })
-    on(RoomEvent.TrackUnsubscribed, (track) => {
+    on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+      if (session.videos.has(publication.trackSid)) {
+        this.#removeVideo(session, publication.trackSid)
+        return
+      }
       const element = session.elements.get(track)
       session.elements.delete(track)
       track.detach()
       element?.remove()
     })
+    const muteChanged = (publication: TrackPublication) => {
+      const entry = session.videos.get(publication.trackSid)
+      if (!mine() || entry === undefined || entry.muted === publication.isMuted) return
+      entry.muted = publication.isMuted
+      this.#set({ videos: this.#feeds(session) })
+    }
+    on(RoomEvent.TrackMuted, muteChanged)
+    on(RoomEvent.TrackUnmuted, muteChanged)
     on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
       if (mine()) this.#set({ speakers: usersOf(speakers) })
     })
@@ -834,7 +1228,24 @@ export class CallController {
     // However the microphone got published (a previous room's enable landing on this connection,
     // a republish after a reconnect), it goes again unless the member wants it now.
     on(RoomEvent.LocalTrackPublished, (publication) => {
-      if (mine() && publication.source === Track.Source.Microphone) void this.#dropMicrophone()
+      if (!mine()) return
+      if (publication.source === Track.Source.Microphone) {
+        void this.#dropMicrophone()
+        return
+      }
+      const source = videoSourceOf(publication.source)
+      if (source !== null) this.#localVideoPublished(session, source, publication)
+    })
+    on(RoomEvent.LocalTrackUnpublished, (publication) => {
+      if (!mine()) return
+      const source = videoSourceOf(publication.source)
+      if (source === null) return
+      this.#removeVideo(session, publication.trackSid)
+      // Stopped by the browser (« Arrêter le partage »), or the right to publish taken away.
+      if (session.videoWanted[source] && this.#snapshot[source] === 'on') {
+        session.videoWanted[source] = false
+        this.#set({ [source]: 'off' })
+      }
     })
     on(RoomEvent.ParticipantPermissionsChanged, (_previous, participant) => {
       if (!mine() || participant !== room.localParticipant) return
@@ -850,6 +1261,9 @@ export class CallController {
       const silencing = this.#turnOff(session)
       this.#set({ listenOnly: true, muted: true })
       void silencing
+      // No right to publish: no camera nor screen either, their capture stopped here too.
+      void this.#stopVideo(session, 'camera')
+      void this.#stopVideo(session, 'screen')
     })
     const reconnecting = () => {
       if (mine() && this.#snapshot.status === 'connected') this.#set({ status: 'reconnecting' })
@@ -962,6 +1376,7 @@ export class CallController {
         // track on the device it already has).
         await local.setMicrophoneEnabled(true, {
           deviceId: chosen === null ? SYSTEM_INPUT : { exact: chosen },
+          ...this.#processing(),
         })
       } catch (error) {
         if (chosen === null || !unplugged(error)) throw error
@@ -970,7 +1385,7 @@ export class CallController {
         // the call already has restarts on the device it was switched to, so it is switched too.
         this.#set({ inputMissing: true })
         await session.room.switchActiveDevice('audioinput', 'default', false)
-        await local.setMicrophoneEnabled(true, { deviceId: SYSTEM_INPUT })
+        await local.setMicrophoneEnabled(true, { deviceId: SYSTEM_INPUT, ...this.#processing() })
       }
     } catch (error) {
       if (generation !== this.#generation || this.#session !== session) return
@@ -1212,6 +1627,28 @@ export class CallController {
       element.remove()
     }
     session.elements.clear()
+    // The camera's and the screen's capture end now, as the microphone's does below.
+    for (const [key, entry] of session.videos) {
+      this.#detachVideo(entry)
+      if (entry.local) {
+        session.videos.delete(key)
+        try {
+          endCapture(entry.track as LocalTrack)
+        } catch {
+          // The disconnect stops it too.
+        }
+      }
+    }
+    session.videos.clear()
+    for (const source of ['camera', 'screen'] as const) {
+      session.videoWanted[source] = false
+      try {
+        const track = session.room.localParticipant.getTrackPublication(SOURCE_OF[source])?.track
+        if (track !== undefined) endCapture(track)
+      } catch {
+        // The disconnect stops it too.
+      }
+    }
     session.container.remove()
     try {
       session.meter.close()

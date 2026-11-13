@@ -149,6 +149,12 @@ export interface AudioCallLike {
   getDeviceChoice?: AudioSettingsCall['getDeviceChoice']
   chooseInput?: AudioSettingsCall['chooseInput']
   chooseOutput?: AudioSettingsCall['chooseOutput']
+  /** The browser's noise suppression on the member's microphone (`CallController`). */
+  setNoiseSuppression?: (on: boolean) => Promise<void>
+  /** The member's camera and shared screen, and drawing the call's video (`CallController`). */
+  setCameraEnabled?: (on: boolean) => Promise<void>
+  setScreenShareEnabled?: (on: boolean) => Promise<void>
+  attachVideo?: (key: string, element: HTMLVideoElement) => () => void
 }
 
 /** The audio room the dock names: the channel the member chose, as the sidebar labels it. */

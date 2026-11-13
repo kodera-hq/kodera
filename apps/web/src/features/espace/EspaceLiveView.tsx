@@ -117,10 +117,14 @@ function deviceSettingsOf(call: AudioCallLike): AudioSettingsCall | null {
   const { getDeviceChoice, chooseInput, chooseOutput } = call
   if (getDeviceChoice === undefined || chooseInput === undefined || chooseOutput === undefined)
     return null
+  const { setNoiseSuppression } = call
   return {
     getDeviceChoice,
     chooseInput: (input) => chooseInput.call(call, input),
     chooseOutput: (output) => chooseOutput.call(call, output),
+    ...(setNoiseSuppression === undefined
+      ? {}
+      : { setNoiseSuppression: (on: boolean) => setNoiseSuppression.call(call, on) }),
   }
 }
 

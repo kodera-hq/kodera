@@ -326,3 +326,41 @@ it('announces call state changes politely', () => {
   expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite')
   expect(screen.getByRole('status')).toHaveTextContent('Reconnecting')
 })
+
+describe('AudioDock camera and screen', () => {
+  it('draws real camera and screen toggles that say their state, in place of the preview', async () => {
+    const user = userEvent.setup()
+    const onCamera = vi.fn()
+    const onScreen = vi.fn()
+    setup({
+      layout: 'studio',
+      cameraUnavailable: 'La vidéo n’est pas disponible',
+      media: {
+        camera: { on: true, busy: false, label: 'Couper la caméra', onToggle: onCamera },
+        screen: { on: false, busy: true, label: 'Partager l’écran', onToggle: onScreen },
+      },
+    })
+    const camera = screen.getByRole('button', { name: 'Couper la caméra' })
+    const share = screen.getByRole('button', { name: 'Partager l’écran' })
+    expect(camera).toHaveAttribute('aria-pressed', 'true')
+    expect(share).toHaveAttribute('aria-pressed', 'false')
+    expect(share).toHaveAttribute('aria-busy', 'true')
+    // The « not available » camera gives way to the real one.
+    expect(screen.queryByRole('button', { name: 'La vidéo n’est pas disponible' })).toBeNull()
+    await user.click(camera)
+    await user.click(share)
+    expect(onCamera).toHaveBeenCalledTimes(1)
+    expect(onScreen).toHaveBeenCalledTimes(1)
+  })
+
+  it('draws no screen toggle where the browser cannot share one', () => {
+    setup({
+      media: { camera: { on: false, busy: false, label: 'Activer la caméra', onToggle: vi.fn() } },
+    })
+    expect(screen.getByRole('button', { name: 'Activer la caméra' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    expect(screen.queryByRole('button', { name: /écran/u })).toBeNull()
+  })
+})

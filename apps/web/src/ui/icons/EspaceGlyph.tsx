@@ -19,6 +19,12 @@ export type EspaceGlyphName =
   | 'reply'
   | 'open'
   | 'settings'
+  | 'camera'
+  | 'camera-off'
+  | 'spotlight'
+  | 'picture-in-picture'
+  | 'expand'
+  | 'shrink'
 
 const PATHS: Record<EspaceGlyphName, ReactNode> = {
   // Two sliders: the call's audio settings.
@@ -84,6 +90,33 @@ const PATHS: Record<EspaceGlyphName, ReactNode> = {
   leave: <path d="M2 9.5c3.5-3 8.5-3 12 0l-1.5 2-2.5-1v-1.5a6 6 0 0 0-4 0V10.5l-2.5 1z" />,
   // A hooked arrow: the message answers an earlier one.
   reply: <path d="M6 4L2.5 7.5 6 11M2.5 7.5H10a3.5 3.5 0 0 1 3.5 3.5v1" />,
+  // A video camera: the member's camera is on.
+  camera: (
+    <>
+      <rect x="1.5" y="4.5" width="9" height="7" rx="1.5" />
+      <path d="M10.5 7l4-2v6l-4-2" />
+    </>
+  ),
+  // The camera struck through: the shape, not a colour, says it is off.
+  'camera-off': (
+    <>
+      <rect x="1.5" y="4.5" width="9" height="7" rx="1.5" />
+      <path d="M10.5 7l4-2v6l-4-2M2.5 2.5l11 11" />
+    </>
+  ),
+  // A pin: this feed takes the stage.
+  spotlight: <path d="M6 2.5h4M7 2.5v4l-2.5 2.5h7L9 6.5v-4M8 9v4.5" />,
+  // A small frame inside a large one: the video in its own floating window.
+  'picture-in-picture': (
+    <>
+      <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
+      <rect x="8" y="8" width="5" height="3.5" rx="0.5" />
+    </>
+  ),
+  // Corners pulled outwards: make the video larger.
+  expand: <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />,
+  // Corners pulled inwards: shrink the video to a thumbnail.
+  shrink: <path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5" />,
   // An arrow leaving a frame: back to the call's own view.
   open: (
     <>

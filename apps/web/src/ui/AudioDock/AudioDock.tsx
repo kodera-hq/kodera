@@ -62,6 +62,15 @@ export type AudioDockLayout = 'sidebar' | 'banner' | 'studio'
 
 export type AudioDockStatus = 'connected' | 'connecting' | 'reconnecting'
 
+/** A camera or screen toggle the call can honour: `on` is pressed, `busy` while it starts. */
+export interface AudioDockMediaToggle {
+  on: boolean
+  busy: boolean
+  /** Its accessible name and tooltip, saying what a press does (« Activer la caméra »). */
+  label: string
+  onToggle: () => void
+}
+
 export interface AudioDockProps {
   /** The region's accessible name, e.g. « Appel en cours ». */
   participants?: readonly { id: string; name: string; speaking: boolean; roleLabel?: string }[]
@@ -100,6 +109,11 @@ export interface AudioDockProps {
    * dock's top row beside the call's name, before `onOpenCall`'s button.
    */
   settings?: ReactNode
+  /**
+   * The member's real camera and screen, before mute: toggles (`aria-pressed` while on), in place
+   * of the preview camera or the « not available » one.
+   */
+  media?: { camera: AudioDockMediaToggle; screen?: AudioDockMediaToggle }
 }
 
 // Filled only when connected; a hollow ring while the call is not yet, or no
@@ -158,16 +172,18 @@ interface ControlProps {
   glyph: EspaceGlyphName
   tone: keyof typeof TONE
   pressed?: boolean
+  busy?: boolean
   onClick: () => void
 }
 
-function Control({ layout, label, glyph, tone, pressed, onClick }: ControlProps) {
+function Control({ layout, label, glyph, tone, pressed, busy, onClick }: ControlProps) {
   return (
     <Tooltip content={label} names>
       <button
         type="button"
         aria-label={label}
         onClick={onClick}
+        {...(busy === true ? { 'aria-busy': true } : {})}
         {...(pressed === undefined ? {} : { 'aria-pressed': pressed })}
         className={cx(CONTROL_BASE, CONTROL_SHAPE[layout], TONE[tone])}
       >
@@ -198,6 +214,7 @@ export function AudioDock({
   cameraUnavailable,
   localParticipantId,
   previewCamera = false,
+  media,
 }: AudioDockProps) {
   const [cameraActive, setCameraActive] = useState(false)
   // Starts empty, then the caller scales it; never a `style` attribute (src/ui/cssom.ts).
@@ -332,7 +349,30 @@ export function AudioDock({
         </div>
       ) : null}
       <div className={CONTROLS[layout]}>
-        {previewCamera && participants?.some((person) => person.id === localParticipantId) ? (
+        {media !== undefined ? (
+          <>
+            <Control
+              layout={layout}
+              label={media.camera.label}
+              glyph={media.camera.on ? 'camera' : 'camera-off'}
+              tone={media.camera.on ? 'pressed' : 'idle'}
+              pressed={media.camera.on}
+              busy={media.camera.busy}
+              onClick={media.camera.onToggle}
+            />
+            {media.screen === undefined ? null : (
+              <Control
+                layout={layout}
+                label={media.screen.label}
+                glyph="screen"
+                tone={media.screen.on ? 'pressed' : 'idle'}
+                pressed={media.screen.on}
+                busy={media.screen.busy}
+                onClick={media.screen.onToggle}
+              />
+            )}
+          </>
+        ) : previewCamera && participants?.some((person) => person.id === localParticipantId) ? (
           <Tooltip content={copy.cameraHint}>
             <button
               type="button"

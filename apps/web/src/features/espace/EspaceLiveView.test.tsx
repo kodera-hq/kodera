@@ -1070,12 +1070,6 @@ describe('EspaceLiveView', () => {
       true,
     ],
     ['ended', 'removed', 'L’appel s’est arrêté\u202f: vous n’avez plus accès à ce salon.', false],
-    [
-      'ended',
-      'connection-lost',
-      'La connexion à l’appel a été perdue. Rejoignez le salon pour reprendre.',
-      true,
-    ],
   ] as const)(
     'explains a call that %s (%s), and lets the member close or retry it',
     async (status, problem, message, retryable) => {
@@ -1114,6 +1108,62 @@ describe('EspaceLiveView', () => {
       expect(screen.queryByText(message, exact)).not.toBeInTheDocument()
     }
   )
+
+  it('joins a lost call again on its own, says so, and lets the member try now or close it', async () => {
+    const user = userEvent.setup()
+    const call = makeFakeCall()
+    render(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme SA"
+        workspace={WORKSPACE}
+        channelId={GENERAL}
+        store={makeFakeStore()}
+        call={call}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Rejoindre Point quotidien, 2 personnes' }))
+    call.set({ status: 'connected', roomId: STANDUP_ROOM })
+    call.set({ status: 'ended', problem: 'connection-lost', roomId: STANDUP_ROOM })
+
+    expect(
+      await screen.findByText('Connexion perdue. Nouvelle tentative bientôt (essai 1 sur 5).')
+    ).toBeInTheDocument()
+    // The banner speaks in the problem's place: one message, not two.
+    expect(
+      screen.queryByText('La connexion à l’appel a été perdue. Rejoignez le salon pour reprendre.')
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Réessayer maintenant' }))
+    expect(call.join).toHaveBeenLastCalledWith(STANDUP_ROOM)
+    expect(call.join).toHaveBeenCalledTimes(2)
+
+    call.set({ status: 'failed', problem: 'network', roomId: STANDUP_ROOM })
+    expect(
+      await screen.findByText('Connexion perdue. Nouvelle tentative bientôt (essai 2 sur 5).')
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Fermer' }))
+    expect(call.leave).toHaveBeenCalledTimes(1)
+  })
+
+  it('never joins again a call the member was removed from', async () => {
+    const user = userEvent.setup()
+    const call = makeFakeCall()
+    render(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme SA"
+        workspace={WORKSPACE}
+        channelId={GENERAL}
+        store={makeFakeStore()}
+        call={call}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: 'Rejoindre Point quotidien, 2 personnes' }))
+    call.set({ status: 'connected', roomId: STANDUP_ROOM })
+    call.set({ status: 'ended', problem: 'removed', roomId: STANDUP_ROOM })
+    expect(screen.queryByRole('button', { name: 'Réessayer maintenant' })).not.toBeInTheDocument()
+    expect(call.join).toHaveBeenCalledTimes(1)
+  })
 
   it('keeps the dock while it says the microphone cannot be used', async () => {
     const user = userEvent.setup()
