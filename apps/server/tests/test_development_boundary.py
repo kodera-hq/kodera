@@ -539,6 +539,18 @@ else:
 
 
 OPERATOR_MODULES = (
+    "apps/billing/statutory.py",
+    "apps/billing/management/commands/manage_statutory_retention.py",
+    "apps/orgs/account_erasure_services.py",
+    "apps/orgs/erasure_services.py",
+    "apps/orgs/private_export_erasure.py",
+    "apps/orgs/privacy_archives.py",
+    "apps/orgs/privacy_core_sources.py",
+    "apps/orgs/privacy_runtime.py",
+    "apps/orgs/privacy_services.py",
+    "apps/orgs/privacy_sources.py",
+    "apps/orgs/privacy_storage.py",
+    "apps/orgs/management/commands/erase_core_workspace.py",
     "apps/workspaces/quota_policy.py",
     "apps/workspaces/management/commands/configure_workspace_quotas.py",
     "apps/identity/command_principal.py",
