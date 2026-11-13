@@ -126,6 +126,33 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('organisatio
 $body$); EXECUTE definition; END $patch$;
 ALTER FUNCTION organisation_intake_change() SECURITY DEFINER; ALTER FUNCTION organisation_intake_change() SET search_path=pg_catalog,public,pg_temp;
 
+
+CREATE FUNCTION privacy_export_expiry_inventory(p_ids jsonb) RETURNS jsonb LANGUAGE plpgsql
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE item public.orgs_privacyexport%ROWTYPE; result jsonb:='{}'; deadline bigint; created bigint; found_count integer:=0;
+BEGIN
+ IF jsonb_typeof(p_ids) IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'original export expiry inventory invalid' USING ERRCODE='23514'; END IF;
+ FOR item IN SELECT * FROM public.orgs_privacyexport WHERE id IN (SELECT value::uuid FROM jsonb_array_elements_text(p_ids)) ORDER BY id FOR SHARE LOOP
+  IF jsonb_typeof(item.request_snapshot->'expires_at') IS DISTINCT FROM 'number'
+  OR jsonb_typeof(item.request_snapshot->'created_at') IS DISTINCT FROM 'number'
+  OR (item.request_snapshot->>'expires_at') !~ '^[0-9]{1,12}$'
+  OR (item.request_snapshot->>'created_at') !~ '^[0-9]{1,12}$'
+  OR item.request_snapshot->>'id' IS DISTINCT FROM item.id::text
+  OR item.request_snapshot->>'user_id' IS DISTINCT FROM item.user_id::text
+  OR item.request_snapshot->>'identity_id' IS DISTINCT FROM item.identity_id::text
+  OR item.request_snapshot->>'scope' IS DISTINCT FROM item.scope
+  OR item.request_snapshot->>'organisation_id' IS DISTINCT FROM item.organisation_id::text
+  THEN RAISE EXCEPTION 'original export expiry snapshot binding invalid' USING ERRCODE='23514'; END IF;
+  deadline:=(item.request_snapshot->>'expires_at')::bigint;
+  created:=(item.request_snapshot->>'created_at')::bigint;
+  IF created>floor(extract(epoch FROM clock_timestamp()))::bigint OR deadline<=created OR deadline-created>86400 THEN RAISE EXCEPTION 'original export expiry window invalid' USING ERRCODE='23514'; END IF;
+  result:=result||jsonb_build_object(item.id::text,deadline); found_count:=found_count+1;
+ END LOOP;
+ IF found_count<>jsonb_array_length(p_ids) THEN RAISE EXCEPTION 'original export expiry inventory incomplete' USING ERRCODE='23514'; END IF;
+ RETURN result;
+END $$;
+REVOKE ALL ON FUNCTION privacy_export_expiry_inventory(jsonb) FROM PUBLIC;
+
 CREATE FUNCTION privacy_begin_erasure(p_id uuid,p_org uuid,p_instruction text,p_digest text,p_not_before timestamptz,p_actor uuid)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp
 SET lock_timeout='3s' SET statement_timeout='15s' AS $$
@@ -147,6 +174,7 @@ BEGIN
  'private_exports',COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM public.orgs_privacyexport WHERE organisation_id=p_org
  OR (scope='account' AND user_id IN (SELECT user_id FROM public.orgs_membership WHERE organisation_id=p_org))),'[]'));
  inventory:=inventory||jsonb_build_object('required_domains',jsonb_build_array('matrix','objects','identity_provider','private_exports'));
+ inventory:=inventory||jsonb_build_object('private_export_expiries',public.privacy_export_expiry_inventory(inventory->'private_exports'));
  IF to_regclass('public.extensions_installation') IS NOT NULL THEN
   EXECUTE 'SELECT coalesce(jsonb_agg(''urn:kodera:extension-installation:''||i.id||'':endpoint-sha256:''||encode(sha256(convert_to(i.endpoint,''UTF8'')),''hex'') ORDER BY i.id),''[]''::jsonb) FROM public.extensions_installation i JOIN public.workspaces_workspace w ON w.id=i.workspace_id WHERE w.organisation_id=$1' INTO receivers USING p_org;
   inventory:=inventory||jsonb_build_object('extension_receivers',receivers,
