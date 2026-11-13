@@ -17,7 +17,7 @@ public struct VoiceCallScope: Equatable, Sendable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.organisationId == rhs.organisationId && lhs.channelId.utf8.elementsEqual(rhs.channelId.utf8)
     }
-    static func boundedText(_ value: String) -> Bool {
+    public static func boundedText(_ value: String) -> Bool {
         (1...255).contains(value.utf8.count)
             && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
             && !value.unicodeScalars.contains {
