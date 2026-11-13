@@ -199,3 +199,10 @@ def vat_status(organisation_id: UUID) -> dict[str, object]:
         "next_check_at": None if row is None else row.next_check_at.isoformat(),
         "evidence_id": None if row is None else str(row.id),
     }
+
+
+def profile_matches(*, organisation_id: UUID, country_code: str, vat_number: str) -> bool:
+    """Whether the requested check still names the stored billing profile."""
+    return BillingProfile.objects.filter(
+        organisation_id=organisation_id, country=country_code, vat_number=vat_number
+    ).exists()

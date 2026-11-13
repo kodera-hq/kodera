@@ -256,28 +256,27 @@ def confirm_action(
         if action.step == "formal_notice" and receipt_at is None:
             raise DunningRefusedError("dunning_formal_notice_receipt_required")
         if action.step in {"suspended", "terminated"}:
-            from apps.jobs.models import Job
-            from apps.tenancy.models import Tenant
+            from apps.jobs.selectors import succeeded_tenant_transition
+            from apps.tenancy.selectors import tenant_status_matches
 
             expected_kind = "suspend" if action.step == "suspended" else "decommission"
             expected_status = "suspended" if action.step == "suspended" else "decommissioning"
             if (
                 job_id is None
-                or not Job.objects.filter(
-                    id=job_id,
+                or not succeeded_tenant_transition(
+                    job_id=job_id,
                     organisation_id=subscription.organisation_id,
                     tenant_id=subscription.tenant_id,
                     kind=expected_kind,
-                    status="succeeded",
-                    finished_at__gte=action.created_at,
-                    finished_at__lte=delivered_at,
-                ).exists()
+                    not_before=action.created_at,
+                    not_after=delivered_at,
+                )
                 or subscription.tenant_id is None
-                or not Tenant.objects.filter(
-                    id=subscription.tenant_id,
+                or not tenant_status_matches(
+                    tenant_id=subscription.tenant_id,
                     organisation_id=subscription.organisation_id,
                     status=expected_status,
-                ).exists()
+                )
             ):
                 raise DunningRefusedError("dunning_transition_job_evidence_required")
             target_state = "suspended" if action.step == "suspended" else "cancelled"
@@ -339,7 +338,7 @@ def record_dispute(
     hold_until: datetime,
 ) -> DunningDispute:
     """Link a verified current billing support case; repeated identical evidence is idempotent."""
-    from apps.support.models import SupportTicket
+    from apps.support.selectors import open_billing_ticket
 
     _operator(principal)
     invoice = Invoice.objects.select_for_update().get(id=invoice_id)
@@ -351,12 +350,7 @@ def record_dispute(
         or not now < hold_until <= now + timedelta(days=90)
     ):
         raise DunningRefusedError("dunning_dispute_bound")
-    if not SupportTicket.objects.filter(
-        id=ticket_id,
-        organisation_id=invoice.organisation_id,
-        category="billing",
-        state__in=("open", "pending_customer", "pending_kodera"),
-    ).exists():
+    if not open_billing_ticket(ticket_id=ticket_id, organisation_id=invoice.organisation_id):
         raise DunningRefusedError("dunning_dispute_ticket_required")
     row = DunningDispute.objects.filter(
         invoice=invoice, ticket_id=ticket_id, closed_at__isnull=True
