@@ -1,62 +1,101 @@
-# Billing documents and recorded VAT evidence
+# Billing documents and collection evidence
 
-Status: Draft implementation; production document and dunning delivery gates remain open.
+Status: Implemented source with qualified local conformance evidence; production delivery gates open.
 
 Core remains the legal invoice and credit-note authority. Stripe Checkout collects in payment
-mode; this change introduces no provider invoice, recurring debit, Tax product or live key.
-All amounts below come from integer-minor-unit accounting snapshots.
+mode. No provider invoice, recurring debit, Tax product, console or live key is introduced.
+All document amounts come from integer-minor-unit accounting snapshots.
 
-## Implemented source
+## Frozen documents
 
-- `vies.py` checks the fixed European Commission REST endpoint using the existing pinned public
-  transport. It records valid, invalid and unavailable outcomes with consultation references,
-  response digests and bounded validity. An unavailable or expired check holds reverse-charge
-  issuance; an old profile timestamp alone cannot authorize zero VAT. A PostgreSQL trigger also
-  refuses direct reverse-charge issuance without current evidence.
-- `documents.py` emits deterministic CII candidates for invoice type `380` and positive credit
-  type `381`, referencing the original invoice and its separate `AV-` series. It reads frozen
-  parties and line columns only. XML output is **not** labelled a conforming Factur-X document.
-- `artifacts.py` requires both a local renderer and an independent conformance validator before
-  it can publish one immutable PDF/XML pair. The pair is bound to its snapshot and byte digests;
-  publication is idempotent under the accounting row lock. Database guards prohibit evidence
-  edits and reject mismatched byte digests.
-- `downloads.py` exposes a worker-owned object-store signing port. The API holds no storage
-  credential and never proxies document bytes. Missing validated artifacts or a signer produce
-  no link. Successful link requests are authenticated, scoped and audited.
-- `verify_billing_integrity` verifies both complete series against their counters, Paris issue
-  years, monotonic issue dates and existing artifact digests. It never renumbers or repairs.
-- `reconcile_billing` emits read-only findings from a bounded sanitized provider observation
-  file and the ledger. Missing provider evidence remains an explicit unverified finding.
-  Unallocated succeeded payments recur on every run; reconciliation never allocates money.
-- `dunning.py` proposes the next ordered step with stable idempotency keys, actual-delivery
-  gaps, dispute amounts, bounded processing holds, formal-notice receipt and staff gates.
-  Proposals are not deliveries and do not change a tenant or subscription state.
+`documents.py` builds canonical CII EN16931 invoice `380` and positive credit-note `381` XML,
+with original invoice references and separate `AV-` numbering. Parties, service periods and
+amounts come only from immutable ledger columns. The issuer country is explicitly snapshotted
+from `KODERA_BILLING_ISSUER_COUNTRY`. Legacy null countries refuse rendering; the migration never
+infers or backfills a country from the VAT prefix. An unstructured legacy issuer address is
+retained as its original line, without invented city/postcode data.
+
+`rendering.py` is an offline operator backend. ReportLab embeds its bundled Vera font; factur-x
+packages the matching XML and XMP; normalization binds all timestamps and PDF identifiers to
+the frozen snapshot. The checked-in ICC profile has its own provenance and digest in
+[assets/README.md](assets/README.md). Unsupported glyphs refuse rather than silently omitting text.
+
+Install the exact `billing-documents` optional extra from `uv.lock` in an isolated operator
+environment. It pins [ReportLab 5.1.0](https://pypi.org/project/reportlab/5.1.0/),
+[factur-x 7.9](https://pypi.org/project/factur-x/7.9/) and
+[SaxonC-HE 13.1.1](https://pypi.org/project/saxonche/13.1.1/). Their BSD/MPL-2.0 licenses
+are compatible with the server's AGPL distribution; preserve their notices and the bundled
+font/profile notices when packaging. The API image does not gain renderer or validator execution.
+
+The local validator evaluates the packaged Factur-X 1.09 EN16931 XSD and compiled Schematron
+with network protocols disabled. It does not use the library's HTTP Saxon service or consider
+library logging a successful validation. The sole allowed warning is `PEPPOL-EN16931-R008` for
+the required empty delivery aggregate when no physical delivery applies; every other failed
+assertion refuses publication. The independent veraPDF report must certify one PDF/A-3b job,
+with no parse, encryption, memory or validator failures. Embedded XML bytes and snapshot binding
+must match exactly. XML alone is never labelled a conforming Factur-X artifact.
+
+`render_billing_document --invoice UUID --verapdf /absolute/path/to/verapdf` (or `--credit-note`)
+renders, validates and stores one immutable PDF/XML pair under the accounting lock. Replays
+verify the existing bytes. Database triggers reject changes and SHA mismatches. The download
+API issues short private links through a configured signer after checking current billing
+membership; no default signer or object-store publication port is inferred.
+
+## VAT and integrity
+
+`vies.py` contacts only the fixed Commission endpoint through pinned public egress. Valid,
+invalid and unavailable outcomes persist with minimal consultation evidence, response digests
+and validity. An outage or expired result holds reverse-charge issuance; an old profile timestamp
+cannot authorize zero VAT. A database trigger independently checks this fence.
+
+`verify_billing_integrity` checks numbering, Paris accounting year, counters, ordering and gaps;
+mutation tests prove refusals. `reconcile_billing` compares local ledger facts with optional
+bounded sanitized observations, labels absent provider facts unverified and repeatedly reports
+unallocated succeeded payments. It never allocates money or performs a provider operation.
+
+## Supervised collection
+
+`schedule_dunning --subscription UUID` serializes invoices before the subscription/case, marks
+J+0 unpaid invoices overdue and persists one idempotent proposal for the next legal milestone.
+It never treats preparation as delivery. Confirmations recheck debt, processing/dispute holds,
+current staff, actual delivery clocks and the complete ordered trail. Payment cancels pending
+proposals and starts a fresh episode. Confirmed evidence is retained and immutable.
+
+`record_billing_dispute --staff-identity UUID --invoice UUID --ticket UUID --amount-minor N
+--hold-until ISO` links a positive bounded amount to an existing same-organisation billing
+support ticket for at most 90 days. Only the disputed amount is held. Closing the support ticket
+or expiration ends the active hold. Replays must preserve the original evidence.
+
+`confirm_dunning_action --staff-identity UUID --action UUID --delivered-at ISO --evidence-ref
+urn:kodera:evidence:UUID` records an operator attestation of real delivery. Formal notice also
+requires `--receipt-at ISO`. This command does not send mail and does not manufacture receipt
+proof. Suspension/termination additionally require `--job UUID`, a matching successful current
+episode transition job and the actual tenant status; no tenant transition is written here.
+Processing payments hold for 20 days; missing processing timestamps refuse. Suspension requires
+7 days after actual suspension notice; termination also requires 30 days after formal receipt.
+All proposal, confirmation, hold and clearing changes are audited in their transaction.
 
 The additive `workspace-v2` pack and plan version 2 include `messaging`, `visio` and `docs`.
-Historical `workspace` rows keep their original applications and profile and are taken off sale.
-Amounts and capacity values remain synthetic reference catalogue data, not measured public
-offers or service guarantees. No historical order, subscription or invoice is rewritten.
+Historical `workspace` rows preserve their original apps/profile and are taken off sale.
+Prices/capacity remain synthetic reference data, not measured public offers or service guarantees.
 
-## Remaining release acceptance
+## Evidence and deployment limits
 
-The default deployment intentionally has no PDF/A-3 renderer, EN16931 XSD/Schematron validator,
-artifact object-store publisher or download signer configured. It must not serve a paying
-customer on the strength of these source tests. A qualified local backend must demonstrate
-PDF/A-3 plus embedded `factur-x.xml`, current profile/schema validation, deterministic output and
-actual authenticated delivery before this gate can close. The frozen legacy issuer address
-is unstructured; the conformance backend must reject any snapshot missing required legal data.
+Local tests used veraPDF 1.30.2 downloaded from its official distribution and verified against
+the official signing fingerprint `13DD102B4DD69354D12DE5A83184863278B17FE7`. The backend checks
+`cli-1.30.2.jar` SHA-256 `889075253fb9df4db5482efb8f8208fb3b4f2e00f5f7e1b1e31edf6fb4b69bb6`
+and executes that JAR directly through Java. The validator and JVM must be provisioned by the
+operator; they are not downloaded at runtime. This is executable local conformance evidence,
+not an external certification of all invoices or national legal completeness.
 
-The dunning planner does not yet own persisted notice/outbox receipts, support-dispute links,
-scheduled enqueueing, finance notifications or confirmed tenant transition jobs. Those runtime
-integrations remain deferred; no reminder, suspension, termination or financial correction is
-performed by the planner. Statutory retention/deletion is a separate lifecycle lane.
+`test_billing_rendering.py` proves both document types, independent PDF/A-3b validation,
+XSD/Schematron monetary mutations, exact embedded XML, wall-clock/random-ID determinism,
+unsupported glyph refusal, service periods and invalid reports. Set `KODERA_TEST_VERAPDF` to
+the verified executable to run its real-validator cases; skips do not count as conformance.
+`test_billing_evidence_persistence.py` and `test_billing_dunning_scheduler.py` need real PostgreSQL.
 
-## Verification
-
-Run the new unit/refusal files `test_billing_documents.py`, `test_billing_vies.py` and
-`test_billing_dunning_plan.py`. `test_billing_evidence_persistence.py` requires an isolated real
-PostgreSQL database and verifies the database-level mutation refusals. Synthetic PDF fixtures
-exercise storage and digest behavior only and explicitly provide no conformance evidence.
-
-Primary protocol references: [Commission VIES API](https://ec.europa.eu/assets/taxud/vow-information/swagger_publicVAT.yaml)
-and [FNFE-MPE Factur-X implementation resources](https://fnfe-mpe.org/factur-x/implementer-factur-x/).
+Production release remains held until issuer-specific legal fields/mentions are qualified,
+artifact delivery storage/signing is configured and verified, and actual notice/outbox receipts,
+finance notifications and tenant transition writers are connected. Current manual attestations
+are labelled as such. Full GDPR/statutory retention is a separate lifecycle lane. No production
+billing, delivery, suspension, termination or financial correction was performed by these tests.

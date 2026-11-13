@@ -108,3 +108,32 @@ def test_missing_notice_mutation_is_named_and_refused():
 def test_reconciliation_observation_mutations_refuse(mutation):
     with pytest.raises(IntegrityRefusedError, match="reconciliation_observations"):
         _observations(mutation)
+
+
+def test_missing_processing_event_time_refuses_progress_instead_of_expiring_hold():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from django.utils import timezone
+
+    from apps.billing.dunning_scheduler import _proposal
+
+    now = timezone.now()
+    invoice = SimpleNamespace(
+        id=SUB,
+        state="issued",
+        due_at=now - timedelta(days=100),
+        total_incl_vat_minor=100,
+        amount_paid_minor=0,
+    )
+    with (
+        patch("apps.billing.dunning_scheduler.DunningDispute.objects") as disputes,
+        patch("apps.billing.dunning_scheduler.Payment.objects") as payments,
+    ):
+        disputes.filter.return_value.aggregate.return_value = {"total": 0}
+        disputes.filter.return_value.order_by.return_value.values_list.return_value.first.return_value = None
+        payments.filter.return_value.order_by.return_value.first.return_value = SimpleNamespace(
+            last_event_at=None
+        )
+        with pytest.raises(DunningRefusedError, match="processing_evidence_date_missing"):
+            _proposal(SimpleNamespace(id=SUB), SimpleNamespace(episode=INVOICE), [invoice], now)

@@ -215,7 +215,9 @@ that job and action do not exist yet.
 | `credit_note.notice_enqueued` | system | `credit_note` | standard |
 | `payment.received`, `payment.failed`, `payment.refunded`, `payment.reconciled`, `payment.reconciliation_mismatch` | system | `payment` | standard |
 | `payment.placed_on_account`, `payment.allocated` | staff, system | `payment` | standard |
-| `dunning.reminder_sent`, `dunning.formal_notice_sent`, `dunning.suspension_notice_sent`, `dunning.suspended`, `dunning.terminated`, `dunning.cleared` | system | `organisation` | standard |
+| `dunning.reminder_sent`, `dunning.formal_notice_sent`, `dunning.suspension_notice_sent`, `dunning.suspended`, `dunning.terminated` | staff | `organisation` | standard |
+| `dunning.proposal_prepared`, `dunning.cleared` | system | `organisation` | standard |
+| `dunning.dispute_recorded` | staff | `invoice` | standard |
 | `vat.vies_checked`, `vat.regime_changed` | system, staff | `organisation` | standard |
 
 `payment.placed_on_account` and `payment.allocated` are the only allocation-decision actions. Each

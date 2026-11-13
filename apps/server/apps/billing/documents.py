@@ -34,6 +34,8 @@ class Party:
     vat_number: str | None
     postal_code: str | None = None
     city: str | None = None
+    address_line2: str | None = None
+    registration_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ class Line:
     net_minor: int
     vat_rate_bp: int
     vat_minor: int
+    period_start: datetime | None = None
+    period_end: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -83,8 +87,9 @@ def snapshot_of(row: object) -> Snapshot:
     if row.issued_at is None or (isinstance(row, Invoice) and row.state == "draft"):
         raise IntegrityRefusedError("document_not_issued")
     credit = isinstance(row, CreditNote)
-    # Country is an existing frozen tax-registration prefix, not a current issuer setting.
-    country = row.issuer_vat_number[:2]
+    country = row.issuer_country
+    if country is None:
+        raise IntegrityRefusedError("document_issuer_country_missing")
     return Snapshot(
         number=row.number or "",
         type_code="381" if credit else "380",
@@ -93,7 +98,13 @@ def snapshot_of(row: object) -> Snapshot:
         currency=row.currency,
         vat_regime=row.vat_regime,
         vat_mention=row.vat_mention,
-        seller=Party(row.issuer_legal_name, row.issuer_address, country, row.issuer_vat_number),
+        seller=Party(
+            row.issuer_legal_name,
+            row.issuer_address,
+            country,
+            row.issuer_vat_number,
+            registration_id=row.issuer_siren,
+        ),
         buyer=Party(
             row.customer_legal_name,
             row.customer_address_line1,
@@ -101,6 +112,8 @@ def snapshot_of(row: object) -> Snapshot:
             row.customer_vat_number,
             row.customer_postal_code,
             row.customer_city,
+            row.customer_address_line2,
+            row.customer_siren,
         ),
         lines=tuple(
             Line(
@@ -111,6 +124,8 @@ def snapshot_of(row: object) -> Snapshot:
                 line.total_excl_vat_minor,
                 line.vat_rate_bp,
                 line.vat_amount_minor,
+                line.period_start,
+                line.period_end,
             )
             for line in row.lines.order_by("position")
         ),
@@ -136,10 +151,19 @@ def _add(parent: ET.Element, name: str, value: object | None = None, **attrs: st
 def _party(parent: ET.Element, name: str, party: Party) -> None:
     node = _add(parent, name)
     _add(node, "ram:Name", party.name)
+    if party.registration_id:
+        _add(
+            _add(node, "ram:SpecifiedLegalOrganization"),
+            "ram:ID",
+            party.registration_id,
+            schemeID="0002",
+        )
     address = _add(node, "ram:PostalTradeAddress")
     if party.postal_code:
         _add(address, "ram:PostcodeCode", party.postal_code)
     _add(address, "ram:LineOne", party.address)
+    if party.address_line2:
+        _add(address, "ram:LineTwo", party.address_line2)
     if party.city:
         _add(address, "ram:CityName", party.city)
     _add(address, "ram:CountryID", party.country)
@@ -176,6 +200,16 @@ def _validate(s: Snapshot) -> None:
     if len({line.position for line in s.lines}) != len(s.lines):
         raise IntegrityRefusedError("document_line_positions")
     for line in s.lines:
+        if (line.period_start is None) != (line.period_end is None) or (
+            line.period_start is not None
+            and line.period_end is not None
+            and (
+                line.period_start.tzinfo is None
+                or line.period_end.tzinfo is None
+                or line.period_end <= line.period_start
+            )
+        ):
+            raise IntegrityRefusedError("document_line_period")
         values = (line.quantity, line.unit_minor, line.net_minor, line.vat_rate_bp, line.vat_minor)
         if (
             any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in values)
@@ -234,6 +268,10 @@ def render_xml(s: Snapshot) -> bytes:
         _add(tax, "ram:TypeCode", "VAT")
         _add(tax, "ram:CategoryCode", category)
         _add(tax, "ram:RateApplicablePercent", _money(line.vat_rate_bp))
+        if line.period_start is not None and line.period_end is not None:
+            period = _add(settlement, "ram:BillingSpecifiedPeriod")
+            _date(period, "ram:StartDateTime", line.period_start)
+            _date(period, "ram:EndDateTime", line.period_end)
         _add(
             _add(settlement, "ram:SpecifiedTradeSettlementLineMonetarySummation"),
             "ram:LineTotalAmount",

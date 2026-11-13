@@ -165,3 +165,21 @@ def test_artifact_insert_refuses_mismatched_digest_even_when_service_is_bypassed
             xml=b"invalid",
             validator_ref="synthetic",
         )
+
+
+def test_legacy_issuer_country_is_not_inferred_or_backfilled():
+    from dataclasses import replace
+
+    from django.conf import settings
+    from django.test import override_settings
+
+    w = world()
+    with override_settings(
+        KODERA_BILLING_ISSUER=replace(settings.KODERA_BILLING_ISSUER, country=None)
+    ):
+        placed = place(w, offer())
+    assert placed.invoice.issuer_country is None
+    with pytest.raises(IntegrityRefusedError, match="document_issuer_country_missing"):
+        snapshot_of(placed.invoice)
+    with pytest.raises(IntegrityError, match="never changes"), transaction.atomic():
+        Invoice.objects.filter(id=placed.invoice.id).update(issuer_country="FR")

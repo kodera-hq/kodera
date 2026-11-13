@@ -165,7 +165,14 @@ def record_consultation(
         profile.save(update_fields=["vat_number_validated_at", "updated_at"])
         from . import events
         from .actors import Actor
-        events.record("vat.vies_checked", actor=Actor("system", None), organisation_id=organisation_id, target=("organisation", organisation_id), metadata={"evidence_id": str(row.id), "status": row.status})
+
+        events.record(
+            "vat.vies_checked",
+            actor=Actor("system", None),
+            organisation_id=organisation_id,
+            target=("organisation", organisation_id),
+            metadata={"evidence_id": str(row.id), "status": row.status},
+        )
         return row
 
 

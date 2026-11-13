@@ -78,6 +78,7 @@ KODERA_BILLING_ISSUER = Issuer(
     address="1 rue de l'Exemple, 75000 Paris",
     siren="000000000",
     vat_number="FR00000000000",
+    country="FR",
 )
 KODERA_INVOICE_SERIES = "TST"
 KODERA_INVOICE_PAYMENT_TERMS_DAYS = PAYMENT_TERMS_DAYS
