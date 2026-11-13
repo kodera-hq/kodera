@@ -12,6 +12,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='Attachment',
             fields=[
@@ -30,5 +34,9 @@ class Migration(migrations.Migration):
             options={
                 'constraints': [models.CheckConstraint(condition=models.Q(('size_bytes__gte', 1), ('size_bytes__lte', 26214400)), name='media_attachment_size_bound'), models.CheckConstraint(condition=models.Q(('sha256__regex', '^[a-f0-9]{64}$')), name='media_attachment_checksum_valid'), models.CheckConstraint(condition=models.Q(('content_type__in', ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf', 'text/plain', 'application/octet-stream'])), name='media_attachment_mime_valid')],
             },
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]
