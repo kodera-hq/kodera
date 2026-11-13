@@ -89,6 +89,8 @@ MUTANTS = [
 ('partner join rule widened by agent', 'if creation_mode(creation) == "partner" and event.type == "m.room.join_rules" and event.content.get(\'join_rule\') != "invite":', 'if False:', 'test_partner_join_rule_is_invite_only_even_for_agent'),
     ('initial ACL bootstrap untrusted creator admitted', 'if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not set(partners) <= self._federation_servers:', 'if not partners:', 'test_initial_acl_bootstrap_uses_trusted_immutable_servers_without_remote_admission'),
     ('initial approved servers not bound immutably', 'creation["io.kodera.room.initial_partner_servers"] = list(partners)', 'creation["io.kodera.room.initial_partner_servers"] = []', 'test_explicit_partner_creation_has_pinned_mode_policy_and_server_acl'),
+    ('raw DM validation skipped before local ACL injection', '        if creator != self._agent and not direct:\n            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)\n', '', 'test_raw_dm_validation_precedes_injected_acl_projection'),
+    ('validated DM projection omitted', '                room_config = {**room_config, "initial_state": []}', '                pass', 'test_raw_dm_validation_precedes_injected_acl_projection'),
 ]
 
 
@@ -107,7 +109,14 @@ def main() -> int:
             package = pathlib.Path(tmp) / "src" / "kodera_synapse_policy"
             package.mkdir(parents=True)
             shutil.copytree(SOURCE.parent, package, dirs_exist_ok=True)
-            (package / source.name).write_text(original.replace(before, after))
+            changed = original.replace(before, after)
+            if name == "partner creation trusted agent ignored":
+                # Raw creation and the partner branch both check the same author boundary.
+                # Remove both checks to exercise that semantic rule rather than a redundant line.
+                raw_author = '        if creator != self._agent and not direct:\n            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)\n'
+                assert changed.count(raw_author) == 1
+                changed = changed.replace(raw_author, "")
+            (package / source.name).write_text(changed)
             shutil.copytree(ROOT / "tests", pathlib.Path(tmp) / "tests")
             result = subprocess.run(
                 [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py", "tests/test_federation.py"],

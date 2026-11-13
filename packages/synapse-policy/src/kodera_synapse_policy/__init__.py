@@ -108,6 +108,14 @@ class KoderaPolicy:
             return Codes.FORBIDDEN
         if user_id == self._agent:
             return NOT_SPAM
+        # on_create_room runs before this callback in the pinned Synapse. It validates the raw
+        # member request before injecting the local ACL. Project only that exact injected state
+        # for the second DM check; a client-supplied ACL is refused by the raw creation hook.
+        if isinstance(room_config, dict):
+            creation = room_config.get("creation_content")
+            injected = [{"type": "m.room.server_acl", "state_key": "", "content": acl(self._server)}]
+            if isinstance(creation, dict) and creation_mode(creation) == "internal" and creation.get(DM_INVITEES) == room_config.get("invite") and room_config.get("initial_state") == injected:
+                room_config = {**room_config, "initial_state": []}
         # Synapse before 1.132 passes no room_config: nothing tells a direct message apart.
         if room_config is None or not self._is_direct_message(user_id, room_config):
             return Codes.FORBIDDEN
@@ -157,6 +165,8 @@ class KoderaPolicy:
     async def on_create_room(self, requester: Any, request_content: dict[str, Any], is_requester_admin: bool) -> None:
         creator = requester.user.to_string()
         direct = creator != self._agent and self._is_direct_message(creator, request_content)
+        if creator != self._agent and not direct:
+            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)
         creation = request_content.get("creation_content") or {}
         if not isinstance(creation, dict):
             raise SynapseError(403, "Room creation content must be an object", errcode=Codes.FORBIDDEN)

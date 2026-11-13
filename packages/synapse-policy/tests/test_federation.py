@@ -342,7 +342,9 @@ def test_partner_creation_refusals_have_expected_diagnostic(mutation):
             {"type": "m.room.server_acl", "state_key": "", "content": {"allow": ["*"]}}
         )
     diagnostic = (
-        "Internal rooms cannot enable partner federation"
+        "Members may create only validated local direct messages"
+        if mutation == "non-agent"
+        else "Internal rooms cannot enable partner federation"
         if mutation == "no-marker"
         else "Room server ACL"
         if mutation == "wide-acl"
@@ -440,3 +442,30 @@ def test_initial_acl_bootstrap_uses_trusted_immutable_servers_without_remote_adm
         elif change == "wide-acl":
             candidate.content["allow"] = ["*"]
         assert not run(instance.check_event_allowed(candidate, altered))[0], change
+
+
+def test_raw_dm_validation_precedes_injected_acl_projection():
+    from kodera_synapse_policy.federation import acl
+
+    configured = configured_partner({})
+    raw = {
+        "is_direct": True,
+        "invite": [BOB],
+        "preset": "private_chat",
+        "visibility": "private",
+    }
+    for extra in (
+        [
+            {
+                "type": "m.room.server_acl",
+                "state_key": "",
+                "content": acl(AGENT.partition(":")[2]),
+            }
+        ],
+        [{"type": "m.room.topic", "state_key": "", "content": {}}],
+    ):
+        forged = {**raw, "initial_state": extra}
+        with pytest.raises(SynapseError, match="validated local direct messages"):
+            run(configured.on_create_room(requester(ALICE), forged, False))
+    run(configured.on_create_room(requester(ALICE), raw, False))
+    assert run(configured.user_may_create_room(ALICE, raw)) == ALLOWED
