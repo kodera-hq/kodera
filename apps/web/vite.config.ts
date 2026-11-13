@@ -220,6 +220,9 @@ const DEFERRED_VENDORS = {
   'matrix-js-sdk': 'vendor-matrix',
   'livekit-client': 'vendor-livekit',
   'oidc-client-ts': 'vendor-oidc',
+  yjs: 'vendor-yjs',
+  'y-protocols': 'vendor-yjs',
+  'y-indexeddb': 'vendor-yjs',
 } as const
 
 /** Every package the given ones depend on, directly or not, by name; the given ones excluded. */

@@ -41,6 +41,49 @@ describe('universal workspace palette', () => {
     await user.keyboard('{Control>}k{/Control}{Escape}')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Origin' })).toHaveFocus())
   })
+  it('searches and keyboard-navigates across channels, direct messages, members, and workspace documents', async () => {
+    const user = userEvent.setup()
+    const chooseChannel = vi.fn(() => null)
+    const openDm = vi.fn()
+    const mentionMember = vi.fn()
+    const openDoc = vi.fn()
+
+    render(
+      <UniversalSearch
+        entries={entries}
+        shortcut
+        onChoose={chooseChannel}
+        directMessages={[{ id: '!dm-1:kodera.io', label: 'Camille Laurent', open: openDm }]}
+        members={[{ id: '@nadia:kodera.io', label: '@Nadia Benali', open: mentionMember }]}
+        documents={[{ id: 'doc-runbook', label: 'Database Failover Runbook', open: openDoc }]}
+      />
+    )
+
+    // 1. Direct message target
+    await user.keyboard('{Control>}k{/Control}')
+    expect(screen.queryByText(/Aucune conversation directe/)).toBeNull()
+    await user.type(screen.getByRole('combobox'), 'Camille')
+    await user.keyboard('{Enter}')
+    expect(openDm).toHaveBeenCalledOnce()
+
+    // 2. Member target
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Nadia')
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(mentionMember).toHaveBeenCalledOnce())
+
+    // 3. Workspace document target
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Failover Runbook')
+    await user.keyboard('{Enter}')
+    expect(openDoc).toHaveBeenCalledOnce()
+
+    // 4. Channel target
+    await user.keyboard('{Control>}k{/Control}')
+    await user.type(screen.getByRole('combobox'), 'Daily team')
+    await user.keyboard('{Enter}')
+    expect(chooseChannel).toHaveBeenCalledWith(expect.objectContaining({ id: 'audio' }))
+  })
   it('changes themes and delegates workspace navigation to the authorized switcher', async () => {
     const user = userEvent.setup()
     const onSwitch = vi.fn()
