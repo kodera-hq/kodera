@@ -34,14 +34,17 @@ const collections = operations.filter((op) => op.isList)
 describe('the generated handlers', () => {
   it('cover every operation in the contract', () => {
     // A count that silently drops to zero would make every assertion below vacuous.
-    expect(operations.length).toBe(142)
+    expect(operations.length).toBe(166)
     expect(collections.length).toBeGreaterThan(20)
   })
 
   it.each(collections.map((op) => [op.operationId, op] as const))(
     '%s answers a page with at least one row',
     async (_id, op) => {
-      const response = await fetch(`${BASE}${fill(op.path)}`)
+      const response = await fetch(`${BASE}${fill(op.path)}`, {
+        method: op.method.toUpperCase(),
+        headers: op.idempotent ? { 'Idempotency-Key': crypto.randomUUID() } : {},
+      })
       expect(response.status).toBe(op.status)
       expect(response.headers.get('X-Request-Id')).toBeTruthy()
       const page = (await response.json()) as { data: unknown[]; has_more: boolean }
@@ -125,13 +128,25 @@ describe('idempotency on POST', () => {
 })
 
 describe('If-Match on PATCH', () => {
-  const patchOps = operations.filter((op) => op.requiresIfMatch)
+  const patchOps = operations.filter((op) => op.method === 'patch')
 
   it('every PATCH the contract declares requires If-Match', () => {
-    // The contract's own count today (CONSOLE_RECONCILIATION §5.6): all eleven `PATCH`
-    // operations. A count that silently drops to zero would make the tests below vacuous.
-    expect(patchOps.length).toBe(13)
-    expect(patchOps.every((op) => op.method === 'patch')).toBe(true)
+    // A fixed inventory prevents the conditional-write assertions becoming vacuous.
+    expect(patchOps.length).toBe(14)
+    expect(patchOps.every((op) => op.requiresIfMatch)).toBe(true)
+  })
+
+  it('requires If-Match on collection row replacement too', async () => {
+    const op = EXAMPLES.putWorkspaceCollectionRow
+    expect(op.requiresIfMatch).toBe(true)
+    const url = `${BASE}${fill(op.path)}`
+    const refused = await fetch(url, { method: 'PUT' })
+    expect(refused.status).toBe(428)
+    expect(await refused.json()).toMatchObject({
+      type: 'https://kodera.io/problems/precondition-required',
+    })
+    const accepted = await fetch(url, { method: 'PUT', headers: { 'If-Match': '"row-tag"' } })
+    expect(accepted.status).toBe(200)
   })
 
   const patchMe = (ifMatch?: string): Promise<Response> =>

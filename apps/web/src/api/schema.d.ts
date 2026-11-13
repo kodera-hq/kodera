@@ -3298,6 +3298,429 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/workspace/collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List visible workspace collections
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["listWorkspaceCollections"];
+        put?: never;
+        /**
+         * Create a workspace collection
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["createWorkspaceCollection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/collections/{collection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a workspace collection
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getWorkspaceCollection"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a collection or its row membership
+         * @description Editors only; check current visibility and document ACLs under the workspace lock. Remove collection membership and revoke its query cursors. This does not delete a document or bypass its independent deletion policy.
+         */
+        delete: operations["deleteWorkspaceCollection"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a workspace collection
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        patch: operations["updateWorkspaceCollection"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/collections/{collection_id}/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query visible collection rows
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["queryWorkspaceCollection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a visible collection row
+         * @description Read only when both collection and document are currently visible. Return the current row ETag for conditional replacement; collection editor and document editor permissions are both required on writes.
+         */
+        get: operations["getWorkspaceCollectionRow"];
+        /**
+         * Replace typed collection row values
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        put: operations["putWorkspaceCollectionRow"];
+        post?: never;
+        /**
+         * Remove a collection or its row membership
+         * @description Editors only; check current visibility and document ACLs under the workspace lock. Remove collection membership and revoke its query cursors. This does not delete a document or bypass its independent deletion policy.
+         */
+        delete: operations["deleteWorkspaceCollectionRow"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/quotas/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get workspace quota usage
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getWorkspaceQuotaUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/quotas/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get workspace quota limits
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getWorkspaceQuotaLimits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credit-notes/{credit_note_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                credit_note_id: components["parameters"]["CreditNoteId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a credit-note PDF or XML download link
+         * @description Short-lived organisation-bound link to an immutable credit note, type code 381, number AV-<series>-<YYYY>-<NNNNN>. Audit issuance against the requesting subject. Return 409 until the requested artifact is verified; no provider billing document is substituted.
+         */
+        get: operations["getCreditNoteDownloadLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/billing/vat-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get persisted VIES VAT status
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getBillingVatStatus"];
+        put?: never;
+        /**
+         * Validate and persist VIES VAT status
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["validateBillingVat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/privacy/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request workspace export
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["requestWorkspaceExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get workspace export lifecycle
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getWorkspaceExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get workspace export download link
+         * @description Recheck requester identity and current scope before issuing a short-lived signed archive URL. Only ready, unexpired exports can download (409 otherwise); never log the URL. Archive SHA-256 and signed manifest provide integrity; HTTP range requests resume against the same immutable artifact.
+         */
+        get: operations["getWorkspaceExportDownloadLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/privacy/deletions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request workspace deletion
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["requestWorkspaceDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/privacy/deletions/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get workspace deletion lifecycle
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getWorkspaceDeletion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/privacy/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request account export
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["requestAccountExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/privacy/exports/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get account export lifecycle
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getAccountExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/privacy/exports/{request_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get account export download link
+         * @description Recheck requester identity and current scope before issuing a short-lived signed archive URL. Only ready, unexpired exports can download (409 otherwise); never log the URL. Archive SHA-256 and signed manifest provide integrity; HTTP range requests resume against the same immutable artifact.
+         */
+        get: operations["getAccountExportDownloadLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/privacy/deletions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request account deletion
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        post: operations["requestAccountDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/privacy/deletions/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get account deletion lifecycle
+         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         */
+        get: operations["getAccountDeletion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3986,6 +4409,12 @@ export interface components {
             instance?: string;
             /** @description Same value as the `X-Request-Id` response header. */
             request_id: string;
+            /** @enum {string} */
+            quota_key?: "seats" | "mediaBytes" | "pages" | "snapshotBytes";
+            limit?: number;
+            used?: number;
+            requested?: number;
+            remaining?: number;
             /** @description Field-level errors, present on `malformed-request` and on `validation-error`. */
             errors?: {
                 /** @description JSON Pointer (RFC 6901) into the request body. */
@@ -6694,6 +7123,11 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at?: string;
+            /** @constant */
+            facturx_type_code?: "380";
+            xml_available?: boolean;
+            snapshot_sha256?: string;
+            artifacts?: components["schemas"]["BillingArtifacts"];
         };
         /**
          * CreditNote
@@ -6762,6 +7196,11 @@ export interface components {
             total_excl_vat: components["schemas"]["Money"];
             vat_amount: components["schemas"]["Money"];
             total_incl_vat: components["schemas"]["Money"];
+            /** @constant */
+            facturx_type_code?: "381";
+            xml_available?: boolean;
+            snapshot_sha256?: string;
+            artifacts?: components["schemas"]["BillingArtifacts"];
         };
         /**
          * CreditNoteReason
@@ -9515,6 +9954,611 @@ export interface components {
              */
             invitation_id?: string | null;
         };
+        /**
+         * CollectionSelectOption
+         * @example {
+         *       "id": "todo",
+         *       "label": "To do"
+         *     }
+         */
+        CollectionSelectOption: {
+            id: string;
+            label: string;
+        };
+        /** CollectionTextProperty */
+        CollectionTextProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionTextProperty";
+        };
+        /** CollectionTextValue */
+        CollectionTextValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionTextValue";
+            value: string | null;
+        };
+        /** CollectionNumberProperty */
+        CollectionNumberProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionNumberProperty";
+        };
+        /** CollectionNumberValue */
+        CollectionNumberValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionNumberValue";
+            value: number | null;
+        };
+        /** CollectionCheckboxProperty */
+        CollectionCheckboxProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionCheckboxProperty";
+        };
+        /** CollectionCheckboxValue */
+        CollectionCheckboxValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionCheckboxValue";
+            value: boolean;
+        };
+        /** CollectionDateProperty */
+        CollectionDateProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionDateProperty";
+        };
+        /** CollectionDateValue */
+        CollectionDateValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionDateValue";
+            /** Format: date */
+            value: string | null;
+        };
+        /** CollectionUrlProperty */
+        CollectionUrlProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionUrlProperty";
+        };
+        /** CollectionUrlValue */
+        CollectionUrlValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionUrlValue";
+            /** Format: uri */
+            value: string | null;
+        };
+        /** CollectionSelectProperty */
+        CollectionSelectProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionSelectProperty";
+            options: components["schemas"]["CollectionSelectOption"][];
+        };
+        /** CollectionSelectValue */
+        CollectionSelectValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionSelectValue";
+            value: string | null;
+        };
+        /** CollectionMultiSelectProperty */
+        CollectionMultiSelectProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionMultiSelectProperty";
+            options: components["schemas"]["CollectionSelectOption"][];
+        };
+        /** CollectionMultiSelectValue */
+        CollectionMultiSelectValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionMultiSelectValue";
+            value: string[];
+        };
+        /** CollectionPersonProperty */
+        CollectionPersonProperty: {
+            id: string;
+            name: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionPersonProperty";
+        };
+        /** CollectionPersonValue */
+        CollectionPersonValue: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionPersonValue";
+            /** Format: uuid */
+            value: string | null;
+        };
+        /**
+         * CollectionProperty
+         * @description Stable property IDs are unique per collection. Select option IDs are unique and stored values must reference declared options; person values name current visible workspace memberships.
+         */
+        CollectionProperty: components["schemas"]["CollectionTextProperty"] | components["schemas"]["CollectionNumberProperty"] | components["schemas"]["CollectionCheckboxProperty"] | components["schemas"]["CollectionDateProperty"] | components["schemas"]["CollectionUrlProperty"] | components["schemas"]["CollectionSelectProperty"] | components["schemas"]["CollectionMultiSelectProperty"] | components["schemas"]["CollectionPersonProperty"];
+        /**
+         * CollectionValue
+         * @description The discriminator must match the collection property definition. Unknown property IDs and type mismatches are 422; values never select database fields or SQL expressions.
+         */
+        CollectionValue: components["schemas"]["CollectionTextValue"] | components["schemas"]["CollectionNumberValue"] | components["schemas"]["CollectionCheckboxValue"] | components["schemas"]["CollectionDateValue"] | components["schemas"]["CollectionUrlValue"] | components["schemas"]["CollectionSelectValue"] | components["schemas"]["CollectionMultiSelectValue"] | components["schemas"]["CollectionPersonValue"];
+        /**
+         * CollectionSort
+         * @example {
+         *       "propertyId": "title",
+         *       "direction": "asc"
+         *     }
+         */
+        CollectionSort: {
+            propertyId: string;
+            /** @enum {string} */
+            direction: "asc" | "desc";
+        };
+        /**
+         * CollectionFilter
+         * @description No recursive expressions, raw SQL, dotted field traversal or unbounded regular expressions. Validate operator/value against the declared property type. Empty operators omit value; other operators require it.
+         */
+        CollectionFilter: {
+            propertyId: string;
+            /** @enum {string} */
+            operator: "eq" | "ne" | "contains" | "lt" | "lte" | "gt" | "gte" | "is_empty" | "is_not_empty";
+            value?: components["schemas"]["CollectionValue"];
+        };
+        /** CollectionTableView */
+        CollectionTableView: {
+            id: string;
+            name: string;
+            filters?: components["schemas"]["CollectionFilter"][];
+            sorts?: components["schemas"]["CollectionSort"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionTableView";
+            columns: string[];
+        };
+        /** CollectionBoardView */
+        CollectionBoardView: {
+            id: string;
+            name: string;
+            filters?: components["schemas"]["CollectionFilter"][];
+            sorts?: components["schemas"]["CollectionSort"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionBoardView";
+            groupByPropertyId: string;
+            showEmptyGroups: boolean;
+        };
+        /** CollectionListView */
+        CollectionListView: {
+            id: string;
+            name: string;
+            filters?: components["schemas"]["CollectionFilter"][];
+            sorts?: components["schemas"]["CollectionSort"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "CollectionListView";
+            titlePropertyId: string;
+        };
+        /**
+         * CollectionView
+         * @description Only declared property IDs may be referenced. Board grouping requires a select property; table columns and list title fields must be visible to the caller.
+         */
+        CollectionView: components["schemas"]["CollectionTableView"] | components["schemas"]["CollectionBoardView"] | components["schemas"]["CollectionListView"];
+        /**
+         * WorkspaceCollection
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "title": "Project tasks",
+         *       "properties": [
+         *         {
+         *           "id": "status",
+         *           "name": "Status",
+         *           "type": "select",
+         *           "options": [
+         *             {
+         *               "id": "todo",
+         *               "label": "To do"
+         *             }
+         *           ]
+         *         }
+         *       ],
+         *       "views": [
+         *         {
+         *           "id": "board",
+         *           "name": "Board",
+         *           "type": "board",
+         *           "groupByPropertyId": "status",
+         *           "showEmptyGroups": true
+         *         }
+         *       ],
+         *       "role": "editor",
+         *       "updatedAt": "2026-11-13T12:00:00Z"
+         *     }
+         */
+        WorkspaceCollection: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            properties: components["schemas"]["CollectionProperty"][];
+            views: components["schemas"]["CollectionView"][];
+            /** @enum {string} */
+            role: "editor" | "viewer";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * WorkspaceCollectionRequest
+         * @description Editors only. Enforce unique property/view IDs and cross-references transactionally. No client-supplied organisation, row ID, ACL or quota counter is accepted.
+         */
+        WorkspaceCollectionRequest: {
+            title: string;
+            properties: components["schemas"]["CollectionProperty"][];
+            views: components["schemas"]["CollectionView"][];
+        };
+        /**
+         * WorkspaceCollectionPatch
+         * @description At least one field is required. Reject removal or incompatible change of populated properties with 409; validate every saved view against the resulting schema.
+         */
+        WorkspaceCollectionPatch: {
+            title?: string;
+            properties?: components["schemas"]["CollectionProperty"][];
+            views?: components["schemas"]["CollectionView"][];
+        };
+        /**
+         * WorkspaceCollectionRow
+         * @example {
+         *       "documentId": "00000000-0000-7000-8000-000000000001",
+         *       "values": {
+         *         "status": {
+         *           "type": "select",
+         *           "value": "todo"
+         *         }
+         *       },
+         *       "updatedAt": "2026-11-13T12:00:00Z"
+         *     }
+         */
+        WorkspaceCollectionRow: {
+            /** Format: uuid */
+            documentId: string;
+            values: {
+                [key: string]: components["schemas"]["CollectionValue"];
+            };
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /**
+         * WorkspaceCollectionRowRequest
+         * @description Replace typed properties of this collection/document pair. Both must belong to this workspace and the caller must currently edit the document. Unknown, cross-workspace or invisible documents return 404.
+         */
+        WorkspaceCollectionRowRequest: {
+            values: {
+                [key: string]: components["schemas"]["CollectionValue"];
+            };
+        };
+        /**
+         * CollectionQuery
+         * @description Bounded conjunction of filters. Stable final sort key is document ID. Opaque signed cursor binds collection, query fingerprint, current membership and ordering; changed query or tampering is 400. Visibility is rechecked per row and page.
+         */
+        CollectionQuery: {
+            viewId?: string;
+            filters?: components["schemas"]["CollectionFilter"][];
+            sorts?: components["schemas"]["CollectionSort"][];
+        };
+        /**
+         * WorkspaceQuotaCounters
+         * @example {
+         *       "seats": 4,
+         *       "mediaBytes": 1024,
+         *       "pages": 12
+         *     }
+         */
+        WorkspaceQuotaCounters: {
+            seats: number;
+            mediaBytes: number;
+            pages: number;
+        };
+        /**
+         * WorkspaceQuotaLimits
+         * @description Null means explicitly unlimited in the server-owned offer snapshot. Missing configuration never becomes unlimited. Counts are active seats plus outstanding reserved invitations, committed media plus upload reservations, and active pages.
+         * @example {
+         *       "seats": 10,
+         *       "mediaBytes": 1073741824,
+         *       "pages": 100
+         *     }
+         */
+        WorkspaceQuotaLimits: {
+            seats: number | null;
+            mediaBytes: number | null;
+            pages: number | null;
+        };
+        /**
+         * WorkspaceQuotaUsage
+         * @description Observation only. Writes reserve quota under the same workspace lock as the mutation; never trust this response or client counters as authorization. Seat/page exhaustion is 402, media bytes 413, request throttling 429 with Retry-After. Configuration/enforcement failure is 503, never a successful uncharged write.
+         * @example {
+         *       "usage": {
+         *         "seats": 4,
+         *         "mediaBytes": 1024,
+         *         "pages": 12
+         *       },
+         *       "limits": {
+         *         "seats": 10,
+         *         "mediaBytes": 1073741824,
+         *         "pages": 100
+         *       },
+         *       "measuredAt": "2026-11-13T12:00:00Z"
+         *     }
+         */
+        WorkspaceQuotaUsage: {
+            usage: components["schemas"]["WorkspaceQuotaCounters"];
+            limits: components["schemas"]["WorkspaceQuotaLimits"];
+            /** Format: date-time */
+            measuredAt: string;
+        };
+        /**
+         * BillingArtifact
+         * @description Digest and size identify bytes built solely from an immutable Core billing snapshot; no mutable catalogue, organisation profile or provider invoice contributes to these bytes.
+         */
+        BillingArtifact: {
+            /** @enum {string} */
+            content_type: "application/pdf" | "application/xml";
+            filename: string;
+            sha256: string;
+            size_bytes: number;
+        };
+        /**
+         * BillingArtifacts
+         * @description PDF/A-3 embeds factur-x.xml; standalone XML is Factur-X EN 16931. Presence means generated and verified, never an unsupported conformance claim. Type code is 380 for invoices and 381 for credit notes.
+         */
+        BillingArtifacts: {
+            pdf?: components["schemas"]["BillingArtifact"];
+            xml?: components["schemas"]["BillingArtifact"];
+        };
+        /**
+         * BillingVatStatus
+         * @description Persisted VIES consultation, not a live assertion or a tax exemption by itself. Unavailable never means valid. Snapshot VAT treatment is frozen on invoice issuance; later consultations cannot rewrite an issued invoice. No raw upstream response or customer address is disclosed.
+         * @example {
+         *       "vat_number": null,
+         *       "country_code": null,
+         *       "status": "not_checked",
+         *       "checked_at": null,
+         *       "next_check_at": null,
+         *       "evidence_id": null
+         *     }
+         */
+        BillingVatStatus: {
+            vat_number: string | null;
+            country_code: string | null;
+            /** @enum {string} */
+            status: "not_checked" | "valid" | "invalid" | "unavailable";
+            /** Format: date-time */
+            checked_at: string | null;
+            /** Format: date-time */
+            next_check_at: string | null;
+            /** Format: uuid */
+            evidence_id: string | null;
+        };
+        /**
+         * BillingVatValidationRequest
+         * @description Normalize and validate the country-specific number before bounded VIES consultation. Persist valid, invalid and unavailable outcomes with evidence and retry time; never silently grant reverse-charge treatment on a timeout.
+         */
+        BillingVatValidationRequest: {
+            vat_number: string;
+            country_code: string;
+        };
+        /**
+         * PrivacyExportRequest
+         * @description Export only currently authorized data. Account scope exports the person's own data and never every workspace record. Signed archive manifest binds requester, scope, snapshot, entries, checksums and expiry. Worker resumes from persisted bounded checkpoints; retries do not duplicate entries.
+         */
+        PrivacyExportRequest: {
+            /** @constant */
+            format: "zip";
+            /** @default true */
+            includeMedia: boolean;
+        };
+        /**
+         * PrivacyDeletionRequest
+         * @description Explicit irreversible intent; require recent verified reauthentication server-side. Revoke sessions, tickets and uploads before purge. Retain only statutory accounting snapshots and minimal lawful proof until purgeAfter. Legal hold is an explicit blocked lifecycle, never successful deletion.
+         */
+        PrivacyDeletionRequest: {
+            /** @constant */
+            confirmation: "delete";
+            reason?: string;
+        };
+        /**
+         * PrivacyWorkspaceExport
+         * @description Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed). Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace scope requires its current owner. Last-owner account deletion requires a prior ownership transfer. Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal holds reported explicitly. No active content is retained merely because accounting must be retained.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "scope": "workspace",
+         *       "kind": "export",
+         *       "status": "queued",
+         *       "requestedAt": "2026-11-13T12:00:00Z",
+         *       "updatedAt": "2026-11-13T12:00:00Z",
+         *       "expiresAt": null,
+         *       "purgeAfter": null,
+         *       "failureCode": null
+         *     }
+         */
+        PrivacyWorkspaceExport: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            scope: "workspace";
+            /** @constant */
+            kind: "export";
+            /** @enum {string} */
+            status: "queued" | "running" | "ready" | "failed" | "expired" | "cancelled";
+            /** Format: date-time */
+            requestedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            purgeAfter: string | null;
+            /** @enum {string|null} */
+            failureCode: "build_failed" | "storage_unavailable" | "identity_conflict" | "legal_hold" | null;
+        };
+        /**
+         * PrivacyWorkspaceDeletion
+         * @description Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed). Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace scope requires its current owner. Last-owner account deletion requires a prior ownership transfer. Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal holds reported explicitly. No active content is retained merely because accounting must be retained.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "scope": "workspace",
+         *       "kind": "deletion",
+         *       "status": "queued",
+         *       "requestedAt": "2026-11-13T12:00:00Z",
+         *       "updatedAt": "2026-11-13T12:00:00Z",
+         *       "expiresAt": null,
+         *       "purgeAfter": null,
+         *       "failureCode": null
+         *     }
+         */
+        PrivacyWorkspaceDeletion: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            scope: "workspace";
+            /** @constant */
+            kind: "deletion";
+            /** @enum {string} */
+            status: "queued" | "running" | "retention_pending" | "completed" | "failed" | "cancelled";
+            /** Format: date-time */
+            requestedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            purgeAfter: string | null;
+            /** @enum {string|null} */
+            failureCode: "build_failed" | "storage_unavailable" | "identity_conflict" | "legal_hold" | null;
+        };
+        /**
+         * PrivacyAccountExport
+         * @description Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed). Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace scope requires its current owner. Last-owner account deletion requires a prior ownership transfer. Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal holds reported explicitly. No active content is retained merely because accounting must be retained.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "scope": "account",
+         *       "kind": "export",
+         *       "status": "queued",
+         *       "requestedAt": "2026-11-13T12:00:00Z",
+         *       "updatedAt": "2026-11-13T12:00:00Z",
+         *       "expiresAt": null,
+         *       "purgeAfter": null,
+         *       "failureCode": null
+         *     }
+         */
+        PrivacyAccountExport: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            scope: "account";
+            /** @constant */
+            kind: "export";
+            /** @enum {string} */
+            status: "queued" | "running" | "ready" | "failed" | "expired" | "cancelled";
+            /** Format: date-time */
+            requestedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            purgeAfter: string | null;
+            /** @enum {string|null} */
+            failureCode: "build_failed" | "storage_unavailable" | "identity_conflict" | "legal_hold" | null;
+        };
+        /**
+         * PrivacyAccountDeletion
+         * @description Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed). Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace scope requires its current owner. Last-owner account deletion requires a prior ownership transfer. Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal holds reported explicitly. No active content is retained merely because accounting must be retained.
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000001",
+         *       "scope": "account",
+         *       "kind": "deletion",
+         *       "status": "queued",
+         *       "requestedAt": "2026-11-13T12:00:00Z",
+         *       "updatedAt": "2026-11-13T12:00:00Z",
+         *       "expiresAt": null,
+         *       "purgeAfter": null,
+         *       "failureCode": null
+         *     }
+         */
+        PrivacyAccountDeletion: {
+            /** Format: uuid */
+            id: string;
+            /** @constant */
+            scope: "account";
+            /** @constant */
+            kind: "deletion";
+            /** @enum {string} */
+            status: "queued" | "running" | "retention_pending" | "completed" | "failed" | "cancelled";
+            /** Format: date-time */
+            requestedAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            purgeAfter: string | null;
+            /** @enum {string|null} */
+            failureCode: "build_failed" | "storage_unavailable" | "identity_conflict" | "legal_hold" | null;
+        };
     };
     responses: {
         /** @description The request body or its parameters are malformed. */
@@ -11405,11 +12449,33 @@ export interface operations {
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
+            /** @description Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned limit and reserved usage. */
+            402: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
             500: components["responses"]["InternalError"];
+            /** @description Quota configuration, reservation or enforcement is unavailable; no write is admitted. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     previewInvitation: {
@@ -12318,7 +13384,10 @@ export interface operations {
     };
     getInvoiceDownloadLink: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description PDF/A-3 with embedded Factur-X XML, or the standalone XML from the same immutable snapshot. Omitted format preserves the PDF default. */
+                format?: "pdf" | "xml";
+            };
             header?: never;
             path: {
                 invoice_id: components["parameters"]["InvoiceId"];
@@ -12337,6 +13406,7 @@ export interface operations {
                     "application/json": components["schemas"]["DownloadLink"];
                 };
             };
+            400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
@@ -15692,11 +16762,33 @@ export interface operations {
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
+            /** @description Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned limit and reserved usage. */
+            402: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
+            /** @description Quota configuration, reservation or enforcement is unavailable; no write is admitted. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     createAttachmentUpload: {
@@ -15753,11 +16845,33 @@ export interface operations {
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
+            /** @description Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned limit and reserved usage. */
+            402: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
+            /** @description Quota configuration, reservation or enforcement is unavailable; no write is admitted. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     completeAttachmentUpload: {
@@ -15811,11 +16925,33 @@ export interface operations {
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
+            /** @description Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned limit and reserved usage. */
+            402: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
+            /** @description Quota configuration, reservation or enforcement is unavailable; no write is admitted. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getAttachment: {
@@ -16195,11 +17331,33 @@ export interface operations {
             };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
+            /** @description Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned limit and reserved usage. */
+            402: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
+            /** @description Quota configuration, reservation or enforcement is unavailable; no write is admitted. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getWorkspaceDocument: {
@@ -16444,6 +17602,1056 @@ export interface operations {
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaceCollections: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List visible workspace collections. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["WorkspaceCollection"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createWorkspaceCollection: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCollectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Create a workspace collection. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCollection"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            /** @description Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned limit and reserved usage. */
+            402: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /** @description Quota configuration, reservation or enforcement is unavailable; no write is admitted. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getWorkspaceCollection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get a workspace collection. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCollection"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteWorkspaceCollection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Remove a collection or its row membership. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    updateWorkspaceCollection: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCollectionPatch"];
+            };
+        };
+        responses: {
+            /** @description Update a workspace collection. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCollection"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    queryWorkspaceCollection: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `next_cursor` of a previous page. Never construct one. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size. The server may return fewer items than asked; trust `has_more`. */
+                limit?: components["parameters"]["Limit"];
+            };
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionQuery"];
+            };
+        };
+        responses: {
+            /** @description Query visible collection rows. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        data?: components["schemas"]["WorkspaceCollectionRow"][];
+                    };
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkspaceCollectionRow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get a visible collection row. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCollectionRow"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    putWorkspaceCollectionRow: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceCollectionRowRequest"];
+            };
+        };
+        responses: {
+            /** @description Replace typed collection row values. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCollectionRow"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteWorkspaceCollectionRow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                collection_id: string;
+                document_id: components["parameters"]["DocumentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Remove a collection or its row membership. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkspaceQuotaUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get workspace quota usage. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceQuotaUsage"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkspaceQuotaLimits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get workspace quota limits. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceQuotaLimits"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getCreditNoteDownloadLink: {
+        parameters: {
+            query?: {
+                /** @description PDF/A-3 with embedded Factur-X XML, or the standalone XML from the same immutable snapshot. Omitted format preserves the PDF default. */
+                format?: "pdf" | "xml";
+            };
+            header?: never;
+            path: {
+                credit_note_id: components["parameters"]["CreditNoteId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get a credit-note PDF or XML download link. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadLink"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getBillingVatStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get persisted VIES VAT status. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingVatStatus"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    validateBillingVat: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BillingVatValidationRequest"];
+            };
+        };
+        responses: {
+            /** @description Validate and persist VIES VAT status. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingVatStatus"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    requestWorkspaceExport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrivacyExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Request workspace export. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyWorkspaceExport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkspaceExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get workspace export lifecycle. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyWorkspaceExport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkspaceExportDownloadLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get workspace export download link. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadLink"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    requestWorkspaceDeletion: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrivacyDeletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Request workspace deletion. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyWorkspaceDeletion"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getWorkspaceDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get workspace deletion lifecycle. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyWorkspaceDeletion"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    requestAccountExport: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrivacyExportRequest"];
+            };
+        };
+        responses: {
+            /** @description Request account export. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyAccountExport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAccountExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get account export lifecycle. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyAccountExport"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAccountExportDownloadLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get account export download link. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadLink"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    requestAccountDeletion: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrivacyDeletionRequest"];
+            };
+        };
+        responses: {
+            /** @description Request account deletion. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyAccountDeletion"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getAccountDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Get account deletion lifecycle. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyAccountDeletion"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
         };
     };
 }
