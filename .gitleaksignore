@@ -84,3 +84,6 @@ d6c9993914f4ab0b8b45291c769990a4a4c84207:apps/ios/scripts/ci/check-app-resources
 
 # Public Cargo registry dependency-name adjacency in the libcrux-ml-kem package.
 da7ee4a7a75a0028c7345ab52de0f52232adc09f:Cargo.lock:generic-api-key:1261
+
+# Reviewed public synthetic HMAC signing fixture; no provider or runtime credential binding.
+7032033ca3069e33b35086579ae3e5f0074b5e74:extensions/billing-webhooks/test/billing-webhooks.test.mjs:generic-api-key:20
