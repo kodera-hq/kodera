@@ -48,6 +48,19 @@ describe('a link preview', () => {
     expect(safeUnfurl(result({ url: 'https://autre.fr/' }), SENT)).toBeNull()
   })
 
+  it('matches the address Core fetched, which escapes `|` and drops the fragment', () => {
+    // Core's canonical form (apps/server/apps/media/outbound.py): quote() and no fragment.
+    const sent = 'https://exemple.fr/doc|v2/[a]^b?x=1#section'
+    const card = safeUnfurl(result({ url: 'https://exemple.fr/doc%7Cv2/%5Ba%5D%5Eb?x=1', canonicalUrl: undefined }), sent)
+    expect(card?.title).toBe('Un article')
+    expect(card?.href).toBe(new URL(sent).href)
+  })
+
+  it('still refuses a card whose path differs only by an escaped slash or query mark', () => {
+    expect(safeUnfurl(result({ url: 'https://exemple.fr/article%3Fid=4' }), SENT)).toBeNull()
+    expect(safeUnfurl(result({ url: 'https://exemple.fr/a%2Fb' }), 'https://exemple.fr/a/b')).toBeNull()
+  })
+
   it('does not follow a canonical address on another site', () => {
     expect(safeUnfurl(result({ canonicalUrl: 'https://piege.example/' }), SENT)?.href).toBe(SENT)
   })
