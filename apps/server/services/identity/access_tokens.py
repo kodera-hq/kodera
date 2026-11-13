@@ -21,7 +21,7 @@ MAX_TOKEN = 16 * 1024
 MAX_JWKS = 256 * 1024
 MAX_KEYS = 32
 KID = re.compile(r"[\x21-\x7e]{1,128}\Z")
-SEGMENT = re.compile(r"[A-Za-z0-9_-]+\Z")
+SEGMENT_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 PublicKey = rsa.RSAPublicKey | ec.EllipticCurvePublicKey
 
 
@@ -57,7 +57,7 @@ def _object(raw: bytes) -> dict[str, Any]:
 
 
 def _segment(value: str) -> bytes:
-    _require(SEGMENT.fullmatch(value) is not None)
+    _require(bool(value) and all(ch in SEGMENT_CHARS for ch in value))
     raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
     # Reject alternate encodings with nonzero unused padding bits.
     _require(base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") == value)

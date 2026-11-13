@@ -274,6 +274,7 @@ class PinnedConnection(http.client.HTTPConnection):
                 raw.connect(sockaddr)
                 if self.destination.scheme == "https":
                     context = ssl.create_default_context()
+                    context.minimum_version = ssl.TLSVersion.TLSv1_2
                     context.set_alpn_protocols(["http/1.1"])
                     raw.settimeout(remaining(self.deadline))
                     raw = context.wrap_socket(raw, server_hostname=self.destination.host)

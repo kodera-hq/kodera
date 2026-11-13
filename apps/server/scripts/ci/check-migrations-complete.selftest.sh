@@ -193,7 +193,7 @@ expect settings-drop-orgs config.settings.selftest_drop_orgs 2 \
 # makemigrations --check printed "No changes detected" over any model change.
 fresh default-settings
 expect default-settings config.settings.dev 2 \
-  "config.settings.dev does not install apps.audit, apps.billing, apps.engine_intents, apps.identity, apps.jobs, apps.legal, apps.orgs, apps.outbox, apps.support, apps.tenancy, apps.workspaces" "$silent"
+  "config.settings.dev does not install apps.audit, apps.billing, apps.engine_intents, apps.identity, apps.jobs, apps.legal, apps.media, apps.notifications, apps.orgs, apps.outbox, apps.support, apps.tenancy, apps.workspaces" "$silent"
 
 # The customer schema profile alone: it installs identity and orgs and leaves
 # the job queue's three apps out, as every profile the API image starts does
@@ -201,7 +201,7 @@ expect default-settings config.settings.dev 2 \
 # there, so the check refuses it by name.
 fresh customer-profile-without-the-queue
 expect customer-profile-without-the-queue config.settings.persistence 2 \
-  "config.settings.persistence does not install apps.audit, apps.billing, apps.engine_intents, apps.jobs, apps.legal, apps.outbox, apps.support, apps.tenancy, apps.workspaces, core.idempotency, so makemigrations --check cannot see" "$silent"
+  "config.settings.persistence does not install apps.audit, apps.billing, apps.engine_intents, apps.jobs, apps.legal, apps.media, apps.notifications, apps.outbox, apps.support, apps.tenancy, apps.workspaces, core.idempotency, so makemigrations --check cannot see" "$silent"
 
 # An app with an AppConfig and a models.py but no migrations yet, left uninstalled.
 fresh app-without-migrations
@@ -245,7 +245,7 @@ package "$work/outside-site/extapp"
 concrete_models "$work/outside-site/extapp/models.py" External
 installing third-party-outside-tree selftest_extapp extapp
 PYTHONPATH="$work/outside-site" expect third-party-outside-tree config.settings.selftest_extapp 0 \
-  "checking the first-party app labels: audit, billing, engine_intents, idempotency, identity, jobs, legal, orgs, outbox, support, tenancy, workspaces"
+  "checking the first-party app labels: audit, billing, engine_intents, idempotency, identity, jobs, legal, media, notifications, orgs, outbox, support, tenancy, workspaces"
 
 # The same app installed from a dot-directory inside the tree, where CI's
 # virtualenv lives.
@@ -254,7 +254,7 @@ package "$work/third-party-in-dot-directory/.venv-site/extapp"
 concrete_models "$work/third-party-in-dot-directory/.venv-site/extapp/models.py" External
 installing third-party-in-dot-directory selftest_extapp extapp
 PYTHONPATH="$work/third-party-in-dot-directory/.venv-site" expect third-party-in-dot-directory \
-  config.settings.selftest_extapp 0 "checking the first-party app labels: audit, billing, engine_intents, idempotency, identity, jobs, legal, orgs, outbox, support, tenancy, workspaces"
+  config.settings.selftest_extapp 0 "checking the first-party app labels: audit, billing, engine_intents, idempotency, identity, jobs, legal, media, notifications, orgs, outbox, support, tenancy, workspaces"
 
 # A tree where the walk finds nothing must refuse, not pass having looked at nothing.
 fresh nothing-to-look-at
