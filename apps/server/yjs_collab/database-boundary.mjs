@@ -4,6 +4,39 @@ export async function assertDatabaseBoundary(pool) {
     session_user=current_user AND
     NOT (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls OR r.rolinherit)
     AND NOT EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid)
+    AND NOT EXISTS (
+      SELECT 1 FROM (
+        SELECT c.relacl AS acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname ~ '^pg_' OR n.nspname='information_schema'
+        UNION ALL SELECT a.attacl FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
+          JOIN pg_namespace n ON n.oid=c.relnamespace WHERE (n.nspname ~ '^pg_'
+          OR n.nspname='information_schema') AND a.attnum>0 AND NOT a.attisdropped
+        UNION ALL SELECT p.proacl FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+          WHERE n.nspname ~ '^pg_' OR n.nspname='information_schema'
+        UNION ALL SELECT nspacl FROM pg_namespace WHERE nspname ~ '^pg_'
+          OR nspname='information_schema'
+      ) objects CROSS JOIN LATERAL aclexplode(objects.acl) privilege
+      WHERE privilege.grantee=r.oid)
+    AND NOT EXISTS (SELECT 1 FROM (VALUES
+      ('pg_catalog.pg_authid','rolpassword'),
+      ('pg_catalog.pg_user_mapping','umoptions'),
+      ('pg_catalog.pg_subscription','subconninfo')
+    ) sensitive(relation_name,column_name)
+    WHERE has_column_privilege(sensitive.relation_name,sensitive.column_name,'SELECT'))
+    AND NOT EXISTS (
+      SELECT 1 FROM (
+        SELECT c.relacl AS acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        UNION ALL SELECT a.attacl FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
+          JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname !~ '^pg_'
+          AND n.nspname<>'information_schema' AND a.attnum>0 AND NOT a.attisdropped
+        UNION ALL SELECT p.proacl FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+          WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        UNION ALL SELECT nspacl FROM pg_namespace WHERE nspname !~ '^pg_'
+          AND nspname<>'information_schema'
+        UNION ALL SELECT datacl FROM pg_database
+      ) objects CROSS JOIN LATERAL aclexplode(objects.acl) privilege
+      WHERE privilege.is_grantable AND privilege.grantee IN (0,r.oid))
     AND NOT has_database_privilege(current_database(),'CREATE')
     AND NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema')
                     AND nspname !~ '^pg_' AND has_schema_privilege(oid,'CREATE'))

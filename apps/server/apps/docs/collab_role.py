@@ -5,6 +5,8 @@ from urllib.parse import unquote, urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
+from core.db.role_acl import has_catalog_grants, has_delegation
+
 ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 SELECT = ("docs_document", "docs_documentlink", "docs_documentsnapshot", "docs_documentupdate")
 INSERT = ("docs_documentlink", "docs_documentupdate")
@@ -35,16 +37,18 @@ def grant_statements(role: str) -> list[str]:
     return statements
 
 
-def credentials(value: str, database: dict) -> tuple[str, str]:
+def credentials(value: str, database: dict, peer_url: str | None = None) -> tuple[str, str]:
     """Accept only the dedicated login for the very database being migrated."""
     try:
         parsed = urlsplit(value)
         role, password = unquote(parsed.username or ""), unquote(parsed.password or "")
+        peer_password = unquote(urlsplit(peer_url).password or "") if peer_url else None
         if (
             parsed.scheme not in {"postgres", "postgresql"}
             or role != "kodera_collab"
             or len(password) < 32
             or password == database.get("PASSWORD")
+            or password == peer_password
             or parsed.hostname != database["HOST"]
             or (parsed.port if parsed.port is not None else 5432)
             != int(database.get("PORT") or 5432)
@@ -90,6 +94,10 @@ def assert_unprivileged(cursor, role: str) -> None:
     creates = cursor.fetchone()[0]
     if any(flags) or memberships or owned or creates:
         raise ImproperlyConfigured("collaboration database role has forbidden authority")
+    if has_delegation(cursor, role):
+        raise ImproperlyConfigured("collaboration database role has forbidden grant options")
+    if has_catalog_grants(cursor, role):
+        raise ImproperlyConfigured("collaboration database role has forbidden catalog grants")
     cursor.execute(
         "SELECT n.nspname,c.relname,a.attname,has_column_privilege(%s,c.oid,a.attnum,'SELECT'),"
         "has_column_privilege(%s,c.oid,a.attnum,'INSERT'),has_column_privilege(%s,c.oid,a.attnum,'UPDATE'),"

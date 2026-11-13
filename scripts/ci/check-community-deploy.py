@@ -69,6 +69,7 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
 
 REQUIRED_SECRET_ENV_KEYS = (
     "POSTGRES_PASSWORD",
+    "KODERA_API_DATABASE_PASSWORD",
     "KODERA_COLLAB_DATABASE_PASSWORD",
     "SYNAPSE_POSTGRES_PASSWORD",
     "DJANGO_SECRET_KEY",
@@ -460,9 +461,15 @@ def check_community_deploy(
             errors.append("yjs-collab must not mount files or credential directories")
     migrator = services.get("migrate")
     if migrator is not None:
+        if migrator.environment.get("KODERA_API_DATABASE_URL") != "postgresql://kodera_api:${KODERA_API_DATABASE_PASSWORD:?Set the isolated API database password}@db:5432/${POSTGRES_DB:-kodera_server}" or "python manage.py configure_api_role --settings config.settings.deploy &&" not in "\n".join(migrator.raw_lines):
+            errors.append("migrate must provision the isolated API login")
         if migrator.environment.get("KODERA_COLLAB_DATABASE_URL") != "postgresql://kodera_collab:${KODERA_COLLAB_DATABASE_PASSWORD:?Set the isolated collaboration database password}@db:5432/${POSTGRES_DB:-kodera_server}" or "python manage.py configure_collab_role --settings config.settings.deploy &&" not in "\n".join(migrator.raw_lines):
             errors.append("migrate must provision the isolated collaboration login")
     if server_svc is not None:
+        if server_svc.environment.get("DATABASE_URL") != "postgresql://kodera_api:${KODERA_API_DATABASE_PASSWORD:?Set the isolated API database password}@db:5432/${POSTGRES_DB:-kodera_server}":
+            errors.append("server must use the isolated API database login")
+        if "urllib.request.urlopen('http://127.0.0.1:8000/health/ready')" not in "\n".join(server_svc.raw_lines):
+            errors.append("server healthcheck must verify database readiness")
         expected = {
             "KODERA_COLLAB_TICKET_KEY": "${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}",
             "KODERA_COLLAB_ENGINE_URL": "http://yjs-collab:8098/internal/transform",
@@ -1672,6 +1679,11 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             for name in value.split(",")
         ):
             errors.append(f"{FEDERATION_ENV_NAME} must list public server names, comma-separated, with no wildcard")
+    database_passwords = [actual.get(key, "").strip().strip("'\"") for key in (
+        "POSTGRES_PASSWORD", "KODERA_API_DATABASE_PASSWORD", "KODERA_COLLAB_DATABASE_PASSWORD"
+    )]
+    if all(database_passwords) and len(set(database_passwords)) != len(database_passwords):
+        errors.append("database passwords must be independent")
     if synapse_issuer:
         try:
             trust_entries = json.loads(actual.get("KODERA_AUTH_TRUST", "").strip("'\""))
@@ -1882,7 +1894,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "remove healthcheck from server",
             lambda c, e, cf: (
                 c.replace(
-                    "    healthcheck:\n      test: [\"CMD-SHELL\", \"python -c \\\"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')\\\"\"]",
+                    "    healthcheck:\n      test: [\"CMD-SHELL\", \"python -c \\\"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')\\\"\"]",
                     "    # healthcheck removed",
                     1,
                 ),
@@ -2314,6 +2326,17 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         else f"{key}=filled-value-{i}"
         for i, (key, value) in enumerate(parse_env_example(env_text)[0].items())
     ) + "\n"
+    credential_pairs = (
+        ("POSTGRES_PASSWORD", "KODERA_API_DATABASE_PASSWORD"),
+        ("POSTGRES_PASSWORD", "KODERA_COLLAB_DATABASE_PASSWORD"),
+        ("KODERA_API_DATABASE_PASSWORD", "KODERA_COLLAB_DATABASE_PASSWORD"),
+    )
+    for left, right in credential_pairs:
+        shared = parse_env_example(filled)[0][left]
+        reused = re.sub(r"(?m)^" + right + r"=.*$", right + "='" + shared + "'", filled)
+        if "database passwords must be independent" not in preflight_env(env_text, reused):
+            print("[FAIL] preflight accepted database credential reuse", file=sys.stderr)
+            return 1
     if preflight_env(env_text, filled):
         print(f"[FAIL] preflight refuses a complete .env: {preflight_env(env_text, filled)}", file=sys.stderr)
         return 1
@@ -2443,7 +2466,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
 
     print(
         f"OK: deploy/community stack valid, {len(mutations)} negative selftest mutations refused, "
-        f"{len(preflight_cases) + len(community_mutations) + len(hardening_refusals) + len(hardening_accepted)} preflight cases reported."
+        f"{len(preflight_cases) + len(credential_pairs) + len(community_mutations) + len(hardening_refusals) + len(hardening_accepted)} preflight cases reported."
     )
     return 0
 
@@ -2602,6 +2625,14 @@ def run_collaboration_selftest(compose: str, env: str, caddy: str, split: str, s
     """Native process isolation and exact-route checks must refuse named mutations."""
     key_line = "      KODERA_COLLAB_TICKET_KEY: ${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}"
     cases = [
+        ("API readiness replaced with liveness", compose.replace("http://127.0.0.1:8000/health/ready", "http://127.0.0.1:8000/health/live"), env, caddy,
+         "server healthcheck must verify database readiness"),
+        ("API database owner restored", compose.replace("postgresql://kodera_api:${KODERA_API_DATABASE_PASSWORD:?Set the isolated API database password}@db:5432/${POSTGRES_DB:-kodera_server}", "postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}"), env, caddy,
+         "server must use the isolated API database login"),
+        ("API login provisioning skipped", compose.replace("python manage.py configure_api_role --settings config.settings.deploy &&", "true &&"), env, caddy,
+         "migrate must provision the isolated API login"),
+        ("API database password undocumented", compose, re.sub(r"(?m)^KODERA_API_DATABASE_PASSWORD=.*\n?", "", env), caddy,
+         "missing required secret key in .env.example: KODERA_API_DATABASE_PASSWORD"),
         ("native database owner restored", compose.replace("postgresql://kodera_collab:${KODERA_COLLAB_DATABASE_PASSWORD:?Set the isolated collaboration database password}@db:5432/${POSTGRES_DB:-kodera_server}", "postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}"), env, caddy,
          "yjs-collab must hold only its reviewed database and application settings"),
         ("native login provisioning skipped", compose.replace("python manage.py configure_collab_role --settings config.settings.deploy &&", "true &&"), env, caddy,

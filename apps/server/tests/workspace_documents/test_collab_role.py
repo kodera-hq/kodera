@@ -161,6 +161,68 @@ def test_role_installer_refuses_existing_excess_grants(collab_role, grant):
             assert_unprivileged(cursor, collab_role)
 
 
+@pytest.mark.parametrize(
+    "privilege",
+    [
+        "SELECT ON docs_document",
+        "EXECUTE ON FUNCTION docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text)",
+    ],
+)
+def test_collab_installer_refuses_delegation_of_its_allowed_privileges(collab_role, privilege):
+    from django.core.exceptions import ImproperlyConfigured
+    from psycopg import sql
+
+    from apps.docs.collab_role import assert_unprivileged
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("GRANT {} TO {} WITH GRANT OPTION").format(
+                sql.SQL(privilege), sql.Identifier(collab_role)
+            )
+        )
+        try:
+            with pytest.raises(ImproperlyConfigured, match="forbidden grant options"):
+                assert_unprivileged(cursor, collab_role)
+        finally:
+            cursor.execute(
+                sql.SQL("REVOKE GRANT OPTION FOR {} FROM {}").format(
+                    sql.SQL(privilege), sql.Identifier(collab_role)
+                )
+            )
+        assert_unprivileged(cursor, collab_role)
+
+
+@pytest.mark.parametrize(
+    "privilege",
+    [
+        "SELECT ON pg_catalog.pg_authid",
+        "SELECT (rolpassword) ON pg_catalog.pg_authid",
+        "EXECUTE ON FUNCTION pg_catalog.pg_read_file(text)",
+    ],
+)
+def test_collab_installer_refuses_explicit_catalog_grants(collab_role, privilege):
+    from django.core.exceptions import ImproperlyConfigured
+    from psycopg import sql
+
+    from apps.docs.collab_role import assert_unprivileged
+
+    with acting_as(collab_role), connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM pg_catalog.pg_roles")
+        assert cursor.fetchone()[0] >= 1
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql.SQL("GRANT {} TO {}").format(sql.SQL(privilege), sql.Identifier(collab_role))
+        )
+        try:
+            with pytest.raises(ImproperlyConfigured, match="forbidden catalog grants"):
+                assert_unprivileged(cursor, collab_role)
+        finally:
+            cursor.execute(
+                sql.SQL("REVOKE {} FROM {}").format(sql.SQL(privilege), sql.Identifier(collab_role))
+            )
+        assert_unprivileged(cursor, collab_role)
+
+
 def test_operator_installs_and_rechecks_the_fixed_independent_login(monkeypatch):
     from io import StringIO
     from urllib.parse import quote

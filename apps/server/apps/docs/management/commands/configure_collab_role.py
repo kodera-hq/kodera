@@ -16,7 +16,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             role, password = credentials(
-                os.environ.get("KODERA_COLLAB_DATABASE_URL", ""), connection.settings_dict
+                os.environ.get("KODERA_COLLAB_DATABASE_URL", ""),
+                connection.settings_dict,
+                os.environ.get("KODERA_API_DATABASE_URL"),
             )
             with transaction.atomic(), connection.cursor() as cursor:
                 cursor.execute("SET LOCAL lock_timeout='5s'")

@@ -2959,11 +2959,24 @@ def migration_create_model_names(
                 return set(projections)
             inspectable_sql = mask_nonprocedural_dollar_literals(inspectable_sql)
             inspectable_sql = mask_sql_string_literals(inspectable_sql)
-            if re.search(
+            for execute in re.finditer(
                 r"\bEXECUTE\s+(?!FUNCTION\b|PROCEDURE\b)",
                 inspectable_sql,
                 re.IGNORECASE,
             ):
+                # An EXECUTE privilege grant/revocation changes an ACL, not a
+                # table. Inspect every other EXECUTE independently so an ACL
+                # statement cannot hide dynamic SQL later in the same migration.
+                if re.search(
+                    r"\b(?:GRANT|REVOKE)\s*$",
+                    inspectable_sql[: execute.start()],
+                    re.IGNORECASE,
+                ) and re.match(
+                    r"ON\s+(?:FUNCTION|PROCEDURE|ROUTINE)\b",
+                    inspectable_sql[execute.end() :],
+                    re.IGNORECASE,
+                ):
+                    continue
                 return set(projections)
             persisted_targets: list[str] = []
             persisted_targets.extend(
@@ -17295,3 +17308,32 @@ def test_weakening_t21_while_the_model_stays_strong_is_caught() -> None:
     assert lifetime_scope_refusals(model, mutant) == [
         "T21 must require every historical provider boundary without exception"
     ]
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        ("GRANT EXECUTE ON FUNCTION harmless() TO PUBLIC", set()),
+        ("REVOKE EXECUTE ON FUNCTION harmless() FROM PUBLIC", set()),
+        ("GRANT EXECUTE ON PROCEDURE harmless() TO writer", set()),
+        ("REVOKE EXECUTE ON ROUTINE harmless() FROM writer", set()),
+        (
+            "GRANT EXECUTE ON FUNCTION harmless() TO PUBLIC; CREATE TABLE entitlement (id bigint)",
+            {"Entitlement"},
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harmless() TO PUBLIC; "
+            "DO $$ BEGIN EXECUTE 'CREATE TABLE entitlement (id bigint)'; END $$;",
+            set(NON_PERSISTED_MODEL_PROJECTIONS),
+        ),
+        (
+            "DO $$ BEGIN EXECUTE 'GRANT EXECUTE ON FUNCTION harmless() TO PUBLIC'; END $$;",
+            set(NON_PERSISTED_MODEL_PROJECTIONS),
+        ),
+    ],
+)
+def test_migration_projection_scanner_distinguishes_execute_privileges_from_dynamic_sql(
+    tmp_path: Path, sql: str, expected: set[str]
+) -> None:
+    _migration(tmp_path, "projection_probe", "0001_privileges.py", f"migrations.RunSQL({sql!r})")
+    assert migration_create_model_names(tmp_path) == expected

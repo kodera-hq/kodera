@@ -40,6 +40,9 @@ try {
     const database = (await owner.query('SELECT current_database() AS name')).rows[0].name
     const quote = value => '"' + value.replaceAll('"', '""') + '"'
     const excess = [
+      'SELECT ON pg_catalog.pg_authid',
+      'SELECT (rolpassword) ON pg_catalog.pg_authid',
+      'EXECUTE ON FUNCTION pg_catalog.pg_read_file(text)',
       'SELECT (email) ON identity_user',
       'UPDATE (visibility) ON docs_document',
       'TRUNCATE ON docs_document',
@@ -51,6 +54,17 @@ try {
       await owner.query('GRANT ' + privilege + ' TO ' + input.role)
       try { await assert.rejects(assertDatabaseBoundary(pool), /collaboration database role refused/) }
       finally { await owner.query('REVOKE ' + privilege + ' FROM ' + input.role) }
+      await assertDatabaseBoundary(pool)
+    }
+    for (const privilege of [
+      'SELECT ON docs_document',
+      'EXECUTE ON FUNCTION docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text)',
+      'USAGE ON SCHEMA public',
+      'CONNECT ON DATABASE ' + quote(database),
+    ]) {
+      await owner.query('GRANT ' + privilege + ' TO ' + input.role + ' WITH GRANT OPTION')
+      try { await assert.rejects(assertDatabaseBoundary(pool), /collaboration database role refused/) }
+      finally { await owner.query('REVOKE GRANT OPTION FOR ' + privilege + ' FROM ' + input.role) }
       await assertDatabaseBoundary(pool)
     }
     const sequence = 'collab_privilege_' + randomUUID().replaceAll('-', '')
