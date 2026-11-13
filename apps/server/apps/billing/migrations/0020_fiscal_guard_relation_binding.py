@@ -22,4 +22,14 @@ REVOKE ALL ON FUNCTION public.billing_fiscal_guard() FROM PUBLIC;
 
 class Migration(migrations.Migration):
     dependencies = [("billing", "0019_statutory_worker_operations")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+migrations.RunSQL(FORWARD),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+    ]

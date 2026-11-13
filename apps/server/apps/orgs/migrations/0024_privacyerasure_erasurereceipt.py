@@ -12,6 +12,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='PrivacyErasure',
             fields=[
@@ -50,5 +54,9 @@ class Migration(migrations.Migration):
             options={
                 'constraints': [models.UniqueConstraint(fields=('erasure', 'domain'), name='erasure_domain_receipt'), models.CheckConstraint(condition=models.Q(('domain__in', ['matrix', 'objects', 'identity_provider', 'private_exports', 'external_extension_receivers'])), name='erasure_domain'), models.CheckConstraint(condition=models.Q(('evidence_sha256__regex', '^[0-9a-f]{64}$')), name='erasure_receipt_digest')],
             },
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]

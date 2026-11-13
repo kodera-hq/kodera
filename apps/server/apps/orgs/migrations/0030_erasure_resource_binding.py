@@ -27,4 +27,14 @@ CREATE TRIGGER a_resource_binding BEFORE UPDATE ON public.notifications_pushsubs
 
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0029_account_erasure_guards")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+migrations.RunSQL(FORWARD),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+    ]

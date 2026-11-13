@@ -11,6 +11,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.AddField(model_name='invoice', name='document_number_snapshot', field=models.TextField(blank=True, null=True)),
         migrations.AddField(model_name='invoiceline', name='document_number_snapshot', field=models.TextField(blank=True, null=True)),
         migrations.AddField(model_name='creditnote', name='document_number_snapshot', field=models.TextField(blank=True, null=True)),
@@ -194,5 +198,9 @@ class Migration(migrations.Migration):
                 'indexes': [models.Index(fields=['purge_after', 'id'], name='statutory_due')],
                 'constraints': [models.UniqueConstraint(fields=('source_table', 'source_id'), name='statutory_source'), models.CheckConstraint(condition=models.Q(('basis__in', ['accounting', 'contract'])), name='statutory_basis'), models.CheckConstraint(condition=models.Q(('payload_sha256__regex', '^[0-9a-f]{64}$')), name='statutory_digest')],
             },
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]
