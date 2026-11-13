@@ -3396,7 +3396,7 @@ export interface paths {
         get: operations["getWorkspaceCollectionRow"];
         /**
          * Replace typed collection row values
-         * @description Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations are audited. This declaration does not assert a deployed handler.
+         * @description Current collection editor and document editor permissions are both required. Replace an existing row with If-Match from its GET ETag; create an absent row with If-None-Match: *. Exactly one header is required (428 neither,422 both/invalid;412 stale tag or incompatible row existence). If-Match: * never creates a row. No cross-workspace references are accepted.
          */
         put: operations["putWorkspaceCollectionRow"];
         post?: never;
@@ -17947,17 +17947,11 @@ export interface operations {
     putWorkspaceCollectionRow: {
         parameters: {
             query?: never;
-            header: {
-                /**
-                 * @description The `ETag` of the representation this change was computed against. Required on every
-                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
-                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
-                 *     re-applies rather than overwriting a change it never saw.
-                 *
-                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
-                 *     for the reason given there.
-                 */
-                "If-Match": components["parameters"]["IfMatch"];
+            header?: {
+                /** @description Existing row only: its ETag from GET. Mutually exclusive with If-None-Match. Missing row or stale tag is412. */
+                "If-Match"?: string;
+                /** @description Initial row creation only. Send *; an existing row is412. Mutually exclusive with If-Match. */
+                "If-None-Match"?: "*";
             };
             path: {
                 organisation_id: components["parameters"]["OrganisationId"];
@@ -17982,6 +17976,16 @@ export interface operations {
                     "application/json": components["schemas"]["WorkspaceCollectionRow"];
                 };
             };
+            /** @description Collection row membership created; If-None-Match: * succeeded. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceCollectionRow"];
+                };
+            };
             400: components["responses"]["MalformedRequest"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
@@ -17992,6 +17996,17 @@ export interface operations {
             428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     deleteWorkspaceCollectionRow: {
@@ -18277,6 +18292,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getWorkspaceExport: {
@@ -18310,6 +18336,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getWorkspaceExportDownloadLink: {
@@ -18342,6 +18379,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     requestWorkspaceDeletion: {
@@ -18404,6 +18452,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getWorkspaceDeletion: {
@@ -18437,6 +18496,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     requestAccountExport: {
@@ -18497,6 +18567,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getAccountExport: {
@@ -18529,6 +18610,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getAccountExportDownloadLink: {
@@ -18560,6 +18652,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     requestAccountDeletion: {
@@ -18620,6 +18723,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getAccountDeletion: {
@@ -18652,6 +18766,17 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            /** @description Required source, private storage, signing, authority or lifecycle proof is unavailable. No incomplete export or unproved deletion is reported successful. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Retry-After": components["headers"]["RetryAfter"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
 }

@@ -26,11 +26,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'bf3d1db9f456db190d06ef6cbe79cafc5b1e210c',
-  commit: 'bf3d1db9f456db190d06ef6cbe79cafc5b1e210c',
+  ref: '305179d32e9002263e393f7b80f91c605bcfdd9c',
+  commit: '305179d32e9002263e393f7b80f91c605bcfdd9c',
   path: 'packages/api-contract/core-api.openapi.yaml',
   version: '0.44.0',
-  sha256: '5b22887c55d6d606ce69ed701e912b42365a76b0b7f34534b62e055c572a7d11',
+  sha256: '67ec0d8a6c7e0b4fa06aea7e14aaf05ebb1e6b7eca2fe81e63c3f1f7fc7066b0',
 }
 
 function requireThat(condition: unknown, reason: string): asserts condition {
@@ -287,10 +287,10 @@ describe('the immutable contract consumer', () => {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        '35709fa413f0204c17c7c4ab81b398432868e7058c3977f8eb3921546031be8a',
+        '52e93bbabdceece9db7468ffb537471d622d193ee00c42b16f47336cedf2f13a',
       'src/mocks/generated/handlers.ts':
-        '065b208aee5a1be4d146e7b00a2537072153b4092c8f61f4cca4075444de5dcb',
-      'src/api/schema.d.ts': 'acd5a11374692a3eb8a06f127cdca87b81598ef758ab975ffb5739028876d8a6',
+        'c30b4dc6f6b3e95d38054c6e93a07f1c1c263ae1a28f973730c870f65d8e5d35',
+      'src/api/schema.d.ts': '3b3ecc731ef2a646379b19819d0cc2ccdcc4057a79c9733c3f6dc5a56d453de4',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)
@@ -532,4 +532,26 @@ describe("the contract's Espace mapping (0.25.2)", () => {
       rule.replace('{id}', id).replace('{server_name}', server)
     )
   })
+})
+
+describe('conditional write generation declarations', () => {
+  it.each(['missing-alternative', 'missing-created-response'])(
+    'refuses %s with its diagnostic',
+    (mutation) => {
+      const changed = structuredClone(spec)
+      const path =
+        '/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}'
+      const put = object(object(changed.paths[path])['put'])
+      if (mutation === 'missing-alternative') {
+        put['parameters'] = (put['parameters'] as Record<string, unknown>[]).filter(
+          (parameter) => parameter['name'] !== 'If-None-Match'
+        )
+      } else {
+        delete object(put['responses'])['201']
+      }
+      expect(() => operations(changed)).toThrow(
+        'conditional writes require both alternative headers and a 201 creation response'
+      )
+    }
+  )
 })

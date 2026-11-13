@@ -21,6 +21,7 @@ export interface OperationExample {
   readonly idempotent: boolean
   /** Whether the operation requires an `If-Match` request header — every `PATCH` today. */
   readonly requiresIfMatch: boolean
+  readonly conditionalWrite?: boolean
 }
 
 export const EXAMPLES = {
@@ -5307,7 +5308,8 @@ export const EXAMPLES = {
     },
     isList: false,
     idempotent: false,
-    requiresIfMatch: true,
+    requiresIfMatch: false,
+    conditionalWrite: true,
   },
   "deleteWorkspaceCollectionRow": {
     operationId: "deleteWorkspaceCollectionRow",

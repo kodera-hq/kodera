@@ -94,6 +94,14 @@ function answerRequiringIfMatch(example: OperationExample, request: Request): Re
   return answer(example)
 }
 
+function answerConditional(example: OperationExample, request: Request): Response {
+  const match = request.headers.get('If-Match')
+  const absent = request.headers.get('If-None-Match')
+  if (match === null && absent === null) return problemMissingHeader('https://kodera.io/problems/precondition-required', request)
+  if ((match !== null && absent !== null) || (absent !== null && absent !== '*') || match === '') return problemMissingHeader('https://kodera.io/problems/validation-error', request)
+  return answer(absent === '*' ? { ...example, status: 201 } : example)
+}
+
 export const handlers: HttpHandler[] = [
   http.get(`${BASE}/me`, ({ request }) => answer({ ...EXAMPLES["getMe"], body: bindCurrentUserToMockRequest(EXAMPLES["getMe"].body as components['schemas']['Me'], request) })),
   http.patch(`${BASE}/me`, ({ request }) => answerRequiringIfMatch(EXAMPLES["patchMe"], request)),
@@ -244,7 +252,7 @@ export const handlers: HttpHandler[] = [
   http.delete(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id`, () => answer(EXAMPLES["deleteWorkspaceCollection"])),
   http.post(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/query`, ({ request }) => answerIdempotent(EXAMPLES["queryWorkspaceCollection"], request)),
   http.get(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, () => answer(EXAMPLES["getWorkspaceCollectionRow"])),
-  http.put(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, ({ request }) => answerRequiringIfMatch(EXAMPLES["putWorkspaceCollectionRow"], request)),
+  http.put(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, ({ request }) => answerConditional(EXAMPLES["putWorkspaceCollectionRow"], request)),
   http.delete(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, () => answer(EXAMPLES["deleteWorkspaceCollectionRow"])),
   http.get(`${BASE}/organisations/:organisation_id/workspace/quotas/usage`, () => answer(EXAMPLES["getWorkspaceQuotaUsage"])),
   http.get(`${BASE}/organisations/:organisation_id/workspace/quotas/limits`, () => answer(EXAMPLES["getWorkspaceQuotaLimits"])),

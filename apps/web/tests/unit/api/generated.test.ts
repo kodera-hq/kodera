@@ -138,7 +138,7 @@ describe('If-Match on PATCH', () => {
 
   it('requires If-Match on collection row replacement too', async () => {
     const op = EXAMPLES.putWorkspaceCollectionRow
-    expect(op.requiresIfMatch).toBe(true)
+    expect(op.conditionalWrite).toBe(true)
     const url = `${BASE}${fill(op.path)}`
     const refused = await fetch(url, { method: 'PUT' })
     expect(refused.status).toBe(428)
@@ -147,6 +147,15 @@ describe('If-Match on PATCH', () => {
     })
     const accepted = await fetch(url, { method: 'PUT', headers: { 'If-Match': '"row-tag"' } })
     expect(accepted.status).toBe(200)
+    const created = await fetch(url, { method: 'PUT', headers: { 'If-None-Match': '*' } })
+    expect(created.status).toBe(201)
+    const both = await fetch(url, {
+      method: 'PUT',
+      headers: { 'If-Match': '\"tag\"', 'If-None-Match': '*' },
+    })
+    expect(both.status).toBe(422)
+    const invalid = await fetch(url, { method: 'PUT', headers: { 'If-None-Match': 'invalid' } })
+    expect(invalid.status).toBe(422)
   })
 
   const patchMe = (ifMatch?: string): Promise<Response> =>
