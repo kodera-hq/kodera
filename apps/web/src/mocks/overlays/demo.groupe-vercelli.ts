@@ -18,6 +18,10 @@ import {
   withLocalMemberships,
 } from '../demo/localWorkspaces'
 import * as community from '../demo/community'
+import {
+  WAVE4_COLLECTIONS_DEMO_ROUTES,
+  wave4CollectionsDemoHandlers,
+} from '../demo/wave4Collections'
 import { MESSAGING_DEMO_ROUTES, messagingDemoHandlers } from '../demo/messagingMedia'
 import {
   WORKSPACE_DOCS_DEMO_ROUTES,
@@ -154,6 +158,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /invitations/accept',
   'GET /organisations/:organisation_id/workspace',
   'POST /organisations/:organisation_id/workspace/actions/initialise',
+  ...WAVE4_COLLECTIONS_DEMO_ROUTES,
   ...MESSAGING_DEMO_ROUTES,
   ...WORKSPACE_DOCS_DEMO_ROUTES,
 ]
@@ -723,6 +728,7 @@ export const handlers: HttpHandler[] = [
             { index: 2, header: 'Adresse mail', sample: `l.ferraro@${seed.DEMO_EMAIL_DOMAIN}` },
           ],
   }),
+  ...wave4CollectionsDemoHandlers(BASE, headers),
   ...messagingDemoHandlers(BASE, headers),
   ...workspaceDocumentsDemoHandlers(BASE, headers),
 ]
