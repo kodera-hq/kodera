@@ -1,4 +1,4 @@
-# Extension SDK & 10 connectors
+# Extension SDK & 22 connectors
 
 > Bring signed events into channels, with explicit trust boundaries.
 
@@ -33,11 +33,11 @@ Native GitHub uses sha256= over rawBody without the SDK timestamp prefix. The Fr
 
 > Signature verification alone is neither tenant authorization nor a persistent replay guarantee.
 
-## Ten reference implementations
+## Twenty-two reference implementations
 
-The connector list below describes repository implementations, not connected production accounts. Frame.io routes asset.ready to dailies and comment/review events to post-production without fetching assets.
+The connector list below describes repository implementations, not connected production accounts. Studio starters route Frame.io timecode/OTIO markers and Flamenco/Deadline render telemetry without fetching private media.
 
-Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional reference connectors for those services.
+External providers outside these twenty-two starters remain possible custom SDK integrations. This checkout does not contain additional reference connectors beyond the list below.
 
 > HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.
 
@@ -62,6 +62,30 @@ Linear, Stripe and Sentry are possible SDK integrations. This checkout does not 
 - [Social Pulse Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/social-pulse-bridge/manifest.json): social-pulse-bridge
 
 - [Frame.io Review Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/frameio-review-bridge/README.md): frameio-review-bridge
+
+- [Frame.io Timecode & OTIO](https://github.com/kodera-hq/kodera/blob/main/extensions/frameio/README.md): frameio
+
+- [Render-Farm Monitor (Flamenco & Deadline)](https://github.com/kodera-hq/kodera/blob/main/extensions/renderfarm/README.md): renderfarm
+
+- [GitHub Dev & PR Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/github/README.md): github
+
+- [GitLab MR & Pipeline Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/gitlab/README.md): gitlab
+
+- [Linear Issue & Cycle Triage](https://github.com/kodera-hq/kodera/blob/main/extensions/linear/README.md): linear
+
+- [Sentry Issue & Regression Triage](https://github.com/kodera-hq/kodera/blob/main/extensions/sentry/README.md): sentry
+
+- [Alertmanager & Grafana Incident Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/alertmanager/README.md): alertmanager
+
+- [RSS & Security Advisories Digest](https://github.com/kodera-hq/kodera/blob/main/extensions/rss-advisories/README.md): rss-advisories
+
+- [Release Notes & Triage Assistant](https://github.com/kodera-hq/kodera/blob/main/extensions/release-assistant/README.md): release-assistant
+
+- [OpenProject & Jira Work Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/openproject/README.md): openproject
+
+- [Cal.com Scheduling & Voice Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/calcom/README.md): calcom
+
+- [Billing & Quota Ops Webhooks](https://github.com/kodera-hq/kodera/blob/main/extensions/billing-webhooks/README.md): billing-webhooks
 
 ## Sources
 

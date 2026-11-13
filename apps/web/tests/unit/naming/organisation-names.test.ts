@@ -214,15 +214,19 @@ const catalogueProse = (catalogue: Readonly<Record<string, string>>, language: s
 
 function extensionProse(extensions: readonly Extension[]): Entry[] {
   return [
-    ...EXTENSION_CATEGORY_FILTERS.map(
-      (filter) => [`extension filter ${filter.id}`, filter.label] as const
-    ),
+    ...EXTENSION_CATEGORY_FILTERS.flatMap((filter) => [
+      [`extension filter ${filter.id}`, filter.label] as const,
+      [`extension filter ${filter.id} (en)`, filter.labelEn] as const,
+    ]),
     ...extensions.flatMap((extension) => [
       [`extension ${extension.slug} (name)`, extension.name] as const,
+      [`extension ${extension.slug} (name en)`, extension.nameEn] as const,
       [`extension ${extension.slug} (description)`, extension.description] as const,
+      [`extension ${extension.slug} (description en)`, extension.descriptionEn] as const,
       [`extension ${extension.slug} (webhook example)`, extension.defaultWebhookExample] as const,
       ...extension.commands.flatMap((command) => [
         [`extension ${extension.slug} (command description)`, command.description] as const,
+        [`extension ${extension.slug} (command description en)`, command.descriptionEn] as const,
         [`extension ${extension.slug} (command usage)`, command.usage] as const,
       ]),
     ]),
@@ -281,7 +285,7 @@ describe('no outside organisation is named in the product', () => {
     expect(Object.keys(fr).length).toBeGreaterThan(1000)
     expect(Object.keys(en)).toEqual(Object.keys(fr))
     expect(COMMUNITY.flatMap((category) => category.channels)).toHaveLength(12)
-    expect(OFFICIAL_EXTENSIONS_CATALOG).toHaveLength(10)
+    expect(OFFICIAL_EXTENSIONS_CATALOG).toHaveLength(22)
     expect(PROSE.length).toBeGreaterThan(3000)
     // The rules do find names and hosts in these sources: the lists are what lets them pass.
     expect(nameViolations(PROSE, new Set()).length).toBeGreaterThan(100)

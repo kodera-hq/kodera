@@ -4,20 +4,28 @@
 # Read by organisation-names.test.ts. One lower-case word per line. These are purpose words, and
 # the names of the services an extension starter is written for. A room, a key or an extension
 # named after an organisation is refused because its word is not here: adding one is a review.
+advisories
+alertmanager
+alerts
 and
 announcements
 announcer
+assistant
 audience
+billing
 bridge
+calcom
 collab
 community
 core
+dailies
 design
 dev
 developers
 doc
 docs
 document
+draft
 engineering
 ext
 extensions
@@ -25,7 +33,9 @@ feed
 feedback
 frameio
 gdrive
+gh
 github
+gitlab
 hello
 host
 hosting
@@ -33,12 +43,14 @@ hours
 incident
 io
 kodera
+linear
 notes
 notifier
 notion
 office
 onboarding
 oncall
+openproject
 operations
 ops
 pad
@@ -51,9 +63,14 @@ pulse
 qonto
 release
 releases
+render
+renderfarm
 repo
 review
+rss
+schedule
 self
+sentry
 share
 show
 social
@@ -65,4 +82,6 @@ tracker
 treasury
 uptime
 webhook
+webhooks
+work
 workspace

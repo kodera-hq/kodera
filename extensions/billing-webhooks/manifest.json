@@ -1,0 +1,34 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.billing-webhooks",
+  "name": "Billing & Quota Ops Webhooks Bridge",
+  "version": "0.1.0",
+  "description": "Subscription lifecycle, invoice status, and infrastructure quota threshold reference implementation with timestamped t=,v1= HMAC-SHA256 verification and strict PII redaction.",
+  "permissions": [
+    "messages:write",
+    "ephemeral:write",
+    "incidents:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "ephemeral:write",
+    "incidents:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "incident.opened"
+  ],
+  "commands": [
+    {
+      "command": "/billing-ops",
+      "name": "/billing-ops",
+      "description": "Inspect redacted workspace plan, invoice status, or quota thresholds in authorized ops channels"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/billing-webhooks"
+}
