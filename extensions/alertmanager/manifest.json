@@ -1,0 +1,36 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.alertmanager",
+  "name": "Prometheus Alertmanager & Grafana Alerting Bridge",
+  "version": "0.1.0",
+  "description": "Prometheus Alertmanager v4 and Grafana Unified Alerting reference implementation posting structured incident cards with runbook link validation.",
+  "permissions": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "incident.opened",
+    "incident.resolved",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/alerts",
+      "name": "/alerts",
+      "description": "List firing alerts, inspect runbooks, or check Alertmanager routing status"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/alertmanager"
+}

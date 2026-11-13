@@ -21,6 +21,7 @@ export interface OperationExample {
   readonly idempotent: boolean
   /** Whether the operation requires an `If-Match` request header — every `PATCH` today. */
   readonly requiresIfMatch: boolean
+  readonly conditionalWrite?: boolean
 }
 
 export const EXAMPLES = {
@@ -5051,6 +5052,608 @@ export const EXAMPLES = {
       "has_more": false
     },
     isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listWorkspaceCollections": {
+    operationId: "listWorkspaceCollections",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/collections",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000001",
+          "title": "Project tasks",
+          "properties": [
+            {
+              "id": "status",
+              "name": "Status",
+              "type": "select",
+              "options": [
+                {
+                  "id": "todo",
+                  "label": "To do"
+                }
+              ]
+            }
+          ],
+          "views": [
+            {
+              "id": "board",
+              "name": "Board",
+              "type": "board",
+              "groupByPropertyId": "status",
+              "showEmptyGroups": true
+            }
+          ],
+          "role": "editor",
+          "updatedAt": "2026-11-13T12:00:00Z"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createWorkspaceCollection": {
+    operationId: "createWorkspaceCollection",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/collections",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "title": "Project tasks",
+      "properties": [
+        {
+          "id": "status",
+          "name": "Status",
+          "type": "select",
+          "options": [
+            {
+              "id": "todo",
+              "label": "To do"
+            }
+          ]
+        }
+      ],
+      "views": [
+        {
+          "id": "board",
+          "name": "Board",
+          "type": "board",
+          "groupByPropertyId": "status",
+          "showEmptyGroups": true
+        }
+      ],
+      "role": "editor",
+      "updatedAt": "2026-11-13T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceCollection": {
+    operationId: "getWorkspaceCollection",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "title": "Project tasks",
+      "properties": [
+        {
+          "id": "status",
+          "name": "Status",
+          "type": "select",
+          "options": [
+            {
+              "id": "todo",
+              "label": "To do"
+            }
+          ]
+        }
+      ],
+      "views": [
+        {
+          "id": "board",
+          "name": "Board",
+          "type": "board",
+          "groupByPropertyId": "status",
+          "showEmptyGroups": true
+        }
+      ],
+      "role": "editor",
+      "updatedAt": "2026-11-13T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "updateWorkspaceCollection": {
+    operationId: "updateWorkspaceCollection",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "title": "Project tasks",
+      "properties": [
+        {
+          "id": "status",
+          "name": "Status",
+          "type": "select",
+          "options": [
+            {
+              "id": "todo",
+              "label": "To do"
+            }
+          ]
+        }
+      ],
+      "views": [
+        {
+          "id": "board",
+          "name": "Board",
+          "type": "board",
+          "groupByPropertyId": "status",
+          "showEmptyGroups": true
+        }
+      ],
+      "role": "editor",
+      "updatedAt": "2026-11-13T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "deleteWorkspaceCollection": {
+    operationId: "deleteWorkspaceCollection",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "queryWorkspaceCollection": {
+    operationId: "queryWorkspaceCollection",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}/query",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "documentId": "00000000-0000-7000-8000-000000000001",
+          "values": {
+            "status": {
+              "type": "select",
+              "value": "todo"
+            }
+          },
+          "updatedAt": "2026-11-13T12:00:00Z"
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false
+    },
+    isList: true,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceCollectionRow": {
+    operationId: "getWorkspaceCollectionRow",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "documentId": "00000000-0000-7000-8000-000000000001",
+      "values": {
+        "status": {
+          "type": "select",
+          "value": "todo"
+        }
+      },
+      "updatedAt": "2026-11-13T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "putWorkspaceCollectionRow": {
+    operationId: "putWorkspaceCollectionRow",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "documentId": "00000000-0000-7000-8000-000000000001",
+      "values": {
+        "status": {
+          "type": "select",
+          "value": "todo"
+        }
+      },
+      "updatedAt": "2026-11-13T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+    conditionalWrite: true,
+  },
+  "deleteWorkspaceCollectionRow": {
+    operationId: "deleteWorkspaceCollectionRow",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceQuotaUsage": {
+    operationId: "getWorkspaceQuotaUsage",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/quotas/usage",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "usage": {
+        "seats": 4,
+        "mediaBytes": 1024,
+        "pages": 12
+      },
+      "limits": {
+        "seats": 10,
+        "mediaBytes": 1073741824,
+        "pages": 100
+      },
+      "measuredAt": "2026-11-13T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceQuotaLimits": {
+    operationId: "getWorkspaceQuotaLimits",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/quotas/limits",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "seats": 10,
+      "mediaBytes": 1073741824,
+      "pages": 100
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getCreditNoteDownloadLink": {
+    operationId: "getCreditNoteDownloadLink",
+    method: "get",
+    path: "/credit-notes/{credit_note_id}/download",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "url": "https://s3.fr-par.scw.cloud/kodera-invoices/2026/INV-2026-0142.pdf?X-Amz-Signature=redacted",
+      "expires_at": "2026-12-01T10:05:00Z",
+      "content_type": "application/pdf",
+      "filename": "INV-2026-0142.pdf",
+      "sha256": "000000000000000000000000000000000000000000000000000000000000d10c",
+      "size_bytes": 48213
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getBillingVatStatus": {
+    operationId: "getBillingVatStatus",
+    method: "get",
+    path: "/organisations/{organisation_id}/billing/vat-status",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "vat_number": null,
+      "country_code": null,
+      "status": "not_checked",
+      "checked_at": null,
+      "next_check_at": null,
+      "evidence_id": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "validateBillingVat": {
+    operationId: "validateBillingVat",
+    method: "post",
+    path: "/organisations/{organisation_id}/billing/vat-status",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "vat_number": null,
+      "country_code": null,
+      "status": "not_checked",
+      "checked_at": null,
+      "next_check_at": null,
+      "evidence_id": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "requestWorkspaceExport": {
+    operationId: "requestWorkspaceExport",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/privacy/exports",
+    status: 202,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "workspace",
+      "kind": "export",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceExport": {
+    operationId: "getWorkspaceExport",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "workspace",
+      "kind": "export",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceExportDownloadLink": {
+    operationId: "getWorkspaceExportDownloadLink",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "url": "https://s3.fr-par.scw.cloud/kodera-invoices/2026/INV-2026-0142.pdf?X-Amz-Signature=redacted",
+      "expires_at": "2026-12-01T10:05:00Z",
+      "content_type": "application/pdf",
+      "filename": "INV-2026-0142.pdf",
+      "sha256": "000000000000000000000000000000000000000000000000000000000000d10c",
+      "size_bytes": 48213
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "requestWorkspaceDeletion": {
+    operationId: "requestWorkspaceDeletion",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/privacy/deletions",
+    status: 202,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "workspace",
+      "kind": "deletion",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceDeletion": {
+    operationId: "getWorkspaceDeletion",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/privacy/deletions/{request_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "workspace",
+      "kind": "deletion",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "requestAccountExport": {
+    operationId: "requestAccountExport",
+    method: "post",
+    path: "/me/privacy/exports",
+    status: 202,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "account",
+      "kind": "export",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getAccountExport": {
+    operationId: "getAccountExport",
+    method: "get",
+    path: "/me/privacy/exports/{request_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "account",
+      "kind": "export",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getAccountExportDownloadLink": {
+    operationId: "getAccountExportDownloadLink",
+    method: "get",
+    path: "/me/privacy/exports/{request_id}/download",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "url": "https://s3.fr-par.scw.cloud/kodera-invoices/2026/INV-2026-0142.pdf?X-Amz-Signature=redacted",
+      "expires_at": "2026-12-01T10:05:00Z",
+      "content_type": "application/pdf",
+      "filename": "INV-2026-0142.pdf",
+      "sha256": "000000000000000000000000000000000000000000000000000000000000d10c",
+      "size_bytes": 48213
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "requestAccountDeletion": {
+    operationId: "requestAccountDeletion",
+    method: "post",
+    path: "/me/privacy/deletions",
+    status: 202,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "account",
+      "kind": "deletion",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "getAccountDeletion": {
+    operationId: "getAccountDeletion",
+    method: "get",
+    path: "/me/privacy/deletions/{request_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000001",
+      "scope": "account",
+      "kind": "deletion",
+      "status": "queued",
+      "requestedAt": "2026-11-13T12:00:00Z",
+      "updatedAt": "2026-11-13T12:00:00Z",
+      "expiresAt": null,
+      "purgeAfter": null,
+      "failureCode": null
+    },
+    isList: false,
     idempotent: false,
     requiresIfMatch: false,
   },

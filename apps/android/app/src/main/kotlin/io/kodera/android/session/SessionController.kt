@@ -142,6 +142,11 @@ class SessionController internal constructor(
     var notice by mutableStateOf<Int?>(null)
         private set
 
+    val telecomCoordinator = TelecomPushCoordinator()
+    val proximityV2Controller = ProximityV2CheckInController()
+    val inviteCoordinator = ChannelInviteCoordinator()
+    val passkeyCoordinator = PasskeySessionCoordinator()
+
     /** Whether this build can sign in at all; when false, entry says sign-in is not offered yet. */
     val signInConfigured: Boolean get() = service != null
     val canSignIn: Boolean get() = !closed && service != null && phase == SessionPhase.SignedOut
@@ -263,6 +268,7 @@ class SessionController internal constructor(
         requireMain()
         if (closed || resumed) return
         resumed = true
+        proximityV2Controller.onForeground()
         invalidateRead()
         if (phase is SessionPhase.SignedIn) loadMember(refreshFirst = false)
     }
@@ -272,6 +278,8 @@ class SessionController internal constructor(
         requireMain()
         if (closed || !resumed) return
         resumed = false
+        proximityV2Controller.onBackground()
+        inviteCoordinator.dismissSheet(null)
         invalidateRead()
     }
 
@@ -369,8 +377,9 @@ class SessionController internal constructor(
                     null -> member = MemberState.CoreUnavailable
                     is MeOutcome.Member -> {
                         val organisation = outcome.profile.organisations.singleOrNull { it.realm == signedIn.session.realm }
+                        configureSessionCoordinators(organisation?.id)
                         member = MemberState.Loaded(outcome.profile.displayName ?: outcome.profile.email, organisation?.name)
-                        if (resumed && clients != null) {
+                        if (resumed) {
                             if (organisation == null) workspace = WorkspaceViewState.Unavailable(R.string.workspace_unavailable)
                             else {
                                 targetOrganisation = organisation.id
@@ -381,7 +390,10 @@ class SessionController internal constructor(
                     MeOutcome.SignedOut -> {
                         if (owner?.isSignedIn == true) member = MemberState.CoreUnavailable else leaveEndedSession()
                     }
-                    is MeOutcome.Unavailable -> member = MemberState.of(outcome.failure)
+                    is MeOutcome.Unavailable -> {
+                        if (outcome.failure == MeFailure.Forbidden) configureSessionCoordinators(null)
+                        member = MemberState.of(outcome.failure)
+                    }
                 }
             }
         }
@@ -431,8 +443,16 @@ class SessionController internal constructor(
         return CoreClients(requester, CoreMeClient(requester), CoreWorkspaceClient(requester))
     }
 
+    private fun configureSessionCoordinators(organisationId: String?) {
+        runCatching { telecomCoordinator.configureOrganisation(organisationId) }
+        runCatching { proximityV2Controller.configureOrganisation(organisationId) }
+        inviteCoordinator.configureOrganisation(organisationId)
+        passkeyCoordinator.configureOrganisation(organisationId)
+    }
+
     /** Closes the ended session's requester, once: a request still in flight finishes and is fenced. */
     private fun endCore() {
+        configureSessionCoordinators(null)
         core?.requester?.close()
         core = null
     }
@@ -448,6 +468,10 @@ class SessionController internal constructor(
         generation = null
         invalidateRead()
         endCore()
+        telecomCoordinator.stop()
+        proximityV2Controller.close()
+        inviteCoordinator.stop()
+        passkeyCoordinator.clear()
     }
 
     private class CoreClients(val requester: CoreRequester, val me: CoreMeClient, val workspace: CoreWorkspaceClient)

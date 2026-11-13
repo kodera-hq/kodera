@@ -1,0 +1,36 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.sentry",
+  "name": "Sentry & GlitchTip Error Alert Bridge",
+  "version": "0.1.0",
+  "description": "Issue and event alert reference implementation for Sentry and open-source GlitchTip with sanitized stacktrace previews and incident cards.",
+  "permissions": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "incident.opened",
+    "incident.resolved",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/sentry",
+      "name": "/sentry",
+      "description": "Inspect, triage, or resolve Sentry and GlitchTip error issues"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/sentry"
+}

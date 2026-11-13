@@ -203,4 +203,111 @@
     <string name="preferences_local_member">Simulated local member</string>
     <string name="preferences_untitled_draft">Untitled local draft</string>
     <string name="preferences_begin_preview">Begin local preview</string>
+
+    <!-- Telecom / ConnectionService & payload-free push wakeup -->
+    <string name="telecom_push_badge">Payload-free wakeup</string>
+    <string name="telecom_section_title">System call and silent push wakeup</string>
+    <string name="telecom_payload_free_notice">UnifiedPush and FCM carry only an opaque wakeup identifier: zero message bodies, room titles, or caller names traverse third-party push relays.</string>
+    <string name="telecom_relay_unifiedpush">Verified UnifiedPush relay</string>
+    <string name="telecom_relay_fcm">Verified opaque FCM relay</string>
+    <string name="telecom_relay_standby">Wakeup relay on standby</string>
+    <string name="telecom_action_answer">Answer</string>
+    <string name="telecom_action_decline">Decline</string>
+    <string name="telecom_action_mute">Mute call microphone</string>
+    <string name="telecom_action_unmute">Unmute call microphone</string>
+    <string name="telecom_action_hold">Place call on hold</string>
+    <string name="telecom_action_resume">Resume call</string>
+    <string name="telecom_route_earpiece">Switch to earpiece</string>
+    <string name="telecom_route_speaker">Switch to speaker</string>
+    <string name="telecom_action_end">End call</string>
+    <string name="telecom_driver_ready">ConnectionService bridge ready for the active session.</string>
+    <string name="telecom_driver_unprovisioned">No active system call. The ConnectionService state machine awaits an authenticated opaque wakeup.</string>
+    <string name="telecom_phase_idle">Idle</string>
+    <string name="telecom_phase_wakeup_pending">Opaque wakeup received</string>
+    <string name="telecom_phase_ringing">Incoming ring</string>
+    <string name="telecom_phase_connecting">Connecting audio</string>
+    <string name="telecom_phase_connected">Call connected</string>
+    <string name="telecom_phase_on_hold">On hold</string>
+    <string name="telecom_phase_ended">Call ended</string>
+    <string name="telecom_phase_rejected">Wakeup rejected</string>
+
+    <!-- #proximity v2 foreground BLE check-in lane -->
+    <string name="proximity_v2_consent_enabled">Local radio consent enabled</string>
+    <string name="proximity_v2_consent_disabled">Local radio consent disabled</string>
+    <string name="proximity_v2_lane_heading">Local BLE v2 radio lane (foreground only)</string>
+    <string name="proximity_v2_lane_separation">Online Matrix room check-ins and local 27-byte BLE radio beacons remain strictly separated.</string>
+    <string name="proximity_v2_online_lane_badge">Online Matrix room</string>
+    <string name="proximity_v2_ble_lane_badge">Local BLE KP v2</string>
+    <string name="proximity_v2_duty_budget_badge">Duty %1$d%% · Min battery %2$d%%</string>
+    <string name="proximity_v2_consent_label">Allow local BLE discovery while the app is open</string>
+    <string name="proximity_v2_consent_hint">Off by default. Pauses immediately when the app leaves the screen or battery saver turns on.</string>
+    <string name="proximity_v2_rotating_pseudonym">Rotating ephemeral beacon: %1$s</string>
+    <string name="proximity_v2_radio_counters">Local BLE broadcasts: %1$d · Verified peer beacons: %2$d</string>
+    <string name="proximity_v2_posture_unprovisioned">Physical BLE radio adapter not attached in this session; only signed in-memory frames are verified.</string>
+    <string name="proximity_v2_posture_consent_required">Local BLE discovery inactive: grant explicit consent to allow foreground radio windows.</string>
+    <string name="proximity_v2_posture_suspended">Local BLE radio paused while the app is not in the foreground.</string>
+    <string name="proximity_v2_posture_ready">Local BLE radio ready within the five-minute rotation window.</string>
+    <string name="proximity_v2_posture_scanning">Foreground BLE scan window active.</string>
+    <string name="proximity_v2_posture_battery_guard">Local BLE radio paused to protect device battery reserve.</string>
+    <string name="proximity_v2_posture_duty_throttled">Local BLE cadence throttled by duty-cycle budget.</string>
+
+    <!-- Universal Matrix invitations -->
+    <string name="invite_open_button">Invite</string>
+    <string name="invite_clipboard_label">Kodera Matrix invitation</string>
+    <string name="invite_sheet_title">Invite to #%1$s</string>
+    <string name="invite_sheet_subtitle">Standard Matrix links interoperable with Element, Tchap, and Cinny, copied inside the app with zero external browser launch.</string>
+    <string name="invite_format_matrix_uri">RFC-compliant Matrix URI</string>
+    <string name="invite_action_copy_uri">Copy Matrix URI</string>
+    <string name="invite_format_matrix_to">Universal matrix.to link</string>
+    <string name="invite_action_copy_web">Copy matrix.to link</string>
+    <string name="invite_format_suggested_alias">Suggested Matrix alias</string>
+    <string name="invite_format_canonical_alias">Canonical Matrix identifier</string>
+    <string name="invite_action_copy_alias">Copy identifier</string>
+    <string name="invite_copied_uri">Matrix URI copied to clipboard.</string>
+    <string name="invite_copied_web">Universal matrix.to link copied to clipboard.</string>
+    <string name="invite_copied_alias">Matrix identifier copied to clipboard.</string>
+    <string name="invite_direct_heading">Direct federated invite</string>
+    <string name="invite_direct_label">Matrix user ID (@localpart:domain)</string>
+    <string name="invite_direct_placeholder">@partner:matrix.org</string>
+    <string name="invite_direct_submit">Validate direct invite</string>
+    <string name="invite_status_sent">Matrix invite dispatched to %1$s.</string>
+    <string name="invite_status_unprovisioned">Recipient %1$s validated; live Matrix invite transport is not configured in this build.</string>
+    <string name="invite_status_invalid_recipient">Matrix ID refused: use the strict @localpart:domain format.</string>
+    <string name="invite_status_failed">The direct invite could not be dispatched.</string>
+    <string name="invite_action_close">Close</string>
+
+    <!-- 3-category community workspace structure & federated partner badges -->
+    <string name="community_title">Community and partner workspace</string>
+    <string name="community_subtitle">Canonical three-category structure: open public channels, private-by-default core team rooms, and federated Matrix partner rooms.</string>
+    <string name="community_private_internal_badge">Private by default</string>
+    <string name="community_federated_badge">Matrix federation</string>
+    <string name="community_audience_public">Open to community members, self-hosters, and contributors.</string>
+    <string name="community_audience_core">Internal Kodera team rooms, private by default.</string>
+    <string name="community_audience_partners">Invite-only federated rooms accessible from Element, Tchap, or Cinny.</string>
+    <string name="community_topic_releases">Release announcements and product updates.</string>
+    <string name="community_topic_developers">SDK integrations, APIs, and architecture.</string>
+    <string name="community_topic_support">Community troubleshooting and deployment help.</string>
+    <string name="community_topic_extensions">Matrix bots, bridges, and workflow extensions.</string>
+    <string name="community_topic_self_host">Sovereign self-hosting, federation, and operations.</string>
+    <string name="community_topic_show_tell">Community demos and field stories.</string>
+    <string name="community_topic_office">Scheduled audio office hours with the team.</string>
+    <string name="community_topic_engineering">Internal engineering coordination.</string>
+    <string name="community_topic_strategy">Internal product direction and reviews.</string>
+    <string name="community_topic_operations">Infrastructure operations, on-call, and security.</string>
+    <string name="community_topic_partner_onboarding">Dedicated federated onboarding for partner organisations.</string>
+    <string name="community_topic_partner_feedback">Joint validation and partner release feedback.</string>
+
+    <!-- Universal ES256 Passkey device binding -->
+    <string name="passkey_title">Universal Passkey device binding</string>
+    <string name="passkey_universal_disclosure">Zero-AAGUID-lock-in ES256 WebAuthn verification supporting Android biometrics, self-hosted Vaultwarden or Bitwarden vaults, and FIDO2 security keys.</string>
+    <string name="passkey_badge_es256">ES256 P-256</string>
+    <string name="passkey_badge_biometric">Android biometrics</string>
+    <string name="passkey_badge_vaultwarden">Vaultwarden · Citadel</string>
+    <string name="passkey_badge_fido2">FIDO2 key</string>
+    <string name="passkey_posture_hardware">Bound to a verified single-device hardware authenticator.</string>
+    <string name="passkey_posture_backup_local">Backup-eligible authenticator stored locally.</string>
+    <string name="passkey_posture_synced">Verified multi-device synced Passkey authenticator.</string>
+    <string name="passkey_posture_bound">ES256 Passkey bound to this organisation.</string>
+    <string name="passkey_verified_count">Verified cryptographic assertions: %1$d</string>
+    <string name="passkey_status_unbound">No Passkey device key bound in this session. All standards-compliant ES256 WebAuthn providers are accepted.</string>
 </resources>
