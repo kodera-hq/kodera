@@ -139,7 +139,11 @@ or infrastructure evidence table.
 ## Operator source interfaces
 
 `core/db/retention_worker_role.py` emits reviewable grants for a separate worker.
-It refuses `kodera_api` and grants no raw deletion, guard/context-table write or
+Its dedicated `kodera_retention_worker` namespace refuses HTTP, collaboration, shared,
+system and owner aliases. Processing grants cannot create a cutoff, register a fiscal
+period, close a contract or qualify historical records. A separate
+`kodera_retention_admission` operator grant set owns those authority decisions.
+The source emits no raw deletion, guard/context-table write or
 infrastructure credential. Functions are `PUBLIC`-revoked, use a fixed schema and
 finite lock/statement timeouts. Trigger exceptions use a private backend/transaction
 context written only by those bounded functions, never a caller-settable GUC or

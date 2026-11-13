@@ -235,9 +235,11 @@ def test_external_proof_mutations_never_complete_or_enter_journal(world, mutatio
 def test_all_privileged_worker_and_trigger_functions_refuse_public_execution_and_temp_trigger_reuse():
     from django.db import ProgrammingError
 
-    from core.db.retention_worker_role import FUNCTIONS, grant_statements
+    from core.db.retention_worker_role import ADMISSION_FUNCTIONS, FUNCTIONS, grant_statements
 
-    assert all("DELETE ON" not in item for item in grant_statements("retention_worker_control"))
+    assert all(
+        "DELETE ON" not in item for item in grant_statements("kodera_retention_worker_control")
+    )
     for name in ["kodera_api", "public", "evil;drop table"]:
         with pytest.raises(ValueError, match="separate statutory erasure worker"):
             grant_statements(name)
@@ -247,6 +249,7 @@ def test_all_privileged_worker_and_trigger_functions_refuse_public_execution_and
     try:
         for signature in [
             *FUNCTIONS,
+            *ADMISSION_FUNCTIONS,
             "retention_context(text,text,uuid)",
             "retention_current_operator(uuid)",
             "billing_retention_clock_guard()",
