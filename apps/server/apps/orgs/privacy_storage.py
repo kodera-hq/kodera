@@ -94,9 +94,10 @@ class PrivateVolume:
     def _parent(self, key: str, *, create: bool = False) -> Iterator[tuple[int, str]]:
         parts = self._parts(key)
         descriptor = None
+        request_descriptor = None
         try:
             descriptor = self._root_fd()
-            for part in parts[:-1]:
+            for index, part in enumerate(parts[:-1]):
                 if create:
                     try:
                         os.mkdir(part, 0o700, dir_fd=descriptor)
@@ -113,7 +114,11 @@ class PrivateVolume:
                     raise
                 os.close(descriptor)
                 descriptor = following
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+                if index == 1:
+                    # Every nested object and request-wide inventory shares this lock.
+                    # Keep a duplicate alive while traversal advances into child directories.
+                    request_descriptor = os.dup(descriptor)
+                    fcntl.flock(request_descriptor, fcntl.LOCK_EX)
             yield descriptor, parts[-1]
         except FileNotFoundError:
             raise MissingPrivateObjectError() from None
@@ -122,6 +127,8 @@ class PrivateVolume:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
+            if request_descriptor is not None:
+                os.close(request_descriptor)
 
     def _read(
         self, parent: int, name: str, limit: int, *, expired: bool = False
@@ -153,6 +160,7 @@ class PrivateVolume:
             "private object expiry bound",
         )
         with self._parent(key, create=True) as (parent, name):
+            require(self.clock() < expires_at, "private object expired", 409)
             try:
                 os.stat(name, dir_fd=parent, follow_symlinks=False)
             except FileNotFoundError:
@@ -177,7 +185,7 @@ class PrivateVolume:
                     stream.write(content)
                     stream.flush()
                     os.fsync(descriptor)
-                # All service writers hold this directory's exclusive lock. Rename publishes
+                # All service writers hold the request directory's lock. Rename publishes
                 # one complete inode, avoiding a hard-link/unlink interruption window.
                 os.rename(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
                 temporary = ""

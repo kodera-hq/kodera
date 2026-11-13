@@ -1,5 +1,6 @@
 """Real private-volume restart, expiry and named filesystem/source refusal controls."""
 
+import fcntl
 import hashlib
 import os
 import threading
@@ -343,3 +344,69 @@ def test_concurrent_captures_reuse_first_committed_bound_manifest(volume):
     assert sources[0].page(request(), snapshots[0], None) == sources[1].page(
         request(), snapshots[1], None
     )
+
+
+def test_waiting_nested_writer_cannot_publish_after_request_expiry(volume):
+    root, storage = volume
+    storage.put_immutable(KEY, b"existing", 1600)
+    admitted = threading.Event()
+    now = [1000]
+    calls = [0]
+
+    def clock():
+        value = now[0]
+        calls[0] += 1
+        if calls[0] == 2:
+            admitted.set()
+        return value
+
+    waiting = PrivateVolume(root, clock=clock)
+    request_fd = os.open(root / "privacy" / REQUEST_ID, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        fcntl.flock(request_fd, fcntl.LOCK_EX)
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            future = workers.submit(
+                waiting.put_immutable, f"privacy/{REQUEST_ID}/sources/late.bin", b"late", 1600
+            )
+            assert admitted.wait(timeout=5)
+            now[0] = 1600
+            fcntl.flock(request_fd, fcntl.LOCK_UN)
+            with pytest.raises(ArchiveRefusalError, match="expired"):
+                future.result(timeout=5)
+        expired = PrivateVolume(root, clock=lambda: 1600)
+        assert expired.collect_request(REQUEST_ID) == 1
+        assert expired.inventory(REQUEST_ID) == ()
+    finally:
+        os.close(request_fd)
+
+
+def test_request_inventory_waits_for_nested_publication(volume, monkeypatch):
+    root, storage = volume
+    publishing = threading.Event()
+    release = threading.Event()
+    inspecting = threading.Event()
+    rename = os.rename
+
+    def paused_rename(*args, **kwargs):
+        publishing.set()
+        assert release.wait(timeout=5)
+        return rename(*args, **kwargs)
+
+    def inventory():
+        inspecting.set()
+        return PrivateVolume(root, clock=lambda: 1000).inventory(REQUEST_ID)
+
+    monkeypatch.setattr(os, "rename", paused_rename)
+    key = f"privacy/{REQUEST_ID}/sources/body.bin"
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        writer = workers.submit(storage.put_immutable, key, b"body", 1600)
+        assert publishing.wait(timeout=5)
+        reader = workers.submit(inventory)
+        assert inspecting.wait(timeout=5)
+        try:
+            with pytest.raises(TimeoutError):
+                reader.result(timeout=0.1)
+        finally:
+            release.set()
+        writer.result(timeout=5)
+        assert reader.result(timeout=5) == (key,)

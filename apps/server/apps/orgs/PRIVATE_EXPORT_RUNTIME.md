@@ -8,8 +8,10 @@ archive protocol. A private local volume is an explicit self-host deployment opt
 an inferred fallback for an absent bucket. Its service-owned root and every directory must
 be private. Reads and writes refuse symbolic links, nonregular files, path traversal,
 oversized objects, different immutable replacements and expired content. Each object commits
-its expiry and bytes together. Cooperative service writers serialize with a parent-directory
-lock and publish one fsynced inode by atomic rename; directory creation fsyncs its parent.
+its expiry and bytes together. Cooperative service writers and complete inventories serialize
+with the same request-directory lock, including nested source objects. A waiting writer
+rechecks expiry under that lock before publication. Writes publish one fsynced inode by
+atomic rename; directory creation fsyncs its parent.
 The filesystem must support these POSIX guarantees. Expiry denies reads; supervised collection removes expired
 objects. It does not prove erasure from volume snapshots or backups.
 
