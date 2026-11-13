@@ -15,9 +15,41 @@
 #![forbid(unsafe_code)]
 
 mod commands;
+pub mod deeplink;
+pub mod keychain;
+pub mod self_host_health;
+pub mod tray_ptt;
+
 pub use commands::{
-    DesktopCommandError, DesktopCommandRequest, DesktopCommandResponse, ProximityMemberStatus,
-    MAX_IPC_COMMAND_BYTES,
+    configure_desktop_ptt, get_desktop_ptt_state, get_desktop_tray_state,
+    inspect_desktop_self_host_health, route_desktop_deep_link, set_desktop_ptt_pressed,
+    update_desktop_tray_state, validate_desktop_keychain_metadata, DesktopCommandError,
+    DesktopCommandRequest, DesktopCommandResponse, ProximityMemberStatus, MAX_IPC_COMMAND_BYTES,
+    REGISTERED_DESKTOP_COMMANDS,
+};
+pub use deeplink::{
+    route_deep_link, AdmittedDeepLink, DeepLinkAdmissionPolicy, DeepLinkError, KoderaDeepLink,
+    MatrixAction, MatrixDeepLink, MatrixTarget, DEFAULT_ADMITTED_DOMAINS,
+    MAX_ADMITTED_DEEP_LINK_DOMAINS, MAX_DEEP_LINK_BYTES, MAX_MATRIX_VIA_SERVERS,
+};
+pub use keychain::{
+    build_keychain_slot, metadata_exposes_secret, validate_keychain_account_id,
+    validate_keychain_service_id, KeychainError, KeychainSecretKind, KeychainSessionMetadata,
+    KeychainSlotDescriptor, RedactedSessionSecret, KEYCHAIN_SERVICE_NAMESPACE,
+    MAX_KEYCHAIN_ACCOUNT_BYTES, MAX_KEYCHAIN_SECRET_BYTES, MAX_KEYCHAIN_SERVICE_BYTES,
+    MIN_KEYCHAIN_SECRET_BYTES,
+};
+pub use self_host_health::{
+    classify_docker_stderr, inspect_community_compose_ps, probe_local_community_stack,
+    CommunityProbeHandle, CommunityServiceRole, DockerUnavailableReason, MemoryBudgetWarning,
+    ProbeDisconnectedError, SelfHostHealthError, SelfHostHealthReport, ServiceHealthDiagnostic,
+    ServiceReadiness, StackHealthState, COMMUNITY_MEMORY_BUDGET_MIB, DEFAULT_PROBE_TIMEOUT_MS,
+    MAX_COMPOSE_CONTAINERS, MAX_COMPOSE_PS_JSON_BYTES, MAX_PROBE_TIMEOUT_MS,
+};
+pub use tray_ptt::{
+    PttController, PttKeyChord, PttModifier, PttStateSnapshot, PttTransmissionState, PttTriggerKey,
+    TrayCallKind, TrayController, TrayIndicator, TrayPttError, TrayStateSnapshot,
+    MAX_PTT_CHORD_BYTES, MAX_TRAY_BADGE_DIRECT, MAX_TRAY_UNREAD_COUNT,
 };
 
 /// Canonical reverse-DNS bundle identifier for the Kodera Tauri v2 shell.
@@ -648,6 +680,9 @@ pub struct DesktopWorkspaceSession {
     custom_theme: Option<ShareableThemePayload>,
     user_profile: Option<UserProfile>,
     docs_pads: BTreeMap<String, DocsPadDocument>,
+    deep_link_policy: DeepLinkAdmissionPolicy,
+    tray: TrayController,
+    ptt: PttController,
 }
 
 impl DesktopWorkspaceSession {
@@ -673,6 +708,9 @@ impl DesktopWorkspaceSession {
             custom_theme: None,
             user_profile: None,
             docs_pads: BTreeMap::new(),
+            deep_link_policy: DeepLinkAdmissionPolicy::kodera_default(),
+            tray: TrayController::new(),
+            ptt: PttController::new(),
         })
     }
 
@@ -1172,6 +1210,133 @@ impl DesktopWorkspaceSession {
         Ok(self.docs_pads.get(pad_id).cloned())
     }
 
+    /// Trusted session configuration adding tenant Matrix/workspace domains to the default
+    /// deep-link allowlist. Invalid domain replacements leave the active policy unchanged.
+    pub fn configure_deep_link_domains(
+        &mut self,
+        organisation_id: &str,
+        extra_domains: &[&str],
+    ) -> Result<(), DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let mut candidate = DeepLinkAdmissionPolicy::kodera_default();
+        for domain in extra_domains {
+            candidate
+                .add_domain(domain)
+                .map_err(DesktopCommandError::DeepLink)?;
+        }
+        self.deep_link_policy = candidate;
+        Ok(())
+    }
+
+    pub fn route_deep_link(
+        &self,
+        organisation_id: &str,
+        raw_uri: &str,
+    ) -> Result<AdmittedDeepLink, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        deeplink::route_deep_link(raw_uri, &self.deep_link_policy)
+            .map_err(DesktopCommandError::DeepLink)
+    }
+
+    pub fn update_tray_state(
+        &mut self,
+        organisation_id: &str,
+        unread_count: u32,
+        active_call: Option<TrayCallKind>,
+        muted: bool,
+        self_host_degraded: bool,
+    ) -> Result<TrayStateSnapshot, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.tray
+            .update_all(unread_count, active_call, muted, self_host_degraded)
+            .map_err(DesktopCommandError::TrayPtt)?;
+        if active_call.is_none() {
+            self.ptt.force_release();
+        }
+        Ok(self.tray.snapshot(self.ptt.is_transmitting()))
+    }
+
+    pub fn tray_state(&self, organisation_id: &str) -> Result<TrayStateSnapshot, CoreError> {
+        self.check_organisation(organisation_id)?;
+        Ok(self.tray.snapshot(self.ptt.is_transmitting()))
+    }
+
+    pub fn configure_ptt(
+        &mut self,
+        organisation_id: &str,
+        opt_in: bool,
+        raw_chord: Option<&str>,
+    ) -> Result<PttStateSnapshot, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.ptt
+            .configure(opt_in, raw_chord)
+            .map_err(DesktopCommandError::TrayPtt)
+    }
+
+    pub fn set_ptt_pressed(
+        &mut self,
+        organisation_id: &str,
+        pressed: bool,
+        now_ms: u64,
+    ) -> Result<PttStateSnapshot, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let snapshot = if pressed {
+            self.ptt.press(now_ms)
+        } else {
+            self.ptt.release()
+        };
+        snapshot.map_err(DesktopCommandError::TrayPtt)
+    }
+
+    pub fn ptt_state(&self, organisation_id: &str) -> Result<PttStateSnapshot, CoreError> {
+        self.check_organisation(organisation_id)?;
+        Ok(self.ptt.snapshot())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_keychain_metadata(
+        &self,
+        organisation_id: &str,
+        secret_kind: KeychainSecretKind,
+        matrix_user_id: &str,
+        device_id: &str,
+        issued_at_unix_secs: u64,
+        expires_at_unix_secs: Option<u64>,
+        raw_secret: Option<&str>,
+    ) -> Result<KeychainSessionMetadata, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let (metadata, _redacted_secret) = KeychainSessionMetadata::validate_with_secret(
+            secret_kind,
+            organisation_id,
+            matrix_user_id,
+            device_id,
+            issued_at_unix_secs,
+            expires_at_unix_secs,
+            raw_secret,
+        )
+        .map_err(DesktopCommandError::Keychain)?;
+        Ok(metadata)
+    }
+
+    pub fn inspect_self_host_health(
+        &mut self,
+        organisation_id: &str,
+        raw_ps_json: &str,
+    ) -> Result<SelfHostHealthReport, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let report = inspect_community_compose_ps(raw_ps_json, &BTreeMap::new())
+            .map_err(DesktopCommandError::SelfHostHealth)?;
+        self.tray.set_self_host_degraded(!report.is_healthy());
+        Ok(report)
+    }
+
     pub fn clear_session(&mut self) {
         if let Some(node) = &mut self.proximity {
             node.clear();
@@ -1188,6 +1353,9 @@ impl DesktopWorkspaceSession {
         self.custom_theme = None;
         self.user_profile = None;
         self.docs_pads.clear();
+        self.deep_link_policy = DeepLinkAdmissionPolicy::kodera_default();
+        self.tray.clear();
+        self.ptt.clear();
         self.organisation_id = None;
     }
 
