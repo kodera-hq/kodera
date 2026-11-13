@@ -70,3 +70,27 @@ def test_processing_grants_cannot_create_cutoffs_fiscal_authority_or_contract_cl
             admission_grant_statements(role)
     with pytest.raises(ValueError, match="separate statutory erasure worker role required"):
         grant_statements("kodera_retention_admission_control")
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "apps.orgs.management.commands.erase_core_workspace",
+        "apps.billing.management.commands.manage_statutory_retention",
+    ],
+)
+def test_operator_commands_refuse_before_any_operation_when_profile_is_unavailable(
+    monkeypatch, module_name
+):
+    import importlib
+
+    from django.core.management.base import CommandError
+
+    module = importlib.import_module(module_name)
+
+    def refuse_profile():
+        raise CommandError("operator profile control unavailable")
+
+    monkeypatch.setattr(module, "require_operator_profile", refuse_profile)
+    with pytest.raises(CommandError, match="operator profile control unavailable"):
+        module.Command().handle()

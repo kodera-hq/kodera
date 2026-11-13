@@ -8,6 +8,7 @@ from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import DatabaseError
 
 from apps.billing import statutory
+from apps.orgs.management.operator import require_operator_profile
 
 
 class Command(BaseCommand):
@@ -27,6 +28,7 @@ class Command(BaseCommand):
         parser.add_argument("--actor-identity-id", type=UUID)
 
     def handle(self, *args: Any, **options: Any) -> None:
+        require_operator_profile()
         operation = options["operation"]
         fields = {
             "fiscal": ["issuer_siren", "starts_at", "closed_at", "timezone", "authority_ref"],

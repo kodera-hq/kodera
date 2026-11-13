@@ -28,8 +28,12 @@ APPS = [
     "apps.workspaces",
     "apps.docs",
     "apps.media",
+    "apps.notifications",
 ]
 COMMANDS = [
+    "erase_core_workspace",
+    "manage_statutory_retention",
+    "dispatch_push",
     "configure_workspace_quotas",
     "configure_collab_role",
     "configure_api_role",

@@ -9,6 +9,7 @@ from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import DatabaseError
 
 from apps.orgs.erasure_services import advance_erasure, begin_erasure
+from apps.orgs.management.operator import require_operator_profile
 
 
 class Command(BaseCommand):
@@ -24,6 +25,7 @@ class Command(BaseCommand):
         parser.add_argument("--purge-not-before", type=datetime.fromisoformat)
 
     def handle(self, *args: Any, **options: Any) -> None:
+        require_operator_profile()
         try:
             if options["operation"] == "cutoff":
                 required = [
