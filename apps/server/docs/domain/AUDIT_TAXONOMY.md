@@ -210,6 +210,7 @@ that job and action do not exist yet.
 | `order.terminated` | system | `order` | standard |
 | `order.complimentary` | staff | `order` | standard |
 | `invoice.issued`, `invoice.sent`, `invoice.paid`, `invoice.overdue`, `invoice.voided` | staff, system | `invoice` | standard |
+| `invoice.download_requested` | tenant | `invoice`, `credit_note` | standard |
 | `credit_note.issued` | staff, system | `credit_note` | standard |
 | `credit_note.notice_enqueued` | system | `credit_note` | standard |
 | `payment.received`, `payment.failed`, `payment.refunded`, `payment.reconciled`, `payment.reconciliation_mismatch` | system | `payment` | standard |

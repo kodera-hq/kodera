@@ -258,6 +258,72 @@ class BillingProfile(StoredModel):
         return f"billing profile of {self.organisation_id}"
 
 
+class ViesConsultation(StoredModel):
+    """Append-only evidence, including unavailable outcomes; never a client validation claim."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    country_code = models.TextField()
+    vat_number = models.TextField()
+    status = models.TextField()
+    checked_at = models.DateTimeField()
+    next_check_at = models.DateTimeField()
+    consultation_ref = models.TextField(null=True, blank=True)  # noqa: DJ001 - unavailable
+    response_sha256 = models.TextField()
+    evidence = models.JSONField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_vies_status",
+                condition=Q(status__in=("valid", "invalid", "unavailable")),
+            ),
+            models.CheckConstraint(
+                name="billing_vies_digest", condition=Q(response_sha256__regex=r"^[0-9a-f]{64}$")
+            ),
+            models.CheckConstraint(
+                name="billing_vies_window", condition=Q(next_check_at__gt=F("checked_at"))
+            ),
+            models.CheckConstraint(
+                name="billing_vies_valid_ref",
+                condition=~Q(status="valid") | Q(consultation_ref__isnull=False),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organisation", "-checked_at", "-id"], name="billing_vies_latest")
+        ]
+
+
+class BillingArtifact(StoredModel):
+    """A validated immutable PDF/XML pair bound to exactly one frozen accounting snapshot."""
+
+    invoice = models.OneToOneField("Invoice", on_delete=models.RESTRICT, null=True, blank=True)
+    credit_note = models.OneToOneField(
+        "CreditNote", on_delete=models.RESTRICT, null=True, blank=True
+    )
+    snapshot_sha256 = models.TextField()
+    pdf_sha256 = models.TextField()
+    xml_sha256 = models.TextField()
+    pdf = models.BinaryField()
+    xml = models.BinaryField()
+    validator_ref = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_artifact_parent",
+                condition=Q(invoice__isnull=False, credit_note__isnull=True)
+                | Q(invoice__isnull=True, credit_note__isnull=False),
+            ),
+            *[
+                models.CheckConstraint(
+                    name=f"billing_artifact_{field}",
+                    condition=Q(**{f"{field}__regex": r"^[0-9a-f]{64}$"}),
+                )
+                for field in ("snapshot_sha256", "pdf_sha256", "xml_sha256")
+            ],
+        ]
+
+
 class Order(StoredModel, PriceSnapshot):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"

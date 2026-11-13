@@ -26,6 +26,8 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 # Read by the intake path itself, or by an `INSERT ... RETURNING` of a column with a database
 # default, or by the deferred constraint triggers of orgs.0002 that run at commit.
 SELECT = (
+    "billing_billingartifact",
+    "billing_viesconsultation",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -99,6 +101,7 @@ SELECT = (
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
 INSERT = (
+    "billing_viesconsultation",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -207,6 +210,8 @@ INSERT = (
 #   resending, revoking and accepting; never its address, role, token or inviter.
 # - orgs_membership.accepted_at: accepting revives a removed membership of the same person.
 UPDATE_COLUMNS = (
+    ("billing_billingprofile", "vat_number_validated_at"),
+    ("billing_billingprofile", "updated_at"),
     # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
     ("workspaces_workspacememberrestriction", "banned"),
     ("workspaces_workspacememberrestriction", "kicked"),
