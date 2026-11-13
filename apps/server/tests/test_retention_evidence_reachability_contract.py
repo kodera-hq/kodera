@@ -17526,7 +17526,7 @@ def test_delivery_expiry_runtime_and_model_alias_retain_the_seven_day_clock(monk
     from apps.extensions import expiry, models
 
     now = datetime(2026, 1, 1, tzinfo=UTC)
-    monkeypatch.setattr(expiry.timezone, "now", lambda: now)
+    monkeypatch.setattr("django.utils.timezone.now", lambda: now)
     assert models.delivery_expiry is expiry.delivery_expiry
     assert models.Delivery._meta.get_field("expires_at").get_default() == now + timedelta(days=7)
 
