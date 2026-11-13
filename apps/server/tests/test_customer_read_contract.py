@@ -1029,7 +1029,7 @@ N4_VERSION = "0.44.0"
 # Rebound at 0.39.0: the staff actor of three examples is the demo crew's; no N4 bytes changed.
 # Rebound at 0.42.0: Membership's private member facts, WorkspaceTemplateId, ThemeId and its
 # aliases, and the reserved proximity check-in schemas; no N4 bytes changed.
-N4_OLD_CONTRACT = "48fd048b257970d4a5ca450fcee9e4329b9534a9cd0be5ad9582b27d4b790749"
+N4_OLD_CONTRACT = "3820a1462d0fa40b2fe772096cabe8fe47b86e26fa983355b7a2cf884adb0e2e"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

@@ -7291,9 +7291,10 @@ paths:
     put:
       operationId: putWorkspaceCollectionRow
       summary: Replace typed collection row values
-      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
-        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
-        are audited. This declaration does not assert a deployed handler.'
+      description: 'Current collection editor and document editor permissions are both required. Replace an
+        existing row with If-Match from its GET ETag; create an absent row with If-None-Match: *. Exactly
+        one header is required (428 neither,422 both/invalid;412 stale tag or incompatible row existence).
+        If-Match: * never creates a row. No cross-workspace references are accepted.'
       tags:
       - Workspace
       x-kodera-scope: workspace_collection:update
@@ -7304,8 +7305,19 @@ paths:
         - org_billing
         - org_member
       responses:
-        '412': { $ref: '#/components/responses/PreconditionFailed' }
-        '428': { $ref: '#/components/responses/PreconditionRequired' }
+        '201':
+          description: 'Collection row membership created; If-None-Match: * succeeded.'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollectionRow'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
         '200':
           description: Replace typed collection row values.
           headers:
@@ -7331,14 +7343,43 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
       parameters:
-      - $ref: '#/components/parameters/IfMatch'
+      - name: If-Match
+        in: header
+        required: false
+        description: 'Existing row only: its ETag from GET. Mutually exclusive with If-None-Match. Missing
+          row or stale tag is412.'
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: If-None-Match
+        in: header
+        required: false
+        description: Initial row creation only. Send *; an existing row is412. Mutually exclusive with If-Match.
+        schema:
+          type: string
+          const: '*'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/WorkspaceCollectionRowRequest'
+      x-kodera-one-of-preconditions: true
+
     get:
       operationId: getWorkspaceCollectionRow
       summary: Get a visible collection row
@@ -7710,6 +7751,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -7768,6 +7821,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download:
     parameters:
@@ -7816,6 +7881,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /organisations/{organisation_id}/workspace/privacy/deletions:
     parameters:
@@ -7860,6 +7937,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -7918,6 +8007,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /me/privacy/exports:
     parameters: []
@@ -7964,6 +8065,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -8024,6 +8137,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /me/privacy/exports/{request_id}/download:
     parameters:
@@ -8074,6 +8199,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /me/privacy/deletions:
     parameters: []
@@ -8120,6 +8257,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -8180,6 +8329,18 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
 components:
   x-audit-action-registry:
