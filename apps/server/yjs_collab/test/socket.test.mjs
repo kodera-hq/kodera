@@ -24,7 +24,7 @@ class MemoryStore {
   constructor() {
     this.document = randomUUID();this.organisation = randomUUID();this.doc = load()
     replace(this.doc, '# Example\n\nInitial text\n')
-    this.roles = new Map();this.revision = 1;this.audit = [];this.guards = 0
+    this.roles = new Map();this.revision = 1;this.audit = [];this.guards = 0;this.redeemed = new Set()
   }
   guard(claims) {
     this.guards += 1
@@ -34,6 +34,12 @@ class MemoryStore {
   async deliver(claims, consumer, known = null) {
     this.guard(claims)
     if (known !== this.revision) consumer({state: Y.encodeStateAsUpdate(this.doc), revision: this.revision})
+  }
+  async admit(claims, consumer) {
+    this.guard(claims)
+    if (this.redeemed.has(claims.nonce)) throw new TicketRefused()
+    this.redeemed.add(claims.nonce)
+    return this.deliver(claims, consumer)
   }
   async emit(claims, consumer) { this.guard(claims);consumer() }
   async update(claims, update) {
@@ -100,6 +106,51 @@ test('two editor sockets converge while a viewer update closes and is audited', 
     assert.equal(inspect(fixtureValue.store.doc).markdown, before)
     assert.equal(fixtureValue.store.audit.length, 1)
   } finally { for (const peer of peers) peer.doc.destroy();await fixtureValue.close() }
+})
+
+test('a redeemed ticket cannot admit a second socket, including another service instance', async () => {
+  const value = await fixture()
+  const other = createCollabServer({key: value.key, store: value.store, origins: new Set(['https://community.example.org'])})
+  const peers = []
+  try {
+    other.server.listen(0, '127.0.0.1');await once(other.server, 'listening')
+    const claims = value.store.claims('viewer')
+    const first = await connect(value, claims);peers.push(first)
+    await until(first.synced)
+    const next = await connect({...value, url: 'ws://127.0.0.1:' + other.server.address().port + '/documents/collab'}, claims)
+    peers.push(next)
+    let closed = null
+    next.socket.on('close', code => { closed = code })
+    await until(() => next.synced() || closed !== null)
+    assert.equal(next.synced(), false, 'replayed ticket disclosed a snapshot')
+    assert.equal(closed, 4401)
+    assert.equal(other.rooms.size, 0)
+    assert.equal(first.socket.readyState, WebSocket.OPEN)
+  } finally {
+    for (const peer of peers) peer.doc.destroy()
+    await other.shutdown();await value.close()
+  }
+})
+
+test('unauthenticated sockets are capped and expire without receiving a first frame', {timeout: 9000}, async () => {
+  const value = await fixture()
+  const sockets = []
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      const socket = new WebSocket(value.url, {origin: 'https://community.example.org'})
+      socket.on('error', () => {});sockets.push(socket)
+      await once(socket, 'open')
+    }
+    const closed = sockets.map(socket => once(socket, 'close'))
+    const excess = new WebSocket(value.url, {origin: 'https://community.example.org'})
+    excess.on('error', () => {});sockets.push(excess)
+    const [, response] = await once(excess, 'unexpected-response')
+    assert.equal(response.statusCode, 403);response.resume();excess.terminate()
+    assert.ok((await Promise.all(closed)).every(([code]) => code === 4401))
+    assert.equal(value.store.guards, 0)
+    const recovered = await connect(value, value.store.claims('viewer'))
+    try { await until(recovered.synced) } finally { recovered.doc.destroy() }
+  } finally { for (const socket of sockets) socket.terminate();await value.close() }
 })
 
 test('expired and wrongly bound tickets close before a room is joined', async () => {

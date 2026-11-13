@@ -4,14 +4,14 @@ import { pathToFileURL } from 'node:url'
 import { configuration } from './configuration.mjs'
 import { createCollabServer } from './socket-server.mjs'
 import { Store } from './store.mjs'
+import { assertDatabaseBoundary } from './database-boundary.mjs'
 
 export async function start(environment) {
   const config = configuration(environment)
   const pool = new pg.Pool({connectionString: config.connectionString, max: 4, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000})
   pool.on('error', () => {})
   try {
-    const qualified = await pool.query("SELECT to_regprocedure('docs_document_role(uuid,uuid,uuid,uuid,text,text)') IS NOT NULL AND to_regprocedure('audit_workspace_resource_event(uuid,text,uuid,uuid,uuid,text)') IS NOT NULL AS ready")
-    if (!qualified.rows[0]?.ready) throw new Error('collaboration schema unavailable')
+    await assertDatabaseBoundary(pool)
   } catch (error) { await pool.end();throw error }
   const service = createCollabServer({key: config.key, store: new Store(pool), origins: config.origins})
   let stopping = false, listener = null, reconnect = null

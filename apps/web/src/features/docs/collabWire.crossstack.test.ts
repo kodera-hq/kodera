@@ -55,11 +55,12 @@ interface Claims {
   readonly nonce: string
 }
 
-/** The PostgreSQL store's contract, held in memory: same guard, deliver, emit and update shape. */
+/** The PostgreSQL store's contract, held in memory: same guard, admit, deliver, emit and update shape. */
 class MemoryStore {
   readonly document = randomUUID()
   readonly organisation = randomUUID()
   readonly roles = new Map<string, string>()
+  readonly redeemed = new Set<string>()
   doc: Y.Doc
   revision = 1
 
@@ -78,6 +79,16 @@ class MemoryStore {
     ) {
       throw new TicketRefused(4403)
     }
+  }
+
+  async admit(
+    claims: Claims,
+    consumer: (value: { state: Uint8Array; revision: number }) => void
+  ): Promise<void> {
+    this.guard(claims)
+    if (this.redeemed.has(claims.nonce)) throw new TicketRefused()
+    this.redeemed.add(claims.nonce)
+    await this.deliver(claims, consumer)
   }
 
   async deliver(
@@ -177,12 +188,16 @@ describe('web collab client against the real yjs_collab server', () => {
         user: { id: claims.membership, name },
         enableOfflineBuffer: false,
         maxReconnectAttempts: 0,
-        fetchSession: async () => ({
-          wsUrl: `ws://127.0.0.1:${port}/documents/collab`,
-          token: ticket(claims, key),
-          expiresAt: new Date(claims.expires * 1000).toISOString(),
-          role,
-        }),
+        fetchSession: async () => {
+          const issued = Math.floor(Date.now() / 1000)
+          const fresh = { ...claims, issued, expires: issued + 60, nonce: randomUUID() }
+          return {
+            wsUrl: `ws://127.0.0.1:${port}/documents/collab`,
+            token: ticket(fresh, key),
+            expiresAt: new Date(fresh.expires * 1000).toISOString(),
+            role,
+          }
+        },
         // A browser sends its page origin on the upgrade; the server admits only listed origins.
         webSocketFactory: (url) => {
           const socket = new NodeWebSocket(url, { origin: ORIGIN })

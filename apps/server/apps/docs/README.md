@@ -1,6 +1,6 @@
 # Native workspace documents and realtime collaboration boundary
 
-Status: Proposed
+Status: Implemented; production service release remains operator-controlled
 
 Workspace documents live in PostgreSQL under workspace-serialized ownership,
 parent-tree validation, wikilink resolution, prefix/full-text search, and an
@@ -17,4 +17,7 @@ tickets for `KODERA_COLLAB_PUBLIC_URL` (`/documents/collab`), where the
 Node.js `yjs_collab` service authenticates the first WebSocket frame, enforces
 closed ProseMirror/TipTap schema invariants, bounds presence payloads, appends
 and compacts binary Yjs updates in PostgreSQL, and records identifier-only
-audit events through `audit_workspace_resource_event`.
+audit events through the bounded `docs_collab_audit` database port. Its dedicated
+database login holds only document table/column grants; authorization and audit
+ports fence foreign-table access. Each ticket nonce is committed as redeemed
+before its first snapshot is disclosed, so reconnects obtain a fresh ticket.

@@ -439,6 +439,14 @@ def write_adr_index(tree: Tree) -> None:
     print(f"Wrote {len(inventory)} ADRs to {ADR_INDEX}")
 
 
+# These capabilities have runtime implementations. Keep historical ADRs intact,
+# while refusing their obsolete unimplemented status in the current product summary.
+STALE_COLLABORATION_STATUS = re.compile(
+    r"(?:^- \*\*(?:Direct messages, file upload and message search|Camera video and screen sharing|Collaborative documents|Public community rooms)\*\*"
+    r"|^- \[ \] (?:Direct messages, file and image upload|Camera video and screen sharing|Public community rooms|Community self-signup|Native Docs:))"
+)
+
+
 def check_wording(tree: Tree, sources: tuple[str, ...] = SOURCES) -> list[str]:
     errors: list[str] = []
     for path in selected(tree.files, sources):
@@ -447,7 +455,12 @@ def check_wording(tree: Tree, sources: tuple[str, ...] = SOURCES) -> list[str]:
             if not path.lower().endswith(IMAGE_SUFFIXES):
                 errors.append(f"{path}: not UTF-8 text: its wording cannot be checked")
             continue
+        unimplemented_section = False
         for number, line in enumerate(text.splitlines(), start=1):
+            if line.startswith("## "):
+                unimplemented_section = line == "## What is not there yet"
+            if (path == "ROADMAP.md" or (path == "README.md" and unimplemented_section)) and STALE_COLLABORATION_STATUS.search(line):
+                errors.append(f"{path}:{number}: stale product status: shipped collaboration capability marked unimplemented")
             for claim, pattern in RETIRED_WORDING:
                 if pattern.search(line):
                     errors.append(f"{path}:{number}: retired wording: {claim}")
@@ -651,6 +664,14 @@ def selftest() -> None:
          {"docs/guide.rst": "Guide\n=====\n\n`gone <./missing.rst>`_\n"},
          "docs/guide.rst: a document of a type whose links this check cannot read"),
     ]
+    cases.extend([
+        ("stale pre-Wave-3 README capability status",
+         {"README.md": readme + "\n## What is not there yet\n\n- **Direct messages, file upload and message search** in the web client.\n"},
+         "README.md:15: stale product status: shipped collaboration capability marked unimplemented"),
+        ("stale pre-Wave-3 roadmap capability status",
+         {"ROADMAP.md": "# Roadmap\n\n- [ ] Native Docs: a block editor inside the web client\n"},
+         "ROADMAP.md:3: stale product status: shipped collaboration capability marked unimplemented"),
+    ])
     for label, changes, expected in cases:
         got = run(changes)
         if not any(error.startswith(expected) for error in got):
@@ -667,6 +688,10 @@ def selftest() -> None:
     if escaped:
         failures.append(f"a correctly escaped link to an oddly named file must be accepted (got {escaped})")
 
+    shipped_summary = run({"README.md": readme + "\n## What works today\n\n- **Public community rooms** use native local joins.\n"})
+    if shipped_summary:
+        failures.append(f"a shipped capability in the implemented section must pass (got {shipped_summary})")
+
     # A checkout whose files git cannot list is a failure, not an empty repository.
     with tempfile.TemporaryDirectory(prefix="docs-truth-selftest-") as tmp:
         build(Path(tmp), base)
@@ -679,7 +704,7 @@ def selftest() -> None:
             failures.append("a checkout git cannot list must be refused")
     if failures:
         sys.exit("check-docs-truth selftest FAILED:\n  " + "\n  ".join(failures))
-    print(f"OK: check-docs-truth selftest, {len(cases) + 1} refusals named and 3 accepted cases")
+    print(f"OK: check-docs-truth selftest, {len(cases) + 1} refusals named and 4 accepted cases")
 
 
 def main() -> None:

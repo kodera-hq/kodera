@@ -31,17 +31,9 @@ export class Store {
       await client.query('BEGIN')
       await client.query("SET LOCAL lock_timeout='3s'")
       await client.query("SET LOCAL statement_timeout='5s'")
-      const domain = await client.query(`SELECT w.id FROM workspaces_workspace w JOIN docs_document d ON d.workspace_id=w.id
-        WHERE d.id=$1 AND w.organisation_id=$2 FOR UPDATE OF w`, [claims.document, claims.organisation])
-      if (domain.rowCount !== 1) throw new TicketRefused(4403)
-      const fenced = await client.query(`SELECT m.id FROM orgs_membership m JOIN identity_user u ON u.id=m.user_id
-        JOIN identity_identity i ON i.user_id=u.id JOIN orgs_organisation o ON o.id=m.organisation_id
-        WHERE m.id=$1 AND i.id=$2 AND m.organisation_id=$3 FOR SHARE OF m,u,i,o`,
-        [claims.membership, claims.identity, claims.organisation])
-      if (fenced.rowCount !== 1) throw new TicketRefused(4403)
-      const current = await client.query('SELECT docs_document_role($1,$2,$3,$4,$5,$6) AS role',
-        [claims.document, claims.organisation, claims.membership, claims.identity, claims.issuer, claims.subject])
-      if (current.rows[0]?.role !== claims.role) throw new TicketRefused(4403)
+      const domain = await client.query('SELECT docs_collab_fence($1,$2,$3,$4,$5,$6,$7) AS id',
+        [claims.document, claims.organisation, claims.membership, claims.identity, claims.issuer, claims.subject, claims.role])
+      if (!domain.rows[0]?.id) throw new TicketRefused(4403)
       alive(claims)
       const result = await operation(client, domain.rows[0].id)
       alive(claims)
@@ -69,6 +61,15 @@ export class Store {
       return {state: Buffer.from(value.snapshot, 'base64'), revision: state.revision}
     })
   }
+  async admit(claims, consumer) {
+    // Persist consumption before disclosure. A failed or ambiguous COMMIT must
+    // never emit a snapshot with a nonce that may still be reusable.
+    await this.transaction(claims, async client => {
+      const used = await client.query('SELECT docs_redeem_collaboration_ticket($1,$2) AS accepted', [claims.nonce, claims.expires])
+      if (used.rows[0]?.accepted !== true) throw new TicketRefused()
+    })
+    return this.deliver(claims, consumer)
+  }
   async deliver(claims, consumer, knownRevision = null) {
     return this.transaction(claims, async client => {
       const state = await this.binary(client, claims.document)
@@ -83,7 +84,7 @@ export class Store {
   async emit(claims, consumer) { return this.transaction(claims, async () => consumer()) }
   async authorize(claims) { return this.transaction(claims, async () => true) }
   async audit(client, claims, action) {
-    await client.query('SELECT audit_workspace_resource_event($1,$2,$3,$4,$5,$6)',
+    await client.query('SELECT docs_collab_audit($1,$2,$3,$4,$5,$6)',
       [uuid7(), action, claims.organisation, claims.document, claims.identity, uuid7()])
   }
   async viewerRefusal(claims) {

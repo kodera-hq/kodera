@@ -102,7 +102,7 @@ export function createCollabServer({key, store, origins, pollMilliseconds = 1000
           } else {
             throw new TicketRefused()
           }
-          await store.deliver(claims, ({state, revision}) => {
+          await store.admit(claims, ({state, revision}) => {
             if (socket.readyState !== WebSocket.OPEN) return
             const room = roomFor(claims.document)
             if (room.connections.size >= 32 || [...connections].filter(peer => peer.claims?.identity === claims.identity).length >= 4) throw new Error('connection capacity reached')

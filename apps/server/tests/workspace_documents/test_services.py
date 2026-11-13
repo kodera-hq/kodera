@@ -328,6 +328,12 @@ def test_postgres_backed_sockets_converge_audit_and_recheck_current_roles(
     viewer = services.collab_session(
         verified=tokens[2], organisation_id=org.id, document_id=document.id, request_id=str(uuid4())
     )
+    second_editor = services.collab_session(
+        verified=tokens[3], organisation_id=org.id, document_id=document.id, request_id=str(uuid4())
+    )
+    second_viewer = services.collab_session(
+        verified=tokens[2], organisation_id=org.id, document_id=document.id, request_id=str(uuid4())
+    )
     database = current_settings.DATABASES["default"]
     url = (
         "postgresql://"
@@ -355,7 +361,8 @@ def test_postgres_backed_sockets_converge_audit_and_recheck_current_roles(
                 settings.KODERA_COLLAB_TICKET_KEY
             ).decode(),
         },
-        input=json.dumps({"editor": editor["token"], "viewer": viewer["token"]}).encode(),
+        input=json.dumps({"editor": editor["token"], "viewer": viewer["token"],
+                          "secondEditor": second_editor["token"], "secondViewer": second_viewer["token"]}).encode(),
         capture_output=True,
         timeout=60,
     )

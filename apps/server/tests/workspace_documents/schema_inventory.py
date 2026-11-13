@@ -7,6 +7,7 @@ TABLES = frozenset(
         "docs_documentlink",
         "docs_documentsnapshot",
         "docs_documentupdate",
+        "docs_collaborationticket",
     }
 )
 FUNCTIONS = frozenset(
@@ -14,6 +15,9 @@ FUNCTIONS = frozenset(
         "docs_document_role",
         "docs_journal_guard",
         "docs_scope_guard",
+        "docs_collab_fence",
+        "docs_collab_audit",
+        "docs_redeem_collaboration_ticket",
     }
 )
 

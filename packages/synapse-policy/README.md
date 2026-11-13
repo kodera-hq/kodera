@@ -8,12 +8,29 @@ A Synapse module that keeps a Kodera instance's rooms under its control plane's 
 
 | Callback | Refuses |
 |---|---|
-| `user_may_create_room` | every room creation with `m.room.encryption` in its initial state, the agent's included (a room's initial state never reaches `check_event_for_spam`); every other creation, except a direct message between two local users, and except by the agent |
-| `user_may_invite` | every invite to or from a service account (`agent_user_id`, `room_access_user_id`, except when the agent itself invites a regular user) or with a malformed Matrix user ID; every other invite, except (1) by the agent, (2) by a joined member (`membership == "join"`) of a room whose `io.kodera.room.policy` state event sets `allow_member_invites: true` (for local users, or for external federated Matrix users when `allow_federated_invites: true` is also set), and (3) the single local invite a member's new direct message is created with |
+| `user_may_create_room` | every room creation with `m.room.encryption` in its initial state, the agent's included (a room's initial state never reaches `check_event_for_spam`); every other creation, except a private direct message with one to eight distinct local invitees, and except by the agent |
+| `on_create_room` | binds a validated DM request's invitee set to immutable `m.room.create` content, replacing any client-supplied marker |
+| `user_may_invite` | every invite to or from a service account (`agent_user_id`, `room_access_user_id`, except when the agent itself invites a regular user) or with a malformed Matrix user ID; every other invite, except (1) by the agent, (2) by a joined member (`membership == "join"`) of a room whose `io.kodera.room.policy` state event sets `allow_member_invites: true` (for local users, or for external federated Matrix users when `allow_federated_invites: true` is also set), and (3) the validated initial local invitees of a member's new direct message |
 | `user_may_send_3pid_invite`, `user_may_create_room_alias` | invites by e-mail or phone, and room aliases, except by the agent |
 | `user_may_publish_room` | publishing any room to the directory |
 | `check_event_allowed` (third-party rules) | `m.room.encryption` and `m.room.encrypted` in any event Synapse creates, with no exemption. Synapse skips `user_may_create_room` for a server admin, and the agent's account is one, so this is what holds for the agent's own room creations, for encryption a server setting would force on, and for the state an upgrade copies. `m.room.encrypted` is ciphertext: a client can post it in a room where encryption is off, with the keys shared by to-device message, so it is refused as a timeline event and as state, in channels and direct messages |
 | `check_event_for_spam` | `m.room.encryption` and `m.room.encrypted` from anyone, as timeline or state: Synapse (v1.163.0) runs this callback, not `check_event_allowed`, on events from other servers. From anyone but the agent: a join rule other than `invite`, a world-readable history, aliases, third-party invites, server ACLs, room upgrades, space links and a room's policy (`io.kodera.room.policy`). From anyone but the agent and the room-access service: a room's audio occupancy (`io.kodera.room.occupancy`). Power levels do not cover these two: in a direct message its creator holds every level, and could otherwise declare it an audio room |
+
+**Bounded direct conversations.** Member-created rooms require `is_direct: true`,
+`preset: "private_chat"`, `visibility: "private"`, and one to eight distinct local
+invitees, excluding the creator and service accounts. Both creators and invitees
+must be registered, active non-guest Synapse accounts; deactivated, unapproved,
+locked or suspended accounts fail closed at creation and each DM invitation. Aliases, initial state,
+power-level overrides, spaces and third-party identifier invites are refused.
+`trusted_private_chat` is refused because it promotes invitees to the creator's
+power level. `on_create_room` records the validated list in immutable creation
+state; each subsequent initial invite is checked against that list, including
+when Synapse freezes JSON arrays into tuples. Neither simultaneous invites nor a
+later invitation can expand the original recipient set. Legacy DMs without the
+marker keep their first-invite-only boundary. This local account check does not
+establish current Core workspace membership. Operators must reconcile Core
+identity removals into Synapse account state; a Core-only removal that leaves a
+local Matrix account active is not an account deactivation.
 
 **Channel member and federated invites (`io.kodera.room.policy`).** When a channel's `("io.kodera.room.policy", "")` state event (written by the agent) sets `allow_member_invites: true`, any currently joined member of that room (`membership == "join"`) may invite local users (`is_mine(invitee)`), whether from Kodera or any standard Matrix client. Inviting an external federated Matrix user (`@localpart:domain` on another homeserver) additionally requires `allow_federated_invites: true` in `io.kodera.room.policy`. Service accounts (`agent_user_id`, `room_access_user_id`) and malformed user IDs are always refused as invitees, and `room_access_user_id` may never send invites.
 

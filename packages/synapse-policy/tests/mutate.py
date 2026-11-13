@@ -14,6 +14,12 @@ SOURCE = ROOT / "src" / "kodera_synapse_policy" / "__init__.py"
 
 # (description, original text, mutated text, test that must fail)
 MUTANTS = [
+    ("DM account eligibility ignored at creation", '        if not await self._active_dm_users(user_id, *room_config["invite"]):\n            return Codes.FORBIDDEN\n', "", "test_dm_creation_and_invites_require_active_registered_local_accounts"),
+    ("DM account eligibility ignored at invitation", 'or not await self._active_dm_users(inviter, invitee)', "", "test_dm_creation_and_invites_require_active_registered_local_accounts"),
+    ("group DMs refused", "len(invite) <= MAX_DM_INVITEES", "len(invite) <= 1", "test_member_creates_bounded_private_group_direct_messages"),
+    ("unsafe trusted preset accepted", 'config.get("preset") == "private_chat"', 'config.get("preset") in {"private_chat", "trusted_private_chat"}', "test_member_cannot_create_anything_but_a_direct_message"),
+    ("group DM immutable invite list ignored", "and invitee in invitees", "", "test_group_dm_invites_are_bound_to_immutable_creation_state"),
+    ("unvalidated group DM marker trusted", 'and self._is_direct_message(inviter, {\n                    "is_direct": True, "invite": list(invitees) if isinstance(invitees, (list, tuple)) else invitees,\n                    "preset": "private_chat", "visibility": "private"\n                })', "", "test_malformed_group_dm_creation_state_fails_closed"),
     ("workspace ban native join open", "if user in content.get('banned', ()):", "if False:", "test_workspace_ban_refuses_native_public_join_and_post"),
     ("workspace mute posting open", "if event.type in {'m.room.message', 'm.sticker'} and _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
     ("archived native join open", 'if content.get("archived", False) is not False:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
@@ -23,8 +29,8 @@ MUTANTS = [
     ("malformed local-only flag open", 'if type(content.get("local_only", False)) is not bool:', 'if False:', "test_public_local_only_flag_must_be_boolean"),
     ("agent may not create", "if user_id == self._agent:\n            return NOT_SPAM", "if False:\n            return NOT_SPAM", "test_agent_creates_any_room"),
     ("any is_direct accepted", 'config.get("is_direct") is not True', "False", "test_member_cannot_create_anything_but_a_direct_message"),
-    ("two invitees accepted", "len(invite) != 1", "len(invite) < 1", "test_member_cannot_create_anything_but_a_direct_message"),
-    ("remote invitee accepted", "or not self._api.is_mine(invitee):\n            return False", ":\n            return False", "test_member_cannot_create_anything_but_a_direct_message"),
+    ("unbounded invite fanout", "len(invite) <= MAX_DM_INVITEES", "len(invite)", "test_member_cannot_create_anything_but_a_direct_message"),
+    ("remote invitee accepted", "and self._api.is_mine(invitee)\n", "\n", "test_member_cannot_create_anything_but_a_direct_message"),
     ("initial state accepted", "and not config.get(\"initial_state\")", "", "test_member_cannot_create_anything_but_a_direct_message"),
     ("spaces accepted", 'and creation.get("type") is None', "", "test_member_cannot_create_anything_but_a_direct_message"),
     ("second invite accepted", "or others or", "or", "test_member_cannot_invite_otherwise"),
@@ -51,7 +57,7 @@ MUTANTS = [
     ("room-access locked out of occupancy", "return NOT_SPAM if event.sender == self._room_access else Codes.FORBIDDEN", "return Codes.FORBIDDEN", "test_only_room_access_and_the_agent_write_occupancy"),
     ("room-access id unchecked", 'room_access is not None and (\n            not isinstance(room_access, str) or not room_access.startswith("@") or ":" not in room_access\n        )', "False", "test_refuses_a_malformed_room_access_id"),
     ("call member state open to members", '        "m.call.member",\n', "", "test_member_cannot_spoof_call_membership"),
-    ("service accounts create or receive DM at creation", "        if creator == self._room_access or invitee in {self._agent, self._room_access}:\n            return False\n", "", "test_service_accounts_never_participate_in_direct_messages"),
+    ("service accounts receive DM at creation", "and invitee not in {self._agent, self._room_access}", "", "test_service_accounts_never_participate_in_direct_messages"),
     ("service accounts invite or are invited into DM", "        if inviter == self._room_access or invitee in {self._agent, self._room_access}:\n            return Codes.FORBIDDEN\n", "", "test_service_accounts_never_participate_in_direct_messages"),
     ("malformed invitee accepted", "        if not _is_valid_user_id(invitee):\n            return Codes.FORBIDDEN\n", "", "test_service_accounts_and_malformed_ids_refused_in_channel_invites"),
     ("channel member invites ignored", 'policy_content.get("allow_member_invites") is True', "False", "test_joined_member_invites_local_user_into_policy_authorized_channel"),

@@ -69,6 +69,7 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
 
 REQUIRED_SECRET_ENV_KEYS = (
     "POSTGRES_PASSWORD",
+    "KODERA_COLLAB_DATABASE_PASSWORD",
     "SYNAPSE_POSTGRES_PASSWORD",
     "DJANGO_SECRET_KEY",
     "KODERA_CONTACT_SEAL_KEY",
@@ -445,7 +446,7 @@ def check_community_deploy(
     native = services.get("yjs-collab")
     if native is not None:
         expected = {
-            "DATABASE_URL": "postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}",
+            "DATABASE_URL": "postgresql://kodera_collab:${KODERA_COLLAB_DATABASE_PASSWORD:?Set the isolated collaboration database password}@db:5432/${POSTGRES_DB:-kodera_server}",
             "KODERA_COLLAB_TICKET_KEY": "${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}",
             "KODERA_COLLAB_ALLOWED_ORIGINS": "https://${KODERA_DOMAIN:-chat.example.org}",
         }
@@ -457,6 +458,10 @@ def check_community_deploy(
             errors.append("yjs-collab must wait for completed migrations")
         if section_entries(native, "volumes"):
             errors.append("yjs-collab must not mount files or credential directories")
+    migrator = services.get("migrate")
+    if migrator is not None:
+        if migrator.environment.get("KODERA_COLLAB_DATABASE_URL") != "postgresql://kodera_collab:${KODERA_COLLAB_DATABASE_PASSWORD:?Set the isolated collaboration database password}@db:5432/${POSTGRES_DB:-kodera_server}" or "python manage.py configure_collab_role --settings config.settings.deploy &&" not in "\n".join(migrator.raw_lines):
+            errors.append("migrate must provision the isolated collaboration login")
     if server_svc is not None:
         expected = {
             "KODERA_COLLAB_TICKET_KEY": "${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}",
@@ -2597,6 +2602,12 @@ def run_collaboration_selftest(compose: str, env: str, caddy: str, split: str, s
     """Native process isolation and exact-route checks must refuse named mutations."""
     key_line = "      KODERA_COLLAB_TICKET_KEY: ${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}"
     cases = [
+        ("native database owner restored", compose.replace("postgresql://kodera_collab:${KODERA_COLLAB_DATABASE_PASSWORD:?Set the isolated collaboration database password}@db:5432/${POSTGRES_DB:-kodera_server}", "postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}"), env, caddy,
+         "yjs-collab must hold only its reviewed database and application settings"),
+        ("native login provisioning skipped", compose.replace("python manage.py configure_collab_role --settings config.settings.deploy &&", "true &&"), env, caddy,
+         "migrate must provision the isolated collaboration login"),
+        ("native database password undocumented", compose, re.sub(r"(?m)^KODERA_COLLAB_DATABASE_PASSWORD=.*\n?", "", env), caddy,
+         "missing required secret key in .env.example: KODERA_COLLAB_DATABASE_PASSWORD"),
         ("Core application key missing", compose.replace(key_line + "\n", "", 1), env, caddy,
          "server must set reviewed collaboration setting KODERA_COLLAB_TICKET_KEY"),
         ("Core transformer pointed elsewhere", compose.replace("http://yjs-collab:8098/internal/transform", "http://example.org/transform"), env, caddy,

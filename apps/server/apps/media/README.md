@@ -1,6 +1,6 @@
 # Workspace attachments and public URL previews
 
-Status: Proposed
+Status: Implemented; production service release remains operator-controlled
 
 The Core 0.43 operations use current persisted organisation membership and workspace
 authority before every effect or replay. Attachment keys contain only organisation
