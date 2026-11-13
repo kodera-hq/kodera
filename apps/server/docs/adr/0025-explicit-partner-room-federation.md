@@ -1,6 +1,8 @@
 # ADR-0025: Explicit, bounded partner-room federation
 
-Status: Proposed — opt-in implementation for review; deployment remains operator-controlled.
+**Status:** Proposed
+
+Opt-in implementation for review; deployment remains operator-controlled.
 
 ## Context
 
