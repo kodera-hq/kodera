@@ -89,6 +89,10 @@ class Migration(migrations.Migration):
     ]
     operations = [
         migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+        migrations.RunSQL(
             FORWARD
             + "\n".join(
                 f"CREATE TRIGGER extension_scope_guard BEFORE INSERT OR UPDATE OR DELETE ON extensions_{table} FOR EACH ROW EXECUTE FUNCTION extension_scope_guard();"
@@ -98,5 +102,9 @@ class Migration(migrations.Migration):
                 f"DROP TRIGGER extension_scope_guard ON extensions_{table};" for table in TABLES
             )
             + "\nDROP FUNCTION extension_scope_guard();",
-        )
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
     ]
