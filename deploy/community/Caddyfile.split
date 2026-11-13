@@ -40,6 +40,14 @@ api.{$KODERA_MATRIX_DOMAIN} {
 		}
 	}
 
+	# Exact WebSocket route; /internal/transform is never published.
+	@documents path /documents/collab
+	handle @documents {
+		reverse_proxy yjs-collab:8098 {
+			import client_address
+		}
+	}
+
 	handle {
 		respond 404
 	}

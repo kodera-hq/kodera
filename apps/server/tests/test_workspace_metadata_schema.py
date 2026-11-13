@@ -420,7 +420,7 @@ def test_composite_scope_constraint_mutation_is_detected_and_rolled_back(schema)
 
 
 def test_new_app_migrations_reverse_on_empty_disposable_database(schema):
-    from test_workspace_parent_policy import LEAF, metadata_baseline_objects
+    from test_workspace_parent_policy import metadata_baseline_objects
 
     assert not schema.Workspace.objects.exists()
     complete = schema_objects()
@@ -443,7 +443,8 @@ def test_new_app_migrations_reverse_on_empty_disposable_database(schema):
         MigrationExecutor(connection).migrate([("workspaces", None)])
         assert schema_objects() == original_existing
     finally:
-        MigrationExecutor(connection).migrate([("workspaces", LEAF)])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
     assert schema_objects() == complete
     # Exercise the reapplied guard, not just its catalogue spelling.
     first, second = workspace(schema), workspace(schema, "bravo")

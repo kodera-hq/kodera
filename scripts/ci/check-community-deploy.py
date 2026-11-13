@@ -47,6 +47,7 @@ ADMITTED_SERVER_SECRET_NAMES = frozenset(
         "KODERA_OUTBOX_SEAL_KEY",
         "KODERA_MEMBERSHIP_CURSOR_KEY",
         "KODERA_DISCOVERY_HMAC_KEY",
+        "KODERA_COLLAB_TICKET_KEY",
     }
 )
 
@@ -72,12 +73,13 @@ REQUIRED_SECRET_ENV_KEYS = (
     "KODERA_OUTBOX_SEAL_KEY",
     "KODERA_MEMBERSHIP_CURSOR_KEY",
     "KODERA_DISCOVERY_HMAC_KEY",
+    "KODERA_COLLAB_TICKET_KEY",
     "ROOM_ACCESS_MATRIX_TOKEN",
     "LIVEKIT_API_KEY",
     "LIVEKIT_API_SECRET",
 )
 
-HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse", "synapse-db")
+HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse", "synapse-db", "yjs-collab")
 
 # Public configuration that has no usable default: the operator's own identity provider.
 REQUIRED_PLACEHOLDER_KEYS = (
@@ -107,6 +109,7 @@ LIVEKIT_PUBLISHED_PORTS = ('- "7881:7881"', '- "50000-50200:50000-50200/udp"')
 # (`/agent/*`) and Matrix federation, key and admin routes are not internet-facing by default.
 ALLOWED_PUBLIC_ROUTES: dict[str, frozenset[str]] = {
     "server:8000": frozenset({"/api/*", "/health/*"}),
+    "yjs-collab:8098": frozenset({"/documents/collab"}),
     "room-access:8095": frozenset({"/_kodera/rooms/token"}),
     "synapse:8008": frozenset({"/_matrix/client/*", "/_matrix/media/*", "/_synapse/client/*"}),
     "livekit:7880": frozenset({"/rtc", "/rtc/*"}),
@@ -340,6 +343,7 @@ def check_community_deploy(
         "valkey",
         "migrate",
         "server",
+        "yjs-collab",
         "web",
         "room-access",
         "synapse",
@@ -435,6 +439,33 @@ def check_community_deploy(
             errors.append("service 'server' must set KODERA_EDITION to 'community'")
         if server_svc.environment.get("KODERA_BILLING_ENABLED") != '"false"':
             errors.append('service \'server\' must set KODERA_BILLING_ENABLED to \'"false"\'')
+
+    native = services.get("yjs-collab")
+    if native is not None:
+        expected = {
+            "DATABASE_URL": "postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}",
+            "KODERA_COLLAB_TICKET_KEY": "${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}",
+            "KODERA_COLLAB_ALLOWED_ORIGINS": "https://${KODERA_DOMAIN:-chat.example.org}",
+        }
+        if native.environment != expected:
+            errors.append("yjs-collab must hold only its reviewed database and application settings")
+        if native.dockerfile != "Dockerfile" or "context: ../../apps/server/yjs_collab" not in "\n".join(native.raw_lines):
+            errors.append("yjs-collab must build its reviewed isolated native runtime")
+        if native.depends_on_conditions.get("migrate") != "service_completed_successfully":
+            errors.append("yjs-collab must wait for completed migrations")
+        if section_entries(native, "volumes"):
+            errors.append("yjs-collab must not mount files or credential directories")
+    if server_svc is not None:
+        expected = {
+            "KODERA_COLLAB_TICKET_KEY": "${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}",
+            "KODERA_COLLAB_ENGINE_URL": "http://yjs-collab:8098/internal/transform",
+            "KODERA_COLLAB_PUBLIC_URL": "wss://${KODERA_DOMAIN:-chat.example.org}/documents/collab",
+        }
+        for name, value in expected.items():
+            if server_svc.environment.get(name) != value:
+                errors.append("server must set reviewed collaboration setting " + name)
+        if server_svc.depends_on_conditions.get("yjs-collab") != "service_healthy":
+            errors.append("server must wait for healthy yjs-collab")
 
     if migrate_svc is not None:
         if migrate_svc.environment.get("KODERA_BILLING_ENABLED") != '"false"':
@@ -562,12 +593,17 @@ SPLIT_OVERRIDE_KEYS: dict[str, frozenset[str]] = {
     "caddy": frozenset({"volumes", "environment"}),
     "web": frozenset({"profiles"}),
     "server": frozenset({"environment"}),
+    "yjs-collab": frozenset({"environment"}),
     "room-access": frozenset({"environment"}),
     "synapse": frozenset({"environment"}),
 }
 SPLIT_OVERRIDE_ENVIRONMENT: dict[str, dict[str, str]] = {
     "caddy": {"KODERA_MATRIX_DOMAIN": "${KODERA_MATRIX_DOMAIN:?"},
-    "server": {"KODERA_CONSOLE_ORIGINS": "https://${KODERA_DOMAIN:?"},
+    "server": {
+        "KODERA_CONSOLE_ORIGINS": "https://${KODERA_DOMAIN:?",
+        "KODERA_COLLAB_PUBLIC_URL": "wss://api.${KODERA_MATRIX_DOMAIN:?",
+    },
+    "yjs-collab": {"KODERA_COLLAB_ALLOWED_ORIGINS": "https://${KODERA_DOMAIN:?"},
     "room-access": {"LIVEKIT_WS_URL": "wss://livekit.${KODERA_DOMAIN:?"},
     "synapse": {COMPOSE_TOPOLOGY_ENV_NAME: "split"},
 }
@@ -644,7 +680,7 @@ REVIEWED_BIND_MOUNTS = frozenset({
     "../../packages/synapse-policy:/opt/kodera-policy:ro",
 })
 REVIEWED_BUILD_LINES = frozenset({
-    "context: ../../apps/server", "context: ../..",
+    "context: ../../apps/server", "context: ../../apps/server/yjs_collab", "context: ../..",
     "dockerfile: Dockerfile", "dockerfile: Dockerfile.migrator", "dockerfile: apps/web/Dockerfile",
     "args:",
 })
@@ -852,7 +888,7 @@ SPLIT_API_SITE = "api.{$KODERA_MATRIX_DOMAIN}"
 SPLIT_MATRIX_SITE = "matrix.{$KODERA_DOMAIN}"
 SPLIT_LIVEKIT_SITE = "livekit.{$KODERA_DOMAIN}"
 SPLIT_CADDY_SITES: dict[str, frozenset[str]] = {
-    SPLIT_API_SITE: frozenset({"server:8000"}),
+    SPLIT_API_SITE: frozenset({"server:8000", "yjs-collab:8098"}),
     SPLIT_MATRIX_SITE: frozenset({"synapse:8008", "room-access:8095"}),
     SPLIT_LIVEKIT_SITE: frozenset({"livekit:7880"}),
 }
@@ -2005,7 +2041,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                    "Caddyfile rewrites a path in a handle that is not the reviewed one"),
         caddy_case("a prefix-stripping handle", "\thandle @api {\n" + api_proxy + "\t}\n", "\thandle_path /internal/* {\n" + api_proxy + "\t}\n",
                    "Caddyfile has an unreviewed block in a site block: 'handle_path'"),
-        caddy_case("an upstream option that was not reviewed", "\t\t\timport client_address\n\t\t}\n\t}\n\n\t@room_access", "\t\t\timport client_address\n\t\t\theader_up Host internal.example.org\n\t\t}\n\t}\n\n\t@room_access",
+        caddy_case("an upstream option that was not reviewed", api_proxy,
+                   api_proxy.replace("import client_address", "import client_address\n\t\t\theader_up Host internal.example.org"),
                    "Caddyfile has an unreviewed reverse_proxy option for 'server:8000': 'header_up Host'"),
         caddy_case("the snippet gains a directive", "\theader_up -Forwarded\n", "\theader_up -Forwarded\n\theader_up X-Internal-Token secret\n",
                    "Caddyfile snippet 'client_address' differs from the reviewed one"),
@@ -2531,6 +2568,49 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
 )
 
 
+def run_collaboration_selftest(compose: str, env: str, caddy: str, split: str, split_caddy: str) -> int:
+    """Native process isolation and exact-route checks must refuse named mutations."""
+    key_line = "      KODERA_COLLAB_TICKET_KEY: ${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}"
+    cases = [
+        ("Core application key missing", compose.replace(key_line + "\n", "", 1), env, caddy,
+         "server must set reviewed collaboration setting KODERA_COLLAB_TICKET_KEY"),
+        ("Core transformer pointed elsewhere", compose.replace("http://yjs-collab:8098/internal/transform", "http://example.org/transform"), env, caddy,
+         "server must set reviewed collaboration setting KODERA_COLLAB_ENGINE_URL"),
+        ("native application key missing", compose.rsplit(key_line + "\n", 1)[0] + compose.rsplit(key_line + "\n", 1)[1], env, caddy,
+         "yjs-collab must hold only its reviewed database and application settings"),
+        ("native provider credential", compose.replace("      KODERA_COLLAB_ALLOWED_ORIGINS:", "      AWS_ACCESS_KEY_ID: CHANGE_ME_PROVIDER\n      KODERA_COLLAB_ALLOWED_ORIGINS:"), env, caddy,
+         "yjs-collab must hold only its reviewed database and application settings"),
+        ("native origin wildcard", compose.replace("KODERA_COLLAB_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:-chat.example.org}", "KODERA_COLLAB_ALLOWED_ORIGINS: '*'"), env, caddy,
+         "yjs-collab must hold only its reviewed database and application settings"),
+        ("native migrations not awaited", compose.replace("      migrate:\n        condition: service_completed_successfully", "      migrate:\n        condition: service_started"), env, caddy,
+         "yjs-collab must wait for completed migrations"),
+        ("native build context changed", compose.replace("context: ../../apps/server/yjs_collab", "context: ../.."), env, caddy,
+         "yjs-collab must build its reviewed isolated native runtime"),
+        ("native credential directory mounted", compose.replace("  yjs-collab:\n    mem_limit", "  yjs-collab:\n    volumes:\n      - ./Caddyfile:/etc/caddy/Caddyfile:ro\n    mem_limit"), env, caddy,
+         "yjs-collab must not mount files or credential directories"),
+        ("application key undocumented", compose, re.sub(r"(?m)^KODERA_COLLAB_TICKET_KEY=.*\n?", "", env), caddy,
+         "missing required secret key in .env.example: KODERA_COLLAB_TICKET_KEY"),
+        ("private transformer published", compose, env, caddy.replace("@documents path /documents/collab", "@documents path /documents/collab /internal/transform"),
+         "exposes an unreviewed route to 'yjs-collab:8098': '/internal/transform'"),
+        ("wildcard native document route", compose, env, caddy.replace("@documents path /documents/collab", "@documents path /documents/*"),
+         "exposes an unreviewed route to 'yjs-collab:8098': '/documents/*'"),
+    ]
+    for label, changed, example, route, expected in cases:
+        if (changed, example, route) == (compose, env, caddy):
+            print("[FAIL] native mutation produced no change: " + label, file=sys.stderr)
+            return 1
+        got = check_community_deploy(changed, example, route)
+        if not any(expected in error for error in got):
+            print(f"[FAIL] native mutation '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
+            return 1
+    changed = split_caddy.replace("@documents path /documents/collab", "@documents path /internal/transform")
+    if not any("exposes an unreviewed route to 'yjs-collab:8098': '/internal/transform'" in error for error in check_split_topology(split, changed, env)):
+        print("[FAIL] split native transformer route escaped", file=sys.stderr)
+        return 1
+    print(f"OK: native collaboration baseline valid, {len(cases) + 1} isolation and route mutations refused by name.")
+    return 0
+
+
 def run_split_selftest(override_text: str, split_caddyfile_text: str, env_text: str) -> int:
     baseline = check_split_topology(override_text, split_caddyfile_text, env_text)
     if baseline:
@@ -2671,6 +2751,7 @@ def main() -> int:
             run_synapse_config_selftest(policy_source)
             or run_scaffolder_selftest()
             or run_split_selftest(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
+            or run_collaboration_selftest(compose_text, env_text, caddyfile_text, texts["docker-compose.split.yml"], texts["Caddyfile.split"])
             or run_selftest(compose_text, env_text, caddyfile_text)
         )
 

@@ -25,12 +25,19 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import io
 import json
 import re
 import sys
 import tempfile
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_LOCKS = (
+    ROOT / "package-lock.json",
+    ROOT / "apps" / "server" / "yjs_collab" / "package-lock.json",
+)
 
 FORBIDDEN_LICENSE = re.compile(
     r"^(?:A|L)?GPL(?:-\d|\b|$)|^SSPL(?:-\d|\b|$)|^UNLICENSED$|^SEE\s+LICENSE\b",
@@ -201,21 +208,36 @@ def problems(lock: dict[str, object]) -> list[str]:
 
 
 def check(lock_path: Path, quiet_errors: bool = False) -> int:
-    lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    found = problems(lock)
+    return check_many((lock_path,), quiet_errors=quiet_errors)
+
+
+def check_many(lock_paths: Sequence[Path], quiet_errors: bool = False) -> int:
     err_stream = io.StringIO() if quiet_errors else sys.stderr
-    for line in found:
-        print(f"check-licenses: {line}", file=err_stream)
-    if found:
+    any_found = False
+    total_external = 0
+    multi = len(lock_paths) > 1
+    for lock_path in lock_paths:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        found = problems(lock)
+        prefix = f"{lock_path}: " if multi else ""
+        for line in found:
+            print(f"check-licenses: {prefix}{line}", file=err_stream)
+        if found:
+            any_found = True
+            continue
+        packages = lock.get("packages", {})
+        total_external += sum(
+            1
+            for path, entry in (packages.items() if isinstance(packages, dict) else [])
+            if path and isinstance(entry, dict) and not entry.get("link") and "node_modules/" in path
+        )
+    if any_found:
         return 1
-    packages = lock.get("packages", {})
-    external_count = sum(
-        1
-        for path, entry in (packages.items() if isinstance(packages, dict) else [])
-        if path and isinstance(entry, dict) and not entry.get("link") and "node_modules/" in path
-    )
     if not quiet_errors:
-        print(f"check-licenses: {external_count} external packages checked, every licence accepted")
+        scope = f" across {len(lock_paths)} lockfiles" if multi else ""
+        print(
+            f"check-licenses: {total_external} external packages checked{scope}, every licence accepted"
+        )
     return 0
 
 
@@ -314,9 +336,21 @@ def selftest() -> int:
                     f"check-licenses selftest: {label}: expected {expected}, got {got}",
                     file=sys.stderr,
                 )
+        clean_a = Path(folder) / "clean-a.json"
+        clean_b = Path(folder) / "clean-b.json"
+        dirty_b = Path(folder) / "dirty-b.json"
+        clean_a.write_text(json.dumps(make_lock(**{"node_modules/a": {"license": "MIT"}})), encoding="utf-8")
+        clean_b.write_text(json.dumps(make_lock(**{"node_modules/b": {"license": "ISC"}})), encoding="utf-8")
+        dirty_b.write_text(json.dumps(make_lock(**{"node_modules/b": {"license": "AGPL-3.0-only"}})), encoding="utf-8")
+        if check_many((clean_a, clean_b), quiet_errors=True) != 0:
+            failures += 1
+            print("check-licenses selftest: multi-lock-clean: expected 0, got 1", file=sys.stderr)
+        if check_many((clean_a, dirty_b), quiet_errors=True) != 1:
+            failures += 1
+            print("check-licenses selftest: multi-lock-dirty: expected 1, got 0", file=sys.stderr)
     if failures:
         return 1
-    print(f"check-licenses selftest: {len(cases)} cases passed")
+    print(f"check-licenses selftest: {len(cases) + 2} cases passed")
     return 0
 
 
@@ -325,13 +359,15 @@ def main() -> int:
     parser.add_argument(
         "--lock",
         type=Path,
-        default=Path(__file__).resolve().parents[2] / "package-lock.json",
+        default=None,
     )
     parser.add_argument("--selftest", action="store_true")
     arguments = parser.parse_args()
     if arguments.selftest:
         return selftest()
-    return check(arguments.lock)
+    if arguments.lock is not None:
+        return check(arguments.lock)
+    return check_many(DEFAULT_LOCKS)
 
 
 if __name__ == "__main__":

@@ -103,6 +103,11 @@ jobs:
           python3 scripts/ci/check-community-deploy.py
           python3 scripts/ci/check-publish-images-workflow.py --selftest
           python3 scripts/ci/check-publish-images-workflow.py
+          python3 scripts/ci/check-licenses.py --selftest
+          python3 scripts/ci/check-licenses.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
@@ -140,6 +145,12 @@ jobs:
             sleep 0.2
           done
           [ "$(psql -h localhost -U kodera -d kodera_server -XAtc 'SHOW fsync')" = "off" ]
+      - name: Install and verify Yjs collaboration runtime
+        working-directory: apps/server/yjs_collab
+        run: |
+          npm ci --ignore-scripts --engine-strict
+          node licenses.mjs
+          node --test test/*.test.mjs
       - name: Run full server test suite
         working-directory: apps/server
         run: |

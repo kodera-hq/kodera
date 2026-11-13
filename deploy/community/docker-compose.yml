@@ -106,6 +106,9 @@ services:
     environment:
       KODERA_EDITION: community
       KODERA_BILLING_ENABLED: "false"
+      KODERA_COLLAB_TICKET_KEY: ${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}
+      KODERA_COLLAB_ENGINE_URL: http://yjs-collab:8098/internal/transform
+      KODERA_COLLAB_PUBLIC_URL: wss://${KODERA_DOMAIN:-chat.example.org}/documents/collab
       KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in .env (README.md, Sign-in)}
       KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
       KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
@@ -120,10 +123,32 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      yjs-collab:
+        condition: service_healthy
       valkey:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # The only public native route is /documents/collab. The signed transformer stays private.
+  yjs-collab:
+    mem_limit: 768m
+    build:
+      context: ../../apps/server/yjs_collab
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kodera}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kodera_server}
+      KODERA_COLLAB_TICKET_KEY: ${KODERA_COLLAB_TICKET_KEY:?Set the application collaboration key}
+      KODERA_COLLAB_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:-chat.example.org}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8098/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 10

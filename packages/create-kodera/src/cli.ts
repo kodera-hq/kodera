@@ -103,6 +103,7 @@ const GENERATED_SECRETS: ReadonlySet<string> = new Set([
   'KODERA_OUTBOX_SEAL_KEY',
   'KODERA_MEMBERSHIP_CURSOR_KEY',
   'KODERA_DISCOVERY_HMAC_KEY',
+  'KODERA_COLLAB_TICKET_KEY',
   'ROOM_ACCESS_MATRIX_TOKEN',
   'LIVEKIT_API_KEY',
   'LIVEKIT_API_SECRET',
@@ -348,7 +349,7 @@ export async function generate(options: Options) {
           (rest.join('=').includes('CHANGE_ME_')
             ? !GENERATED_SECRETS.has(key)
               ? ''
-              : key.endsWith('SEAL_KEY')
+              : key.endsWith('SEAL_KEY') || key === 'KODERA_COLLAB_TICKET_KEY'
                 ? randomBytes(32)
                     .toString('base64')
                     .replace(/\+/gu, '-')

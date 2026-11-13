@@ -184,6 +184,7 @@ test('a generated directory holds the deploy/community assets and passes its pre
     ])
       assert.match(env, new RegExp(`^${key}=$`, 'mu'), key)
     assert.match(env, /^SYNAPSE_POSTGRES_PASSWORD=[0-9a-f]{64}$/mu)
+    assert.match(env, /^KODERA_COLLAB_TICKET_KEY=[A-Za-z0-9_-]{43}=$/mu)
     // The same preflight an operator runs on deploy/community accepts the generated file.
     const preflight = await run('python3', [
       join(ROOT, 'scripts/ci/check-community-deploy.py'),

@@ -21,6 +21,11 @@ services:
   server:
     environment:
       KODERA_CONSOLE_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
+      KODERA_COLLAB_PUBLIC_URL: wss://api.${KODERA_MATRIX_DOMAIN:?Set KODERA_MATRIX_DOMAIN to the tenant base domain}/documents/collab
+
+  yjs-collab:
+    environment:
+      KODERA_COLLAB_ALLOWED_ORIGINS: https://${KODERA_DOMAIN:?Set KODERA_DOMAIN to the web client host}
 
   room-access:
     environment:

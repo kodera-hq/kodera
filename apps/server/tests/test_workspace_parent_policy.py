@@ -991,9 +991,10 @@ DEFERRED = " DEFERRABLE INITIALLY DEFERRED"
 
 def without_warm_pool(objects):
     """0008 owns only the warm-pool table; retain every unrelated schema object."""
+    from workspace_documents.schema_inventory import without_documents
     from workspace_safety.schema_inventory import without_moderation
 
-    objects = without_moderation(objects)
+    objects = without_moderation(without_documents(objects))
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
     return {key: value for key, value in objects.items() if key[1] != WARM_POOL_TABLE}
@@ -1087,7 +1088,8 @@ def test_policy_migrations_reverse_reapply_exact_definitions_and_preserve_metada
             }
             assert actual == expected
     finally:
-        MigrationExecutor(connection).migrate([("workspaces", LEAF)])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
     assert catalog_contract() == complete
     record_property("policy_migration_definitions", repr(sorted(complete.items())))
     # A new real fixture after reapplication also exercises the restored scope guard.
