@@ -31,7 +31,10 @@ CREATE TRIGGER a_contract_retention BEFORE INSERT OR UPDATE OR DELETE ON billing
 CREATE TRIGGER a_contract_retention BEFORE INSERT OR UPDATE OR DELETE ON billing_subscription FOR EACH ROW EXECUTE FUNCTION billing_contract_clock_guard();
 CREATE TRIGGER a_contract_retention BEFORE INSERT OR UPDATE OR DELETE ON legal_dpa FOR EACH ROW EXECUTE FUNCTION billing_contract_clock_guard();
 CREATE TRIGGER a_contract_retention BEFORE INSERT OR UPDATE OR DELETE ON legal_acceptance FOR EACH ROW EXECUTE FUNCTION billing_contract_clock_guard();
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('legal_dpa_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION legal_dpa_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  mutable text[] := ARRAY['state', 'superseded_by_id', 'updated_at'];
+BEGIN
  IF TG_OP='UPDATE' AND TG_TABLE_NAME IN ('legal_dpa','legal_acceptance')
  AND public.retention_context('close',TG_TABLE_NAME,NEW.id) IS NOT NULL
  AND (to_jsonb(NEW)-ARRAY['contract_ended_at','purge_after','close_reason','close_evidence_ref'])
@@ -40,9 +43,40 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('legal_dpa_g
  IF TG_OP='DELETE' AND TG_TABLE_NAME IN ('legal_dpa','legal_acceptance')
  AND public.retention_context('purge',TG_TABLE_NAME,OLD.id) IS NOT NULL
  AND (to_jsonb(OLD)->>'purge_after')::timestamptz<clock_timestamp() THEN RETURN OLD; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='A DPA is never deleted';
+  END IF;
+  IF OLD.state = 'generated' AND (
+       NEW.organisation_id IS DISTINCT FROM OLD.organisation_id
+       OR NEW.template_id IS DISTINCT FROM OLD.template_id
+       OR NEW.pack_code IS DISTINCT FROM OLD.pack_code OR NEW.locale IS DISTINCT FROM OLD.locale
+       OR NEW.version IS DISTINCT FROM OLD.version OR NEW.sha256 IS DISTINCT FROM OLD.sha256
+       OR NEW.sub_processors IS DISTINCT FROM OLD.sub_processors) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='A DPA keeps the template it was generated from';
+  END IF;
+  IF OLD.state = 'accepted' AND (
+       (to_jsonb(OLD) - mutable) IS DISTINCT FROM (to_jsonb(NEW) - mutable)
+       OR NEW.state NOT IN ('accepted', 'superseded')
+       OR (NEW.state = 'accepted' AND NEW.superseded_by_id IS NOT NULL)) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='An accepted DPA only ever moves to superseded';
+  END IF;
+  IF OLD.state = 'superseded' AND (
+       (to_jsonb(OLD) - ARRAY['superseded_by_id', 'updated_at'])
+         IS DISTINCT FROM (to_jsonb(NEW) - ARRAY['superseded_by_id', 'updated_at'])
+       OR (OLD.superseded_by_id IS NOT NULL
+           AND NEW.superseded_by_id IS DISTINCT FROM OLD.superseded_by_id)) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='A superseded DPA never changes';
+  END IF;
+  RETURN NEW;
+END $$;
 ALTER FUNCTION legal_dpa_guard() SECURITY DEFINER; ALTER FUNCTION legal_dpa_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION legal_dpa_guard() FROM PUBLIC;
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('legal_append_only_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION legal_append_only_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
  IF TG_OP='UPDATE' AND TG_TABLE_NAME IN ('legal_dpa','legal_acceptance')
  AND public.retention_context('close',TG_TABLE_NAME,NEW.id) IS NOT NULL
  AND (to_jsonb(NEW)-ARRAY['contract_ended_at','purge_after','close_reason','close_evidence_ref'])
@@ -51,7 +85,10 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('legal_appen
  IF TG_OP='DELETE' AND TG_TABLE_NAME IN ('legal_dpa','legal_acceptance')
  AND public.retention_context('purge',TG_TABLE_NAME,OLD.id) IS NOT NULL
  AND (to_jsonb(OLD)->>'purge_after')::timestamptz<clock_timestamp() THEN RETURN OLD; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0],
+    MESSAGE='A legal record is never changed or deleted';
+END $$;
 ALTER FUNCTION legal_append_only_guard() SECURITY DEFINER; ALTER FUNCTION legal_append_only_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION legal_append_only_guard() FROM PUBLIC;
 
 CREATE FUNCTION retention_current_operator(p_actor uuid) RETURNS boolean LANGUAGE plpgsql
@@ -96,8 +133,24 @@ BEGIN
  UNION ALL SELECT 'legal_dpa',dpa.id UNION ALL SELECT 'legal_acceptance',id FROM public.legal_acceptance WHERE order_id=ord.id
  LOOP
   INSERT INTO public.retention_worker_context VALUES(pg_backend_pid(),txid_current(),'close',table_name,row_id,'{}');
-  EXECUTE format('UPDATE public.%I SET contract_ended_at=$1,purge_after=$2,close_reason=$3,close_evidence_ref=$4 WHERE id=$5 RETURNING to_jsonb(%I.*)',table_name,table_name)
-   INTO payload USING p_ended,deadline,p_reason,p_evidence,row_id;
+  CASE table_name
+   WHEN 'billing_order' THEN
+    UPDATE public.billing_order SET contract_ended_at=p_ended,purge_after=deadline,
+     close_reason=p_reason,close_evidence_ref=p_evidence WHERE id=row_id
+     RETURNING to_jsonb(billing_order.*) INTO payload;
+   WHEN 'billing_subscription' THEN
+    UPDATE public.billing_subscription SET contract_ended_at=p_ended,purge_after=deadline,
+     close_reason=p_reason,close_evidence_ref=p_evidence WHERE id=row_id
+     RETURNING to_jsonb(billing_subscription.*) INTO payload;
+   WHEN 'legal_dpa' THEN
+    UPDATE public.legal_dpa SET contract_ended_at=p_ended,purge_after=deadline,
+     close_reason=p_reason,close_evidence_ref=p_evidence WHERE id=row_id
+     RETURNING to_jsonb(legal_dpa.*) INTO payload;
+   WHEN 'legal_acceptance' THEN
+    UPDATE public.legal_acceptance SET contract_ended_at=p_ended,purge_after=deadline,
+     close_reason=p_reason,close_evidence_ref=p_evidence WHERE id=row_id
+     RETURNING to_jsonb(legal_acceptance.*) INTO payload;
+  END CASE;
   INSERT INTO public.billing_statutoryrecord(id,created_at,updated_at,source_table,source_id,organisation_reference,
    basis,event_at,financial_year_closed_at,purge_after,authority_ref,payload,payload_sha256)
    VALUES(public.retention_new_uuid7(),clock_timestamp(),clock_timestamp(),table_name,row_id,ord.organisation_id,'contract',p_ended,NULL,deadline,p_evidence,payload,
@@ -121,7 +174,15 @@ BEGIN
  IF p_table NOT IN ('billing_invoice','billing_creditnote','billing_payment')
  OR p_evidence IS NULL OR p_evidence !~ '^[A-Z]{2,8}-[0-9]{1,8}$'
  THEN RAISE EXCEPTION 'legacy accounting qualification refused' USING ERRCODE='23514'; END IF;
- EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1 FOR UPDATE',p_table) INTO payload USING p_id;
+ CASE p_table
+  WHEN 'billing_invoice' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_invoice t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_creditnote' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_creditnote t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_payment' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_payment t WHERE id=p_id FOR UPDATE;
+  ELSE RAISE EXCEPTION 'null values cannot be formatted as an SQL identifier' USING ERRCODE='22004';
+ END CASE;
  IF payload IS NULL OR payload->>'accounting_event_at' IS NOT NULL
  OR (p_table IN ('billing_invoice','billing_creditnote') AND (payload->>'issued_at')::timestamptz IS DISTINCT FROM p_event)
  OR (p_table='billing_payment' AND (payload->>'last_event_at')::timestamptz IS DISTINCT FROM p_event)
@@ -134,8 +195,33 @@ BEGIN
  WHERE p_table='billing_invoice' AND invoice_id=p_id UNION ALL SELECT 'billing_creditnoteline',id FROM public.billing_creditnoteline
  WHERE p_table='billing_creditnote' AND credit_note_id=p_id LOOP
   INSERT INTO public.retention_worker_context VALUES(pg_backend_pid(),txid_current(),'qualify',table_name,row_id,clock);
-  EXECUTE format('UPDATE public.%I SET accounting_event_at=$1,financial_year_closed_at=$2,purge_after=$3,retention_authority_ref=$4 WHERE id=$5',table_name)
-  USING p_event,(clock->>'financial_year_closed_at')::timestamptz,(clock->>'purge_after')::timestamptz,clock->>'retention_authority_ref',row_id;
+  CASE table_name
+   WHEN 'billing_invoice' THEN
+    UPDATE public.billing_invoice SET accounting_event_at=p_event,
+     financial_year_closed_at=(clock->>'financial_year_closed_at')::timestamptz,
+     purge_after=(clock->>'purge_after')::timestamptz,
+     retention_authority_ref=clock->>'retention_authority_ref' WHERE id=row_id;
+   WHEN 'billing_creditnote' THEN
+    UPDATE public.billing_creditnote SET accounting_event_at=p_event,
+     financial_year_closed_at=(clock->>'financial_year_closed_at')::timestamptz,
+     purge_after=(clock->>'purge_after')::timestamptz,
+     retention_authority_ref=clock->>'retention_authority_ref' WHERE id=row_id;
+   WHEN 'billing_payment' THEN
+    UPDATE public.billing_payment SET accounting_event_at=p_event,
+     financial_year_closed_at=(clock->>'financial_year_closed_at')::timestamptz,
+     purge_after=(clock->>'purge_after')::timestamptz,
+     retention_authority_ref=clock->>'retention_authority_ref' WHERE id=row_id;
+   WHEN 'billing_invoiceline' THEN
+    UPDATE public.billing_invoiceline SET accounting_event_at=p_event,
+     financial_year_closed_at=(clock->>'financial_year_closed_at')::timestamptz,
+     purge_after=(clock->>'purge_after')::timestamptz,
+     retention_authority_ref=clock->>'retention_authority_ref' WHERE id=row_id;
+   WHEN 'billing_creditnoteline' THEN
+    UPDATE public.billing_creditnoteline SET accounting_event_at=p_event,
+     financial_year_closed_at=(clock->>'financial_year_closed_at')::timestamptz,
+     purge_after=(clock->>'purge_after')::timestamptz,
+     retention_authority_ref=clock->>'retention_authority_ref' WHERE id=row_id;
+  END CASE;
   DELETE FROM public.retention_worker_context WHERE backend=pg_backend_pid() AND transaction=txid_current()
    AND purpose='qualify' AND source_table=table_name AND source_id=row_id;
  END LOOP;
@@ -149,7 +235,27 @@ DECLARE payload jsonb; deadline timestamptz;
 BEGIN
  IF p_table NOT IN ('billing_invoice','billing_invoiceline','billing_creditnote','billing_creditnoteline','billing_payment',
  'billing_order','billing_subscription','legal_dpa','legal_acceptance') THEN RAISE EXCEPTION 'statutory table refused' USING ERRCODE='23514'; END IF;
- EXECUTE format('SELECT to_jsonb(t) FROM public.%I t WHERE id=$1 FOR UPDATE',p_table) INTO payload USING p_id;
+ CASE p_table
+  WHEN 'billing_invoice' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_invoice t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_invoiceline' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_invoiceline t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_creditnote' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_creditnote t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_creditnoteline' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_creditnoteline t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_payment' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_payment t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_order' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_order t WHERE id=p_id FOR UPDATE;
+  WHEN 'billing_subscription' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.billing_subscription t WHERE id=p_id FOR UPDATE;
+  WHEN 'legal_dpa' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.legal_dpa t WHERE id=p_id FOR UPDATE;
+  WHEN 'legal_acceptance' THEN
+   SELECT to_jsonb(t) INTO payload FROM public.legal_acceptance t WHERE id=p_id FOR UPDATE;
+  ELSE RAISE EXCEPTION 'null values cannot be formatted as an SQL identifier' USING ERRCODE='22004';
+ END CASE;
  IF payload IS NULL THEN RETURN false; END IF;
  deadline:=(payload->>'purge_after')::timestamptz;
  IF deadline IS NULL OR deadline>=clock_timestamp()
@@ -157,7 +263,17 @@ BEGIN
  THEN RAISE EXCEPTION 'statutory record not due or unqualified' USING ERRCODE='23514'; END IF;
  INSERT INTO public.retention_worker_context VALUES(pg_backend_pid(),txid_current(),'purge',p_table,p_id,'{}');
  BEGIN
-  EXECUTE format('DELETE FROM public.%I WHERE id=$1',p_table) USING p_id;
+  CASE p_table
+   WHEN 'billing_invoice' THEN DELETE FROM public.billing_invoice WHERE id=p_id;
+   WHEN 'billing_invoiceline' THEN DELETE FROM public.billing_invoiceline WHERE id=p_id;
+   WHEN 'billing_creditnote' THEN DELETE FROM public.billing_creditnote WHERE id=p_id;
+   WHEN 'billing_creditnoteline' THEN DELETE FROM public.billing_creditnoteline WHERE id=p_id;
+   WHEN 'billing_payment' THEN DELETE FROM public.billing_payment WHERE id=p_id;
+   WHEN 'billing_order' THEN DELETE FROM public.billing_order WHERE id=p_id;
+   WHEN 'billing_subscription' THEN DELETE FROM public.billing_subscription WHERE id=p_id;
+   WHEN 'legal_dpa' THEN DELETE FROM public.legal_dpa WHERE id=p_id;
+   WHEN 'legal_acceptance' THEN DELETE FROM public.legal_acceptance WHERE id=p_id;
+  END CASE;
   -- Force deferred FK checks inside the operation so a dependency is an explicit hold.
   SET CONSTRAINTS ALL IMMEDIATE;
  EXCEPTION WHEN foreign_key_violation THEN
