@@ -114,16 +114,35 @@ CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_message FOR E
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_realmaccount FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_realmaccess FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('docs_journal_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION public.docs_journal_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp SET lock_timeout='3s' SET statement_timeout='5s' AS $$
+DECLARE covered bigint; head bigint; expected uuid; actual uuid;
+BEGIN
  IF TG_OP='DELETE' AND EXISTS(SELECT 1 FROM public.docs_document d JOIN public.workspaces_workspace w ON w.id=d.workspace_id
  WHERE d.id=OLD.document_id AND public.privacy_erasure_context(w.organisation_id)) THEN RETURN OLD; END IF;
-$body$); EXECUTE definition; END $patch$;
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('organisation_intake_change()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+
+  IF TG_OP='UPDATE' THEN RAISE EXCEPTION 'document journal is immutable' USING ERRCODE='23514'; END IF;
+  IF TG_OP='DELETE' THEN
+    SELECT sequence INTO covered FROM docs_documentsnapshot WHERE document_id=OLD.document_id;
+    IF covered IS NULL OR covered<OLD.sequence THEN RAISE EXCEPTION 'document update is not covered by a snapshot' USING ERRCODE='23514'; END IF;
+    RETURN OLD;
+  END IF;
+  SELECT head_sequence INTO head FROM docs_documentsnapshot WHERE document_id=NEW.document_id FOR UPDATE;
+  IF head IS NULL OR NEW.sequence<>head+1 THEN RAISE EXCEPTION 'document journal sequence refused' USING ERRCODE='23514'; END IF;
+  SELECT w.organisation_id INTO expected FROM docs_document d JOIN workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=NEW.document_id;
+  SELECT organisation_id INTO actual FROM identity_identity WHERE id=NEW.actor_id;
+  IF expected IS DISTINCT FROM actual THEN RAISE EXCEPTION 'document journal actor scope refused' USING ERRCODE='23514'; END IF;
+  UPDATE docs_documentsnapshot SET head_sequence=NEW.sequence,updated_at=clock_timestamp() WHERE document_id=NEW.document_id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION public.organisation_intake_change() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
  IF TG_OP='UPDATE' AND public.privacy_erasure_context(OLD.organisation_id)
  AND NEW.sealed_contact=decode('','hex') AND NEW.intended_owner_email_masked='erased'
  AND (to_jsonb(NEW)-ARRAY['sealed_contact','intended_owner_email_masked'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['sealed_contact','intended_owner_email_masked']) THEN RETURN NEW; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='intake_immutable', MESSAGE='An intake record is never changed or deleted';
+END $$;
 ALTER FUNCTION organisation_intake_change() SECURITY DEFINER; ALTER FUNCTION organisation_intake_change() SET search_path=pg_catalog,public,pg_temp;
 
 
@@ -176,7 +195,7 @@ BEGIN
  inventory:=inventory||jsonb_build_object('required_domains',jsonb_build_array('matrix','objects','identity_provider','private_exports'));
  inventory:=inventory||jsonb_build_object('private_export_expiries',public.privacy_export_expiry_inventory(inventory->'private_exports'));
  IF to_regclass('public.extensions_installation') IS NOT NULL THEN
-  EXECUTE 'SELECT coalesce(jsonb_agg(''urn:kodera:extension-installation:''||i.id||'':endpoint-sha256:''||encode(sha256(convert_to(i.endpoint,''UTF8'')),''hex'') ORDER BY i.id),''[]''::jsonb) FROM public.extensions_installation i JOIN public.workspaces_workspace w ON w.id=i.workspace_id WHERE w.organisation_id=$1' INTO receivers USING p_org;
+  SELECT coalesce(jsonb_agg('urn:kodera:extension-installation:'||i.id||':endpoint-sha256:'||encode(sha256(convert_to(i.endpoint,'UTF8')),'hex') ORDER BY i.id),'[]'::jsonb) INTO receivers FROM public.extensions_installation i JOIN public.workspaces_workspace w ON w.id=i.workspace_id WHERE w.organisation_id=p_org;
   inventory:=inventory||jsonb_build_object('extension_receivers',receivers,
    'required_domains',(inventory->'required_domains')||jsonb_build_array('external_extension_receivers'));
  END IF;

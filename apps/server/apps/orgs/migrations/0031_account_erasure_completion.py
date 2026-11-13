@@ -42,17 +42,40 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.privacy_record_account_absence(uuid,uuid,timestamptz,text,text,text,text,timestamptz) FROM PUBLIC;
 
-DO $patch$ DECLARE definition text; BEGIN
- SELECT pg_get_functiondef('public.customer_immutable()'::regprocedure) INTO definition;
- definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION public.customer_immutable() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
  IF TG_ARGV[0]='identity' AND TG_OP='UPDATE' THEN
  IF public.privacy_account_context(OLD.user_id)
  AND NEW.subject='erased:'||OLD.id AND NOT NEW.enabled
  AND (to_jsonb(NEW)-ARRAY['subject','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','updated_at'])
  THEN RETURN NEW; END IF;
  END IF;
-$body$); EXECUTE definition;
-END $patch$;
+
+ IF TG_ARGV[0]='identity' AND TG_OP='UPDATE' THEN
+ IF public.privacy_erasure_context(OLD.organisation_id)
+ AND NEW.subject='erased:'||OLD.id AND NOT NEW.enabled
+ AND (to_jsonb(NEW)-ARRAY['subject','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','updated_at'])
+ THEN RETURN NEW; END IF;
+ END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0] || '_id_immutable', MESSAGE='Stored identifier is immutable';
+  END IF;
+  IF TG_ARGV[0]='identity' THEN
+    IF (NEW.user_id,NEW.organisation_id,NEW.issuer,NEW.realm,NEW.subject) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id,OLD.issuer,OLD.realm,OLD.subject) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='identity_immutable_binding', MESSAGE='Principal binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='membership' THEN
+    IF (NEW.user_id,NEW.organisation_id) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='membership_immutable_binding', MESSAGE='Membership binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='organisation' THEN
+    IF NEW.issuer IS DISTINCT FROM OLD.issuer THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='organisation_immutable_binding', MESSAGE='Organisation issuer is immutable';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
 
 CREATE FUNCTION public.privacy_erased_subject_rebind_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public,pg_temp AS $$

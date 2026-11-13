@@ -23,14 +23,33 @@ CREATE TRIGGER aa_engine_erasure_cutoff BEFORE INSERT OR UPDATE ON engine_intent
 CREATE TRIGGER aa_engine_erasure_cutoff BEFORE INSERT OR UPDATE ON engine_intents_member_set FOR EACH ROW EXECUTE FUNCTION privacy_engine_cutoff_guard();
 CREATE TRIGGER aa_engine_erasure_cutoff BEFORE INSERT OR UPDATE ON engine_intents_channel_set FOR EACH ROW EXECUTE FUNCTION privacy_engine_cutoff_guard();
 CREATE TRIGGER aa_engine_erasure_cutoff BEFORE INSERT OR UPDATE ON engine_intents_known_subject FOR EACH ROW EXECUTE FUNCTION privacy_engine_cutoff_guard();
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('customer_immutable()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION public.customer_immutable() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
  IF TG_ARGV[0]='identity' AND TG_OP='UPDATE' THEN
  IF public.privacy_erasure_context(OLD.organisation_id)
  AND NEW.subject='erased:'||OLD.id AND NOT NEW.enabled
  AND (to_jsonb(NEW)-ARRAY['subject','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','updated_at'])
  THEN RETURN NEW; END IF;
  END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0] || '_id_immutable', MESSAGE='Stored identifier is immutable';
+  END IF;
+  IF TG_ARGV[0]='identity' THEN
+    IF (NEW.user_id,NEW.organisation_id,NEW.issuer,NEW.realm,NEW.subject) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id,OLD.issuer,OLD.realm,OLD.subject) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='identity_immutable_binding', MESSAGE='Principal binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='membership' THEN
+    IF (NEW.user_id,NEW.organisation_id) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='membership_immutable_binding', MESSAGE='Membership binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='organisation' THEN
+    IF NEW.issuer IS DISTINCT FROM OLD.issuer THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='organisation_immutable_binding', MESSAGE='Organisation issuer is immutable';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
 ALTER FUNCTION customer_immutable() SECURITY DEFINER; ALTER FUNCTION customer_immutable() SET search_path=pg_catalog,public,pg_temp;
 
 CREATE FUNCTION privacy_complete_erasure(p_id uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
@@ -57,7 +76,7 @@ BEGIN
  AND receipt.domain=domain.value AND receipt.cutoff_at=request.cutoff_at AND receipt.verified_at>=request.cutoff_at))
  THEN RETURN false; END IF;
  IF to_regclass('public.extensions_installation') IS NOT NULL THEN
-  EXECUTE 'SELECT EXISTS(SELECT 1 FROM public.extensions_installation i JOIN public.workspaces_workspace w ON w.id=i.workspace_id WHERE w.organisation_id=$1) OR EXISTS(SELECT 1 FROM public.extensions_importbatch b JOIN public.workspaces_workspace w ON w.id=b.workspace_id WHERE w.organisation_id=$1) OR EXISTS(SELECT 1 FROM public.extensions_digestconsent c JOIN public.orgs_membership m ON m.id=c.membership_id WHERE m.organisation_id=$1)' INTO extension_pending USING request.organisation_reference;
+  SELECT EXISTS(SELECT 1 FROM public.extensions_installation i JOIN public.workspaces_workspace w ON w.id=i.workspace_id WHERE w.organisation_id=request.organisation_reference) OR EXISTS(SELECT 1 FROM public.extensions_importbatch b JOIN public.workspaces_workspace w ON w.id=b.workspace_id WHERE w.organisation_id=request.organisation_reference) OR EXISTS(SELECT 1 FROM public.extensions_digestconsent c JOIN public.orgs_membership m ON m.id=c.membership_id WHERE m.organisation_id=request.organisation_reference) INTO extension_pending;
   IF extension_pending THEN RETURN false; END IF;
  END IF;
  org:=request.organisation_reference;

@@ -91,7 +91,10 @@ CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON notifications_notifi
 CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON notifications_pushoutbox FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
 CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON outbox_realmaccess FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
 CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON docs_documentupdate FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('privacy_cutoff_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION public.privacy_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid;
+BEGIN
  IF TG_TABLE_NAME='identity_identity' AND TG_OP='UPDATE' THEN
   IF public.privacy_account_context(OLD.user_id) AND NOT NEW.enabled
   AND ((NEW.email='erased:'||OLD.id AND (to_jsonb(NEW)-ARRAY['email','enabled','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','enabled','updated_at']))
@@ -101,7 +104,35 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('privacy_cut
   IF NEW.state='removed' AND EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=NEW.user_id)
   AND (to_jsonb(NEW)-ARRAY['state','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['state','updated_at']) THEN RETURN NEW; END IF;
  END IF;
-$body$); EXECUTE definition; END $patch$;
+
+ IF item ? 'organisation_id' THEN org:=(item->>'organisation_id')::uuid;
+ ELSIF TG_TABLE_NAME='orgs_organisation' THEN org:=NEW.id;
+ ELSIF item ? 'workspace_id' THEN
+  SELECT organisation_id INTO org FROM public.workspaces_workspace WHERE id=(item->>'workspace_id')::uuid;
+ ELSIF item ? 'document_id' THEN
+  SELECT w.organisation_id INTO org FROM public.docs_document d JOIN public.workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=(item->>'document_id')::uuid;
+ ELSIF TG_TABLE_NAME='docs_documentlink' THEN
+  SELECT w.organisation_id INTO org FROM public.docs_document d JOIN public.workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=NEW.source_id;
+ ELSIF TG_TABLE_NAME='docs_collectionrow' THEN
+  SELECT w.organisation_id INTO org FROM public.docs_collection c JOIN public.workspaces_workspace w ON w.id=c.workspace_id WHERE c.id=NEW.collection_id;
+ ELSIF item ? 'delivery_id' THEN
+  SELECT organisation_id INTO org FROM public.outbox_outboxdelivery WHERE id=(item->>'delivery_id')::uuid;
+ ELSIF TG_TABLE_NAME='notifications_pushoutbox' THEN
+  SELECT organisation_id INTO org FROM public.notifications_pushsubscription WHERE id=NEW.subscription_id;
+ END IF;
+ IF TG_TABLE_NAME='orgs_organisation' AND TG_OP='UPDATE'
+ AND (to_jsonb(NEW)-ARRAY['authority_revision','owner_guard_revision'])
+ IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['authority_revision','owner_guard_revision']) THEN RETURN NEW; END IF;
+ IF org IS NOT NULL THEN
+  -- Same lock as cutoff: a pre-cutoff writer commits before the inventory, or sees the fence.
+  PERFORM 1 FROM public.orgs_organisation WHERE id=org FOR SHARE;
+  IF EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
+   AND NOT public.privacy_erasure_context(org) THEN
+   RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
 
 CREATE FUNCTION privacy_begin_account_erasure(p_id uuid,p_identity uuid,p_instruction text,p_digest text,p_not_before timestamptz,p_actor uuid)
 RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp
