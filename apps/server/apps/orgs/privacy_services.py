@@ -12,8 +12,8 @@ from typing import Any
 
 from django.db import transaction
 
-from apps.audit.models import AuditEvent
-from apps.identity.models import Identity
+from apps.audit.privacy_events import record_export_event
+from apps.identity.privacy_selectors import current_export_organisation
 from apps.orgs.models import Membership, Organisation
 
 from .privacy_archives import SECTIONS, ArchiveRefusalError, Chunk, Request, State, require
@@ -22,18 +22,8 @@ from .privacy_models import PrivacyExport
 
 class CurrentAuthority:
     def authorize(self, request: Request) -> bool:
-        identity = (
-            Identity.objects.filter(
-                id=request.identity_id,
-                user_id=request.user_id,
-                enabled=True,
-                deleted_at__isnull=True,
-                user__enabled=True,
-                user__deleted_at__isnull=True,
-                organisation__isnull=False,
-            )
-            .values_list("organisation_id", flat=True)
-            .first()
+        identity = current_export_organisation(
+            identity_id=request.identity_id, user_id=request.user_id
         )
         if identity is None:
             return False
@@ -149,15 +139,12 @@ class DatabaseJournal:
 
 
 def _audit(action: str, request: Request) -> None:
-    AuditEvent.objects.create(
+    record_export_event(
         action=action,
-        actor_type="tenant",
-        actor_id=request.identity_id,
-        actor_label=f"urn:kodera:identity:{request.identity_id}",
+        identity_id=request.identity_id,
         organisation_id=request.organisation_id,
-        target_urn=f"urn:kodera:export:{request.id}",
-        retention_class="standard",
-        metadata={"scope": request.scope},
+        export_id=request.id,
+        scope=request.scope,
     )
 
 
