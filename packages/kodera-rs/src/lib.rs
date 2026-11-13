@@ -21,6 +21,30 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
 
+mod native_scope;
+pub use native_scope::{NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES};
+
+mod proximity_beacon_v2;
+pub use proximity_beacon_v2::{
+    BeaconObservationV2, ProximityBeaconV2, ProximityBeaconV2Receiver, ProximityBeaconV2Sender,
+    PROXIMITY_BEACON_V2_BYTES,
+};
+
+#[cfg(feature = "openmls-engine")]
+mod mls_engine;
+#[cfg(feature = "openmls-engine")]
+pub use mls_engine::{MlsCommitBundle, OpenMlsMember, OpenMlsSession};
+
+#[cfg(feature = "megolm-engine")]
+mod megolm_engine;
+#[cfg(feature = "megolm-engine")]
+pub use megolm_engine::{MegolmEpochKey, MegolmEpochReceiver, MegolmEpochSender, MegolmPacket};
+
+#[cfg(feature = "passkey-bindings")]
+mod passkey_binding;
+#[cfg(feature = "passkey-bindings")]
+pub use passkey_binding::{PasskeyAssertion, PasskeyBinding, PasskeyChallenge};
+
 mod poll_connector;
 pub use poll_connector::{
     redact_iban, validate_channel_poll_id, validate_connector_post_url, ChannelPoll,
