@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Adopt the `ciel` (light) and `cielNuit` (dark) generated design-token palettes across the entry, signed-in, call, passkey, community and `#proximity` surfaces.
+- Add the canonical three-category `community.kodera.io` workspace structure (`Community`, `Core Kodera`, `Design Partners`) with localized FR/EN audience subtitles, federated partner badges, universal Matrix invitation URI builder/parser (`matrix.to`, `matrix:` URIs, `#alias:domain`, `@user:domain`), `ChannelInviteCoordinator` and clipboard-only `ChannelInviteSheet`.
+- Add `PayloadFreePushEnvelope`, `CallSessionState` and `CallKitPushCoordinator` enforcing Core's payload-free VoIP push invariant and deterministic `idle -> ringing -> connecting -> active -> muted/held -> ended/failed` transitions without adding unqualified background modes to `Info.plist`.
+- Add `PasskeyDeviceBinding` and `ASAuthorizationPlatformPublicKeyCredential` assertion bridging in `KoderaAuth` aligned with `kodera-rs` `passkey_binding` (strict `clientDataJSON`, ES256 UP+UV `0x05` flags, monotonic counter and bounded challenge expiry), plus `ProximityBeaconV2` vector-verified codecs, duty-cycle/battery bounds and foreground opt-in consent separating online Matrix room relays from local BLE radio check-ins.
 - Refresh native design tokens from the monorepo source and align local document bounds across clients.
 - Rename the `#urgence` channel to `#proximity` (translated in the French catalogue) in code and copy, and state on its card that it is not an emergency service. The frame v1 wire bytes are unchanged and now held to vectors shared with the Rust core.
 - Show check-ins under a pseudonymous handle, picked by the member or derived from the sender key inside the organisation, never a name; equal handles in a roster carry a key fingerprint.

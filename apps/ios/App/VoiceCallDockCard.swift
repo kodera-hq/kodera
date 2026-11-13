@@ -2,14 +2,42 @@ import SwiftUI
 import KoderaClient
 import KoderaDomain
 
-/// No transport is provisioned by this app composition. Controls never start microphone capture.
+enum CallSessionPhasePresentation {
+    static func phaseKey(for phase: CallSessionPhase) -> String {
+        switch phase {
+        case .idle:
+            "callkit.phase_idle"
+        case .ringing:
+            "callkit.phase_ringing"
+        case .connecting:
+            "callkit.phase_connecting"
+        case let .active(_, _, isMuted, isHeld, _):
+            if isHeld {
+                "callkit.phase_held"
+            } else if isMuted {
+                "callkit.phase_muted"
+            } else {
+                "callkit.phase_active"
+            }
+        case .ended:
+            "callkit.phase_ended"
+        case .failed:
+            "callkit.phase_failed"
+        }
+    }
+}
+
+/// No transport is provisioned by this app composition. Controls never start microphone capture,
+/// and PushKit/CallKit wakeup relays enforce Core's payload-free invariant.
+@MainActor
 struct VoiceCallDockCard: View {
     let scope: VoiceCallScope?
     @Environment(\.colorScheme) private var colorScheme
     @State private var coordinator = VoiceCallCoordinator()
+    @StateObject private var callKitCoordinator = try! CallKitPushCoordinator()
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
     // Hide old metadata synchronously, before onChange clears the previous scope's reducer.
     private var preview: Bool {
@@ -26,6 +54,9 @@ struct VoiceCallDockCard: View {
             if scope == nil {
                 Text("voice.channel_unavailable").font(NativeTypography.caption).foregroundStyle(palette.ink2)
             }
+
+            callKitWakeupSection
+
             VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
                 Button {
                     try? coordinator.setMuted(!coordinator.state.isMuted)
@@ -71,8 +102,49 @@ struct VoiceCallDockCard: View {
         .padding(KoderaTokens.Space.s5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(palette.surface, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.lg))
-        .onAppear { try? coordinator.configure(scope) }
-        .onChange(of: scope) { value in try? coordinator.configure(value) }
-        .onDisappear { coordinator.leave() }
+        .onAppear { syncScope(scope) }
+        .onChange(of: scope) { value in syncScope(value) }
+        .onDisappear {
+            coordinator.leave()
+            Task { try? await callKitCoordinator.switchOrganisation(nil) }
+        }
+    }
+
+    private var callKitWakeupSection: some View {
+        VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
+            HStack(alignment: .center, spacing: KoderaTokens.Space.s2) {
+                Label("callkit.section_title", systemImage: "phone.badge.checkmark")
+                    .font(NativeTypography.emphasis)
+                Spacer(minLength: KoderaTokens.Space.s2)
+                Text("callkit.payload_free_badge")
+                    .font(NativeTypography.caption)
+                    .foregroundStyle(palette.t1Fg)
+                    .padding(.horizontal, KoderaTokens.Space.s2)
+                    .padding(.vertical, KoderaTokens.Space.s1)
+                    .background(palette.t1Bg, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.full))
+            }
+            Text("callkit.policy_description")
+                .font(NativeTypography.caption)
+                .foregroundStyle(palette.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(LocalizedStringKey(CallSessionPhasePresentation.phaseKey(for: callKitCoordinator.state.phase)))
+                .font(NativeTypography.monoCaption)
+                .foregroundStyle(palette.accentInk)
+            if !callKitCoordinator.isPushKitProvisioned {
+                Text("callkit.unprovisioned_hint")
+                    .font(NativeTypography.caption)
+                    .foregroundStyle(palette.ink3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(KoderaTokens.Space.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.sunken, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.md))
+    }
+
+    private func syncScope(_ nextScope: VoiceCallScope?) {
+        try? coordinator.configure(nextScope)
+        let orgId = nextScope?.organisationId
+        Task { try? await callKitCoordinator.switchOrganisation(orgId) }
     }
 }
