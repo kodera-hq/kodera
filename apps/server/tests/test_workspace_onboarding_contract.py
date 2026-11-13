@@ -261,6 +261,11 @@ def unmark_replay(c):
     op["responses"]["201"]["headers"].pop("Idempotency-Replayed")
 
 
+def unmark_quota_replay(c):
+    op = next(op for _, op in keyed_posts(c) if op["operationId"] == "createWorkspaceCollection")
+    op["responses"]["402"]["headers"].pop("Idempotency-Replayed")
+
+
 def unmark_shared(c):
     c["components"]["responses"]["Conflict"]["headers"].pop("Idempotency-Replayed")
 
@@ -331,6 +336,7 @@ MUTANTS = {
     "example": (bad_example, "examples-0"),
     "unmark-inline": (unmark_replay, "replay-header"),
     "unmark-shared": (unmark_shared, "replay-header"),
+    "unmark-quota": (unmark_quota_replay, "replay-header"),
     "first-seen": (drop_first_seen, "first-seen"),
     "count": (recount, "key-count"),
     "pattern": (loosen_pattern, "key-pattern"),

@@ -94,6 +94,14 @@ function answerRequiringIfMatch(example: OperationExample, request: Request): Re
   return answer(example)
 }
 
+function answerConditional(example: OperationExample, request: Request): Response {
+  const match = request.headers.get('If-Match')
+  const absent = request.headers.get('If-None-Match')
+  if (match === null && absent === null) return problemMissingHeader('https://kodera.io/problems/precondition-required', request)
+  if ((match !== null && absent !== null) || (absent !== null && absent !== '*') || match === '') return problemMissingHeader('https://kodera.io/problems/validation-error', request)
+  return answer(absent === '*' ? { ...example, status: 201 } : example)
+}
+
 export const handlers: HttpHandler[] = [
   http.get(`${BASE}/me`, ({ request }) => answer({ ...EXAMPLES["getMe"], body: bindCurrentUserToMockRequest(EXAMPLES["getMe"].body as components['schemas']['Me'], request) })),
   http.patch(`${BASE}/me`, ({ request }) => answerRequiringIfMatch(EXAMPLES["patchMe"], request)),
@@ -237,4 +245,28 @@ export const handlers: HttpHandler[] = [
   http.get(`${BASE}/organisations/:organisation_id/workspace/documents/:document_id/backlinks`, () => answer(EXAMPLES["listDocumentBacklinks"])),
   http.post(`${BASE}/organisations/:organisation_id/workspace/documents/:document_id/collab-session`, ({ request }) => answerIdempotent(EXAMPLES["createDocumentCollabSession"], request)),
   http.get(`${BASE}/organisations/:organisation_id/workspace/search`, () => answer(EXAMPLES["searchWorkspace"])),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/collections`, () => answer(EXAMPLES["listWorkspaceCollections"])),
+  http.post(`${BASE}/organisations/:organisation_id/workspace/collections`, ({ request }) => answerIdempotent(EXAMPLES["createWorkspaceCollection"], request)),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id`, () => answer(EXAMPLES["getWorkspaceCollection"])),
+  http.patch(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id`, ({ request }) => answerRequiringIfMatch(EXAMPLES["updateWorkspaceCollection"], request)),
+  http.delete(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id`, () => answer(EXAMPLES["deleteWorkspaceCollection"])),
+  http.post(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/query`, ({ request }) => answerIdempotent(EXAMPLES["queryWorkspaceCollection"], request)),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, () => answer(EXAMPLES["getWorkspaceCollectionRow"])),
+  http.put(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, ({ request }) => answerConditional(EXAMPLES["putWorkspaceCollectionRow"], request)),
+  http.delete(`${BASE}/organisations/:organisation_id/workspace/collections/:collection_id/rows/:document_id`, () => answer(EXAMPLES["deleteWorkspaceCollectionRow"])),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/quotas/usage`, () => answer(EXAMPLES["getWorkspaceQuotaUsage"])),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/quotas/limits`, () => answer(EXAMPLES["getWorkspaceQuotaLimits"])),
+  http.get(`${BASE}/credit-notes/:credit_note_id/download`, () => answer(EXAMPLES["getCreditNoteDownloadLink"])),
+  http.get(`${BASE}/organisations/:organisation_id/billing/vat-status`, () => answer(EXAMPLES["getBillingVatStatus"])),
+  http.post(`${BASE}/organisations/:organisation_id/billing/vat-status`, ({ request }) => answerIdempotent(EXAMPLES["validateBillingVat"], request)),
+  http.post(`${BASE}/organisations/:organisation_id/workspace/privacy/exports`, ({ request }) => answerIdempotent(EXAMPLES["requestWorkspaceExport"], request)),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/privacy/exports/:request_id`, () => answer(EXAMPLES["getWorkspaceExport"])),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/privacy/exports/:request_id/download`, () => answer(EXAMPLES["getWorkspaceExportDownloadLink"])),
+  http.post(`${BASE}/organisations/:organisation_id/workspace/privacy/deletions`, ({ request }) => answerIdempotent(EXAMPLES["requestWorkspaceDeletion"], request)),
+  http.get(`${BASE}/organisations/:organisation_id/workspace/privacy/deletions/:request_id`, () => answer(EXAMPLES["getWorkspaceDeletion"])),
+  http.post(`${BASE}/me/privacy/exports`, ({ request }) => answerIdempotent(EXAMPLES["requestAccountExport"], request)),
+  http.get(`${BASE}/me/privacy/exports/:request_id`, () => answer(EXAMPLES["getAccountExport"])),
+  http.get(`${BASE}/me/privacy/exports/:request_id/download`, () => answer(EXAMPLES["getAccountExportDownloadLink"])),
+  http.post(`${BASE}/me/privacy/deletions`, ({ request }) => answerIdempotent(EXAMPLES["requestAccountDeletion"], request)),
+  http.get(`${BASE}/me/privacy/deletions/:request_id`, () => answer(EXAMPLES["getAccountDeletion"])),
 ]
