@@ -151,7 +151,7 @@ describe('If-Match on PATCH', () => {
     expect(created.status).toBe(201)
     const both = await fetch(url, {
       method: 'PUT',
-      headers: { 'If-Match': '\"tag\"', 'If-None-Match': '*' },
+      headers: { 'If-Match': '"tag"', 'If-None-Match': '*' },
     })
     expect(both.status).toBe(422)
     const invalid = await fetch(url, { method: 'PUT', headers: { 'If-None-Match': 'invalid' } })
