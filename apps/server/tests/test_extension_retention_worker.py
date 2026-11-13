@@ -196,6 +196,7 @@ def test_real_restricted_step_preserves_metadata_until_every_bound_receipt_and_p
         progress = step(worker, row, limit=1)
         assert progress["payloads_complete"] and not progress["metadata_complete"]
         assert progress["external_receipts_complete"] is False
+        assert progress["native_documents_released"] is False
         delivery.refresh_from_db()
         assert bytes(delivery.event) == b"" and delivery.purged_at is not None
         assert (
@@ -213,7 +214,7 @@ def test_real_restricted_step_preserves_metadata_until_every_bound_receipt_and_p
             total += progress["metadata_purged"]
             if progress["metadata_complete"]:
                 break
-        assert progress["metadata_complete"] and total > 0
+        assert progress["metadata_complete"] and progress["native_documents_released"] and total > 0
         assert step(worker, row)["metadata_complete"]
         assert not ImportedObject.objects.exists() and Document.objects.exists()
         core = worker.execute("SELECT public.privacy_purge_core(%s)", [row.id]).fetchone()[0]
@@ -295,12 +296,21 @@ def test_bare_local_cutoff_cannot_substitute_for_exact_initial_inventory(world, 
 
     org, _, _, _ = seed(world)
     row = begin_sql(org)
-    # The owner-only local helper is not Core admission. Even after it removes a receiver,
+    # Test-owned SQL setup is not Core admission. Even after it removes a receiver,
     # a processing login must refuse the changed inventory instead of trusting that marker.
     with transaction.atomic():
-        retention.cutoff_workspace(organisation_id=org.id, cutoff_at=row.cutoff_at)
+        WorkspaceCutoff.objects.create(organisation_id=org.id, cutoff_at=row.cutoff_at)
+        Installation.objects.filter(workspace__organisation_id=org.id).update(
+            revoked_at=row.cutoff_at
+        )
+        from apps.extensions.models import Delivery
+
+        Delivery.objects.filter(installation__workspace__organisation_id=org.id).update(
+            expires_at=row.cutoff_at
+        )
         retention.purge_due(limit=100, organisation_id=org.id)
-        retention.purge_workspace_metadata(organisation_id=org.id, limit=100)
+        Delivery.objects.all().delete()
+        Installation.objects.all().delete()
     assert not Installation.objects.exists() and not ErasureAdmission.objects.exists()
     _, connect = processing_login
     with connect() as worker:
@@ -349,3 +359,39 @@ def test_restricted_worker_cannot_reuse_private_core_integrity_trigger(processin
                     "CREATE CONSTRAINT TRIGGER forged_integrity AFTER INSERT ON forged_integrity DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.{}()"
                 ).format(sql.Identifier(function))
             )
+
+
+@pytest.mark.skipif(not HAS_CORE, reason="requires the reviewed Core retention integration stack")
+def test_no_import_links_release_actual_native_core_while_remote_receipts_stay_held(
+    world, native_engine, processing_login
+):
+    from apps.docs import services as documents
+    from apps.docs.models import Document
+
+    org, _, _, tokens = world
+    documents.create(
+        verified=tokens[0],
+        organisation_id=org.id,
+        name="Synthetic native page",
+        parent_id=None,
+        template_key=None,
+        request_id="controlled-native-erasure",
+    )
+    row = begin_sql(org)
+    assert row.inventory["extension_receivers"] == []
+    _, connect = processing_login
+    with connect() as worker:
+        progress = step(worker, row)
+        assert progress["payloads_complete"] and progress["native_documents_released"]
+        assert not progress["metadata_complete"] and not progress["external_receipts_complete"]
+        assert (
+            worker.execute("SELECT public.privacy_purge_core(%s)", [row.id]).fetchone()[0][
+                "documents"
+            ]
+            == 1
+        )
+        assert (
+            worker.execute("SELECT public.privacy_complete_erasure(%s)", [row.id]).fetchone()[0]
+            is False
+        )
+    assert not Document.objects.exists()
