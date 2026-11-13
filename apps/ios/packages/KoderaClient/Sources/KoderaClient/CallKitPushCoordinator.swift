@@ -31,6 +31,8 @@ public final class CallKitPushCoordinator: WorkspacePreferencesObservable {
     private var resolver: (any AuthenticatedCallStateResolver)?
     private var systemProvider: (any SystemCallProviderControlling)?
     private var generation: UInt64 = 1
+    // Keep native UUIDs reserved across resets until late reports and their cleanup settle.
+    private var nativeReportsInFlight: Set<UUID> = []
 
     public init(
         organisationId: String? = nil,
@@ -134,6 +136,9 @@ public final class CallKitPushCoordinator: WorkspacePreferencesObservable {
             return .failure(.organisationMismatch)
         }
 
+        guard !nativeReportsInFlight.contains(wakeup.callUUID) else {
+            return .failure(.invalidTransition)
+        }
         do {
             try state.beginRinging(wakeup: wakeup, descriptor: descriptor)
         } catch let error as CallWakeupError {
@@ -143,6 +148,8 @@ public final class CallKitPushCoordinator: WorkspacePreferencesObservable {
         }
 
         if let systemProvider {
+            nativeReportsInFlight.insert(wakeup.callUUID)
+            defer { nativeReportsInFlight.remove(wakeup.callUUID) }
             do {
                 try await systemProvider.reportIncomingCall(
                     uuid: wakeup.callUUID,
@@ -150,8 +157,16 @@ public final class CallKitPushCoordinator: WorkspacePreferencesObservable {
                     hasVideo: descriptor.hasVideo
                 )
             } catch {
+                guard matchesCall(generation: wakeupGeneration, organisationId: currentOrg, uuid: wakeup.callUUID) else {
+                    await systemProvider.reportCallEnded(uuid: wakeup.callUUID, reason: .organisationChanged)
+                    return .failure(.organisationMismatch)
+                }
                 state.recordFailure(.callKitRejected)
                 return .failure(.invalidTransition)
+            }
+            guard matchesCall(generation: wakeupGeneration, organisationId: currentOrg, uuid: wakeup.callUUID) else {
+                await systemProvider.reportCallEnded(uuid: wakeup.callUUID, reason: .organisationChanged)
+                return .failure(.organisationMismatch)
             }
         }
         return .success(wakeup)
@@ -226,6 +241,11 @@ public final class CallKitPushCoordinator: WorkspacePreferencesObservable {
         }
         resolver = nil
         systemProvider = nil
+    }
+
+    private func matchesCall(generation expected: UInt64, organisationId: String, uuid: UUID) -> Bool {
+        !isStopped && generation == expected && state.organisationId == organisationId
+            && state.activeCallUUID == uuid
     }
 
     private func recordIdleFailure(_ reason: CallFailureReason) {
