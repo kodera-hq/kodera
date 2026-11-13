@@ -541,6 +541,8 @@ else:
 
 
 OPERATOR_MODULES = (
+    "apps/audit/privacy_events.py",
+    "apps/identity/privacy_selectors.py",
     "apps/billing/statutory.py",
     "apps/billing/management/commands/manage_statutory_retention.py",
     "apps/orgs/account_erasure_services.py",
