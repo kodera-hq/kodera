@@ -12,6 +12,8 @@ names at least one https issuer. It reports key names only, never a value.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import copy
 import json
 import os
@@ -1603,6 +1605,15 @@ def _deployable_issuer(issuer: object) -> bool:
     return host not in {"", "localhost", "127.0.0.1", "::1", "[::1]"}
 
 
+def _base64url_32_bytes(value: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}=?", value):
+        return False
+    try:
+        return len(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))) == 32
+    except (binascii.Error, ValueError):
+        return False
+
+
 def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     """Check an operator's .env against .env.example. Names keys, never values."""
     example, _ = parse_env_example(env_example_text)
@@ -1631,6 +1642,9 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             errors.append(f"{key} is not set")
         elif "CHANGE_ME_" in value:
             errors.append(f"{key} still holds a CHANGE_ME_ placeholder")
+        elif "BASE64URL_32" in example.get(key, "") and not _base64url_32_bytes(value):
+            # The collaboration server and the seal keys refuse to start on any other length.
+            errors.append(f"{key} must be 32 random bytes in URL-safe base64")
         elif key == "KODERA_AUTH_TRUST":
             try:
                 entries = json.loads(value)
@@ -2269,6 +2283,16 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "KODERA_AUTH_TRUST entry 0 issuer is not a public https URL",
         ),
         (
+            "the collaboration key is hex, not 32 bytes of base64url",
+            lambda env: re.sub(r"(?m)^KODERA_COLLAB_TICKET_KEY=.*$", "KODERA_COLLAB_TICKET_KEY=" + "ab" * 32, env),
+            "KODERA_COLLAB_TICKET_KEY must be 32 random bytes in URL-safe base64",
+        ),
+        (
+            "a seal key is too short",
+            lambda env: re.sub(r"(?m)^KODERA_CONTACT_SEAL_KEY=.*$", "KODERA_CONTACT_SEAL_KEY=" + base64.urlsafe_b64encode(bytes(16)).decode(), env),
+            "KODERA_CONTACT_SEAL_KEY must be 32 random bytes in URL-safe base64",
+        ),
+        (
             "the provider origin is plain http",
             lambda env: re.sub(r"(?m)^KODERA_OIDC_PROVIDER_ORIGIN=.*$", "KODERA_OIDC_PROVIDER_ORIGIN=http://id.example.net", env),
             "KODERA_OIDC_PROVIDER_ORIGIN is not a public https origin",
@@ -2281,8 +2305,9 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
+        else f"{key}={base64.urlsafe_b64encode(bytes([i]) * 32).decode()}" if "BASE64URL_32" in value
         else f"{key}=filled-value-{i}"
-        for i, key in enumerate(parse_env_example(env_text)[0])
+        for i, (key, value) in enumerate(parse_env_example(env_text)[0].items())
     ) + "\n"
     if preflight_env(env_text, filled):
         print(f"[FAIL] preflight refuses a complete .env: {preflight_env(env_text, filled)}", file=sys.stderr)

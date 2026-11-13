@@ -152,7 +152,9 @@ def generate(args):
             if key in values:
                 value = values[key]
             elif 'CHANGE_ME_' in value:
-                value = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode() if key.endswith('SEAL_KEY') else secrets.token_hex(32)
+                # The placeholder names the encoding each consumer decodes: a 32-byte key in
+                # base64url (seal keys, the collaboration ticket key) or 32 random bytes in hex.
+                value = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode() if 'BASE64URL_32' in value else secrets.token_hex(32)
             line = key+'='+value
         lines.append(line)
     content = '\n'.join(lines)+'\n'
@@ -273,6 +275,9 @@ def selftest():
         content = path.read_text()
         assert 'CHANGE_ME_' not in '\n'.join(line for line in content.splitlines() if not line.startswith('#'))
         assert not check.preflight_env(TEMPLATE.read_text(), content)
+        # The collaboration server refuses to start unless its key decodes to exactly 32 bytes.
+        collab_key = next(line.split('=', 1)[1] for line in content.splitlines() if line.startswith('KODERA_COLLAB_TICKET_KEY='))
+        assert len(base64.urlsafe_b64decode(collab_key)) == 32
         for changes in [dict(oidc_issuer='http://id.example.org/realm'), dict(domain='bad;command'), dict(oidc_origin='https://localhost'), dict(trust_file=None)]:
             try:
                 generate(args(**changes))
