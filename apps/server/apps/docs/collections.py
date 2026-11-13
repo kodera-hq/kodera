@@ -13,7 +13,7 @@ from django.db.models.fields.json import KeyTextTransform, KeyTransform
 from django.utils import timezone
 
 from apps.audit.services import record_workspace_resource_event
-from apps.orgs.models import Membership
+from apps.orgs.selectors import collection_person_is_current
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import collection_schema as schema, services
@@ -166,15 +166,9 @@ def put_row(
     schema.values(collection.properties, body["values"])
     for typed in body["values"].values():
         if typed["type"] == "person" and typed["value"] is not None:
-            if not Membership.objects.filter(
-                pk=typed["value"],
-                organisation_id=organisation_id,
-                state="active",
-                accepted_at__isnull=False,
-                deleted_at__isnull=True,
-                user__enabled=True,
-                user__deleted_at__isnull=True,
-            ).exists():
+            if not collection_person_is_current(
+                membership_id=typed["value"], organisation_id=organisation_id
+            ):
                 raise RefusalError(422)
     row = CollectionRow.objects.filter(collection=collection, document_id=document_id).first()
     if if_match and if_none_match:
