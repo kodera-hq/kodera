@@ -5,6 +5,36 @@
   "notice": "Generated from the extension manifests. Every entry is a reference implementation exercised with synthetic fixtures: it is not installed, hosted or connected to a provider account by this repository.",
   "extensions": [
     {
+      "slug": "alertmanager",
+      "id": "io.kodera.ext.alertmanager",
+      "name": "Prometheus Alertmanager & Grafana Alerting Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Prometheus Alertmanager v4 and Grafana Unified Alerting reference implementation posting structured incident cards with runbook link validation.",
+      "manifest": "extensions/alertmanager/manifest.json",
+      "readme": "extensions/alertmanager/README.md",
+      "scopes": [
+        "messages:write",
+        "incidents:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "incident.opened",
+        "incident.resolved",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/alerts",
+          "description": "List firing alerts, inspect runbooks, or check Alertmanager routing status"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/alertmanager"
+    },
+    {
       "slug": "docs-collab-announcer",
       "id": "io.kodera.ext.docs-collab-announcer",
       "name": "Docs Collaborative Pad Announcer",
@@ -103,6 +133,35 @@
       "webhookUrl": "https://extensions.example.org/hooks/git-tracker"
     },
     {
+      "slug": "github",
+      "id": "io.kodera.ext.github",
+      "name": "GitHub PR, CI & Triage Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Bidirectional pull request review, check suite and workflow run summary, issue triage, and release reference implementation with X-Hub-Signature-256 verification.",
+      "manifest": "extensions/github/manifest.json",
+      "readme": "extensions/github/README.md",
+      "scopes": [
+        "messages:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "release.published",
+        "ci.workflow_failed",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/gh",
+          "description": "Inspect pull requests, CI checks, or triage issues for a GitHub repository"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/github"
+    },
+    {
       "slug": "github-release-notifier",
       "id": "io.kodera.ext.github-release-notifier",
       "name": "GitHub Release & CI Notifier",
@@ -158,6 +217,35 @@
       "webhookUrl": "https://extensions.example.org/hooks/github-repo-tracker"
     },
     {
+      "slug": "gitlab",
+      "id": "io.kodera.ext.gitlab",
+      "name": "GitLab & Self-Hosted GitLab CE/EE Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Merge request, pipeline stage breakdown, push, tag, issue, and release reference implementation for GitLab.com and self-hosted GitLab CE/EE.",
+      "manifest": "extensions/gitlab/manifest.json",
+      "readme": "extensions/gitlab/README.md",
+      "scopes": [
+        "messages:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "release.published",
+        "ci.workflow_failed",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/gitlab",
+          "description": "Inspect merge requests, pipeline stages, or issues for a GitLab project"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/gitlab"
+    },
+    {
       "slug": "hello-webhook",
       "id": "io.kodera.ext.hello-webhook",
       "name": "Hello Webhook Starter",
@@ -180,6 +268,33 @@
         }
       ],
       "webhookUrl": "https://extensions.example.org/hooks/hello-webhook"
+    },
+    {
+      "slug": "linear",
+      "id": "io.kodera.ext.linear",
+      "name": "Linear Issue, Cycle & Project Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Issue lifecycle, comment quote previews, cycle progress, and project health update reference implementation with Linear-Signature verification.",
+      "manifest": "extensions/linear/manifest.json",
+      "readme": "extensions/linear/README.md",
+      "scopes": [
+        "messages:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/linear",
+          "description": "Inspect or triage Linear issues, cycles, and project health updates"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/linear"
     },
     {
       "slug": "notion-workspace-bridge",
@@ -232,6 +347,65 @@
         }
       ],
       "webhookUrl": "https://extensions.example.org/hooks/qonto-treasury-feed"
+    },
+    {
+      "slug": "rss-advisories",
+      "id": "io.kodera.ext.rss-advisories",
+      "name": "RSS, Atom & Security Advisory Feed",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Normalized Atom, RSS, GHSA, CVE, and CERT-FR security advisory reference implementation for upstream dependencies with bounded deduplication.",
+      "manifest": "extensions/rss-advisories/manifest.json",
+      "readme": "extensions/rss-advisories/README.md",
+      "scopes": [
+        "messages:write",
+        "incidents:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "incident.opened",
+        "release.published",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/advisories",
+          "description": "Inspect upstream security advisories, CVSS thresholds, or tracked components"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/rss-advisories"
+    },
+    {
+      "slug": "sentry",
+      "id": "io.kodera.ext.sentry",
+      "name": "Sentry & GlitchTip Error Alert Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Issue and event alert reference implementation for Sentry and open-source GlitchTip with sanitized stacktrace previews and incident cards.",
+      "manifest": "extensions/sentry/manifest.json",
+      "readme": "extensions/sentry/README.md",
+      "scopes": [
+        "messages:write",
+        "incidents:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "incident.opened",
+        "incident.resolved",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/sentry",
+          "description": "Inspect, triage, or resolve Sentry and GlitchTip error issues"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/sentry"
     },
     {
       "slug": "social-pulse-bridge",
