@@ -92,6 +92,9 @@ class ChannelSet:
     revision: int
     channels: tuple[dict[str, Any], ...]
     all_members: frozenset[str] = frozenset()
+    banned_subjects: frozenset[str] = frozenset()
+    muted_subjects: tuple[tuple[str, str], ...] = ()
+    moderation_present: bool = False
 
 
 def room_members(channel: dict[str, Any], all_members: frozenset[str]) -> list[str]:
@@ -104,8 +107,8 @@ def room_members(channel: dict[str, Any], all_members: frozenset[str]) -> list[s
 def _subjects(value: Any) -> bool:
     return (
         isinstance(value, list)
-        and len(set(value)) == len(value)
         and all(isinstance(s, str) and _SUBJECT.fullmatch(s) for s in value)
+        and len(set(value)) == len(value)
     )
 
 
@@ -163,7 +166,40 @@ def parse(payload: dict[str, Any]) -> ChannelSet | None:
         members += len(channel["members"]) + len(channel["denied"]) + len(channel["exempt"])
     if members > MAX_MEMBERS:
         return None
-    return ChannelSet(revision, tuple(channels), all_members)
+    banned, muted = payload.get("banned_subjects", []), payload.get("muted_subjects", [])
+    if (
+        not _subjects(banned)
+        or not isinstance(muted, list)
+        or len(banned) + len(muted) > MAX_MEMBERS
+    ):
+        return None
+    expirations = []
+    for item in muted:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"subject", "expires_at"}
+            or not _subjects([item["subject"]])
+        ):
+            return None
+        try:
+            from datetime import datetime
+
+            stamp = datetime.fromisoformat(item["expires_at"].replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                return None
+        except (ValueError, TypeError, AttributeError):
+            return None
+        expirations.append((item["subject"], item["expires_at"]))
+    if len({subject for subject, _ in expirations}) != len(expirations):
+        return None
+    return ChannelSet(
+        revision,
+        tuple(channels),
+        all_members,
+        frozenset(banned),
+        tuple(expirations),
+        "banned_subjects" in payload or "muted_subjects" in payload,
+    )
 
 
 def power_levels(channel: dict[str, Any], synapse: Synapse, exempt: list[str]) -> dict[str, Any]:
@@ -315,7 +351,9 @@ class Channels:
         rooms = self._state.channel_rooms()
         prints = self._state.channel_fingerprints()
         channels = channel_set.channels
-        wanted = {c["channel_id"]: self._wanted(c, channel_set.all_members) for c in channels}
+        wanted = {
+            c["channel_id"]: self._wanted(c, channel_set.all_members, channel_set) for c in channels
+        }
         failed: dict[str, None] = {}  # in order, once each
 
         def fail(channel_id: str) -> None:
@@ -380,6 +418,7 @@ class Channels:
                         fresh(channel_id),
                         owed,
                         result,
+                        channel_set if channel_set.moderation_present else None,
                     )
                 except SynapseUnavailableError:
                     for left in channels[index:]:
@@ -412,20 +451,56 @@ class Channels:
         owed.save()
         return result
 
+    def _moderate_room(self, room_id: str, channel_set: ChannelSet) -> None:
+        wanted = {
+            u
+            for subject in channel_set.banned_subjects
+            if (u := self._synapse.user_id(subject)) is not None
+        }
+        # Only bans carrying our fixed reason are reversed. Human/operator bans are preserved.
+        everyone, owned = self._synapse.moderation_bans(room_id)
+        for user in sorted(wanted - everyone):
+            self._synapse.ban(room_id, user)
+        for user in sorted(owned - wanted):
+            self._synapse.unban(room_id, user)
+
     def signed_in(self) -> bool:
         """Whether someone the last application was waiting for has an account now: they signed in
         to Espace, and applying the set again joins them. One paged admin read; nothing when no one
         is waiting."""
         return bool(self.waiting) and not self.waiting.isdisjoint(self._synapse.active_users())
 
-    def _wanted(self, channel: dict[str, Any], all_members: frozenset[str]) -> _Wanted:
+    def _wanted(
+        self,
+        channel: dict[str, Any],
+        all_members: frozenset[str],
+        moderation: ChannelSet | None = None,
+    ) -> _Wanted:
         synapse = self._synapse
         users = frozenset(
             u for s in room_members(channel, all_members) if (u := synapse.user_id(s)) is not None
         )
+        if moderation is not None:
+            banned_users = {
+                u
+                for subject in moderation.banned_subjects
+                if (u := synapse.user_id(subject)) is not None
+            }
+            users = users - banned_users
         exempt = sorted(u for s in channel["exempt"] if (u := synapse.user_id(s)) in users)
         public = native_public(channel, synapse)
         governance = policy(channel, exempt, users)
+        if moderation is not None and moderation.moderation_present:
+            governance["banned"] = sorted(
+                u
+                for subject in moderation.banned_subjects
+                if (u := synapse.user_id(subject)) is not None
+            )
+            governance["muted_until"] = {
+                u: expires
+                for subject, expires in moderation.muted_subjects
+                if (u := synapse.user_id(subject)) is not None
+            }
         if public:
             governance["local_only"] = True
         state = (
@@ -582,6 +657,7 @@ class Channels:
         fresh: bool,
         owed: _Owed,
         result: Applied,
+        moderation: ChannelSet | None = None,
     ) -> str:
         synapse = self._synapse
         channel_id = channel["channel_id"]
@@ -612,6 +688,10 @@ class Channels:
                 # Recorded at once: a deleted channel's room is then emptied even if this pass stops.
                 rooms[channel_id] = room_id
                 self._state.keep_channel_rooms(rooms)
+        if moderation is not None and not fresh:
+            # Policy is current before ban changes. Clear our old bans before inviting/joining
+            # a readmitted member; an operator's independent ban is never overwritten.
+            self._moderate_room(room_id, moderation)
         present = seen.get(room_id)
         if present is None:
             # Not read by the first phase: a room found or made just now, or one whose removals

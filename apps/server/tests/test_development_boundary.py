@@ -322,6 +322,12 @@ def assert_image_boundary(ignore):
         "!apps/support/api/__init__.py",
         "!apps/support/api/permissions.py",
         "!apps/support/api/views.py",
+        "!apps/orgs/workspace_members.py",
+        "!apps/workspaces/moderation.py",
+        "!apps/workspaces/moderation_policy.py",
+        "!apps/workspaces/moderation_wire.py",
+        "!apps/workspaces/api/moderation.py",
+        "!apps/workspaces/api/moderation_urls.py",
     }
     assert {line for line in ignore if line.startswith("!")} == permitted, (
         "build inputs differ from the exact runtime allowlist"

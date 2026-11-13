@@ -188,6 +188,7 @@ class EngineChannelSet(models.Model):
     )
     revision = models.BigIntegerField()
     all_members = models.JSONField(default=list)  # the organisation's Espace members, once
+    moderation = models.JSONField(default=dict)
     channels = models.JSONField()
     reason = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)

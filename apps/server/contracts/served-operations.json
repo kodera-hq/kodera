@@ -37,6 +37,11 @@
       "path": "/organisations/{organisation_id}/memberships/count"
     },
     {
+      "operation_id": "createAbuseReport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/reports"
+    },
+    {
       "operation_id": "createCategory",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/categories"
@@ -70,6 +75,11 @@
       "operation_id": "createTenant",
       "method": "POST",
       "path": "/organisations/{organisation_id}/tenants"
+    },
+    {
+      "operation_id": "createWorkspaceInviteLink",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/invite-links"
     },
     {
       "operation_id": "deleteCategory",
@@ -207,6 +217,11 @@
       "path": "/organisations/{organisation_id}/invitations"
     },
     {
+      "operation_id": "listAbuseReports",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/reports"
+    },
+    {
       "operation_id": "listCapacityTiers",
       "method": "GET",
       "path": "/catalog/capacity-tiers"
@@ -267,6 +282,16 @@
       "path": "/organisations/{organisation_id}/tenants"
     },
     {
+      "operation_id": "listWorkspaceInviteLinks",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/invite-links"
+    },
+    {
+      "operation_id": "moderateWorkspaceMember",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/moderation"
+    },
+    {
       "operation_id": "patchCategory",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/workspace/categories/{category_id}"
@@ -297,6 +322,16 @@
       "path": "/invitations/preview"
     },
     {
+      "operation_id": "previewWorkspaceInvite",
+      "method": "POST",
+      "path": "/workspace-invites/preview"
+    },
+    {
+      "operation_id": "redeemWorkspaceInvite",
+      "method": "POST",
+      "path": "/workspace-invites/redeem"
+    },
+    {
       "operation_id": "removeMembership",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
@@ -307,9 +342,19 @@
       "path": "/invitations/{invitation_id}/actions/resend"
     },
     {
+      "operation_id": "resolveAbuseReport",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/reports/{report_id}"
+    },
+    {
       "operation_id": "revokeInvitation",
       "method": "DELETE",
       "path": "/invitations/{invitation_id}"
+    },
+    {
+      "operation_id": "revokeWorkspaceInviteLink",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/invite-links/{invite_link_id}"
     },
     {
       "operation_id": "unarchiveChannel",

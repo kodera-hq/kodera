@@ -165,6 +165,8 @@ class KoderaPolicy:
             return NOT_SPAM
         if not self._governance_valid(policy_event):
             return Codes.FORBIDDEN
+        if user in content.get('banned', ()):
+            return Codes.FORBIDDEN
         if content.get("archived", False) is not False:
             return Codes.FORBIDDEN
         if content.get("local_only") is True and not self._api.is_mine(user):
@@ -230,6 +232,11 @@ class KoderaPolicy:
             values = content.get(key)
             if not isinstance(values, (list, tuple)) or not all(_is_valid_user_id(value) for value in values):
                 return False
+        banned, muted = content.get('banned', ()), content.get('muted_until', {})
+        if not isinstance(banned, (list, tuple)) or not all(_is_valid_user_id(value) for value in banned):
+            return False
+        if not isinstance(muted, Mapping) or not all(_is_valid_user_id(value) and isinstance(until, str) for value, until in muted.items()):
+            return False
         return content["audience"] != "listed" or set(content["exempt"]) <= set(content["members"])
 
     def _governance_allows(self, event: Any, state: Any) -> bool:
@@ -240,6 +247,12 @@ class KoderaPolicy:
         if not _has_governance(content):
             return True
         if not self._governance_valid(policy_event):
+            return False
+        if event.sender in content.get('banned', ()):
+            return event.type == 'm.room.member' and getattr(event, 'state_key', None) == event.sender and event.content.get('membership') == 'leave'
+        if event.type == 'm.room.member' and event.content.get('membership') in {'join', 'invite', 'knock'} and getattr(event, 'state_key', None) in content.get('banned', ()):
+            return False
+        if event.type in {'m.room.message', 'm.sticker'} and _active_mute(content, event.sender):
             return False
         if content.get("archived") is True:
             own_leave = (
@@ -282,7 +295,7 @@ class KoderaPolicy:
 
 def _has_governance(content: Any) -> bool:
     return isinstance(content, Mapping) and any(
-        key in content for key in ("read_only", "audience", "members", "exempt")
+        key in content for key in ("read_only", "audience", "members", "exempt", "banned", "muted_until")
     )
 
 
@@ -312,3 +325,15 @@ def _membership_of(member_event: Any) -> str | None:
         if isinstance(value, str):
             return value
     return None
+
+
+def _active_mute(content: Mapping, user: str) -> bool:
+    from datetime import UTC, datetime
+    value = content.get('muted_until', {}).get(user)
+    if value is None:
+        return False
+    try:
+        until = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return until.tzinfo is None or until > datetime.now(UTC)
+    except (TypeError, ValueError, AttributeError):
+        return True

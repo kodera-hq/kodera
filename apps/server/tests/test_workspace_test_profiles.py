@@ -100,6 +100,11 @@ def test_workspace_registration_is_explicit_per_profile(profile, has_workspace):
             "ResourcePolicyRule",
             "WarmPoolAllocation",
             "Workspace",
+            "WorkspaceAbuseReport",
+            "WorkspaceInviteLink",
+            "WorkspaceInviteRedemption",
+            "WorkspaceMemberRestriction",
+            "WorkspaceModerator",
         ]
         if has_workspace
         else []

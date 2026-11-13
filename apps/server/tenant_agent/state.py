@@ -97,13 +97,24 @@ class State:
         return value
 
     def keep_channel_set(
-        self, revision: int, channels: list[dict[str, Any]], all_members: list[str]
+        self,
+        revision: int,
+        channels: list[dict[str, Any]],
+        all_members: list[str],
+        moderation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Store this set unless a higher revision is stored; return the set now in force."""
         current = self.channel_set()
         if current is not None and int(current["revision"]) > revision:
             return current
-        value = {"revision": revision, "all_members": all_members, "channels": channels}
+        if current is not None and "banned_subjects" in current and moderation is None:
+            raise ValueError("moderation projection cannot be silently dropped")
+        value = {
+            "revision": revision,
+            "all_members": all_members,
+            "channels": channels,
+            **(moderation or {}),
+        }
         _write(self._dir / "channel_set.json", value)
         return value
 

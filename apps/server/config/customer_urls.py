@@ -3,7 +3,7 @@ invitations, the workspace operations,
 the billing operations, the legal documents and the DPA, the agents' engine commands, and the
 existing diagnostics."""
 
-from django.urls import path
+from django.urls import include, path
 
 from apps.billing.api import tenants as tenancy, views as billing
 from apps.billing.api.help_context import help_context
@@ -37,6 +37,7 @@ from .urls import urlpatterns as diagnostics
 
 urlpatterns = [
     *diagnostics,
+    path("", include("apps.workspaces.api.moderation_urls")),
     path("api/v1/me", me),
     path("api/v1/workspaces/instant-claim", instant_claim),
     path("api/v1/auth/discover", discovery),

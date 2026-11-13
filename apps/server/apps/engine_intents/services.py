@@ -594,6 +594,7 @@ def _as_command(command: EngineCommand) -> dict[str, Any]:
             "revision": channel_set.revision,
             "all_members": channel_set.all_members,
             "channels": channel_set.channels,
+            **channel_set.moderation,
         }
     else:
         member_set = _member_set(command)

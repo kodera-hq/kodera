@@ -139,3 +139,30 @@ def test_archived_public_room_refuses_rejoin_and_post_but_allows_leave():
         member = event("m.room.member", ALICE, membership=membership)
         member.state_key = ALICE
         assert both_callbacks(state, member) == expected
+
+
+@pytest.mark.parametrize('invited', [True, False])
+def test_workspace_ban_refuses_native_public_join_and_post(invited):
+    state = governed()
+    state[("io.kodera.room.policy", "")].content['banned'] = [ALICE]
+    policy = KoderaPolicy({'agent_user_id': AGENT}, FakeApi({ROOM: state}))
+    assert run(policy.user_may_join_room(ALICE, ROOM, invited)) == FORBIDDEN
+    assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (False, FORBIDDEN)
+    joining = event('m.room.member', ALICE, membership='join')
+    joining.state_key = ALICE
+    assert both_callbacks(state, joining) == (False, FORBIDDEN)
+    leaving = event('m.room.member', ALICE, membership='leave')
+    leaving.state_key = ALICE
+    assert both_callbacks(state, leaving) == (True, ALLOWED)
+
+
+def test_workspace_mute_uses_server_time_even_for_exempt_member():
+    from datetime import UTC, datetime, timedelta
+    state = governed(exempt=[ALICE])
+    content = state[("io.kodera.room.policy", "")].content
+    content['muted_until'] = {ALICE: (datetime.now(UTC) + timedelta(minutes=5)).isoformat()}
+    assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (False, FORBIDDEN)
+    content['muted_until'][ALICE] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (True, ALLOWED)
+    content['muted_until'][ALICE] = 'invalid'
+    assert both_callbacks(state, event('m.room.message', ALICE, state=False)) == (False, FORBIDDEN)

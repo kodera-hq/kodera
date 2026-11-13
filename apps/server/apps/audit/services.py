@@ -802,3 +802,33 @@ def record_agent_credential_event(
         retention_class="standard",
         metadata={"tenant_id": None if tenant_id is None else str(tenant_id)},
     )
+
+
+def record_workspace_resource_event(
+    *,
+    action: str,
+    organisation_id: UUID,
+    target_id: UUID,
+    actor_id: UUID,
+    request_id: str,
+) -> None:
+    """Append a workspace resource action with identifiers only, in its caller's transaction."""
+    import re
+
+    if (
+        not isinstance(action, str)
+        or len(action) > 100
+        or re.fullmatch(r"workspace(?:\.[a-z][a-z0-9_]*){1,3}", action) is None
+    ):
+        raise ValueError("a workspace resource event needs a bounded workspace action")
+    AuditEvent.objects.create(
+        action=action,
+        actor_type="tenant",
+        actor_id=actor_id,
+        actor_label=f"urn:kodera:identity:{actor_id}",
+        organisation_id=organisation_id,
+        target_urn=f"urn:kodera:workspace-resource:{target_id}",
+        request_id=request_id,
+        retention_class="standard",
+        metadata={},
+    )

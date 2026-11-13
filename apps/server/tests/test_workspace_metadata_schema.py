@@ -194,6 +194,8 @@ def test_registered_schema_matches_migrations(schema):
             "0006_espace_structure",
             "0007_room_state_revision",
             "0008_warmpoolallocation",
+            "0009_workspace_moderation",
+            "0010_moderation_scope_guards",
         }
 
 
