@@ -164,6 +164,8 @@ def subscription(row: Subscription) -> JSON:
 
 def invoice(row: Invoice, *, staff: bool = False) -> JSON:
     """`external_ref` is staff-facing: a tenant caller does not receive it."""
+    from .artifacts import metadata
+
     currency = row.currency
     body: JSON = {
         "id": str(row.id),
@@ -205,13 +207,17 @@ def invoice(row: Invoice, *, staff: bool = False) -> JSON:
     }
     if staff:
         body["external_ref"] = row.external_ref
+    body.update(metadata(row))
     return body
 
 
 def credit_note(row: CreditNote) -> JSON:
     """The contract's `CreditNote`: what it credits, with the lines of the invoice it credits."""
+    from .artifacts import metadata
+
     currency = row.currency
     return {
+        **metadata(row),
         "id": str(row.id),
         "organisation_id": str(row.organisation_id),
         "invoice_id": str(row.invoice_id),

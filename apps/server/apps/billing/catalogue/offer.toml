@@ -5,8 +5,9 @@
 # prices represent list amounts; yearly prices represent a 10 % annual billing
 # discount paid yearly in advance. Enterprise is offered on an annual term.
 #
-# The `workspace` pack (Visio and Espace `messaging`) is the active pack on
-# sale, priced by capacity tier. Legacy `visio` and `visio-docs` packs remain
+# The historical `workspace` pack keeps its original applications and profile.
+# The additive `workspace-v2` edition includes messaging, calls and documents,
+# priced by capacity tier with new plan versions. Legacy `visio` and `visio-docs` packs remain
 # stored with `available = false` so historical order snapshots keep resolving.
 #
 # Loaded via `manage.py load_catalogue apps/billing/catalogue/offer.toml`.
@@ -20,6 +21,7 @@ name = "Kodera"
 description = "Canaux de discussion, salons audio et réunions vidéo pour toute votre organisation, sur votre instance, hébergée dans l’Union européenne."
 apps = ["visio", "messaging"]
 profile_ref = "workspace/1.0"
+available = false
 
 [[packs]]
 code = "visio"
@@ -293,3 +295,107 @@ capacity_tier = "XL"
 billing_period = "yearly"
 amount_minor = 960000
 valid_from = 2026-11-05T00:00:00Z
+
+# Unified workspace edition: additive identities preserve every historical snapshot.
+
+[[packs]]
+code = "workspace-v2"
+name = "Kodera Workspace"
+description = "Messaging, calls and collaborative documents on a dedicated instance hosted in the European Union."
+apps = ["messaging", "visio", "docs"]
+profile_ref = "workspace/2.0"
+
+[[plans]]
+code = "team"
+version = 2
+name = "Team"
+description = "Messaging, calls and documents included; reference catalogue for local evaluation."
+state = "published"
+published_at = 2026-11-13T00:00:00Z
+
+[[plans]]
+code = "business"
+version = 2
+name = "Business"
+description = "Messaging, calls and documents included; reference catalogue for local evaluation."
+state = "published"
+published_at = 2026-11-13T00:00:00Z
+
+[[plans]]
+code = "business-plus"
+version = 2
+name = "Business Plus"
+description = "Messaging, calls and documents included; reference catalogue for local evaluation."
+state = "published"
+published_at = 2026-11-13T00:00:00Z
+
+[[plans]]
+code = "enterprise"
+version = 2
+name = "Enterprise"
+description = "Messaging, calls and documents included; reference catalogue for local evaluation."
+state = "published"
+published_at = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "team"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "S"
+billing_period = "monthly"
+amount_minor = 10000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "team"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "S"
+billing_period = "yearly"
+amount_minor = 108000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "M"
+billing_period = "monthly"
+amount_minor = 20000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "business"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "M"
+billing_period = "yearly"
+amount_minor = 216000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "L"
+billing_period = "monthly"
+amount_minor = 40000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "business-plus"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "L"
+billing_period = "yearly"
+amount_minor = 432000
+valid_from = 2026-11-13T00:00:00Z
+
+[[prices]]
+plan = "enterprise"
+plan_version = 2
+pack = "workspace-v2"
+capacity_tier = "XL"
+billing_period = "yearly"
+amount_minor = 960000
+valid_from = 2026-11-13T00:00:00Z

@@ -19,6 +19,12 @@ GET_INVOICE = Operation(method="GET", operation_id="getInvoice", scope="invoice:
 LIST_CREDIT_NOTES = Operation(method="GET", operation_id="listCreditNotes", scope="invoice:read")
 GET_CREDIT_NOTE = Operation(method="GET", operation_id="getCreditNote", scope="invoice:read")
 GET_DUNNING = Operation(method="GET", operation_id="getDunning", scope="subscription:read")
+GET_BILLING_VAT = Operation(
+    method="GET", operation_id="getBillingVatStatus", scope="billing_vat:read"
+)
+VALIDATE_BILLING_VAT = Operation(
+    method="POST", operation_id="validateBillingVat", scope="billing_vat:update"
+)
 GET_PAYMENT_LINK = Operation(method="GET", operation_id="getPaymentLink", scope="payment:read")
 CREATE_PAYMENT_LINK = Operation(
     method="POST", operation_id="createPaymentLink", scope="payment:create"

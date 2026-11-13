@@ -585,6 +585,12 @@ def record_owner_event(
 
 # AUDIT_TAXONOMY.md §Billing: each billing action and the actor types its row allows.
 BILLING_ACTIONS: Mapping[str, frozenset[str]] = {
+    "dunning.proposal_prepared": frozenset({"system"}),
+    "dunning.cleared": frozenset({"system"}),
+    "dunning.dispute_recorded": frozenset({"staff"}),
+    **dict.fromkeys(("dunning.reminder_sent", "dunning.formal_notice_sent", "dunning.suspension_notice_sent", "dunning.suspended", "dunning.terminated"), frozenset({"staff"})),
+    "invoice.download_requested": frozenset({"tenant"}),
+    "vat.vies_checked": frozenset({"system", "staff"}),
     **dict.fromkeys(
         ("plan.published", "plan.deprecated", "price.published", "price.deprecated"),
         frozenset({"staff"}),

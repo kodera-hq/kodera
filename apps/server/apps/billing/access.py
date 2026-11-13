@@ -30,6 +30,8 @@ from .callers import (
 
 # AUTHZ.md §5: the tenant roles holding `read` on each row (the contract's x-kodera-authz).
 READERS = {
+    "billing_vat:read": frozenset({"org_owner", "org_admin", "org_billing"}),
+    "billing_vat:update": frozenset({"org_owner", "org_billing"}),
     "order:read": frozenset({"org_owner", "org_admin", "org_billing"}),
     "subscription:read": frozenset({"org_owner", "org_admin", "org_billing"}),
     "invoice:read": frozenset({"org_owner", "org_admin", "org_billing"}),
