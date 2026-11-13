@@ -541,6 +541,8 @@ else:
 
 
 OPERATOR_MODULES = (
+    "apps/audit/privacy_events.py",
+    "apps/identity/privacy_selectors.py",
     "apps/workspaces/quota_policy.py",
     "apps/workspaces/management/commands/configure_workspace_quotas.py",
     "apps/identity/command_principal.py",
