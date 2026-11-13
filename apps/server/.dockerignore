@@ -39,6 +39,7 @@ config/settings/deploy_worker.py
 !core/faults.py
 # A link's origin: createPaymentLink's return URL is held to the console's (core/links.py).
 !core/links.py
+!core/api/guarded_replay.py
 !core/api/idempotency.py
 !core/idempotency/__init__.py
 !core/idempotency/apps.py
@@ -323,6 +324,7 @@ config/settings/deploy_worker.py
 !apps/docs/collection_schema.py
 !apps/docs/collections.py
 !apps/docs/api/collections.py
+!apps/workspaces/services.py
 !apps/workspaces/quotas.py
 !apps/workspaces/quota_http.py
 !apps/workspaces/api/quotas.py

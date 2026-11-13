@@ -17,8 +17,8 @@ from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
 from apps.orgs import invitations as service
-from apps.workspaces.quota_http import respond_once
 from core.api import lanes, problems
+from core.api.guarded_replay import respond_once
 from core.api.idempotency import StoredResponse
 from core.api.scopes import declares
 from core.db.ids import new_uuid7
@@ -270,6 +270,7 @@ def organisation_invitations(request: HttpRequest, organisation_id: UUID) -> Htt
                 subject=verified.subject,
                 request_id=request_id,
                 handler=handler,
+                policy=service.quota_replay_policy(),
             )
     except TokenVerificationError:
         response = _problem("unauthenticated", request_id)
@@ -331,6 +332,7 @@ def resend_invitation(request: HttpRequest, invitation_id: UUID) -> HttpResponse
             subject=verified.subject,
             request_id=request_id,
             handler=handler,
+            policy=service.quota_replay_policy(),
         )
     except TokenVerificationError:
         response = _problem("unauthenticated", request_id)
@@ -363,6 +365,7 @@ def accept_invitation(request: HttpRequest) -> HttpResponse:
             subject=verified.subject,
             request_id=request_id,
             handler=handler,
+            policy=service.quota_replay_policy(),
         )
     except TokenVerificationError:
         response = _problem("unauthenticated", request_id)
