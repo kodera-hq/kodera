@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve consumed BLE duty across failed same-organisation provisioning, retire replaced scan windows before new radio operations, and keep an admitted call controllable when another push is refused. These paths are qualified with local fake adapters; device radio and native call qualification remain pending.
+
 - Adopt the `ciel` (light) and `cielNuit` (dark) generated design-token palettes and frost glass panel materials (`CielGlassCard`, `CielBadgePill`, IBM Plex Mono bindings) across the entry, signed-in, voice/telecom, passkey, community and `#proximity` surfaces without modifying generated `KoderaTokens.kt`.
 - Add the canonical three-category `community.kodera.io` workspace structure (`Community`, `Core Kodera`, `Design Partners`) with private-by-default internal room guards, federated Matrix partner badges (`Element`, `Tchap`, `Cinny`), universal Matrix invitation URI builder/parser (`matrix:r/...`, `matrix.to`, `#alias:domain`, `@localpart:domain`), `ChannelInviteCoordinator` and in-app clipboard `ChannelInviteSheet`.
 - Add `PayloadFreePushEnvelope`, `CallSessionState` and `TelecomPushCoordinator` enforcing Core's payload-free `UnifiedPush` and `FCM` wakeup invariant (refusing any push payload carrying room titles, caller labels or message bodies) and driving deterministic `Idle -> WakeupPending -> Ringing -> Connecting -> Connected -> OnHold -> Ended/Rejected` `ConnectionService` transitions while keeping `AndroidManifest.xml` permissions and exported components unchanged.
