@@ -148,3 +148,24 @@ def job_progress(job_id: UUID) -> JobProgress | None:
         unresolved_operation_ref=operation_ref,
         steps=tuple(steps),
     )
+
+
+def succeeded_tenant_transition(
+    *,
+    job_id: UUID,
+    organisation_id: UUID,
+    tenant_id: UUID | None,
+    kind: str,
+    not_before: datetime,
+    not_after: datetime,
+) -> bool:
+    """Recorded completion evidence within the caller's exact delivery interval."""
+    return Job.objects.filter(
+        id=job_id,
+        organisation_id=organisation_id,
+        tenant_id=tenant_id,
+        kind=kind,
+        status="succeeded",
+        finished_at__gte=not_before,
+        finished_at__lte=not_after,
+    ).exists()
