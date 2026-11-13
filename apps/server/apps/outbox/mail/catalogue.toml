@@ -306,3 +306,32 @@ The customer's message:
 
 ${customer_body}
 """
+
+# Opt-in aggregate metadata only. Human copy approval remains a production release gate.
+[workspace_digest]
+copy = "draft"
+approved = false
+link = false
+params = ["organisation_name", "updated_pages", "updated_collections", "period_start", "period_end"]
+
+[workspace_digest.en]
+subject = "Workspace activity in ${organisation_name}"
+body = """
+Your optional workspace summary for ${period_start} to ${period_end}:
+Updated pages: ${updated_pages}
+Updated collections: ${updated_collections}
+
+Open Kodera to read activity you can currently access. This email contains no document or message text.
+These summaries require your active consent.
+"""
+
+[workspace_digest.fr]
+subject = "Activité de votre espace ${organisation_name}"
+body = """
+Votre récapitulatif facultatif du ${period_start} au ${period_end} :
+Pages mises à jour : ${updated_pages}
+Collections mises à jour : ${updated_collections}
+
+Ouvrez Kodera pour consulter les activités auxquelles vous avez accès. Cet e-mail ne contient aucun texte de document ou de message.
+Ces récapitulatifs nécessitent votre consentement actif.
+"""

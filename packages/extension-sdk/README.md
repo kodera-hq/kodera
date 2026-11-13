@@ -68,3 +68,21 @@ URL validation is lexical. Redirects are disabled by the outbound client, but th
 ## License
 
 Apache-2.0 ([`LICENSE`](./LICENSE)).
+
+## Additive v2 rotation verification
+
+`verifyRotatingWebhookRequest` and `createRotatingWebhookVerifier` preserve the existing v1
+HMAC transcript and primary header. A v2 Core producer signs organisation, installation,
+delivery id, event type and key generation inside the raw JSON body. During a bounded rotation,
+`X-Kodera-Previous-Signature-256` carries a second independent `v1=` signature; the primary header
+never combines signatures. Configure the expected organisation/installation, current generation
+and secret, and the previous generation/secret with its trusted absolute `expiresAt` epoch.
+The previous key is refused at expiry equality; incoming data cannot extend trusted grace.
+
+Pass the raw body plus signature/timestamp/event/delivery headers to the helper. Scope/header
+mismatch, malformed signatures, invalid UTF-8, oversized bodies and expired grace refuse. The
+factory additionally bounds and rejects in-process delivery-id replay. For durable side effects,
+commit the scoped delivery id with the effect in receiver storage; an in-memory cache cannot
+provide that guarantee across process restarts or later producer retries. Provision receiver
+keys and generation configuration before changing the producer. A receiver still using only
+the legacy helper needs the current key; adopting the new helper is an explicit rollout step.
