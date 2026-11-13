@@ -63,12 +63,19 @@ export function verifyRotatingWebhookRequest(options) {
 export function createRotatingWebhookVerifier(configuration) {
   /** @type {Map<string, {until: number}>} */
   const seen = new Map();
+  /** @type {number | undefined} */
+  let latestClock;
   /** @param {Partial<RotationOptions> & Pick<RotationOptions, 'rawBody'>} options */
   return options => {
     const merged = { ...options, ...configuration };
     const body = verifyRotatingWebhookRequest(merged);
     const now = merged.nowUnixSeconds ?? Math.floor(Date.now() / 1000);
     const skew = merged.maxSkewSeconds ?? 300;
+    if (latestClock !== undefined && now < latestClock) {
+      throw new WebhookVerificationError('INVALID_CLOCK', 'Webhook handler clock must not move backwards.');
+    }
+    // Refused replay/capacity attempts must also advance the verified clock before pruning.
+    latestClock = now;
     for (const [id, entry] of seen) if (entry.until < now) seen.delete(id);
     const key = `${body.organisation_id}:${body.installation_id}:${body.delivery_id}`;
     if (seen.has(key)) fail('ROTATION_REPLAY');

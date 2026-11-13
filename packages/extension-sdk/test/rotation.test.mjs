@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { createRotatingWebhookVerifier, verifyRotatingWebhookRequest, verifyWebhookRequest } from '../src/index.mjs';
+import { createRotatingWebhookVerifier, signWebhookPayload, verifyRotatingWebhookRequest, verifyWebhookRequest } from '../src/index.mjs';
 
 const source = fileURLToPath(new URL('../../../apps/server', import.meta.url));
 const python = process.env.KODERA_TEST_PYTHON ?? 'python3';
@@ -42,4 +42,53 @@ test('reused delivery id rejects even when switching from old to current signatu
 test('malformed signature syntax and oversized bodies refuse before parsing', () => {
   for (const change of [{ signatureHeader: options.signatureHeader + ',v1=bad' }, { previousSignatureHeader: 'bad' }, { rawBody: 'x'.repeat(128 * 1024 + 1) }])
     assert.throws(() => verifyRotatingWebhookRequest({ ...options, ...change }), /binding refused/);
+});
+
+
+function vector(deliveryId, timestamp, previousOnly = false) {
+  const rawBody = JSON.stringify({ ...body, delivery_id: deliveryId });
+  return { ...options, rawBody, deliveryIdHeader: deliveryId,
+    signatureHeader: previousOnly ? 'v1=' + '0'.repeat(64) : signWebhookPayload(options.current.secret, timestamp, rawBody),
+    previousSignatureHeader: signWebhookPayload(options.previous.secret, timestamp, rawBody),
+    timestampHeader: String(timestamp), nowUnixSeconds: timestamp };
+}
+function receiver() {
+  return createRotatingWebhookVerifier({ organisationId: options.organisationId,
+    installationId: options.installationId, current: options.current, previous: options.previous });
+}
+const refusal = code => error => error.code === code;
+
+test('previous-to-current delivery replay refuses after pruning and clock rollback', () => {
+  const verify = receiver();
+  const now = options.nowUnixSeconds;
+  const first = vector('00000000-0000-0000-0000-000000000010', now, true);
+  verify(first);
+  verify(vector('00000000-0000-0000-0000-000000000011', now + 301));
+  const replay = { ...first, signatureHeader: signWebhookPayload(options.current.secret, now, first.rawBody) };
+  assert.throws(() => verify(replay), refusal('INVALID_CLOCK'));
+});
+
+test('refused rotating replay advances the verified clock before pruning', () => {
+  const verify = receiver();
+  const now = options.nowUnixSeconds;
+  const old = vector('00000000-0000-0000-0000-000000000020', now, true);
+  const recent = vector('00000000-0000-0000-0000-000000000021', now + 100);
+  verify(old);
+  verify(recent);
+  assert.throws(() => verify({ ...recent, nowUnixSeconds: now + 301 }), refusal('ROTATION_REPLAY'));
+  assert.throws(() => verify({ ...old, nowUnixSeconds: now + 200 }), refusal('INVALID_CLOCK'));
+});
+
+test('refused rotating capacity advances clock while unauthenticated requests cannot poison it', () => {
+  const verify = receiver();
+  const now = options.nowUnixSeconds;
+  const first = vector('00000000-0000-0000-0000-000000000030', now, true);
+  assert.throws(() => verify({ ...first, nowUnixSeconds: now + 200,
+    signatureHeader: 'v1=' + '0'.repeat(64), previousSignatureHeader: 'v1=' + '0'.repeat(64) }), refusal('ROTATION_SIGNATURE'));
+  verify(first);
+  for (let index = 1; index < 4096; index++) {
+    verify(vector('00000000-0000-0000-0001-' + index.toString(16).padStart(12, '0'), now));
+  }
+  assert.throws(() => verify(vector('00000000-0000-0000-0002-000000000001', now + 1)), refusal('ROTATION_REPLAY_CAPACITY'));
+  assert.throws(() => verify({ ...first, signatureHeader: signWebhookPayload(options.current.secret, now, first.rawBody) }), refusal('INVALID_CLOCK'));
 });
