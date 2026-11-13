@@ -77,6 +77,7 @@ SECRET_SHAPED_NAME = re.compile(
 ADMITTED_SECRET_NAMES = frozenset(
     {
         "DJANGO_SECRET_KEY",  # the application signing key
+        "KODERA_COLLAB_TICKET_KEY",  # collaboration ticket and transform HMAC key
         "KODERA_NOTIFICATION_SEAL_KEY",  # sealed per-device application data
         "KODERA_PUSH_VAPID_PUBLIC_KEY",  # public P-256 discovery point
         "KODERA_CONTACT_SEAL_KEY",  # application secrets

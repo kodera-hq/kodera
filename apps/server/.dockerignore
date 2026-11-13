@@ -267,6 +267,7 @@ config/settings/deploy_worker.py
 !apps/workspaces/api/moderation.py
 !apps/workspaces/api/moderation_urls.py
 !apps/media/__init__.py
+!apps/media/apps.py
 !apps/media/models.py
 !apps/media/context.py
 !apps/media/outbound.py
@@ -281,6 +282,7 @@ config/settings/deploy_worker.py
 !apps/media/api/urls.py
 !apps/media/api/views.py
 !apps/notifications/__init__.py
+!apps/notifications/apps.py
 !apps/notifications/models.py
 !apps/notifications/push.py
 !apps/notifications/services.py
@@ -289,3 +291,19 @@ config/settings/deploy_worker.py
 !apps/notifications/api/responses.py
 !apps/notifications/api/urls.py
 !apps/notifications/api/views.py
+!apps/docs/__init__.py
+!apps/docs/apps.py
+!apps/docs/access.py
+!apps/docs/configuration.py
+!apps/docs/engine.py
+!apps/docs/errors.py
+!apps/docs/models.py
+!apps/docs/services.py
+!apps/docs/templates.py
+!apps/docs/tickets.py
+!apps/docs/tree.py
+!apps/docs/api/__init__.py
+!apps/docs/api/http.py
+!apps/docs/api/responses.py
+!apps/docs/api/urls.py
+!apps/docs/api/views.py

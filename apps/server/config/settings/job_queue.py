@@ -25,6 +25,7 @@ from apps.billing.configuration import (
     issuer_from_environment as billing_issuer,
     series_from_environment as billing_series,
 )
+from apps.docs.configuration import collaboration_settings
 from apps.outbox.mail.links import origins_from_environment, setup_redirect_from_environment
 from apps.outbox.mail.seal import key_from_environment
 from apps.outbox.mail.transport import transport_from_environment
@@ -51,6 +52,7 @@ INSTALLED_APPS = [
     "apps.support",
     "apps.media",
     "apps.notifications",
+    "apps.docs",
 ]
 
 # Plaintext SMTP only to a loopback address or `localhost` here; no deployed name is exempt.
@@ -104,3 +106,8 @@ KODERA_UNPAID_LAPSE_ENABLED = os.environ.get("KODERA_UNPAID_LAPSE_ENABLED") == "
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
 (KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)
+(
+    KODERA_COLLAB_TICKET_KEY,
+    KODERA_COLLAB_ENGINE_URL,
+    KODERA_COLLAB_PUBLIC_URL,
+) = collaboration_settings(os.environ)

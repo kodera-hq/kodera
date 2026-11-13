@@ -257,6 +257,10 @@ SECRET_SHAPED = re.compile(r"KEY|SECRET|PASSWORD|PASSWD|TOKEN|CREDENTIAL|PRIVATE
 # Every secret-shaped setting an API profile may hold, and the §2 row that admits it.
 ALLOWED_SECRETS = {
     "SECRET_KEY": "the application signing key",
+    "KODERA_COLLAB_TICKET_KEY": (
+        "an application secret: the HMAC key collaboration session tickets and internal "
+        "transform requests are signed with"
+    ),
     "KODERA_CONTACT_SEAL_KEY": "an application secret: the key contacts are sealed with",
     "KODERA_NOTIFICATION_SEAL_KEY": (
         "an application secret: the key device push subscriptions are sealed with"

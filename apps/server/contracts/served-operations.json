@@ -67,6 +67,11 @@
       "path": "/community/support/tickets"
     },
     {
+      "operation_id": "createDocumentCollabSession",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/documents/{document_id}/collab-session"
+    },
+    {
       "operation_id": "createOrganisation",
       "method": "POST",
       "path": "/organisations"
@@ -87,6 +92,11 @@
       "path": "/organisations/{organisation_id}/tenants"
     },
     {
+      "operation_id": "createWorkspaceDocument",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/documents"
+    },
+    {
       "operation_id": "createWorkspaceInviteLink",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/invite-links"
@@ -100,6 +110,11 @@
       "operation_id": "deletePushSubscription",
       "method": "DELETE",
       "path": "/push/subscriptions/{device_id}"
+    },
+    {
+      "operation_id": "deleteWorkspaceDocument",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
     },
     {
       "operation_id": "discoverRealm",
@@ -227,6 +242,11 @@
       "path": "/organisations/{organisation_id}/workspace/administration"
     },
     {
+      "operation_id": "getWorkspaceDocument",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
       "operation_id": "initialiseWorkspace",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/actions/initialise"
@@ -255,6 +275,11 @@
       "operation_id": "listCreditNotes",
       "method": "GET",
       "path": "/organisations/{organisation_id}/credit-notes"
+    },
+    {
+      "operation_id": "listDocumentBacklinks",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/documents/{document_id}/backlinks"
     },
     {
       "operation_id": "listInvitations",
@@ -310,6 +335,11 @@
       "operation_id": "listTenants",
       "method": "GET",
       "path": "/organisations/{organisation_id}/tenants"
+    },
+    {
+      "operation_id": "listWorkspaceDocuments",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/documents"
     },
     {
       "operation_id": "listWorkspaceInviteLinks",
@@ -397,6 +427,11 @@
       "path": "/organisations/{organisation_id}/workspace/invite-links/{invite_link_id}"
     },
     {
+      "operation_id": "searchWorkspace",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/search"
+    },
+    {
       "operation_id": "unarchiveChannel",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/unarchive"
@@ -405,6 +440,11 @@
       "operation_id": "unfurlUrl",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/unfurl"
+    },
+    {
+      "operation_id": "updateWorkspaceDocument",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
     }
   ]
 }

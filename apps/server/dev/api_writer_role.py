@@ -37,6 +37,12 @@ SELECT = (
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
+    # Native workspace documents, per-document grants, wikilinks, compacted snapshots and updates.
+    "docs_document",
+    "docs_documentgrant",
+    "docs_documentlink",
+    "docs_documentsnapshot",
+    "docs_documentupdate",
     "identity_user",
     "identity_identity",
     "identity_staffrole",
@@ -104,6 +110,11 @@ INSERT = (
     "notifications_notification",
     "notifications_pushsubscription",
     "notifications_pushoutbox",
+    # Native workspace documents, wikilinks, snapshots and journal updates (grants stay excluded).
+    "docs_document",
+    "docs_documentlink",
+    "docs_documentsnapshot",
+    "docs_documentupdate",
     "orgs_organisation",
     "orgs_slugreservation",
     "orgs_organisationintake",
@@ -219,6 +230,21 @@ UPDATE_COLUMNS = (
     ("notifications_pushsubscription", "sealed_subscription"),
     ("notifications_pushsubscription", "revoked_at"),
     ("notifications_pushsubscription", "updated_at"),
+    # Native workspace document tree/content mutations, soft-delete, snapshot compaction and links;
+    # ownership, visibility, creator, channel binding and journal rows stay immutable.
+    ("docs_document", "parent_id"),
+    ("docs_document", "title"),
+    ("docs_document", "markdown"),
+    ("docs_document", "revision"),
+    ("docs_document", "deleted_at"),
+    ("docs_document", "purge_after"),
+    ("docs_document", "updated_at"),
+    ("docs_documentsnapshot", "sequence"),
+    ("docs_documentsnapshot", "head_sequence"),
+    ("docs_documentsnapshot", "state"),
+    ("docs_documentsnapshot", "updated_at"),
+    ("docs_documentlink", "target_id"),
+    ("docs_documentlink", "updated_at"),
     ("identity_staffrole", "created_at"),
     ("orgs_organisation", "owner_guard_revision"),
     ("jobs_job", "lock_requested_at"),
@@ -291,8 +317,20 @@ UPDATE_COLUMNS = (
 )
 # An expired replay entry is replaced when its key returns (IDEMPOTENCY_REPLAY.md §2.2), for the
 # intake and initialiseWorkspace alike. deleteCategory deletes an empty category, and a channel's
-# access change deletes the rules it drops; a policy itself is never deleted.
-DELETE = ("idempotency_record", "workspaces_category", "workspaces_resourcepolicyrule")
+# access change deletes the rules it drops; a policy itself is never deleted. Native document
+# Markdown replacement refreshes outgoing wikilinks and prunes snapshot-covered journal updates
+# (trigger `docs_journal_guard` refuses deleting any uncovered update).
+DELETE = (
+    "idempotency_record",
+    "workspaces_category",
+    "workspaces_resourcepolicyrule",
+    "docs_documentlink",
+    "docs_documentupdate",
+)
+EXECUTE_FUNCTIONS = (
+    "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
+    "docs_document_role(uuid, uuid, uuid, uuid, text, text)",
+)
 
 
 # Read by column only: the guard reads which documents were accepted, for which tenant and DPA,
@@ -319,4 +357,7 @@ def grant_statements(role: str) -> list[str]:
         for table, column in UPDATE_COLUMNS
     ]
     statements += [f'GRANT DELETE ON TABLE "{table}" TO "{role}"' for table in DELETE]
+    statements += [
+        f'GRANT EXECUTE ON FUNCTION {signature} TO "{role}"' for signature in EXECUTE_FUNCTIONS
+    ]
     return statements

@@ -34,6 +34,14 @@
 		}
 	}
 
+	# Exact WebSocket route; /internal/transform is never published.
+	@documents path /documents/collab
+	handle @documents {
+		reverse_proxy yjs-collab:8098 {
+			import client_address
+		}
+	}
+
 	@room_access path /_kodera/rooms/token
 	handle @room_access {
 		rewrite * /token

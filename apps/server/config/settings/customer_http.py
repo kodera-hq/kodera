@@ -19,6 +19,7 @@ from apps.billing.configuration import (
     series_from_environment as billing_series,
     stripe_from_environment,
 )
+from apps.docs.configuration import collaboration_settings
 from config.environment import (
     auth_trust,
     billing_enabled,
@@ -46,6 +47,7 @@ CUSTOMER_HTTP_APPS = (
     "apps.support",
     "apps.media",
     "apps.notifications",
+    "apps.docs",
 )
 INSTALLED_APPS = [*INSTALLED_APPS, *CUSTOMER_HTTP_APPS]
 # The deployable API profile: KODERA_LOOPBACK_ISSUERS, from config.settings.persistence, is False
@@ -101,3 +103,8 @@ KODERA_BILLING_ENABLED = billing_enabled(os.environ)
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
 (KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)
+(
+    KODERA_COLLAB_TICKET_KEY,
+    KODERA_COLLAB_ENGINE_URL,
+    KODERA_COLLAB_PUBLIC_URL,
+) = collaboration_settings(os.environ)
