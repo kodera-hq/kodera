@@ -5,13 +5,14 @@ import json
 from django.db import connection, transaction
 from django.http import HttpResponse
 
-from apps.docs.api.responses import finish, request_id
-from core.api.idempotency import StoredResponse, respond_once as core_respond_once
+from core.api.guarded_replay import respond_once as guarded_respond_once
+from core.api.idempotency import StoredResponse
 
+from .api.responses import finish, request_id
 from .quotas import violation
 
 
-def respond_once(request, *, handler, request_id, **kwargs):
+class QuotaReplayPolicy:
     """Retain terminal quota refusals without retaining the refused operation's effects.
 
     Database quota triggers abort the operation's savepoint. Translate only after that
@@ -19,7 +20,7 @@ def respond_once(request, *, handler, request_id, **kwargs):
     become a successful write merely because an operator raises its quota.
     """
 
-    def guarded():
+    def execute(self, handler, request_id):
         try:
             with transaction.atomic():
                 result = handler()
@@ -44,9 +45,7 @@ def respond_once(request, *, handler, request_id, **kwargs):
                 # Configuration failures are transient: preserve the outer middleware's
                 # Retry-After response and roll back the entire replay transaction.
                 raise
-            response = QuotaRefusalMiddleware(None).process_exception(
-                request, failure, correlation=request_id
-            )
+            response = refusal_response(failure, request_id)
             if response is None:
                 raise
             return StoredResponse(
@@ -55,7 +54,12 @@ def respond_once(request, *, handler, request_id, **kwargs):
                 content_type=response["Content-Type"],
             )
 
-    return core_respond_once(request, handler=guarded, request_id=request_id, **kwargs)
+
+def respond_once(request, *, handler, request_id, **kwargs):
+    """Compatibility adapter for workspace-owned HTTP callers."""
+    return guarded_respond_once(
+        request, handler=handler, request_id=request_id, policy=QuotaReplayPolicy(), **kwargs
+    )
 
 
 class QuotaRefusalMiddleware:
@@ -66,40 +70,42 @@ class QuotaRefusalMiddleware:
         return self.get_response(request)
 
     def process_exception(self, request, exception, *, correlation=None):
-        if (
-            getattr(getattr(exception.__cause__, "diag", None), "constraint_name", None)
-            == "workspace_quota_missing"
-        ):
-            correlation = correlation or request_id(request)
-            body = {
-                "type": "https://kodera.io/problems/service-unavailable",
-                "title": "Workspace quota policy unavailable",
-                "status": 503,
-                "request_id": correlation,
-                "retry_after_s": 1,
-            }
-            response = finish(
-                HttpResponse(json.dumps(body), status=503, content_type="application/problem+json"),
-                correlation,
-            )
-            response["Retry-After"] = "1"
-            return response
-        detail = violation(exception)
-        if detail is None:
-            return None
-        correlation = correlation or request_id(request)
+        return refusal_response(exception, correlation or request_id(request))
+
+
+def refusal_response(exception, correlation):
+    if (
+        getattr(getattr(exception.__cause__, "diag", None), "constraint_name", None)
+        == "workspace_quota_missing"
+    ):
         body = {
-            "type": "https://kodera.io/problems/"
-            + {402: "subscription-required", 413: "payload-too-large", 429: "rate-limited"}[
-                detail["status"]
-            ],
-            "title": "Workspace quota exceeded",
+            "type": "https://kodera.io/problems/service-unavailable",
+            "title": "Workspace quota policy unavailable",
+            "status": 503,
             "request_id": correlation,
-            **detail,
+            "retry_after_s": 1,
         }
-        return finish(
-            HttpResponse(
-                json.dumps(body), status=detail["status"], content_type="application/problem+json"
-            ),
+        response = finish(
+            HttpResponse(json.dumps(body), status=503, content_type="application/problem+json"),
             correlation,
         )
+        response["Retry-After"] = "1"
+        return response
+    detail = violation(exception)
+    if detail is None:
+        return None
+    body = {
+        "type": "https://kodera.io/problems/"
+        + {402: "subscription-required", 413: "payload-too-large", 429: "rate-limited"}[
+            detail["status"]
+        ],
+        "title": "Workspace quota exceeded",
+        "request_id": correlation,
+        **detail,
+    }
+    return finish(
+        HttpResponse(
+            json.dumps(body), status=detail["status"], content_type="application/problem+json"
+        ),
+        correlation,
+    )

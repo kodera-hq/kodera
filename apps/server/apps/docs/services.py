@@ -592,3 +592,10 @@ def search(
         if more
         else None,
     }
+
+
+def quota_replay_policy():
+    """Supply the workspace effect policy through this application service boundary."""
+    from apps.workspaces.services import quota_replay_policy as workspace_policy
+
+    return workspace_policy()
