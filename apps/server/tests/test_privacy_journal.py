@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
+from django.db import connection, transaction
 from workspace_safety.test_moderation import world as world
 
 from apps.audit.models import AuditEvent
@@ -122,3 +123,18 @@ def test_export_admission_rolls_back_when_audit_cannot_commit(world, monkeypatch
     with pytest.raises(RuntimeError, match="synthetic audit failure"):
         persist_started(next_state, CurrentAuthority())
     assert not PrivacyExport.objects.filter(id=next_request.id).exists()
+
+
+def test_owner_acceptance_is_rechecked_independently_of_schema_constraint(world):
+    state, _ = started(world)
+    _, _, members, _ = world
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE orgs_membership DROP CONSTRAINT membership_acceptance_valid"
+            )
+        Membership.objects.filter(pk=members[1].id).update(role="org_owner")
+        Membership.objects.filter(pk=members[0].id).update(accepted_at=None)
+        assert not CurrentAuthority().authorize(state.request)
+        transaction.set_rollback(True)
+    assert CurrentAuthority().authorize(state.request)

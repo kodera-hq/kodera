@@ -47,6 +47,7 @@ class CurrentAuthority:
                 organisation_id=identity,
                 user_id=request.user_id,
                 state="active",
+                accepted_at__isnull=False,
                 role="org_owner",
                 deleted_at__isnull=True,
             ).exists()

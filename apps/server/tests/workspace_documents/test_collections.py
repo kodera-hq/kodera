@@ -16,6 +16,7 @@ from apps.media.models import Attachment
 from apps.workspaces import quotas
 from apps.workspaces.models import WorkspaceQuota
 from workspace_documents.test_collab_role import collab_role as collab_role
+from workspace_documents.test_services import native_engine as native_engine
 
 PROPS = [
     {"id": "title", "name": "Title", "type": "text"},
@@ -540,3 +541,120 @@ def test_concurrent_seat_activation_is_checked_at_commit(world):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(activate, ids)) == ["admitted", "refused"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_repeated_small_native_updates_cannot_exceed_materialized_snapshot_quota(
+    world, native_engine, collab_role, settings
+):
+    import base64
+    import json
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from urllib.parse import quote
+
+    org, workspace, _, tokens = world
+    documents = []
+    for name in ("Quota control", "Quota mutation"):
+        created = services.create(
+            verified=tokens[3],
+            organisation_id=org.id,
+            name=name,
+            parent_id=None,
+            template_key="adr",
+            request_id=str(uuid4()),
+        )
+        documents.append(Document.objects.get(pk=created["id"]))
+    maximum = max(len(DocumentSnapshot.objects.get(document=doc).state) for doc in documents) + 64
+    WorkspaceQuota.objects.filter(workspace=workspace).update(snapshot_bytes=maximum)
+    database = settings.DATABASES["default"]
+    url = (
+        "postgresql://"
+        + quote(database["USER"], safe="")
+        + ":"
+        + quote(database["PASSWORD"], safe="")
+        + "@"
+        + database["HOST"]
+        + ":"
+        + str(database["PORT"])
+        + "/"
+        + quote(database["NAME"], safe="")
+    )
+    root = Path(__file__).resolve().parents[2] / "yjs_collab"
+    node = shutil.which("node")
+    assert node is not None
+    for document, skip in zip(documents, (False, True), strict=True):
+        session = services.collab_session(
+            verified=tokens[3],
+            organisation_id=org.id,
+            document_id=document.id,
+            request_id=str(uuid4()),
+        )
+        result = subprocess.run(  # noqa: S603 - owned fixture, synthetic isolated database
+            [node, str(root / "test/quota-store-fixture.mjs")],
+            cwd=root,
+            env={
+                "PATH": os.environ["PATH"],
+                "KODERA_TEST_DATABASE_URL": url,
+                "KODERA_TEST_COLLAB_KEY": base64.urlsafe_b64encode(
+                    settings.KODERA_COLLAB_TICKET_KEY
+                ).decode(),
+            },
+            input=json.dumps(
+                {
+                    "ticket": session["token"],
+                    "role": collab_role,
+                    "limit": maximum,
+                    "skipAdmission": skip,
+                }
+            ).encode(),
+            capture_output=True,
+            timeout=60,
+        )
+        if skip:
+            assert result.returncode != 0
+            assert "materialized snapshot quota was bypassed" in result.stderr.decode()
+        else:
+            assert result.returncode == 0, result.stderr.decode()
+            assert json.loads(result.stdout)["refused"] is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("operation", ["accept", "invite"])
+def test_seat_predicates_stay_closed_with_legacy_invalid_acceptance(world, operation):
+    from apps.identity.models import Identity
+    from apps.orgs.models import Invitation, Membership
+
+    org, workspace, members, _ = world
+    # Production already refuses this state. Waive only that constraint inside
+    # a rolled-back test to exercise the independent quota admission predicates.
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE orgs_membership DROP CONSTRAINT membership_acceptance_valid"
+            )
+        Membership.objects.filter(id=members[3].id).update(accepted_at=None)
+        with connection.cursor() as cursor:
+            cursor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        WorkspaceQuota.objects.filter(workspace=workspace).update(seats=3)
+        with pytest.raises(IntegrityError, match="workspace quota exceeded"), transaction.atomic():
+            if operation == "accept":
+                Membership.objects.filter(id=members[3].id).update(accepted_at=timezone.now())
+            else:
+                identity = Identity.objects.get(user=members[0].user, organisation=org)
+                now = timezone.now()
+                Invitation.objects.create(
+                    organisation=org,
+                    email=members[3].user.email,
+                    role="org_member",
+                    state="pending",
+                    token_digest=b"t" * 32,
+                    token_sealed=b"synthetic",
+                    invited_by_user=members[0].user,
+                    invited_by_identity=identity,
+                    issued_at=now,
+                    expires_at=now + timedelta(hours=1),
+                )
+        transaction.set_rollback(True)

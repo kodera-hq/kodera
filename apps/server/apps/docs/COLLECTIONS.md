@@ -34,8 +34,10 @@ PostgreSQL serializes page admission and upload reservations on the workspace. M
 remain counted after upload-link expiry until actual object cleanup is implemented, preventing
 expired reservations from concealing stored bytes. Deferred seat checks count active memberships
 and outstanding invitations after an acceptance transaction completes. Snapshot and update-frame
-limits also apply to direct native collaboration writes, without granting the collaboration login
-access to quota configuration. Application credentials cannot change these snapshots.
+limits also apply to direct native collaboration writes. Every native update admits the complete
+merged snapshot before persistence or broadcast, even when individual deltas remain small and
+compaction is not due. The collaboration login receives only the bounded admission function,
+not access to quota configuration. Application credentials cannot change these snapshots.
 
 Quota responses expose usage, explicit limits and measurement time. Refusals use the existing
 problem registry: `402 subscription-required` for seats/pages, `413 payload-too-large` for bytes,

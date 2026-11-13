@@ -13,7 +13,7 @@ SELECT jsonb_build_object(
             AND i.state='pending' AND i.expires_at>statement_timestamp()
             AND NOT EXISTS(SELECT 1 FROM public.orgs_membership m JOIN public.identity_user u ON u.id=m.user_id
                            WHERE m.organisation_id=i.organisation_id AND m.state='active'
-                           AND m.deleted_at IS NULL AND lower(u.email)=i.email)),
+                           AND m.deleted_at IS NULL AND m.accepted_at IS NOT NULL AND lower(u.email)=i.email)),
  'mediaBytes', (SELECT coalesce(sum(a.size_bytes),0) FROM public.media_attachment a WHERE a.organisation_id=w.organisation_id),
  'pages', (SELECT count(*) FROM public.docs_document d WHERE d.workspace_id=w.id AND d.deleted_at IS NULL))
 FROM public.workspaces_workspace w WHERE w.id=p_workspace;
@@ -84,8 +84,8 @@ SET search_path=pg_catalog,public AS $$
 DECLARE quota_workspace_id uuid; policy record; counters jsonb;
 BEGIN
   IF TG_TABLE_NAME='orgs_membership' THEN
-    IF NOT EXISTS(SELECT 1 FROM public.orgs_membership WHERE id=NEW.id AND state='active' AND deleted_at IS NULL) THEN RETURN NULL; END IF;
-    IF NEW.state<>'active' OR NEW.deleted_at IS NOT NULL OR (TG_OP='UPDATE' AND OLD.state='active' AND OLD.deleted_at IS NULL) THEN RETURN NULL; END IF;
+    IF NOT EXISTS(SELECT 1 FROM public.orgs_membership WHERE id=NEW.id AND state='active' AND accepted_at IS NOT NULL AND deleted_at IS NULL) THEN RETURN NULL; END IF;
+    IF NEW.state<>'active' OR NEW.accepted_at IS NULL OR NEW.deleted_at IS NOT NULL OR (TG_OP='UPDATE' AND OLD.state='active' AND OLD.accepted_at IS NOT NULL AND OLD.deleted_at IS NULL) THEN RETURN NULL; END IF;
   ELSE
     IF NOT EXISTS(SELECT 1 FROM public.orgs_invitation WHERE id=NEW.id AND state='pending' AND expires_at>statement_timestamp()) THEN RETURN NULL; END IF;
     IF NEW.state<>'pending' OR NEW.expires_at<=statement_timestamp()
