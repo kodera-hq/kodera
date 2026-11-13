@@ -12,6 +12,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='WorkspaceQuota',
             fields=[
@@ -28,5 +32,9 @@ class Migration(migrations.Migration):
             options={
                 'constraints': [models.CheckConstraint(condition=models.Q(('seats__isnull', True), ('seats__gte', 0), _connector='OR'), name='workspace_seat_quota_nonnegative'), models.CheckConstraint(condition=models.Q(('media_bytes__isnull', True), ('media_bytes__gte', 0), _connector='OR'), name='workspace_media_quota_nonnegative'), models.CheckConstraint(condition=models.Q(('pages__isnull', True), ('pages__gte', 0), _connector='OR'), name='workspace_page_quota_nonnegative'), models.CheckConstraint(condition=models.Q(('snapshot_bytes__gte', 1), ('snapshot_bytes__lte', 2097152)), name='workspace_snapshot_quota_bound')],
             },
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]

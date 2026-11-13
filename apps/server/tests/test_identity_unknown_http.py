@@ -67,6 +67,7 @@ class Case:
     also: dict[str, Any] = field(default_factory=dict)
     # The module that verifies the token, when the view is built by another module's factory.
     verifier: str = ""
+    error_args: tuple[Any, ...] = ()
 
     @property
     def module(self) -> str:
@@ -94,6 +95,24 @@ STRUCTURE_SERVICES = (
 )
 
 CASES = (
+    Case(
+        "getWorkspaceQuotaUsage",
+        "apps.workspaces.api.quotas.usage",
+        "get",
+        ORG,
+        "apps.workspaces.moderation.RefusalError",
+        ("apps.workspaces.quotas.read",),
+        error_args=(403, "identity-unknown"),
+    ),
+    Case(
+        "getWorkspaceQuotaLimits",
+        "apps.workspaces.api.quotas.limits",
+        "get",
+        ORG,
+        "apps.workspaces.moderation.RefusalError",
+        ("apps.workspaces.quotas.read",),
+        error_args=(403, "identity-unknown"),
+    ),
     Case(
         "getMe",
         IDENTITY + ".me",
@@ -391,11 +410,11 @@ def _answer_unknown(
     error = _resolve(case.raises)
 
     def unknown(*args: Any, **kwargs: Any) -> Any:
-        raise error()
+        raise error(*case.error_args)
 
     @contextmanager
     def unknown_operation(**kwargs: Any) -> Any:
-        raise error()
+        raise error(*case.error_args)
         yield  # pragma: no cover
 
     if signed is None:
