@@ -35,6 +35,7 @@ from core.sealing import key_from_environment
 from .persistence import *
 
 ROOT_URLCONF = "config.customer_urls"
+MIDDLEWARE = [*MIDDLEWARE, "apps.workspaces.quota_http.QuotaRefusalMiddleware"]
 CUSTOMER_HTTP_APPS = (
     "apps.jobs",
     "apps.audit",

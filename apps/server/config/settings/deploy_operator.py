@@ -54,6 +54,9 @@ INSTALLED_APPS = [
     "apps.support",
     "apps.engine_intents",
     "apps.workspaces",
+    # Quota migrations share the native document/media schema without routing HTTP.
+    "apps.docs",
+    "apps.media",
 ]
 
 KODERA_LOOPBACK_ISSUERS = False

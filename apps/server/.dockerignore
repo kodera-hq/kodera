@@ -73,6 +73,7 @@ config/settings/deploy_worker.py
 !apps/orgs/__init__.py
 !apps/orgs/apps.py
 !apps/orgs/models.py
+!apps/orgs/privacy_models.py
 !apps/orgs/selectors.py
 !apps/orgs/detail_selectors.py
 !apps/orgs/detail_services.py
@@ -310,3 +311,11 @@ config/settings/deploy_worker.py
 !apps/docs/api/responses.py
 !apps/docs/api/urls.py
 !apps/docs/api/views.py
+
+# Collections and quota admission, excluding the supervised operator writer.
+!apps/docs/collection_schema.py
+!apps/docs/collections.py
+!apps/docs/api/collections.py
+!apps/workspaces/quotas.py
+!apps/workspaces/quota_http.py
+!apps/workspaces/api/quotas.py

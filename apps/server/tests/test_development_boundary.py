@@ -522,6 +522,8 @@ else:
 
 
 OPERATOR_MODULES = (
+    "apps/workspaces/quota_policy.py",
+    "apps/workspaces/management/commands/configure_workspace_quotas.py",
     "apps/identity/command_principal.py",
     "apps/orgs/realm_bootstrap.py",
     "apps/orgs/realm_readiness.py",
