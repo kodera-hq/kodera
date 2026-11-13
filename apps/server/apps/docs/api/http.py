@@ -10,8 +10,9 @@ from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import HttpRequest, HttpResponse
 
+from apps.workspaces.quota_http import respond_once
 from core.api import lanes
-from core.api.idempotency import StoredResponse, respond_once
+from core.api.idempotency import StoredResponse
 from services.identity.access_tokens import TokenVerificationError, VerifiedAccessToken
 from services.identity.trusted_issuers import verify_configured_token
 

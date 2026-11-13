@@ -12453,6 +12453,7 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16766,6 +16767,7 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16849,6 +16851,7 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16929,6 +16932,7 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17335,6 +17339,7 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17701,6 +17706,7 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
+                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
                     [name: string]: unknown;
                 };
                 content: {
