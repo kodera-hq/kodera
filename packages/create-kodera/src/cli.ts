@@ -97,6 +97,8 @@ export const TEMPLATE_ALIASES: Readonly<Record<string, TemplateId>> =
 // empty, never invented.
 const GENERATED_SECRETS: ReadonlySet<string> = new Set([
   'POSTGRES_PASSWORD',
+  'KODERA_API_DATABASE_PASSWORD',
+  'KODERA_COLLAB_DATABASE_PASSWORD',
   'SYNAPSE_POSTGRES_PASSWORD',
   'DJANGO_SECRET_KEY',
   'KODERA_CONTACT_SEAL_KEY',

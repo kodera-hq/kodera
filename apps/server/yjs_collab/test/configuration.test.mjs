@@ -12,5 +12,8 @@ test('native service requires explicit application settings and exact HTTPS orig
     {KODERA_COLLAB_ALLOWED_ORIGINS: 'https://*.example.org'}, {KODERA_COLLAB_ALLOWED_ORIGINS: 'https://community.example.org/'},
     {KODERA_COLLAB_ALLOWED_ORIGINS: 'http://community.example.org'}, {KODERA_COLLAB_PORT: '0'},
     {DATABASE_URL: 'https://example.org'}, {SCW_SECRET_KEY: randomBytes(32).toString('hex')},
+    {DATABASE_URL: settings().DATABASE_URL + '?options=-c%20role=kodera_collab'},
+    {DATABASE_URL: settings().DATABASE_URL + '#fragment'},
+    {PGOPTIONS: '-c session_authorization=kodera_collab'},
   ]) assert.throws(() => configuration({...settings(), ...patch}), /collaboration configuration refused/)
 })

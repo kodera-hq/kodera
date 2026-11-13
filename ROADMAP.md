@@ -17,13 +17,15 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Hardened `deploy/community` profile (Synapse on PostgreSQL, federation closed, rate limits, no public agent API), checked on every change
 - [ ] End-to-end cold-start verification of `deploy/community` on a clean host, with a measured footprint
 
-## Track 2 — Collaboration (`Status: Planned`)
+## Track 2 — Collaboration (`Status: Implemented through Wave 3; further work Planned`)
 
-- [ ] Direct messages, file and image upload, and message search in the web client
-- [ ] Camera video and screen sharing in rooms. LiveKit alone carries voice and video.
-- [ ] Public community rooms, using Matrix's native join rules
-- [ ] Community self-signup with an optional TOTP second factor
-- [ ] Native Docs: a block editor inside `apps/web` (ProseMirror/Tiptap and Yjs, MIT-licensed, no GPL add-on) with a small Yjs sync service. No third-party office suite, and no server-coupled bridge from a chat thread to a document.
+- [x] Direct messages and bounded group conversations, file and image upload, and message search in the web client
+- [x] Camera video and screen sharing in rooms. LiveKit alone carries voice and video.
+- [x] Public local Community rooms using Matrix's native join rules and control-plane moderation
+- [x] Canonical-realm Community self-signup and default membership; optional TOTP is configured in the operator's identity provider
+- [x] Native Docs: a block editor inside `apps/web` (ProseMirror/Tiptap and Yjs, MIT-licensed, no GPL add-on), PostgreSQL document permissions and a Yjs sync service, page trees, wikilinks, backlinks and search. No third-party office suite, and no server-coupled bridge from a chat thread to a document.
+- [x] Workspace moderation, reusable invite links, scoped attachments, text-only unfurling, notification history and payload-free Web Push
+- [ ] Human Community production cutover, backup/restore rehearsal and exact-release acceptance
 - [ ] An extension runtime in the control plane: registering a manifest, installing an extension for a workspace, delivering signed webhooks
 - [ ] `Kodera Passport`: optional Passkey / Magic-Link sign-in across workspaces
 - [ ] Slack / Discord channel & history importer for workspace migrations
@@ -32,7 +34,8 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [ ] Mobile v1.0 for iOS and Android: a companion app, with no in-app purchase and no pricing screen
 - [ ] Bindings connecting `packages/kodera-rs` to `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose)
-- [ ] Push notifications that wake the app without carrying message text
+- [x] Web Push notifications that wake the web client without carrying message text
+- [ ] Native mobile push delivery and notification integration
 - [ ] Tauri v2 Desktop (`@kodera/desktop`) with a running shell and installers for macOS, Windows and Linux
 - [ ] A local self-host wizard inside Kodera Desktop
 
@@ -53,3 +56,11 @@ Both are planned and not shipped. Until then channels are not end-to-end encrypt
 - [ ] Managed-hosting automation for the shared cloud and dedicated tenants, and commercial price schedules ([`ee/billing`](./ee/billing/README.md))
 
 The generic invoice ledger and the payment engine already in `apps/server` stay open source; see [`GOVERNANCE.md`](./GOVERNANCE.md).
+
+## Waves 4–6 (`Status: Planned`)
+
+The [collaboration status](./docs/specs/collaboration-status.md) records the completed Wave 2B and Wave 3 boundaries. The remaining waves are backlog scope, not production-readiness claims:
+
+- **Wave 4:** billing, quotas and GDPR lifecycle controls. Community self-hosting remains independent of billing.
+- **Wave 5:** Tauri shell, native mobile transports and encryption provider integration; E2EE remains Deferred until its cross-client acceptance exists.
+- **Wave 6:** extension runtime v2, migration importers and federation. Federation remains closed until its authorization and abuse controls pass acceptance.

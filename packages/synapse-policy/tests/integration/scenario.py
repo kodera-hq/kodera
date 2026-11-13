@@ -66,7 +66,7 @@ def check(name, got, want):
 
 
 agent, alice, bob, carol = (login(u) for u in ("kodera-agent", "alice", "bob", "carol"))
-dm_request = {"is_direct": True, "invite": [BOB], "preset": "trusted_private_chat"}
+dm_request = {"is_direct": True, "invite": [BOB], "preset": "private_chat", "visibility": "private"}
 
 status, _ = call("POST", "/createRoom", alice, {"preset": "public_chat", "name": "x"})
 check("member cannot create a public room", status, 403)
@@ -80,6 +80,20 @@ status, _ = call(
 )
 check("member cannot create an encrypted DM", status, 403)
 
+group_invitees = [f"@member{i}:it.local" for i in range(8)]
+for invites in [[], group_invitees + [BOB]]:
+    check("invalid DM fanout is refused", call("POST", "/createRoom", alice, {**dm_request, "invite": invites})[0], 403)
+check("unknown local DM invitee is refused", call("POST", "/createRoom", alice, {**dm_request, "invite": ["@never-registered:it.local"]})[0], 403)
+check("trusted DM preset is refused", call("POST", "/createRoom", alice, {**dm_request, "preset": "trusted_private_chat"})[0], 403)
+for invitees in ([BOB, CAROL], group_invitees):
+    status, group = call("POST", "/createRoom", alice, {**dm_request, "invite": invitees})
+    check("member creates bounded group DM", status, 200)
+    if status == 200:
+        status, members = call("GET", f"/rooms/{group['room_id']}/members", alice)
+        invited = {event["state_key"] for event in members.get("chunk", []) if event.get("content", {}).get("membership") == "invite"}
+        check("all group DM initial invites persisted", (status, invited), (200, set(invitees)))
+        check("unlisted group DM invite refused", call("POST", f"/rooms/{group['room_id']}/invite", alice, {"user_id": "@unlisted:it.local"})[0], 403)
+
 status, dm = call("POST", "/createRoom", alice, dm_request)
 check("member creates a direct message with its invite", status, 200)
 dm_id = dm.get("room_id", "!missing")
@@ -89,7 +103,7 @@ status, _ = call("PUT", f"/rooms/{dm_id}/send/m.room.message/t1", bob, {"msgtype
 check("members post in a direct message", status, 200)
 status, _ = call("PUT", f"/rooms/{dm_id}/send/m.room.encrypted/c1", bob, CIPHERTEXT)
 check("member cannot post ciphertext in a DM", status, 403)
-# Both members of a trusted_private_chat DM hold power 100, so only the module refuses this.
+# The creator holds power 100, so the module must still refuse encrypted state.
 status, _ = call("PUT", f"/rooms/{dm_id}/state/m.room.encrypted/", alice, CIPHERTEXT)
 check("member cannot send ciphertext as DM state", status, 403)
 status, page = call("GET", f"/rooms/{dm_id}/messages?dir=b&limit=100", alice)

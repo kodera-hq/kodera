@@ -13,7 +13,7 @@ Kodera is a **multi-workspace, open-core collaboration platform**: a control pla
    The control plane, the web client's URLs and the clients' models address workspaces and channels by **RFC 9562 `UuidV7`** identifiers, not by raw Matrix room IDs (`!opaque:domain`). Channels are backed by Synapse today. The same identifiers are meant to address confidential rooms and `#proximity` frames once those exist.
 
 3. **Channels are readable by the homeserver, not end-to-end encrypted.**
-   - **Today:** channels are encrypted in transit (TLS at the edge) and stored by the homeserver in clear, which is what lets a new member read history and an extension post, and what server-side search (Status: Planned) will rely on. The policy module refuses `m.room.encryption` in every room.
+   - **Today:** channels are encrypted in transit (TLS at the edge) and stored by the homeserver in clear, which is what lets a new member read history and an extension post, and what Matrix message search relies on. The policy module refuses `m.room.encryption` in every room.
    - **Status: Deferred.** End-to-end encryption and Matrix federation are not shipped. `kodera-rs` carries only the provider seam and envelope metadata (`MlsCiphertextEnvelope`, `OpenMlsDraft`) for a future OpenMLS (RFC 9420) provider; no MLS provider and no media-frame keys for LiveKit exist. The homeserver is closed: no federation listener, an empty federation whitelist.
 
 4. **One codebase, a self-host profile first.**
@@ -30,7 +30,7 @@ Kodera is a **multi-workspace, open-core collaboration platform**: a control pla
 
 ## 2. Clients
 
-- **`apps/web`** is the only client that carries conversations today: the customer console, Matrix-backed channels (threads, reactions, typing, presence) and audio rooms over LiveKit (microphone audio). It talks to the control plane through the OpenAPI contract in [`packages/api-contract`](./packages/api-contract), to Synapse with the member's own Matrix session, and to LiveKit with the token `room_access` minted.
+- **`apps/web`** is the only client that carries conversations today: the customer console, Matrix-backed channels (threads, reactions, typing, presence) and LiveKit audio, camera video and screen sharing. It also implements private direct conversations, checked attachments, text-only link previews, notifications and native collaborative Pages. It talks to the control plane through the OpenAPI contract in [`packages/api-contract`](./packages/api-contract), to Synapse with the member's own Matrix session, and to LiveKit with the token `room_access` minted.
 - **`apps/ios` and `apps/android`** are native clients in development. They consume the design tokens and hold native models and protocol code; they have no Matrix or LiveKit transport yet and do not link `kodera-rs`. Version 1.0 is a companion app with no in-app purchase and no pricing screen.
 - **`apps/desktop`** links `kodera-rs` and exposes Rust seams; it has no running window.
 

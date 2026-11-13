@@ -28,6 +28,7 @@ APPS = [
     "apps.workspaces",
 ]
 COMMANDS = [
+    "configure_api_role",
     "bind_community_identity",
     "bootstrap_community_workspace",
     "bootstrap_staff_roles",

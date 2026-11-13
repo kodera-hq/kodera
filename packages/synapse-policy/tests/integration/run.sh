@@ -53,6 +53,6 @@ register() {
     -k "$SECRET" http://localhost:8008 >/dev/null
 }
 register kodera-agent -a
-for user in alice bob carol; do register "$user" --no-admin; done
+for user in alice bob carol member0 member1 member2 member3 member4 member5 member6 member7 unlisted; do register "$user" --no-admin; done
 
 python3 "$HERE/tests/integration/scenario.py" "$PORT"

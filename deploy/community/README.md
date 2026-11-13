@@ -350,6 +350,24 @@ subject against the identity service before binding; never link by matching emai
 
 ### Required cutover evidence
 
+The migration job also runs `configure_api_role` and `configure_collab_role`.
+Set independent `KODERA_API_DATABASE_PASSWORD` and
+`KODERA_COLLAB_DATABASE_PASSWORD` values of at least 32 random URL-safe
+characters; never reuse `POSTGRES_PASSWORD`. The API connects as `kodera_api`
+with the reviewed API writer grants; native collaboration connects as
+`kodera_collab` with document-only column grants and bounded authorization/audit
+functions. Provisioning refuses privileged logins and excessive grants. Runtime
+connections refuse owner, elevated or masked database identities; a rejected API
+connection is closed before application queries can use it. Migration and
+bootstrap commands retain their separate schema authority. A refusal must be
+investigated rather than bypassed.
+
+Collaboration tickets expire within five minutes and admit exactly one socket.
+Redeemed nonces persist in PostgreSQL across service instances and restarts;
+expired entries are pruned during admission. A reconnect must mint a fresh ticket.
+Only `/documents/collab` is public. `/internal/transform` stays on the internal
+Compose network and requires the signed, short-lived application request MAC.
+
 Re-run bootstrap after the real owner is bound and the agent is enrolled; this
 emits the desired member/channel sets again. In the running profile, verify the
 agent's one-shot convergence with:

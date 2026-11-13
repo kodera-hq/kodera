@@ -91,6 +91,24 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
                 f"{filename} must trigger only on workflow_call (has {sorted(map(str, on))}): "
                 "run on its own, it is never aggregated"
             )
+    http_job = ((area_docs.get("ci-server.yml") or {}).get("jobs") or {}).get("http-image-acceptance")
+    if not isinstance(http_job, dict):
+        problems.append("server HTTP image acceptance job is missing")
+    else:
+        if "if" in http_job or http_job.get("continue-on-error", False) is not False:
+            problems.append("server HTTP image acceptance must be mandatory")
+        required = [
+            "uv run python dev/accept_production_http.py",
+            "uv run python dev/accept_bootstrap_http.py",
+        ]
+        if not any(
+            step.get("working-directory") == "apps/server"
+            and "if" not in step
+            and step.get("continue-on-error", False) is False
+            and [line.strip() for line in str(step.get("run", "")).splitlines() if line.strip()] == required
+            for step in http_job.get("steps", [])
+        ):
+            problems.append("server HTTP image acceptance must run both unmasked proofs")
     return problems
 
 
@@ -146,7 +164,23 @@ def selftest(root: Path) -> None:
     def no_unlabel(o, a):
         triggers(o)["pull_request"]["types"].remove("unlabeled")
 
+    def missing_http_job(o, a):
+        a["ci-server.yml"]["jobs"].pop("http-image-acceptance")
+
+    def missing_bootstrap_proof(o, a):
+        a["ci-server.yml"]["jobs"]["http-image-acceptance"]["steps"][-1]["run"] = "uv run python dev/accept_production_http.py"
+
+    def soft_http_failure(o, a):
+        a["ci-server.yml"]["jobs"]["http-image-acceptance"]["continue-on-error"] = True
+
+    def skipped_http_job(o, a):
+        a["ci-server.yml"]["jobs"]["http-image-acceptance"]["if"] = "false"
+
     cases = [
+        (missing_http_job, "server HTTP image acceptance job is missing"),
+        (missing_bootstrap_proof, "server HTTP image acceptance must run both unmasked proofs"),
+        (soft_http_failure, "server HTTP image acceptance must be mandatory"),
+        (skipped_http_job, "server HTTP image acceptance must be mandatory"),
         (drop_need, "job `web` is not in `ci-ok` needs"),
         (drop_always, "must run `if: always()`"),
         (add_job, "job `extra` is not in `ci-ok` needs"),

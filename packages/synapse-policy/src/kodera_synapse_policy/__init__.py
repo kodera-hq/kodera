@@ -4,8 +4,8 @@ Kodera's control plane decides who is in which channel room and the tenant agent
 administrative account applies it (ADR-0018). Synapse's client API is open to any Matrix
 client a member signs in with, so this module refuses what would route around that:
 
-- room creation, except a direct message between two local users, and except by the agent;
-- invites, except the one a member's direct message is created with, except by a joined member of
+- room creation, except a bounded private direct message between local users, and except by the agent;
+- invites, except the bounded set a member's direct message is created with, except by a joined member of
   a room whose ``io.kodera.room.policy`` sets ``allow_member_invites: true`` (for local users, or
   federated users when ``allow_federated_invites: true`` is also set), and except by the agent;
 - invites by e-mail or phone (third-party identifiers) and room aliases, except by the agent;
@@ -35,7 +35,8 @@ from synapse.module_api.errors import Codes, ConfigError
 
 __version__ = "0.1.5"
 
-DM_PRESETS = frozenset({"private_chat", "trusted_private_chat"})
+DM_INVITEES = "io.kodera.dm.invitees"
+MAX_DM_INVITEES = 8
 # State a member may never send, whatever its content.
 LOCKED_STATE = frozenset(
     {
@@ -74,7 +75,9 @@ class KoderaPolicy:
             user_may_publish_room=self.user_may_publish_room,
             check_event_for_spam=self.check_event_for_spam,
         )
-        api.register_third_party_rules_callbacks(check_event_allowed=self.check_event_allowed)
+        api.register_third_party_rules_callbacks(
+            check_event_allowed=self.check_event_allowed, on_create_room=self.on_create_room
+        )
 
     @staticmethod
     def parse_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -101,16 +104,21 @@ class KoderaPolicy:
         # Synapse before 1.132 passes no room_config: nothing tells a direct message apart.
         if room_config is None or not self._is_direct_message(user_id, room_config):
             return Codes.FORBIDDEN
+        if not await self._active_dm_users(user_id, *room_config["invite"]):
+            return Codes.FORBIDDEN
         return NOT_SPAM
 
     def _is_direct_message(self, creator: str, config: dict[str, Any]) -> bool:
         invite = config.get("invite")
-        if config.get("is_direct") is not True or not isinstance(invite, list) or len(invite) != 1:
+        if config.get("is_direct") is not True or not isinstance(invite, list) or not 1 <= len(invite) <= MAX_DM_INVITEES:
             return False
-        invitee = invite[0]
-        if not isinstance(invitee, str) or invitee == creator or not self._api.is_mine(invitee):
+        if creator == self._room_access or not _is_valid_user_id(creator) or not self._api.is_mine(creator):
             return False
-        if creator == self._room_access or invitee in {self._agent, self._room_access}:
+        if not all(
+            _is_valid_user_id(invitee) and invitee != creator and self._api.is_mine(invitee)
+            and invitee not in {self._agent, self._room_access}
+            for invitee in invite
+        ) or len(set(invite)) != len(invite):
             return False
         creation = config.get("creation_content") or {}
         return (
@@ -118,11 +126,34 @@ class KoderaPolicy:
             and not config.get("room_alias_name")
             and not config.get("initial_state")
             and not config.get("power_level_content_override")
-            and config.get("visibility", "private") == "private"
-            and config.get("preset", "trusted_private_chat") in DM_PRESETS
+            and config.get("visibility") == "private"
+            and config.get("preset") == "private_chat"
             and isinstance(creation, dict)
             and creation.get("type") is None
         )
+
+    async def _active_dm_users(self, *users: str) -> bool:
+        for user_id in users:
+            info = await self._api.get_userinfo_by_id(user_id)
+            if (
+                info is None
+                or getattr(info, "is_deactivated", True) is not False
+                or getattr(info, "is_guest", True) is not False
+                or getattr(info, "approved", True) is not True
+                or getattr(info, "locked", False) is not False
+                or getattr(info, "suspended", False) is not False
+            ):
+                return False
+        return True
+
+    async def on_create_room(self, requester: Any, request_content: dict[str, Any], is_requester_admin: bool) -> None:
+        creator = requester.user.to_string()
+        if creator != self._agent and self._is_direct_message(creator, request_content):
+            # Room creation state is immutable. Bind every sequential initial invite to
+            # the validated request rather than a racy current membership count.
+            creation = dict(request_content.get("creation_content") or {})
+            creation[DM_INVITEES] = list(request_content["invite"])
+            request_content["creation_content"] = creation
 
     async def user_may_invite(self, inviter: str, invitee: str, room_id: str) -> Any:
         if inviter == self._room_access or invitee in {self._agent, self._room_access}:
@@ -147,9 +178,22 @@ class KoderaPolicy:
             if self._api.is_mine(invitee) or policy_content.get("allow_federated_invites") is True:
                 return NOT_SPAM
             return Codes.FORBIDDEN
-        # Without a channel invite policy, a member invites once: into the direct message they
-        # just created, where nobody else has ever had a membership.
+        if not self._api.is_mine(invitee) or not await self._active_dm_users(inviter, invitee):
+            return Codes.FORBIDDEN
+        # A new DM admits only its immutable creation-time invitees. Legacy DMs
+        # without that marker retain their single first-invite boundary.
         create = state.get(("m.room.create", ""))
+        creation_content = getattr(create, "content", {})
+        if isinstance(creation_content, Mapping) and DM_INVITEES in creation_content:
+            invitees = creation_content[DM_INVITEES]
+            return NOT_SPAM if (
+                create.sender == inviter
+                and self._is_direct_message(inviter, {
+                    "is_direct": True, "invite": list(invitees) if isinstance(invitees, (list, tuple)) else invitees,
+                    "preset": "private_chat", "visibility": "private"
+                })
+                and invitee in invitees
+            ) else Codes.FORBIDDEN
         others = {key for (kind, key) in state if kind == "m.room.member"} - {inviter}
         if create is None or create.sender != inviter or others or not self._api.is_mine(invitee):
             return Codes.FORBIDDEN

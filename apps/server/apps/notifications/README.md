@@ -1,6 +1,6 @@
 # Authenticated inbox and empty Web Push wakeups
 
-Status: Proposed
+Status: Implemented; production service release remains operator-controlled
 
 Inbox entries contain a kind, resource identifier, timestamps and read state.
 Current persisted membership and resource visibility govern every page and read

@@ -29,6 +29,9 @@ config/settings/deploy_worker.py
 !core/db/ids.py
 !core/db/models.py
 !core/db/functions.py
+!core/db/api_writer_role.py
+!core/db/api_database_boundary.py
+!core/db/role_acl.py
 !core/sealing.py
 # The formatter config/settings/base.py's LOGGING names: without it the image does not start.
 !core/logs.py

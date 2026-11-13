@@ -19,9 +19,10 @@ ALLOWED = "NOT_SPAM"
 
 
 class FakeApi:
-    def __init__(self, rooms=None):
+    def __init__(self, rooms=None, users=None):
         self.callbacks = {}
         self.rooms = rooms or {}
+        self.users = users
 
     def register_spam_checker_callbacks(self, **callbacks):
         self.callbacks.update(callbacks)
@@ -31,6 +32,11 @@ class FakeApi:
 
     def is_mine(self, user_id):
         return user_id.endswith(f":{SERVER}")
+
+    async def get_userinfo_by_id(self, user_id):
+        if self.users is not None:
+            return self.users.get(user_id)
+        return SimpleNamespace(is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False)
 
     async def get_room_state(self, room_id):
         return self.rooms.get(room_id, {})
@@ -45,7 +51,7 @@ def policy(rooms=None):
 
 
 def dm_request(**overrides):
-    request = {"is_direct": True, "invite": [BOB], "preset": "trusted_private_chat"}
+    request = {"is_direct": True, "invite": [BOB], "preset": "private_chat", "visibility": "private"}
     request.update(overrides)
     return request
 
@@ -73,6 +79,7 @@ def test_registers_every_callback_it_relies_on():
         "user_may_publish_room",
         "check_event_for_spam",
         "check_event_allowed",
+        "on_create_room",
     }
 
 
@@ -185,7 +192,12 @@ def test_member_creates_a_direct_message():
         None,
         {"preset": "private_chat"},
         dm_request(is_direct=False),
-        dm_request(invite=[BOB, CAROL]),
+        dm_request(invite=[f"@member{i}:{SERVER}" for i in range(9)]),
+        dm_request(invite=[BOB, BOB]),
+        dm_request(invite=[BOB, "bob"]),
+        dm_request(preset="trusted_private_chat"),
+        dm_request(preset=None),
+        dm_request(visibility=None),
         dm_request(invite=[]),
         dm_request(invite=[ALICE]),
         dm_request(invite=[OUTSIDER]),
@@ -495,3 +507,54 @@ def test_member_cannot_open_a_room(refused):
 )
 def test_ordinary_events_pass(allowed):
     assert run(policy().check_event_for_spam(allowed)) == ALLOWED
+
+
+@pytest.mark.parametrize("count", [1, 2, 8])
+def test_member_creates_bounded_private_group_direct_messages(count):
+    invitees = [f"@member{i}:{SERVER}" for i in range(count)]
+    configured = policy()
+    request = dm_request(invite=invitees)
+    assert run(configured.user_may_create_room(ALICE, request)) == ALLOWED
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_group_dm_invites_are_bound_to_immutable_creation_state(frozen):
+    invitees = [f"@member{i}:{SERVER}" for i in range(8)]
+    configured = policy()
+    request = dm_request(invite=invitees, creation_content={"io.kodera.dm.invitees": [OUTSIDER]})
+    requester = SimpleNamespace(user=SimpleNamespace(to_string=lambda: ALICE))
+    run(configured.on_create_room(requester, request, False))
+    assert request["creation_content"]["io.kodera.dm.invitees"] == invitees
+    state = state_of(ALICE, [ALICE])
+    state[("m.room.create", "")].content = {"io.kodera.dm.invitees": tuple(invitees)} if frozen else request["creation_content"]
+    configured._api.rooms["!group"] = state
+    for invitee in invitees:
+        assert run(configured.user_may_invite(ALICE, invitee, "!group")) == ALLOWED
+        state[("m.room.member", invitee)] = SimpleNamespace(content={"membership": "invite"})
+    assert run(configured.user_may_invite(ALICE, CAROL, "!group")) == FORBIDDEN
+    assert run(configured.user_may_invite(invitees[0], BOB, "!group")) == FORBIDDEN
+    assert run(configured.user_may_invite(ALICE, OUTSIDER, "!group")) == FORBIDDEN
+
+
+@pytest.mark.parametrize("invitees", [[], [BOB] * 9, [BOB, OUTSIDER], [BOB, AGENT], [BOB, ROOM_ACCESS], [BOB, ALICE], [BOB, "bob"]])
+def test_malformed_group_dm_creation_state_fails_closed(invitees):
+    state = state_of(ALICE, [ALICE])
+    state[("m.room.create", "")].content = {"io.kodera.dm.invitees": invitees}
+    configured = KoderaPolicy({"agent_user_id": AGENT, "room_access_user_id": ROOM_ACCESS}, FakeApi({"!group": state}))
+    assert run(configured.user_may_invite(ALICE, BOB, "!group")) == FORBIDDEN
+
+
+@pytest.mark.parametrize("blocked", [ALICE, BOB])
+@pytest.mark.parametrize("status", [None, {"is_deactivated": True}, {"is_guest": True}, {"approved": False}, {"locked": True}, {"suspended": True}])
+def test_dm_creation_and_invites_require_active_registered_local_accounts(blocked, status):
+    users = {user: SimpleNamespace(is_deactivated=False, is_guest=False, approved=True, locked=False, suspended=False) for user in (ALICE, BOB)}
+    if status is None:
+        del users[blocked]
+    else:
+        for key, value in status.items():
+            setattr(users[blocked], key, value)
+    state = state_of(ALICE, [ALICE])
+    state[("m.room.create", "")].content = {"io.kodera.dm.invitees": [BOB]}
+    configured = KoderaPolicy({"agent_user_id": AGENT}, FakeApi({"!dm": state}, users=users))
+    assert run(configured.user_may_create_room(ALICE, dm_request())) == FORBIDDEN
+    assert run(configured.user_may_invite(ALICE, BOB, "!dm")) == FORBIDDEN

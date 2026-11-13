@@ -1,6 +1,6 @@
 # Workspace moderation and reusable invitations
 
-Status: Proposed
+Status: Implemented; production service release remains operator-controlled
 
 The contract is Core 0.43.0 and Agent 0.6.0. A moderator is a workspace grant on a
 current organisation membership; organisation roles remain unchanged. Owners and

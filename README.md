@@ -30,7 +30,10 @@
 ## What works today
 
 - **Channels in the web client.** Text channels with threads, replies, reactions, typing and presence, backed by a Matrix homeserver (Synapse) that a Kodera policy module keeps under the control plane's rules.
-- **Always-open audio rooms.** One click to join, over a LiveKit SFU, with who-is-in-the-room shown in the channel list. The web client publishes and plays microphone audio.
+- **Always-open audio and video rooms.** Join over a LiveKit SFU, with camera video, screen sharing and who-is-in-the-room shown in the channel list. The web client publishes and plays microphone audio.
+- **Direct conversations and media.** Private one-to-one and bounded group conversations, message search, checked file uploads and downloads, text-only link previews, notification history and payload-free Web Push are implemented in the web client and server.
+- **Native collaborative Pages.** Workspace documents have a page tree, document roles, Markdown editing, wikilinks, backlinks, search and a Yjs collaboration service with persisted updates and snapshots.
+- **Community membership and moderation.** Canonical-realm self-signup, reusable invitation links, public local rooms, private staff/partner categories, reports and workspace moderation are implemented. An operator still prepares and verifies the identity provider and promotes the real Community tenant.
 - **A control plane with a contract.** `apps/server` (Django) owns organisations, members, roles, workspaces and channel access behind an OpenAPI 3.1 contract, from which the web client's API types are generated.
 - **Sign-in through OpenID Connect.** The server trusts the issuers you list; the web client signs in at your identity provider, and Synapse signs members in through the same realm. The web client's "Create an account" sends a new person to the identity provider's own registration page.
 - **A self-host profile.** [`deploy/community`](./deploy/community/README.md): a single-node Docker Compose stack with Synapse on PostgreSQL, federation closed, rate limits set and the agent API off the internet. `scripts/ci/check-community-deploy.py` holds it to that on every change.
@@ -39,13 +42,9 @@
 
 ## What is not there yet
 
-Status: Planned. None of the following ships today; the [roadmap](./ROADMAP.md) orders it.
+Status: Planned. The [roadmap](./ROADMAP.md) orders the remaining work. The [collaboration status](./docs/specs/collaboration-status.md) distinguishes shipped code from the pending production cutover.
 
-- **Direct messages, file upload and message search** in the web client.
-- **Camera video and screen sharing** in rooms. LiveKit alone carries voice and video; no other conferencing system is planned.
-- **Collaborative documents.** The web client has local Markdown drafts that can be published to a channel as a message. Native Docs will be a block editor inside `apps/web` (ProseMirror/Tiptap and Yjs, both MIT-licensed, with no GPL add-on) with a small Yjs sync service. No third-party office suite is integrated or planned.
 - **End-to-end encryption and Matrix federation.** Both are deferred. Channels are encrypted in transit and the homeserver is closed; `kodera-rs` carries only the type seams for a future encryption provider.
-- **Public community rooms**, which will use Matrix's native join rules.
 - **Passkeys and magic-link sign-in** ("Kodera Passport"). Community is designed for self-signup with an optional TOTP second factor; today accounts and second factors live in the identity provider you operate.
 - **Mobile and desktop apps.** `apps/ios` and `apps/android` are native clients in development, without chat or call transport yet; version 1.0 is a companion app with no in-app purchase and no pricing screen. `apps/desktop` is a Rust backend preview without a running window.
 - **`#proximity`**, an everyday proximity channel with a voluntary, pseudonymous check-in. Its signed frame codec exists; no radio transport and no check-in screen do. It is not an emergency service ([`RFC-0001`](./docs/rfcs/RFC-0001-emergency-ble-channel.md)).
@@ -98,7 +97,7 @@ Django 6 · ADR-0003 Secret Isolation · Room Access`"]
     SYN["`Synapse + packages/synapse-policy
 Closed homeserver, policy-governed rooms`"]
     LK["`LiveKit SFU
-Audio rooms`"]
+Audio, video and screen sharing`"]
     EE["`ee/ (Commercial License)
 Planned enterprise modules`"]
   end

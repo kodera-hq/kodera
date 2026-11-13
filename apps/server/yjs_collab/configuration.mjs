@@ -13,8 +13,9 @@ export function configuration(environment) {
   const connectionString = environment.DATABASE_URL
   try {
     const database = new URL(connectionString)
-    if (!['postgres:', 'postgresql:'].includes(database.protocol) || !database.hostname || !database.username || !database.password || database.pathname === '/') fail()
+    if (!['postgres:', 'postgresql:'].includes(database.protocol) || !database.hostname || !database.username || !database.password || database.pathname === '/' || database.search || database.hash) fail()
   } catch { fail() }
+  if (environment.PGOPTIONS) fail()
   const declared = environment.KODERA_COLLAB_ALLOWED_ORIGINS
   if (typeof declared !== 'string') fail()
   const origins = new Set(declared.split(','))

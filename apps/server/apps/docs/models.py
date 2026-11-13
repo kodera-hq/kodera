@@ -111,3 +111,13 @@ class DocumentUpdate(StoredModel):
                 condition=models.Q(sequence__gte=1), name="docs_update_sequence_valid"
             ),
         ]
+
+
+class CollaborationTicket(models.Model):
+    """Only redeemed nonces are retained, until their signed expiry."""
+
+    nonce = models.UUIDField(primary_key=True)
+    expires = models.BigIntegerField(db_index=True)
+
+    def __str__(self) -> str:
+        return "Redeemed collaboration ticket"
