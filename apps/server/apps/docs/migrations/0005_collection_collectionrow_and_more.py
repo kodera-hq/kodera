@@ -14,6 +14,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='Collection',
             fields=[
@@ -63,5 +67,9 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='collectionrow',
             constraint=models.UniqueConstraint(fields=('collection', 'document'), name='docs_collection_document_unique'),
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]

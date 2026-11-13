@@ -3192,6 +3192,7 @@ def migration_create_model_names(
             "django.db.models.IntegerField",
             "django.db.models.JSONField",
             "django.db.models.OneToOneField",
+            "django.db.models.PositiveBigIntegerField",
             "django.db.models.PositiveIntegerField",
             "django.db.models.Q",
             "django.db.models.RESTRICT",
@@ -17336,4 +17337,34 @@ def test_migration_projection_scanner_distinguishes_execute_privileges_from_dyna
     tmp_path: Path, sql: str, expected: set[str]
 ) -> None:
     _migration(tmp_path, "projection_probe", "0001_privileges.py", f"migrations.RunSQL({sql!r})")
+    assert migration_create_model_names(tmp_path) == expected
+
+
+@pytest.mark.parametrize(
+    ("model", "default", "expected"),
+    [
+        ("PrivacyExport", "", {"PrivacyExport"}),
+        ("Entitlement", "", {"Entitlement"}),
+        (
+            "PrivacyExport",
+            "default=models.PositiveBigIntegerField",
+            set(NON_PERSISTED_MODEL_PROJECTIONS) | {"PrivacyExport"},
+        ),
+        (
+            "PrivacyExport",
+            "default=models.UnreviewedField()",
+            set(NON_PERSISTED_MODEL_PROJECTIONS) | {"PrivacyExport"},
+        ),
+    ],
+)
+def test_migration_positive_big_integer_field_preserves_projection_detection(
+    tmp_path: Path, model: str, default: str, expected: set[str]
+) -> None:
+    _migration(
+        tmp_path,
+        "orgs",
+        "0001_probe.py",
+        f"migrations.CreateModel(name={model!r}, fields=["
+        f"('bytes', models.PositiveBigIntegerField({default}))])",
+    )
     assert migration_create_model_names(tmp_path) == expected
