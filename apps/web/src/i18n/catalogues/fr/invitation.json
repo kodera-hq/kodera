@@ -18,5 +18,17 @@
   "console.invitation.accept.sign-in": "Vous êtes invité à rejoindre {{name}}. Connectez-vous avec le compte créé pour vous.",
   "console.invitation.accept.signing-in": "Une fenêtre de connexion est ouverte. Terminez la connexion dans cette fenêtre.",
   "console.invitation.accept.unknown": "Cette invitation n’existe pas ou a déjà été utilisée. Demandez une nouvelle invitation.",
-  "console.invitation.accept.unusable": "Cette invitation ne peut pas être utilisée. Contactez la personne qui vous a invité(e)."
+  "console.invitation.accept.unusable": "Cette invitation ne peut pas être utilisée. Contactez la personne qui vous a invité(e).",
+  "console.invitation.join.action-home": "Aller à l’accueil",
+  "console.invitation.join.action-join": "Rejoindre {{name}}",
+  "console.invitation.join.checking": "Vérification du lien…",
+  "console.invitation.join.failed": "Le lien n’a pas pu être vérifié. Réessayez dans un instant.",
+  "console.invitation.join.gone": "Ce lien d’invitation a expiré, a été révoqué ou a déjà servi autant de fois que prévu. Demandez-en un nouveau.",
+  "console.invitation.join.joined": "Vous avez rejoint {{name}}.",
+  "console.invitation.join.missing": "Ce lien est incomplet. Rouvrez le lien d’invitation tel qu’il vous a été envoyé.",
+  "console.invitation.join.ready": "Ce lien vous invite à rejoindre {{name}}. Il est valable jusqu’au {{date}}.",
+  "console.invitation.join.role-member": "Vous y entrerez comme membre.",
+  "console.invitation.join.role-moderator": "Vous y entrerez comme modérateur.",
+  "console.invitation.join.sign-in": "Connectez-vous à Kodera, puis rouvrez le lien d’invitation.",
+  "console.invitation.join.title": "Rejoindre un espace"
 }

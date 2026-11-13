@@ -7,19 +7,27 @@
 // the device (`timelineCache.ts`): sent message views only, no token, wiped at sign-out.
 
 import {
+  ATTACHMENTS_FIELD,
+  attachmentsFallback,
+  type AttachmentRef,
+} from '../../messaging/attachments/attachmentRefs'
+import {
   ClientEvent,
   createClient,
   EventStatus,
   EventType,
+  HistoryVisibility,
   HttpApiEvent,
   MatrixError,
   MemoryStore,
   MsgType,
   NotificationCountType,
+  Preset,
   PendingEventOrdering,
   RoomEvent,
   RoomStateEvent,
   SyncState,
+  Visibility,
   type MatrixClient,
   type MatrixEvent,
   type Room,
@@ -28,6 +36,14 @@ import {
 import { clearMatrixSession } from '@/auth/matrix'
 import { channelRoomAlias, isChannelId, serverNameOf } from '../homeserver'
 import { isMatrixUserId } from '../roomInvitations'
+import {
+  directMap,
+  directPeople,
+  directRooms,
+  existingDirect,
+  withDirect,
+  type DirectSummary,
+} from './directs'
 import { NotRenewable, RefreshRefused, refreshingFetch } from './refresh'
 export { RefreshRefused }
 import {
@@ -53,6 +69,8 @@ export interface SendOptions {
   mentions?: string[]
   replyTo?: string
   threadRootId?: string
+  /** Files already stored by Core, named by id (docs/specs/messaging-media-and-notifications.md). */
+  attachments?: AttachmentRef[]
 }
 
 /** A joined room, as the sidebar draws it. */
@@ -329,6 +347,9 @@ export class EspaceStore {
   #presenceChanged = false
   /** When the member's last « typing » notice went to each room it still stands in. */
   readonly #typingSent = new Map<string, number>()
+  /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
+  #directsChanged = false
+  #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
 
   constructor(
     session: EspaceSession,
@@ -448,6 +469,11 @@ export class EspaceStore {
         this.#online.add(userId)
       else this.#online.delete(userId)
       this.#presenceChanged = true
+      this.#schedule()
+    })
+    on(ClientEvent.AccountData, (event: MatrixEvent) => {
+      if (this.#stopped || event.getType() !== 'm.direct') return
+      this.#directsChanged = true
       this.#schedule()
     })
     on(ClientEvent.Sync, (state: SyncState) => {
@@ -723,9 +749,12 @@ export class EspaceStore {
     if (status === 'live') this.#recheck(rooms, invites)
     const typingChanged = this.#typingChanged
     this.#typingChanged = false
+    const directsChanged = this.#directsChanged
+    this.#directsChanged = false
     if (
       messageDataChanged ||
       typingChanged ||
+      directsChanged ||
       this.#presenceChanged ||
       rooms !== this.#snapshot.rooms ||
       invites !== this.#snapshot.invites ||
@@ -1204,9 +1233,12 @@ export class EspaceStore {
               'm.in_reply_to': { event_id: options.replyTo },
             }
           : undefined
+    const attachments = options.attachments ?? []
     await this.#client.sendMessage(roomId, {
       msgtype: MsgType.Text,
-      body,
+      // Other clients show the files' names when the message has no text of its own.
+      body: body === '' && attachments.length > 0 ? attachmentsFallback(attachments) : body,
+      ...(attachments.length === 0 ? {} : { [ATTACHMENTS_FIELD]: attachments }),
       ...(options.mentions === undefined ? {} : { 'm.mentions': { user_ids: options.mentions } }),
       ...(relatesTo === undefined ? {} : { 'm.relates_to': relatesTo }),
     } as never)
@@ -1272,6 +1304,73 @@ export class EspaceStore {
     } else {
       await this.react(roomId, eventId, key)
     }
+  }
+
+  /**
+   * The member's direct conversations, from `m.direct`, joined rooms only, by name. The same list
+   * for the same snapshot, so a screen that reads it redraws only when it changes.
+   */
+  getDirects = (): readonly DirectSummary[] => {
+    const snapshot = this.#snapshot
+    if (this.#directs?.snapshot === snapshot) return this.#directs.list
+    const rooms = directRooms(
+      directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
+    )
+    const list: DirectSummary[] = []
+    for (const [roomId, userIds] of rooms) {
+      const summary = snapshot.rooms.find((room) => room.roomId === roomId)
+      const room = this.#client.getRoom(roomId)
+      if (summary === undefined || room === null) continue
+      const names = userIds.map((userId) => displayName(room, userId) ?? userId)
+      list.push({ roomId, userIds, name: names.join(', '), unread: summary.unread })
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name))
+    const previous = this.#directs?.list
+    const same =
+      previous !== undefined &&
+      previous.length === list.length &&
+      previous.every(
+        (item, at) =>
+          item.roomId === list[at]!.roomId &&
+          item.name === list[at]!.name &&
+          item.unread === list[at]!.unread
+      )
+    this.#directs = { snapshot, list: same ? previous : list }
+    return this.#directs.list
+  }
+
+  /**
+   * The direct conversation with these people: the joined one already held, else a new private
+   * room, invited and listed in `m.direct` under each of them. Resolves to its room id.
+   */
+  async openDirect(userIds: readonly string[]): Promise<string> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const people = directPeople(userIds, this.#me)
+    const map = directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
+    const held = existingDirect(
+      directRooms(map),
+      people,
+      (roomId) => this.#client.getRoom(roomId)?.getMyMembership() === 'join'
+    )
+    if (held !== undefined) return held
+    // `private_chat`, not `trusted_private_chat`: the latter gives every invitee the creator's
+    // power level, so anyone in a group conversation could remove the others or change the room.
+    // Someone invited later reads only what is sent from their invitation on.
+    const { room_id: roomId } = await this.#client.createRoom({
+      is_direct: true,
+      invite: people,
+      preset: Preset.PrivateChat,
+      visibility: Visibility.Private,
+      initial_state: [
+        {
+          type: EventType.RoomHistoryVisibility,
+          state_key: '',
+          content: { history_visibility: HistoryVisibility.Invited },
+        },
+      ],
+    })
+    await this.#client.setAccountData(EventType.Direct, withDirect(map, roomId, people) as never)
+    return roomId
   }
 
   async inviteToRoom(roomId: string, userId: string): Promise<void> {

@@ -15,6 +15,8 @@ import { UniversalSearch } from '../command-palette/UniversalSearch'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import { OrganisationHeader } from '../workspace/OrganisationHeader'
+import { NotificationCenter } from '../notifications/NotificationCenter'
+import { DirectMessages } from './DirectMessages'
 import { StudioNavigation } from '../workspace/StudioNavigation'
 import { categoryLabel, channelLabel } from '../workspace/workspace'
 import type { Workspace, WorkspaceCategory, WorkspaceChannel } from '../workspace/workspace'
@@ -209,6 +211,9 @@ export interface ChannelSidebarProps {
   /** The studio's sections: the canvas changes, and a phone's chooser closes on it. */
   onSwitchCanvas: ((mode: 'chat' | 'docs') => void) | undefined
   onSelectTextChannel: (channelId: string) => void
+  /** The direct conversation shown, and how one is chosen; absent where there are none. */
+  activeDirectRoomId?: string | null
+  onSelectDirect?: (roomId: string) => void
   onJoinAudioRoom: AudioRoomProps['onJoin']
   onCreateInCategory: ((category: WorkspaceCategory) => void) | undefined
   onChannelContextMenu: ChannelContextMenu | undefined
@@ -244,6 +249,8 @@ function ChannelSidebarView({
   onChangeCanvasMode,
   onSwitchCanvas,
   onSelectTextChannel,
+  activeDirectRoomId,
+  onSelectDirect,
   onJoinAudioRoom,
   onCreateInCategory,
   onChannelContextMenu,
@@ -412,7 +419,17 @@ function ChannelSidebarView({
       {/* On a phone the column is the whole screen: the top bar already carries the
               organisation and its switch, and a touch screen has no shortcut to show. */}
       <div className="flex flex-col gap-3">
-        {narrow ? null : <OrganisationHeader name={organisationName} slug={org} />}
+        {/* The bell sits beside the organisation; a simulation has no notifications to show. */}
+        {narrow && simulation ? null : (
+          <div className="flex items-center gap-1">
+            {narrow ? null : (
+              <div className="min-w-0 flex-1">
+                <OrganisationHeader name={organisationName} slug={org} />
+              </div>
+            )}
+            {simulation ? null : <NotificationCenter />}
+          </div>
+        )}
         {organisationActionSlot ?? null}
         <h2 id={headingId} className="sr-only">
           {t('console.workspace.sidebar.title')}
@@ -470,6 +487,13 @@ function ChannelSidebarView({
           </ul>
         ) : null}
         {workspace.categories.map((category, index) => renderCategory(category, index))}
+        {simulation || onSelectDirect === undefined || store.getDirects === undefined ? null : (
+          <DirectMessages
+            store={store}
+            activeRoomId={activeDirectRoomId ?? null}
+            onSelect={onSelectDirect}
+          />
+        )}
       </div>
     </div>
   )

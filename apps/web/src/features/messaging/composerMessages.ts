@@ -29,6 +29,19 @@ const messages = {
     copy: 'Copy code',
     copied: 'Code copied',
     copyFailed: 'Copy unavailable. Select the code to copy it.',
+    uploads: 'Attachments',
+    uploadsHint:
+      'Files are checked on this device, then sent. The message leaves once every file is sent.',
+    uploading: 'Sending…',
+    uploaded: 'Ready',
+    failed: 'Not sent. Remove it and try again.',
+    refused: {
+      empty: 'Empty file: not sent.',
+      'too-large': 'Larger than 25 MB: not sent.',
+      'active-content': 'Pages, scripts and programs cannot be attached.',
+      'type-mismatch': 'Its content does not match its type: not sent.',
+      'too-many': 'At most 10 files per message.',
+    },
   },
   fr: {
     toolbar: 'Mise en forme du message',
@@ -61,6 +74,19 @@ const messages = {
     copy: 'Copier le code',
     copied: 'Code copié',
     copyFailed: 'Copie indisponible. Sélectionnez le code pour le copier.',
+    uploads: 'Pièces jointes',
+    uploadsHint:
+      'Les fichiers sont vérifiés sur cet appareil, puis envoyés. Le message part quand tous sont envoyés.',
+    uploading: 'Envoi…',
+    uploaded: 'Prêt',
+    failed: 'Non envoyé. Retirez-le et réessayez.',
+    refused: {
+      empty: 'Fichier vide : non envoyé.',
+      'too-large': 'Plus de 25 Mo : non envoyé.',
+      'active-content': 'Les pages, scripts et programmes ne peuvent pas être joints.',
+      'type-mismatch': 'Son contenu ne correspond pas à son type : non envoyé.',
+      'too-many': 'Au plus 10 fichiers par message.',
+    },
   },
 } as const
 export const composerCopy = (locale?: string) => messages[locale?.startsWith('en') ? 'en' : 'fr']

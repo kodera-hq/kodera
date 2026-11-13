@@ -6,6 +6,7 @@
 // reads: `ChannelSidebar`, `MessageTimeline` and its `MessageRow`s, `MessageComposer`,
 // `VoiceCallDock`. What they share lives in `liveViewModel.ts`.
 
+import { MessagingOrganisation } from '../messaging/organisationContext'
 import { demoMessages } from '../../app/demoMessages'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { StudioNavigation } from '../workspace/StudioNavigation'
@@ -121,6 +122,22 @@ function deviceSettingsOf(call: AudioCallLike): AudioSettingsCall | null {
     chooseInput: (input) => chooseInput.call(call, input),
     chooseOutput: (output) => chooseOutput.call(call, output),
   }
+}
+
+/**
+ * A direct conversation, drawn as a channel is: its room is the summary itself, never one Core
+ * resolves, so its id is marked as no channel id Core issues.
+ */
+function directChannelOf(roomId: string, name: string): WorkspaceChannel {
+  return {
+    id: `direct:${roomId}`,
+    kind: 'text',
+    name,
+    template_key: null,
+    topic: '',
+    lifecycle: 'active',
+    room_state: 'ready',
+  } as WorkspaceChannel
 }
 
 export interface EspaceLiveViewProps {
@@ -286,7 +303,14 @@ export function EspaceLiveView(props: EspaceLiveViewProps) {
   useLayoutEffect(() => () => committedView.commit(null), [committedView])
   if (!allowed)
     return <InlineAlert kind="error">{t('console.workspace.live.problem-unavailable')}</InlineAlert>
-  return <MountedEspaceLiveView key={registration.generation} {...props} />
+  return (
+    // A simulation has no organisation to store a file in or to preview a link through.
+    <MessagingOrganisation
+      value={props.store?.simulation === true ? null : props.workspace.organisation_id}
+    >
+      <MountedEspaceLiveView key={registration.generation} {...props} />
+    </MessagingOrganisation>
+  )
 }
 
 /**
@@ -479,17 +503,38 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const navigationUnsettled =
     navigationPending || (requestedChannelId !== null && requestedChannelId !== addressedChannel)
 
+  // A direct conversation chosen in the sidebar stands in for the addressed channel until the
+  // address changes or another channel is chosen (docs/specs/messaging-media-and-notifications.md).
+  const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
+    null
+  )
+  const directRoomId = direct !== null && direct.over === selectedChannelId ? direct.roomId : null
+  const directRoom =
+    directRoomId === null ? undefined : snapshot.rooms.find((room) => room.roomId === directRoomId)
+  const directName =
+    directRoom === undefined
+      ? undefined
+      : (activeStore.getDirects?.().find((item) => item.roomId === directRoom.roomId)?.name ??
+        directRoom.name)
   const activeChannel = useMemo(
-    () => currentChannel(workspace, selectedChannelId),
-    [workspace, selectedChannelId]
+    () =>
+      directRoom !== undefined && directName !== undefined
+        ? directChannelOf(directRoom.roomId, directName)
+        : currentChannel(workspace, selectedChannelId),
+    [workspace, selectedChannelId, directRoom, directName]
   )
   const activeRoom = useMemo(
     () =>
-      activeChannel !== null && activeChannel !== undefined
+      directRoom ??
+      (activeChannel !== null && activeChannel !== undefined
         ? roomForChannel(activeChannel, snapshot.channels, snapshot.rooms)
-        : undefined,
-    [activeChannel, snapshot.channels, snapshot.rooms]
+        : undefined),
+    [directRoom, activeChannel, snapshot.channels, snapshot.rooms]
   )
+  const selectDirect = useStableHandler((roomId: string) => {
+    closeChannelChooser()
+    setDirect({ roomId, over: selectedChannelId })
+  })
   // No room, no messages and nowhere to send them: never a channel id taken for a room id.
   const activeRoomId = activeRoom?.roomId ?? null
   /** « 18 membres »: a text channel's people (`RoomSummary.joined`). */
@@ -874,6 +919,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
     closeChannelChooser()
+    setDirect(null)
     if (onNavigateChannel === undefined) {
       setClickedChannelId(nextChannelId)
       return
@@ -1202,6 +1248,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       onChangeCanvasMode={onChangeCanvasMode}
       onSwitchCanvas={onChangeCanvasMode ? switchCanvas : undefined}
       onSelectTextChannel={selectTextChannel}
+      activeDirectRoomId={directRoomId}
+      onSelectDirect={selectDirect}
       onJoinAudioRoom={joinAudioRoom}
       onCreateInCategory={onCreateInCategory === undefined ? undefined : createInCategory}
       onChannelContextMenu={onChannelContextMenu}
@@ -1408,7 +1456,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             </div>
           ) : null}
 
-          {activeChannel != null && docsCanvasSlot !== undefined ? (
+          {activeChannel != null && directRoomId === null && docsCanvasSlot !== undefined ? (
             <div
               hidden={activeCanvasMode !== 'docs'}
               data-testid="espace-inline-docs-canvas"

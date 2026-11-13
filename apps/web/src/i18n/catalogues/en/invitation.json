@@ -18,5 +18,17 @@
   "console.invitation.accept.sign-in": "You are invited to join {{name}}. Sign in with the account created for you.",
   "console.invitation.accept.signing-in": "A sign-in window is open. Finish signing in in that window.",
   "console.invitation.accept.unknown": "This invitation does not exist or has already been used. Ask for a new invitation.",
-  "console.invitation.accept.unusable": "This invitation cannot be used. Contact the person who invited you."
+  "console.invitation.accept.unusable": "This invitation cannot be used. Contact the person who invited you.",
+  "console.invitation.join.action-home": "Go to home",
+  "console.invitation.join.action-join": "Join {{name}}",
+  "console.invitation.join.checking": "Checking the link…",
+  "console.invitation.join.failed": "The link could not be checked. Try again in a moment.",
+  "console.invitation.join.gone": "This invite link has expired, was revoked or has been used as many times as allowed. Ask for a new one.",
+  "console.invitation.join.joined": "You have joined {{name}}.",
+  "console.invitation.join.missing": "This link is incomplete. Open the invite link again exactly as you received it.",
+  "console.invitation.join.ready": "This link invites you to join {{name}}. It is valid until {{date}}.",
+  "console.invitation.join.role-member": "You will join as a member.",
+  "console.invitation.join.role-moderator": "You will join as a moderator.",
+  "console.invitation.join.sign-in": "Sign in to Kodera, then open the invite link again.",
+  "console.invitation.join.title": "Join a workspace"
 }

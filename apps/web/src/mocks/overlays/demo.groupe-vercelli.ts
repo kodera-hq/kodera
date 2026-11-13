@@ -18,6 +18,7 @@ import {
   withLocalMemberships,
 } from '../demo/localWorkspaces'
 import * as community from '../demo/community'
+import { MESSAGING_DEMO_ROUTES, messagingDemoHandlers } from '../demo/messagingMedia'
 // The walkable demo (docs/dev/DEMO.md): one scenario overlay that answers
 // EVERY route the built areas call, from the one seed in `src/mocks/demo/seed.ts`.
 //
@@ -149,6 +150,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'POST /invitations/accept',
   'GET /organisations/:organisation_id/workspace',
   'POST /organisations/:organisation_id/workspace/actions/initialise',
+  ...MESSAGING_DEMO_ROUTES,
 ]
 
 /** The invoice whose id the console asked for, or the current month's — the
@@ -716,4 +718,5 @@ export const handlers: HttpHandler[] = [
             { index: 2, header: 'Adresse mail', sample: `l.ferraro@${seed.DEMO_EMAIL_DOMAIN}` },
           ],
   }),
+  ...messagingDemoHandlers(BASE, headers),
 ]

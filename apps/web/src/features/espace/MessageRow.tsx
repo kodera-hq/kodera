@@ -23,6 +23,8 @@ import { studioMessages } from '../workspace/studioMessages'
 import { nameOf, sameItems } from './liveViewModel'
 import type { MessageView } from './matrix/timeline'
 import { MessageText } from './MessageText'
+import { MessageAttachments } from '../messaging/attachments/MessageAttachments'
+import { UnfurlCard } from '../messaging/unfurl/UnfurlCard'
 import { ReactionPalette } from './ReactionPalette'
 
 function uniqueThreadParticipants(replies: readonly MessageView[]): ThreadParticipant[] {
@@ -263,7 +265,9 @@ function MessageRowView({
         )
       }
     >
-      <MessageText body={msg.body} />
+      {msg.body === '' ? null : <MessageText body={msg.body} />}
+      {msg.attachments === undefined ? null : <MessageAttachments refs={msg.attachments} />}
+      {msg.redacted ? null : <UnfurlCard body={msg.body} />}
     </TimelineMessage>
   )
 }

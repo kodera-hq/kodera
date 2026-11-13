@@ -266,6 +266,10 @@ function protocol() {
       if (method === 'GET' && corePath === `/organisations/${ORG}/invitations`) {
         return json({ data: [], next_cursor: null, has_more: false })
       }
+      // The notification center beside the organisation (messaging-media-and-notifications.md).
+      if (method === 'GET' && corePath === '/notifications') {
+        return json({ data: [], next_cursor: null, has_more: false })
+      }
     }
 
     if (url.origin === HOMESERVER) {
@@ -917,6 +921,10 @@ async function composedHarness(
         ).toBe(`Bearer ${auth.adapter.getAccessToken()}`)
         if (heldMe !== undefined) await heldMe
         return json(responseMe)
+      }
+      // The notification center beside the organisation (messaging-media-and-notifications.md).
+      if (url === `${coreUrl}/notifications?limit=50`) {
+        return json({ data: [], next_cursor: null, has_more: false })
       }
       if (options.audio && url === `${HOMESERVER}/_kodera/rooms/token`) {
         expect(init?.method).toBe('POST')

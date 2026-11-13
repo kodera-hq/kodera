@@ -19,15 +19,17 @@ import { isMatrixUserId } from '../espace/roomInvitations'
 import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { useLocalProfile, type LocalProfile } from '../profile/localProfile'
 import { HostingOfferPanel } from './HostingOfferPanel'
+import { ModerationPanel } from './moderation/ModerationPanel'
 import { useWorkspaceTenantQuery } from './queries'
 import { useActiveThemeShare } from './themeSharing'
 import { useWorkspaceSettingsRuntime, type WorkspaceSettingsRuntime } from './settingsRuntime'
 import { settingsCopy } from './settingsMessages'
 import type { WorkspaceSettingsProps } from './WorkspaceSettingsHost'
 
-export type Section = 'profile' | 'appearance' | 'audio' | 'members' | 'extensions' | 'hosting'
+export type Section =
+  'profile' | 'appearance' | 'audio' | 'members' | 'moderation' | 'extensions' | 'hosting'
 const PERSONAL: Section[] = ['profile', 'appearance', 'audio']
-const WORKSPACE: Section[] = ['members', 'extensions', 'hosting']
+const WORKSPACE: Section[] = ['members', 'moderation', 'extensions', 'hosting']
 const LINK =
   'rounded-md border border-c-border px-4 py-3 text-sm font-medium text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
 
@@ -416,6 +418,13 @@ export default function WorkspaceSettings({
                   ) : null}
                   {item === 'members' ? (
                     <Members runtime={runtime} org={org} role={role} onClose={onClose} />
+                  ) : null}
+                  {item === 'moderation' ? (
+                    canManage ? (
+                      <ModerationPanel organisationId={organisationId} />
+                    ) : (
+                      <p className="text-sm text-c-ink-2">{copy.moderationRestricted}</p>
+                    )
                   ) : null}
                   {item === 'extensions' ? <ExtensionsCatalogPanel /> : null}
                   {item === 'hosting' ? (
