@@ -99,3 +99,73 @@ class ErasureReceipt(StoredModel):
                 name="erasure_receipt_digest",
             ),
         ]
+
+
+class AccountErasure(StoredModel):
+    """Detached customer-person cutoff; workspace-owned content is never selected."""
+
+    user_reference = models.UUIDField(unique=True)
+    requester_identity_reference = models.UUIDField()
+    instruction_ref = models.TextField()
+    instruction_sha256 = models.TextField()
+    cutoff_at = models.DateTimeField()
+    purge_not_before = models.DateTimeField()
+    inventory = models.JSONField()
+    inventory_sha256 = models.TextField()
+    status = models.TextField(default="cutoff")
+    protocol_emitted_at = models.DateTimeField(null=True, blank=True)
+    core_purged_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    counts = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["cutoff", "core_purged", "complete"]),
+                name="account_erasure_status",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(instruction_ref__regex=r"^[A-Z]{2,8}-[0-9]{1,8}$"),
+                name="account_erasure_instruction",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(instruction_sha256__regex=r"^[0-9a-f]{64}$"),
+                name="account_erasure_digest",
+            ),
+        ]
+
+
+class AccountErasureReceipt(StoredModel):
+    """Person-scoped receipt; cannot substitute an organisation-scoped export proof."""
+
+    erasure = models.ForeignKey(AccountErasure, on_delete=models.RESTRICT)
+    user_reference = models.UUIDField()
+    inventory_sha256 = models.TextField()
+    domain = models.TextField()
+    cutoff_at = models.DateTimeField()
+    evidence_sha256 = models.TextField()
+    adapter_revision = models.TextField()
+    verified_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["erasure", "domain"], name="account_erasure_receipt_unique"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    domain__in=[
+                        "matrix_accounts",
+                        "identity_provider_accounts",
+                        "private_exports",
+                        "account_message_outbox",
+                        "account_extension_subjects",
+                    ]
+                ),
+                name="account_erasure_receipt_domain",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(evidence_sha256__regex=r"^[0-9a-f]{64}$"),
+                name="account_erasure_receipt_digest",
+            ),
+        ]

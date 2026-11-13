@@ -1,7 +1,7 @@
 # Core erasure and statutory retention
 
-Status: Source implementation under review. Disposable PostgreSQL qualification is
-required before merge. No provider, live account or production erasure is authorised
+Status: Source implementation under review with focused disposable PostgreSQL
+qualification. Hosted checks and final independent review remain required before merge. No provider, live account or production erasure is authorised
 by this document.
 
 ## Scope and authority
@@ -19,7 +19,8 @@ clock. It records an immutable detached `PrivacyErasure` journal, closes Core
 organisation authority, disables scoped identities, revokes agent credentials and
 expires every affected private export. Account archives containing the workspace's
 members are conservatively revoked as well. The inventory preserves only attachment
-UUIDs and affected private export UUIDs, plus exact extension receiver references
+UUIDs, affected private export UUIDs and their immutable original request expiry
+evidence, plus exact extension receiver references
 when that application is present; it does not retain document names, addresses,
 endpoint URLs, content or provider secrets.
 
@@ -69,14 +70,20 @@ and completion logic.
 Private export erasure must remove the entire `privacy/<request-uuid>/` subtree,
 including frozen sources, manifests, chunks and archive, and revoke delivery.
 Deleting only the final ZIP is insufficient. The separate private-volume runtime
-provides its own concrete storage implementation and qualification.
+provides its own concrete storage implementation and qualification. Admission refuses
+missing/malformed legacy request bindings, a future creation time, or an original
+window over 24 hours. The map preserves original `request_snapshot.expires_at`,
+never a shortened current row TTL; its exact keys match the export UUID inventory.
 
 When extension tables exist, `external_extension_receivers` becomes an additional
 required domain. Its inventory names every installation UUID and the SHA-256 of
 its canonical endpoint, including revoked installations and installations without
 a completed delivery. The installed extension retention module must expose the
 actual cutoff, bounded payload purge, payload-absence and post-proof metadata
-teardown hooks. Missing hooks refuse. External receipts precede removal of import
+teardown hooks. Missing hooks refuse. Actual native-document deletion can progress only when
+bounded payload purge is complete and the definer reports actual scoped import
+link absence (`native_documents_released`). This fact never proves receiver absence.
+External receipts precede removal of import
 mappings/reports, digest metadata and endpoint records; mappings are removed before
 Core documents so their real `RESTRICT` foreign keys remain effective. Large
 metadata batches can remain held and resume; no empty-success default is used.
@@ -94,7 +101,9 @@ retention policy.
 
 `FiscalPeriod` records the legal issuer's SIREN, explicit inclusive start and
 exclusive closing instant, IANA timezone and authority reference. Overlap is
-serialized and refused. Rows are immutable. There is no default calendar close,
+serialized and refused. The invoker fiscal trigger fixes its search path and binds
+`pg_catalog.pg_timezone_names` and `public.billing_fiscalperiod` explicitly, including
+when a separate admission LOGIN creates hostile TEMP shadows. Rows are immutable. There is no default calendar close,
 no year inferred from an invoice number, and no automatic historical backfill.
 The named closing instant is supplied by the responsible fiscal authority.
 
@@ -168,3 +177,55 @@ The default resume command commits real Core deletion and exits unsuccessfully
 while unconfigured external domains remain held. An unsuccessful command is not
 proof that Core deletion was rolled back: inspect the durable request/progress.
 No command supplies or manufactures a provider absence receipt.
+
+
+## Account scope
+
+Account admission binds the real `VerifiedAccessToken` subject to the persisted
+person; no request body person ID is accepted. Explicit `delete` confirmation,
+current recent verified authentication, the separate operator's validated instruction,
+and an aware recovery deadline are required. A sole active owner must transfer
+ownership first. Staff-managed people require a separate policy and are refused.
+The transaction takes the person lock and ordered organisation locks, drains any
+in-flight push, disables the person's identities, revokes their private exports,
+and invokes the existing membership removal, `access_off` and real member/channel
+set hooks. Failure to emit the concrete engine erasure protocol rolls back intent
+and all authority changes. `protocol_emitted_at` is not a metadata-only replacement
+for those hooks: SQL checks the new sets and final known-subject erasure facts.
+
+At the explicitly admitted deadline, account processing deletes only that person's
+push queue/subscriptions/inbox and scrubs their own contact fields, authored support
+contacts and invitations tied by their actual membership FK. It does not erase
+controller-owned workspace docs, Yjs content, uploads, other members' contacts or
+accounting/contracts. These do not become ten-year records merely because an account
+was erased. Attachments, notifications and subscriptions have immutable physical
+identifier/organisation/person authority tuples: neither a workspace nor an account
+cutoff can be evaded by moving an OLD payload into a valid NEW live scope.
+
+`AccountErasureScope` and `AccountAbsenceProof` are separate person-scoped types.
+Durable immutable receipts bind request, person, original cutoff, inventory digest,
+required domain, evidence digest, revision and database observation time after the
+recovery deadline. Workspace proofs, wrong person/request/inventory, future evidence
+and failed adapter verification refuse. All required domains remain mandatory even
+when an inventory is empty: `matrix_accounts`, `identity_provider_accounts`,
+`private_exports`, `account_message_outbox`, plus `account_extension_subjects` when
+extensions are installed. No account adapter is configured by default. In particular,
+sealed mail currently has no authoritative person FK; matching a recipient email is
+not a valid ownership inventory. Resolving that binding and supplying a real fenced
+person-scoped adapter is a deployment/product integration gate, not an inferred
+empty result. The workspace private-volume adapter cannot satisfy account scope.
+
+After actual local purge, concrete protocol emission and all verified account receipts,
+`privacy_complete_account_erasure` replaces disabled login subjects with tombstones
+and durably commits `complete`. The path is reachable and tested with explicitly
+synthetic proof controls and an independent processing LOGIN; this is not production
+provider absence evidence. Accepted ADR-0016 keeps the minimal erased realm-subject
+denylist and controller-owned history while that organisation exists. A trigger
+prevents rebinding an erased realm subject to a new person. No other member's engine
+history is removed. Statutory records retain their own exact lawful deadlines.
+
+The source admission service requires the existing operator/membership-lifecycle
+profile for its canonical hooks. The processing grant set has account journal reads,
+lock-only timestamp UPDATE and only bounded purge/receipt/complete functions; it
+cannot admit account intent or read raw personal tables. No HTTP account deletion
+success route or new runtime credential is installed by this source change.

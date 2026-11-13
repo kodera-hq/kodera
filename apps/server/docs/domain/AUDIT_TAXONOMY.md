@@ -148,6 +148,8 @@ unless all three rows receive the identical contract end and derived deadlines a
 | Action | Actor | Target | Retention |
 | --- | --- | --- | --- |
 | `privacy.erasure_cutoff` | staff | `organisation` | standard |
+| `privacy.account_cutoff` | staff admission, person-bound intent | `person` | standard |
+| `privacy.account_core_erased`, `privacy.account_erasure_completed` | system | `person` | standard |
 | `privacy.core_erased`, `privacy.erasure_completed` | system | `organisation` | standard |
 
 These events commit with the durable erasure journal transition. Metadata contains the

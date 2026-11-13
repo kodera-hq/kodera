@@ -19,12 +19,7 @@ from apps.extensions.models import (
     WorkspaceCutoff,
 )
 
-try:
-    apps.get_model("orgs", "PrivacyErasure")
-except LookupError:
-    HAS_CORE = False
-else:
-    HAS_CORE = True
+HAS_CORE = any(model._meta.label_lower == "orgs.privacyerasure" for model in apps.get_models())
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

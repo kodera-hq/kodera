@@ -215,7 +215,10 @@ def advance_erasure(request_id: UUID, adapters: dict[str, ErasureAdapter]) -> di
     )
     if extension:
         progress = _extension_step(scope)
-        if held or not progress.get("payloads_complete") or not progress.get("metadata_complete"):
+        if (
+            progress.get("payloads_complete") is not True
+            or progress.get("native_documents_released") is not True
+        ):
             return {
                 "request_id": str(row.id),
                 "core_purged": False,

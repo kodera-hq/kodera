@@ -107,7 +107,7 @@ def test_real_core_payloads_are_deleted_while_missing_remote_adapters_hold_compl
     )
     result = advance_erasure(row.id, {})
     assert result["core_purged"] and not result["complete"]
-    assert result["held_domains"] == ["identity_provider", "matrix", "objects", "private_exports"]
+    assert result["held_domains"] == sorted(row.inventory["required_domains"])
     assert result["counts"]["documents"] == 2
     for model in [
         Document,
@@ -178,17 +178,16 @@ def test_all_bound_adapter_controls_allow_actual_subject_history_finalization(wo
     org, _, _, _ = world
     _, _, principal = seed(world)
     row = begin(org)
-    adapters = {
-        domain: ControlledAdapter(domain)
-        for domain in ["matrix", "objects", "identity_provider", "private_exports"]
-    }
+    adapters = {domain: ControlledAdapter(domain) for domain in row.inventory["required_domains"]}
     result = advance_erasure(row.id, adapters)
     assert result["complete"] and not result["held_domains"]
     row.refresh_from_db()
     principal.refresh_from_db()
     assert row.status == "complete" and row.completed_at is not None
     assert principal.subject == f"erased:{principal.id}"
-    assert ErasureReceipt.objects.filter(erasure=row).count() == 4
+    assert ErasureReceipt.objects.filter(erasure=row).count() == len(
+        row.inventory["required_domains"]
+    )
     assert advance_erasure(row.id, adapters)["complete"]
 
 
@@ -277,9 +276,15 @@ def test_all_privileged_worker_and_trigger_functions_refuse_public_execution_and
 def test_an_existing_optional_extension_store_cannot_be_silently_omitted(world):
     org, _, _, _ = world
     with transaction.atomic(), connection.cursor() as cursor:
-        cursor.execute(
-            "CREATE TABLE public.extensions_installation (id uuid,workspace_id uuid,endpoint text)"
-        )
+        cursor.execute("SELECT to_regclass('public.extensions_installation') IS NOT NULL")
+        if cursor.fetchone()[0]:
+            cursor.execute(
+                "ALTER FUNCTION public.extension_erasure_step(uuid,uuid,timestamptz,text,integer) RENAME TO extension_erasure_step_unavailable_control"
+            )
+        else:
+            cursor.execute(
+                "CREATE TABLE public.extensions_installation (id uuid,workspace_id uuid,endpoint text)"
+            )
         with pytest.raises(ValueError, match="extension erasure integration unavailable"):
             begin(org)
         org.refresh_from_db()
