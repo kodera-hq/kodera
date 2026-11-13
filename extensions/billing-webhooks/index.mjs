@@ -26,7 +26,11 @@ const SLUG_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const TIMESTAMP_DIGITS_PATTERN = /^(0|[1-9]\d{0,15})$/;
 const HEX_SHA256_PATTERN = /^[0-9a-fA-F]{64}$/;
 const SAFE_WORKSPACE_SLUG_PATTERN = /^[a-z][a-z0-9-]{1,47}$/;
-const SAFE_PLAN_TIER_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{1,31}$/;
+// Core offer plan codes, plus the existing reference connector's standard/studio labels.
+// Return only these public constants; provider identifiers and arbitrary nicknames stay private.
+const KNOWN_PLAN_TIERS = Object.freeze([
+  'team', 'business', 'business-plus', 'enterprise', 'standard', 'studio',
+]);
 const SAFE_EVENT_ID_PATTERN = /^[a-zA-Z]{2,8}_[A-Za-z0-9_-]{2,48}$/;
 const SAFE_QUOTA_METRIC_PATTERN = /^[a-z][a-z0-9_.-]{1,47}$/;
 const ISO_CURRENCY_PATTERN = /^[A-Z]{3}$/;
@@ -337,11 +341,10 @@ export function extractRedactedBillingSummary(eventName, envelope) {
     .toLowerCase();
   const workspaceSlug = SAFE_WORKSPACE_SLUG_PATTERN.test(rawWorkspace) ? rawWorkspace : 'unassigned-workspace';
 
-  // 2. Plan tier (strict identifier)
-  const rawPlan = String(
-    metadata.plan_tier ?? metadata.planTier ?? obj.planTier ?? obj.plan?.nickname ?? envelope.planTier ?? 'standard'
-  ).trim();
-  const planTier = SAFE_PLAN_TIER_PATTERN.test(rawPlan) ? rawPlan.toLowerCase() : 'standard';
+  // 2. Closed non-PII plan projection. Identifier-shaped free text can still contain PII.
+  const rawPlan = metadata.plan_tier ?? metadata.planTier ?? obj.planTier ?? obj.plan?.nickname ?? envelope.planTier;
+  const candidatePlan = typeof rawPlan === 'string' ? rawPlan.trim().toLowerCase() : undefined;
+  const planTier = KNOWN_PLAN_TIERS.find((tier) => tier === candidatePlan) ?? 'unknown';
 
   // 3. Synthetic/provider event identifier (strict prefix + alphanumeric, never free text)
   const rawEventId = String(envelope.id ?? obj.id ?? 'evt_synthetic').trim();

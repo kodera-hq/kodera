@@ -9,7 +9,7 @@ Exercised with synthetic fixtures against the SDK in-memory harness only. Nothin
 ## Security & Reliability Guarantees
 
 - **Constant-Time `Sentry-Hook-Signature` & Kodera Signature Verification**: Supports canonical Kodera `x-kodera-signature-256` signatures via `createWebhookHandler` and native `Sentry-Hook-Signature` (`HMAC-SHA256`) constant-time verification via `timingSafeEqual`, paired with bounded replay deduplication.
-- **Sanitized Stacktrace Preview**: Extracts a compact culprit frame (`file:line in fn`), environment, release version, and impacted user count while scrubbing home-directory paths, query strings, markup, and control characters.
+- **Sanitized Stacktrace Preview**: Extracts a compact culprit frame (`file:line in fn`), environment, release version, and impacted user count while scrubbing home-directory prefixes, query strings and fragments with one bounded filename policy across chosen `filename`/`abs_path` frames and no-frame `culprit`/`metadata.filename` fallbacks, plus markup and control characters.
 - **Anti-SSRF Issue URL Validation**: Validates issue links for Sentry and self-hosted GlitchTip origins via `validateEndpointUrl`, rejecting plaintext HTTP, embedded credentials, loopback, link-local, and RFC1918 addresses.
 
 ## Slash Command (`/sentry`)

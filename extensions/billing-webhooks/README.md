@@ -9,6 +9,7 @@ Exercised with synthetic fixtures against the SDK in-memory harness only. Nothin
 ## Security & Privacy Guarantees
 
 - **Strict Allowlist-Only PII Redaction**: Structurally strips and ignores customer billing and shipping addresses, payment card metadata (`number`, `last4`, `cvc`, `exp_month`, `exp_year`, `fingerprint`), IBANs, phone numbers, customer names, and raw email addresses. Only validated `workspaceSlug`, `planTier`, ISO-4217 `currency` + minor-unit amount summary, and `status` / `quotaUsagePercent` are emitted.
+- **Closed Plan Labels**: Plan metadata and provider nicknames project only to Core offer IDs (`team`, `business`, `business-plus`, `enterprise`) and existing reference labels (`standard`, `studio`). Missing, unknown, non-string and provider-specific values become `unknown`; freeform labels are never copied to cards, incidents or returned summaries. These labels do not grant access or establish billing state.
 - **Authorized Ops Channel Isolation**: Refuses to emit billing or quota webhook cards to any channel outside `authorizedOpsChannels`.
 - **Timestamped `t=...,v1=...` HMAC-SHA256 Verification**: Constant-time `timingSafeEqual` comparison across `v1` hex digests over `${timestamp}.${rawBody}` with strict replay skew bounds and duplicate event ID rejection.
 

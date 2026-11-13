@@ -279,3 +279,95 @@ test('supports all 5 lifecycle & quota events, key rotation v1 candidates, repla
   assert.equal(cmdRes.response.result.subcommand, 'status');
   assert.equal(cmdRes.response.result.piiRedacted, true);
 });
+
+
+const PLAN_SOURCES = [
+  ['object metadata snake case', (body, value) => { body.data.object.metadata = { plan_tier: value }; }],
+  ['object metadata camel case', (body, value) => { body.data.object.metadata = { planTier: value }; }],
+  ['object tier', (body, value) => { body.data.object.planTier = value; }],
+  ['provider nickname', (body, value) => { body.data.object.plan = { nickname: value }; }],
+  ['envelope tier', (body, value) => { body.planTier = value; }],
+  ['envelope metadata snake case', (body, value) => { body.metadata = { plan_tier: value }; }],
+  ['envelope metadata camel case', (body, value) => { body.metadata = { planTier: value }; }],
+];
+const PRIVATE_PLAN_VALUES = [
+  ['IBAN', 'FR7630006000011234567890189'],
+  ['PAN', '4242424242424242'],
+  ['PAN with identifier prefix', 'Card4242424242424242'],
+  ['email', 'synthetic.owner@example.invalid'],
+  ['phone', '+33612345678'],
+  ['phone with identifier prefix', 'Phone33612345678'],
+  ['person name', 'SyntheticJaneDoe'],
+  ['provider identifier', 'price_SyntheticProvider123'],
+  ['unknown label', 'private_customer_plan'],
+];
+function planPayload(event) {
+  return { id: 'evt_projection_001', type: event, data: { object: {
+    amount_due: 100, currency: 'EUR', metric: 'workspace_storage_gb', usagePercent: 99,
+  } } };
+}
+for (const event of ['invoice.payment_failed', 'quota.threshold_reached']) {
+  for (const [source, assign] of PLAN_SOURCES) {
+    test(`closed plan projection: ${event} / ${source} never emits private input`, async (t) => {
+      t.mock.method(globalThis, 'fetch', () => { throw new Error('Network forbidden in connector privacy test'); });
+      for (const [kind, value] of PRIVATE_PLAN_VALUES) {
+        const messages = [], incidents = [];
+        const handler = createBillingWebhooksHandler({ secret: FIXTURE_SIGNING_MATERIAL,
+          client: { async postChannelMessage(card) { messages.push(card); return { id: 'synthetic_message' }; },
+            async upsertIncidentCard(card) { incidents.push(card); return { id: 'synthetic_incident' }; } } });
+        const body = planPayload(event);
+        assign(body, value);
+        const rawBody = JSON.stringify(body), now = 1_763_150_000;
+        const response = await handler({ rawBody, nowUnixSeconds: now,
+          headers: { 'stripe-signature': signBillingWebhookPayload(FIXTURE_SIGNING_MATERIAL, now, rawBody) } });
+        assert.equal(messages.length, 1);
+        assert.equal(incidents.length, 1);
+        const previewHandler = createBillingWebhooksHandler({ secret: FIXTURE_SIGNING_MATERIAL });
+        const preview = await previewHandler({ rawBody, nowUnixSeconds: now,
+          headers: { 'stripe-signature': signBillingWebhookPayload(FIXTURE_SIGNING_MATERIAL, now, rawBody) } });
+        assert.equal(preview.result.summary.planTier, 'unknown', kind);
+        assert.equal(preview.result.blocks[0].planTier, 'unknown', kind);
+        assert.equal(response.result.summary.planTier, 'unknown', kind);
+        assert.equal(messages[0].blocks[0].planTier, 'unknown', kind);
+        assert.equal(messages[0].blocks[0].piiRedacted, true);
+        assert.match(messages[0].text, /unknown/);
+        assert.match(incidents[0].summary, /unknown/);
+        assert.ok(!JSON.stringify({ messages, incidents, response, preview }).toLowerCase().includes(value.toLowerCase()), `${kind} leaked through ${source}`);
+        assert.equal(response.result.idempotencyKey, `billing:${event}:unassigned-workspace:evt_projection_001:${event === 'invoice.payment_failed' ? 'payment_failed' : 'critical'}`);
+      }
+    });
+  }
+}
+
+test('known Core and reference plan identifiers remain exact public labels across all sources', async () => {
+  for (const value of ['team', 'business', 'business-plus', 'enterprise', 'standard', 'studio']) {
+    for (const [, assign] of PLAN_SOURCES) {
+      const body = planPayload('invoice.paid');
+      assign(body, ' ' + value.toUpperCase() + ' ');
+      assert.equal(extractRedactedBillingSummary('invoice.paid', body).planTier, value);
+      const handler = createBillingWebhooksHandler({ secret: FIXTURE_SIGNING_MATERIAL });
+      const rawBody = JSON.stringify(body), now = 1_763_150_000;
+      const response = await handler({ rawBody, nowUnixSeconds: now,
+        headers: { 'stripe-signature': signBillingWebhookPayload(FIXTURE_SIGNING_MATERIAL, now, rawBody) } });
+      assert.equal(response.result.summary.planTier, value);
+      assert.equal(response.result.blocks[0].planTier, value);
+      assert.ok(response.result.text.includes(value));
+    }
+  }
+});
+
+test('missing, non-string and higher-priority unknown plans never invent or inherit a tier', () => {
+  for (const value of [undefined, null, 123, ['enterprise'], { nickname: 'enterprise' }]) {
+    const body = planPayload('invoice.paid');
+    body.data.object.planTier = value;
+    assert.equal(extractRedactedBillingSummary('invoice.paid', body).planTier, 'unknown');
+  }
+  const body = planPayload('invoice.paid');
+  body.data.object.metadata = { plan_tier: 'SyntheticJaneDoe', planTier: 'enterprise' };
+  body.planTier = 'team';
+  assert.equal(extractRedactedBillingSummary('invoice.paid', body).planTier, 'unknown');
+  for (const value of PRIVATE_PLAN_VALUES.map(([, value]) => value)) {
+    assert.equal(extractRedactedBillingSummary('invoice.paid', { plan: { nickname: value } }).planTier, 'unknown');
+    assert.equal(extractRedactedBillingSummary('invoice.paid', { planTier: value }).planTier, 'unknown');
+  }
+});

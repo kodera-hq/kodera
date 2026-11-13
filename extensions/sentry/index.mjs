@@ -177,7 +177,23 @@ export function sanitizeSentryText(rawValue, fallback = '', maxLength = 240) {
 }
 
 /**
- * Scrubs local home-directory prefixes and URL query strings from stacktrace filenames
+ * One bounded filename policy for frames and every no-frame fallback. Query and fragment
+ * contents may carry credentials and never enter a culprit preview.
+ * @param {unknown} rawValue
+ * @param {string} fallback
+ * @param {number} maxLength
+ * @returns {string}
+ */
+function scrubSentryFilename(rawValue, fallback, maxLength) {
+  if (typeof rawValue !== 'string') return fallback;
+  const path = rawValue.slice(0, 16_384).split(/[?#]/, 1)[0]
+    .replace(/^\/(?:Users|home)\/[^/]+\//, '')
+    .replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '');
+  return sanitizeSentryText(path, fallback, maxLength);
+}
+
+/**
+ * Scrubs local home-directory prefixes and URL query/fragment contents from stacktrace filenames
  * before rendering a compact culprit frame preview (`src/auth/verify.ts:84 in verifyToken`).
  *
  * @param {Record<string, unknown>} eventOrIssue
@@ -205,13 +221,7 @@ export function formatSentryStackPreview(eventOrIssue) {
   }
 
   if (chosenFrame && typeof chosenFrame === 'object') {
-    let rawFile = String(chosenFrame.filename ?? chosenFrame.abs_path ?? 'unknown');
-    const qIdx = rawFile.indexOf('?');
-    if (qIdx !== -1) rawFile = rawFile.slice(0, qIdx);
-    rawFile = rawFile
-      .replace(/^\/(?:Users|home)\/[^/]+\//, '')
-      .replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '');
-    const safeFile = sanitizeSentryText(rawFile, 'unknown', 100);
+    const safeFile = scrubSentryFilename(chosenFrame.filename ?? chosenFrame.abs_path, 'unknown', 100);
     const lineno = Number.isSafeInteger(chosenFrame.lineno) && chosenFrame.lineno > 0
       ? `:${chosenFrame.lineno}`
       : '';
@@ -219,12 +229,9 @@ export function formatSentryStackPreview(eventOrIssue) {
     return fnName ? `${safeFile}${lineno} in ${fnName}` : `${safeFile}${lineno}`;
   }
 
-  const rawCulprit = String(
-    eventOrIssue?.culprit ?? eventOrIssue?.metadata?.filename ?? 'unattributed-frame'
-  )
-    .replace(/^\/(?:Users|home)\/[^/]+\//, '')
-    .replace(/^[A-Za-z]:\\Users\\[^\\]+\\/, '');
-  return sanitizeSentryText(rawCulprit, 'unattributed-frame', 120);
+  return scrubSentryFilename(
+    eventOrIssue?.culprit ?? eventOrIssue?.metadata?.filename, 'unattributed-frame', 120
+  );
 }
 
 /**

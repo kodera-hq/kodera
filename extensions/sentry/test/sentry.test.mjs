@@ -260,3 +260,58 @@ test('/sentry slash command and stack preview helper validate inputs', () => {
   assert.equal(handleSentryCommand({ args: 'ignore KODERA-WEB-4A' }).subcommand, 'ignore');
   assert.equal(formatSentryStackPreview({ culprit: '/home/alice/app/main.py' }), 'app/main.py');
 });
+
+
+const STACK_FILENAME_SOURCES = [
+  ['chosen frame filename', (path) => ({ exception: { values: [{ stacktrace: { frames: [{ filename: path, lineno: 73, function: 'handleIncident', in_app: true }] } }] } })],
+  ['chosen frame absolute path', (path) => ({ exception: { values: [{ stacktrace: { frames: [{ abs_path: path, lineno: 73, function: 'handleIncident', in_app: true }] } }] } })],
+  ['no-frame culprit', (path) => ({ culprit: path })],
+  ['no-frame metadata filename', (path) => ({ metadata: { filename: path } })],
+];
+const PRIVATE_FILENAME_SUFFIXES = [
+  ['query credential', '?token=SyntheticQueryCredentialABC123#private-fragment', 'SyntheticQueryCredentialABC123'],
+  ['fragment credential', '#access_token=SyntheticFragmentCredentialABC123', 'SyntheticFragmentCredentialABC123'],
+  ['fragment before query', '#token=SyntheticFragmentFirstABC123?key=private', 'SyntheticFragmentFirstABC123'],
+];
+for (const [source, fields] of STACK_FILENAME_SOURCES) {
+  test(`Sentry filename projection: ${source} strips query and fragment in full signed handler output`, async (t) => {
+    t.mock.method(globalThis, 'fetch', () => { throw new Error('Network forbidden in connector privacy test'); });
+    for (const [kind, suffix, marker] of PRIVATE_FILENAME_SUFFIXES) {
+      const calls = [];
+      const filename = '/home/synthetic/project/src/client.ts' + suffix;
+      const issue = { id: '123', title: 'Synthetic issue', web_url: 'https://sentry.io/issues/123', ...fields(filename) };
+      const handler = createSentryWebhookHandler({ secret: SECRET, client: {
+        async postIncidentCard(card) { calls.push(card); return { id: 'synthetic_incident' }; },
+      } });
+      const preview = createSentryWebhookHandler({ secret: SECRET });
+      const rawBody = JSON.stringify({ action: 'created', data: { issue } });
+      const request = { rawBody, nowUnixSeconds: 1_000_000, headers: {
+        'sentry-hook-resource': 'issue', 'request-id': 'synthetic_projection',
+        'sentry-hook-signature': signSentryWebhookPayload(SECRET, rawBody),
+      } };
+      const response = await handler(request), local = await preview(request);
+      assert.equal(calls.length, 1);
+      assert.ok(response.result.culpritFrame.startsWith('project/src/client.ts'));
+      assert.ok(calls[0].summary.includes('project/src/client.ts'));
+      assert.equal(response.result.idempotencyKey, 'sentry:issue:123:created');
+      const serialized = JSON.stringify({ calls, response, local });
+      assert.ok(!serialized.includes(marker), `${kind} leaked through ${source}`);
+      assert.ok(!serialized.includes('?token=') && !serialized.includes('#access_token=') && !serialized.includes('#token='));
+      assert.ok(!serialized.includes('/home/synthetic/'));
+    }
+  });
+}
+
+test('Sentry filename projection preserves legitimate relative, URL and Windows paths', () => {
+  for (const [path, expected] of [
+    ['src/auth/verify.ts', 'src/auth/verify.ts'],
+    ['https://assets.example.invalid/app/client.js', 'https://assets.example.invalid/app/client.js'],
+    ['C:\\Users\\synthetic\\project\\src\\client.ts', 'project\\src\\client.ts'],
+  ]) {
+    for (const [, fields] of STACK_FILENAME_SOURCES) {
+      const preview = formatSentryStackPreview(fields(path));
+      assert.ok(preview.startsWith(expected));
+    }
+  }
+  assert.equal(formatSentryStackPreview({}), 'unattributed-frame');
+});
