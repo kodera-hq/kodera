@@ -37,7 +37,8 @@ import { onboardingCopy } from '../onboarding/onboardingMessages'
 // not repeated.
 
 import { useParams, useRouter } from '@tanstack/react-router'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import type { WorkspacePageRecord } from '../docs/WorkspaceCollaborativeDocs'
 import {
   createDemoWorkspaceStore,
   isDemoActive,
@@ -282,12 +283,15 @@ function ReadyWorkspace({
   )
 }
 
+const LazyWorkspaceCollaborativeDocs = lazy(() => import('../docs/WorkspaceCollaborativeDocs'))
+
 const demoWorkspaceViews = new WeakMap<
   EspaceStoreLike,
   { channels: Record<string, WorkspaceChannel[]>; docs: ChannelDocsWorkspace }
 >()
 
 interface LiveWorkspaceProps {
+  organisationId: string
   org: string
   organisationName: string
   workspace: Workspace
@@ -305,6 +309,7 @@ interface LiveWorkspaceProps {
  * runs the same sign-in as « Ouvrir les messages ».
  */
 function LiveWorkspace({
+  organisationId,
   org,
   organisationName,
   workspace,
@@ -314,7 +319,7 @@ function LiveWorkspace({
   actions,
   serverSlug,
 }: LiveWorkspaceProps) {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation()
   const communityCopy = developerDocsCopy(i18n.resolvedLanguage)
   const [localChannels, setLocalChannels] = useState<Record<string, WorkspaceChannel[]>>(() =>
     store
@@ -356,6 +361,8 @@ function LiveWorkspace({
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [canvas, setCanvas] = useState<'chat' | 'docs'>('chat')
   const [docsView, setDocsView] = useState<DocsWorkspaceView>('team')
+  const [workspacePages, setWorkspacePages] = useState<readonly WorkspacePageRecord[]>([])
+  const [activeWorkspacePageId, setActiveWorkspacePageId] = useState<string | undefined>(undefined)
   const channel = channelId
     ? liveWorkspace.categories
         .flatMap((category) => category.channels)
@@ -398,9 +405,27 @@ function LiveWorkspace({
         channelId={channelId}
         {...(session ? { session } : {})}
         {...(store ? { store } : {})}
-        focusedDocs={canvas === 'docs' && docsView === 'developer'}
-        documents={docsWorkspace.docs}
+        focusedDocs={canvas === 'docs' && (docsView === 'developer' || docsView === 'pages')}
+        documents={[
+          ...docsWorkspace.docs,
+          ...workspacePages.map(
+            (page): ChannelDoc => ({
+              id: `workspace-page:${page.id}`,
+              channelId: channel?.id ?? '',
+              title: page.title,
+              content: page.markdown,
+              parentId: page.parentId,
+              role: page.role,
+            })
+          ),
+        ]}
         onOpenDocument={(doc: ChannelDoc) => {
+          if (doc.id.startsWith('workspace-page:')) {
+            setActiveWorkspacePageId(doc.id.slice('workspace-page:'.length))
+            setDocsView('pages')
+            setCanvas('docs')
+            return
+          }
           setDocsWorkspace((prev) => ({
             ...prev,
             selectedByChannel: { ...prev.selectedByChannel, [doc.channelId]: doc.id },
@@ -417,6 +442,26 @@ function LiveWorkspace({
           channel ? (
             <DocsWorkspacePanel
               key={channel.id}
+              workspacePagesSlot={
+                <Suspense
+                  fallback={
+                    <p className="p-4 text-sm text-c-ink-2">
+                      {t('console.docs.collab.editor-loading')}
+                    </p>
+                  }
+                >
+                  <LazyWorkspaceCollaborativeDocs
+                    {...(store ? { localDocuments: workspacePages, onLocalDocumentsChange: setWorkspacePages } : { organisationId })}
+                    currentUser={{
+                      id: userId || 'member',
+                      name: userId || 'Member',
+                    }}
+                    activeDocumentId={activeWorkspacePageId}
+                    onActiveDocumentChange={setActiveWorkspacePageId}
+                    onDocumentsLoaded={setWorkspacePages}
+                  />
+                </Suspense>
+              }
               teamPadsSlot={
                 store ? (
                   <ChannelDocsEditor
@@ -424,6 +469,13 @@ function LiveWorkspace({
                     channelName={channel.name}
                     workspace={docsWorkspace}
                     onWorkspaceChange={setDocsWorkspace}
+                    onNavigateDocument={(targetDoc) => {
+                      setDocsView('team')
+                      setCanvas('docs')
+                      if (targetDoc.channelId !== channel.id) {
+                        void navigation.onNavigateChannel(targetDoc.channelId)
+                      }
+                    }}
                     author={{
                       userId,
                       name:
@@ -667,6 +719,7 @@ export function WorkspaceScreen() {
           isDemoActive(org) && serverSlug !== undefined && !preparing ? (
             <DemoWorkspace
               key={`${org}:${serverSlug}`}
+              organisationId={organisationId}
               org={org}
               organisationName={organisationName}
               workspace={view.workspace}
@@ -679,6 +732,7 @@ export function WorkspaceScreen() {
               // One organisation's workspace: its drafts, its chosen channel and its sign-in state
               // are never carried into another's.
               key={live.serverSlug}
+              organisationId={organisationId}
               org={org}
               organisationName={organisationName}
               workspace={view.workspace}

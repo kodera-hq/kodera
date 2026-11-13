@@ -19,6 +19,10 @@ import {
 } from '../demo/localWorkspaces'
 import * as community from '../demo/community'
 import { MESSAGING_DEMO_ROUTES, messagingDemoHandlers } from '../demo/messagingMedia'
+import {
+  WORKSPACE_DOCS_DEMO_ROUTES,
+  workspaceDocumentsDemoHandlers,
+} from '../demo/workspaceDocuments'
 // The walkable demo (docs/dev/DEMO.md): one scenario overlay that answers
 // EVERY route the built areas call, from the one seed in `src/mocks/demo/seed.ts`.
 //
@@ -151,6 +155,7 @@ export const DEMO_ROUTES: readonly string[] = [
   'GET /organisations/:organisation_id/workspace',
   'POST /organisations/:organisation_id/workspace/actions/initialise',
   ...MESSAGING_DEMO_ROUTES,
+  ...WORKSPACE_DOCS_DEMO_ROUTES,
 ]
 
 /** The invoice whose id the console asked for, or the current month's — the
@@ -719,4 +724,5 @@ export const handlers: HttpHandler[] = [
           ],
   }),
   ...messagingDemoHandlers(BASE, headers),
+  ...workspaceDocumentsDemoHandlers(BASE, headers),
 ]

@@ -25,10 +25,12 @@ export function UniversalSearch({
   documents = [],
   actions: quickActions = [],
   directMessages = [],
+  members = [],
 }: ChannelSearchProps & {
   actions?: readonly PaletteTarget[]
   documents?: readonly PaletteTarget[]
   directMessages?: readonly PaletteTarget[]
+  members?: readonly PaletteTarget[]
 }) {
   const surface = useRef<HTMLDivElement>(null)
   const { i18n } = useTranslation()
@@ -48,6 +50,10 @@ export function UniversalSearch({
     )
   for (const action of quickActions)
     add(`action:${action.id}`, action.label, copy.actions, () => requestAnimationFrame(action.open))
+  for (const person of members)
+    add(`member:${person.id}`, person.label, copy.actions, () =>
+      requestAnimationFrame(person.open)
+    )
   for (const doc of documents) add(`doc:${doc.id}`, doc.label, copy.docs, doc.open)
   for (const dm of directMessages) add(`dm:${dm.id}`, dm.label, copy.direct, dm.open)
   for (const section of [

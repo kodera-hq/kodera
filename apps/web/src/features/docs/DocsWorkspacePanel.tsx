@@ -20,12 +20,13 @@ import {
   validateExternalDocsUrl,
 } from './url'
 
-export type DocsWorkspaceView = 'team' | 'developer'
+export type DocsWorkspaceView = 'team' | 'pages' | 'developer'
 
 export interface DocsWorkspacePanelProps {
   readonly view?: DocsWorkspaceView | undefined
   readonly onViewChange?: ((view: DocsWorkspaceView) => void) | undefined
   readonly teamPadsSlot?: ReactNode
+  readonly workspacePagesSlot?: ReactNode
   readonly onOpenSupportChannel?: ((id: CommunityChannelId) => void) | undefined
   readonly draftContent?: string | undefined
   readonly onDraftContentChange?: ((content: string) => void) | undefined
@@ -44,6 +45,7 @@ export function DocsWorkspacePanel({
   view,
   onViewChange,
   teamPadsSlot,
+  workspacePagesSlot,
   onOpenSupportChannel,
   draftContent,
   onDraftContentChange,
@@ -182,7 +184,10 @@ export function DocsWorkspacePanel({
         aria-label={copy.views}
         className="flex flex-wrap gap-2 border-b border-c-border-soft pb-2"
       >
-        {(['team', 'developer'] as const).map((next) => (
+        {(workspacePagesSlot !== undefined
+          ? (['team', 'pages', 'developer'] as const)
+          : (['team', 'developer'] as const)
+        ).map((next) => (
           <button
             key={next}
             type="button"
@@ -200,13 +205,19 @@ export function DocsWorkspacePanel({
             }}
           >
             <span className="text-left text-sm whitespace-normal">
-              {next === 'team' ? copy.team : copy.developer}
+              {next === 'team'
+                ? copy.team
+                : next === 'pages'
+                  ? t('console.docs.collab.tree-title')
+                  : copy.developer}
             </span>
           </button>
         ))}
       </div>
       {selectedView === 'developer' ? (
         <DeveloperDocsHub onOpenSupportChannel={onOpenSupportChannel} />
+      ) : selectedView === 'pages' && workspacePagesSlot !== undefined ? (
+        workspacePagesSlot
       ) : (
         (teamPadsSlot ?? (
           <Card>
