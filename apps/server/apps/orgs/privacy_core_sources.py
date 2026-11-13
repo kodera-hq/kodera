@@ -8,12 +8,12 @@ from typing import Protocol
 from uuid import UUID
 
 from django.core.serializers.json import DjangoJSONEncoder
-from django.db import connection, transaction
+from django.db import transaction
 
-from apps.billing.models import CreditNote, Invoice, Order
-from apps.docs.models import Collection, CollectionRow, Document, DocumentSnapshot, DocumentUpdate
-from apps.identity.models import Identity, User
-from apps.workspaces.models import Workspace
+from apps.billing import privacy_selectors as billing_privacy
+from apps.docs import privacy_selectors as docs_privacy
+from apps.identity import privacy_selectors as identity_privacy
+from apps.workspaces import privacy_selectors as workspace_privacy
 
 from .models import Membership
 from .privacy_archives import (
@@ -30,18 +30,6 @@ from .privacy_services import CurrentAuthority
 from .privacy_sources import CapturedEntry, FrozenSource
 from .privacy_storage import PrivateVolume
 
-IDENTITY_FIELDS = (
-    "id",
-    "user_id",
-    "organisation_id",
-    "issuer",
-    "realm",
-    "subject",
-    "email",
-    "enabled",
-    "created_at",
-    "deleted_at",
-)
 MEMBER_FIELDS = (
     "id",
     "user_id",
@@ -51,42 +39,6 @@ MEMBER_FIELDS = (
     "accepted_at",
     "created_at",
     "deleted_at",
-)
-ORDER_FIELDS = (
-    "id",
-    "organisation_id",
-    "state",
-    "placed_by",
-    "created_at",
-    "billing_contact_email",
-    "billing_contact_name",
-    "purchase_order_ref",
-)
-INVOICE_FIELDS = (
-    "id",
-    "organisation_id",
-    "number",
-    "state",
-    "currency",
-    "issued_at",
-    "due_at",
-    "paid_at",
-    "total_excl_vat_minor",
-    "vat_amount_minor",
-    "total_incl_vat_minor",
-    "amount_paid_minor",
-)
-CREDIT_FIELDS = (
-    "id",
-    "organisation_id",
-    "invoice_id",
-    "number",
-    "issued_at",
-    "reason",
-    "currency",
-    "total_excl_vat_minor",
-    "vat_amount_minor",
-    "total_incl_vat_minor",
 )
 CORE_RESOURCE_KINDS = frozenset(
     {"user", "identity", "membership", "document", "collection", "order", "invoice", "credit_note"}
@@ -171,10 +123,6 @@ class CoreSources:
         return supplement.permitted(request, resource)
 
     @staticmethod
-    def _identities(request: Request):
-        return Identity.objects.filter(user_id=request.user_id, organisation__isnull=False)
-
-    @staticmethod
     def _members(request: Request):
         rows = Membership.objects.all()
         return (
@@ -184,38 +132,52 @@ class CoreSources:
         )
 
     @staticmethod
-    def _workspace_ids(request: Request):
-        rows = Workspace.objects.all()
-        if request.scope == "workspace":
-            return rows.filter(organisation_id=_organisation(request)).values_list("id", flat=True)
-        organisations = Membership.objects.filter(
-            user_id=request.user_id,
-            state="active",
-            accepted_at__isnull=False,
-            deleted_at__isnull=True,
-        ).values_list("organisation_id", flat=True)
-        return rows.filter(organisation_id__in=organisations).values_list("id", flat=True)
+    def _workspace_ids(request: Request) -> tuple[UUID, ...]:
+        organisations = (
+            (_organisation(request),)
+            if request.scope == "workspace"
+            else tuple(
+                Membership.objects.filter(
+                    user_id=request.user_id,
+                    state="active",
+                    accepted_at__isnull=False,
+                    deleted_at__isnull=True,
+                ).values_list("organisation_id", flat=True)[: MAX_ENTRIES + 1]
+            )
+        )
+        require(len(organisations) <= MAX_ENTRIES, "Core export organisation binding bound")
+        try:
+            return workspace_privacy.export_workspace_ids(
+                organisation_ids=organisations, max_entries=MAX_ENTRIES
+            )
+        except workspace_privacy.PrivacyWorkspaceRefusalError as error:
+            raise ArchiveRefusalError(str(error)) from None
+
+    @staticmethod
+    def _identity_ids(request: Request) -> tuple[UUID, ...]:
+        try:
+            return identity_privacy.export_identity_ids(
+                user_id=request.user_id, max_entries=MAX_ENTRIES
+            )
+        except identity_privacy.PrivacyIdentityRefusalError as error:
+            raise ArchiveRefusalError(str(error)) from None
 
     @staticmethod
     def _document_allowed(request: Request, identifier: UUID) -> bool:
-        row = (
-            Document.objects.filter(id=identifier, deleted_at__isnull=True)
-            .values("workspace__organisation_id", "creator__user_id")
-            .first()
-        )
+        row = docs_privacy.document_disclosure_context(identifier=identifier)
         if row is None:
             return False
-        org = row["workspace__organisation_id"]
+        org, creator_user = row
         if (
             request.scope == "workspace"
             and str(org) != request.organisation_id
             or request.scope == "account"
-            and str(row["creator__user_id"]) != request.user_id
+            and str(creator_user) != request.user_id
         ):
             return False
-        identity = Identity.objects.filter(
-            user_id=request.user_id, organisation_id=org, enabled=True, deleted_at__isnull=True
-        ).first()
+        identity = identity_privacy.disclosure_identity(
+            user_id=request.user_id, organisation_id=org
+        )
         member = Membership.objects.filter(
             user_id=request.user_id,
             organisation_id=org,
@@ -225,12 +187,15 @@ class CoreSources:
         ).first()
         if identity is None or member is None:
             return False
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT docs_document_role(%s,%s,%s,%s,%s,%s)",
-                [identifier, org, member.id, identity.id, identity.issuer, identity.subject],
-            )
-            return cursor.fetchone()[0] in {"editor", "viewer"}
+        identity_id, issuer, subject = identity
+        return docs_privacy.document_role_permitted(
+            identifier=identifier,
+            organisation_id=org,
+            membership_id=member.id,
+            identity_id=identity_id,
+            issuer=issuer,
+            subject=subject,
+        )
 
     @transaction.atomic
     def permitted(self, request: Request, resource: str) -> bool:
@@ -244,41 +209,32 @@ class CoreSources:
         if kind == "user":
             return str(identifier) == request.user_id
         if kind == "identity":
-            identity_rows = Identity.objects.filter(id=identifier, organisation__isnull=False)
-            return (
-                identity_rows.filter(organisation_id=_organisation(request)).exists()
-                if request.scope == "workspace"
-                else identity_rows.filter(user_id=request.user_id).exists()
+            return identity_privacy.identity_export_permitted(
+                identifier=identifier,
+                scope=request.scope,
+                user_id=request.user_id,
+                organisation_id=_organisation(request) if request.scope == "workspace" else None,
             )
         if kind == "membership":
             return self._members(request).filter(id=identifier).exists()
         if kind == "document":
             return self._document_allowed(request, identifier)
         if kind == "collection":
-            collection_rows = Collection.objects.filter(
-                id=identifier,
-                deleted_at__isnull=True,
-                workspace_id__in=self._workspace_ids(request),
+            return docs_privacy.collection_export_permitted(
+                identifier=identifier,
+                scope=request.scope,
+                user_id=request.user_id,
+                workspace_ids=self._workspace_ids(request),
             )
-            if request.scope == "account":
-                collection_rows = collection_rows.filter(creator__user_id=request.user_id)
-            return collection_rows.exists()
-        if kind == "order":
-            order_rows = Order.objects.filter(id=identifier)
-            return (
-                order_rows.filter(organisation_id=_organisation(request)).exists()
-                if request.scope == "workspace"
-                else order_rows.filter(
-                    placed_by__in=self._identities(request).values_list("id", flat=True)
-                ).exists()
-            )
-        if kind in {"invoice", "credit_note"}:
-            model = Invoice if kind == "invoice" else CreditNote
-            return (
-                request.scope == "workspace"
-                and model.objects.filter(
-                    id=identifier, organisation_id=_organisation(request)
-                ).exists()
+        if kind in {"order", "invoice", "credit_note"}:
+            return billing_privacy.export_record_permitted(
+                kind=kind,
+                identifier=identifier,
+                scope=request.scope,
+                organisation_id=_organisation(request) if request.scope == "workspace" else None,
+                identity_ids=self._identity_ids(request)
+                if request.scope == "account" and kind == "order"
+                else (),
             )
         return False
 
@@ -300,142 +256,57 @@ class CoreSources:
 
         if section == "identity":
             if request.scope == "account":
-                person = User.objects.values(
-                    "id", "email", "display_name", "enabled", "created_at", "deleted_at"
-                ).get(id=request.user_id)
+                person = identity_privacy.export_user(user_id=request.user_id)
                 append(_item(section, "user", UUID(request.user_id), person))
-                rows = self._identities(request)
-            else:
-                rows = Identity.objects.filter(organisation_id=_organisation(request))
-            for row in rows.order_by("id").values(*IDENTITY_FIELDS).iterator():
+            for row in identity_privacy.export_identities(
+                scope=request.scope,
+                user_id=request.user_id,
+                organisation_id=_organisation(request) if request.scope == "workspace" else None,
+            ):
                 append(_item(section, "identity", row["id"], row))
         elif section == "memberships":
             for row in self._members(request).order_by("id").values(*MEMBER_FIELDS).iterator():
                 append(_item(section, "membership", row["id"], row))
-        elif section == "documents":
-            rows = Document.objects.filter(
-                workspace_id__in=self._workspace_ids(request), deleted_at__isnull=True
+        elif section in {"documents", "collections"}:
+            workspace_ids = self._workspace_ids(request)
+            allowed = partial(self._document_allowed, request)
+            parts = (
+                docs_privacy.document_export_parts(
+                    scope=request.scope,
+                    user_id=request.user_id,
+                    workspace_ids=workspace_ids,
+                    permitted=allowed,
+                    max_journal_entries=MAX_ENTRIES,
+                )
+                if section == "documents"
+                else docs_privacy.collection_export_parts(
+                    scope=request.scope,
+                    user_id=request.user_id,
+                    workspace_ids=workspace_ids,
+                    permitted=allowed,
+                )
             )
-            if request.scope == "account":
-                rows = rows.filter(creator__user_id=request.user_id)
-            for document in rows.order_by("id").iterator():
-                if not self._document_allowed(request, document.id):
-                    continue
-                snapshot = (
-                    DocumentSnapshot.objects.select_for_update().filter(document=document).first()
-                )
-                if snapshot is None:
-                    raise ArchiveRefusalError("native document snapshot absent")
-                require(
-                    0 <= snapshot.head_sequence - snapshot.sequence <= MAX_ENTRIES,
-                    "native document journal incomplete",
-                )
-                append(
-                    _item(
-                        section,
-                        "document",
-                        document.id,
-                        {
-                            "id": document.id,
-                            "title": document.title,
-                            "parentId": document.parent_id,
-                            "revision": document.revision,
-                            "markdownProjection": document.markdown,
-                            "snapshotSequence": snapshot.sequence,
-                            "headSequence": snapshot.head_sequence,
-                            "format": "yjs-v1",
-                        },
-                    )
-                )
-                resource = f"document:{document.id}"
-                prefix = f"documents/native/{document.id}"
-                append(
-                    CapturedEntry(resource, Entry(prefix + "/snapshot.bin", bytes(snapshot.state)))
-                )
-                expected = snapshot.sequence + 1
-                for update in (
-                    DocumentUpdate.objects.filter(
-                        document=document,
-                        sequence__gt=snapshot.sequence,
-                        sequence__lte=snapshot.head_sequence,
-                    )
-                    .order_by("sequence")
-                    .iterator(chunk_size=1)
-                ):
-                    require(update.sequence == expected, "native document journal incomplete")
-                    expected += 1
-                    append(
-                        CapturedEntry(
-                            resource,
-                            Entry(prefix + f"/update_{update.sequence}.bin", bytes(update.state)),
-                        )
-                    )
-                require(
-                    expected == snapshot.head_sequence + 1, "native document journal incomplete"
-                )
-        elif section == "collections":
-            rows = Collection.objects.filter(
-                workspace_id__in=self._workspace_ids(request), deleted_at__isnull=True
-            )
-            if request.scope == "account":
-                rows = rows.filter(creator__user_id=request.user_id)
-            for row in rows.order_by("id").iterator():
-                append(
-                    _item(
-                        section,
-                        "collection",
-                        row.id,
-                        {
-                            "id": row.id,
-                            "title": row.title,
-                            "properties": row.properties,
-                            "views": row.views,
-                            "revision": row.revision,
-                        },
-                    )
-                )
-                for member in (
-                    CollectionRow.objects.filter(collection=row).order_by("id").iterator()
-                ):
-                    if self._document_allowed(request, member.document_id):
-                        # Both collection and document authority are necessary for the row.
+            try:
+                for part in parts:
+                    if part.relative_path is None:
+                        append(_item(section, part.kind, part.identifier, part.value))
+                    else:
+                        content = part.value if isinstance(part.value, bytes) else _json(part.value)
                         append(
                             CapturedEntry(
-                                f"document:{member.document_id}",
-                                Entry(
-                                    f"collections/rows/{row.id}/{member.document_id}.json",
-                                    _json(
-                                        {
-                                            "collectionId": row.id,
-                                            "documentId": member.document_id,
-                                            "values": member.values,
-                                        }
-                                    ),
-                                ),
+                                f"{part.kind}:{part.identifier}",
+                                Entry(f"{section}/{part.relative_path}", content),
                             )
                         )
+            except docs_privacy.PrivacySourceRefusalError as error:
+                raise ArchiveRefusalError(str(error)) from None
         elif section == "billing":
-            orders = (
-                Order.objects.filter(organisation_id=_organisation(request))
-                if request.scope == "workspace"
-                else Order.objects.filter(
-                    placed_by__in=self._identities(request).values_list("id", flat=True)
-                )
-            )
-            for row in orders.order_by("id").values(*ORDER_FIELDS).iterator():
-                append(_item(section, "order", row["id"], row))
-            if request.scope == "workspace":
-                for kind, model, fields in (
-                    ("invoice", Invoice, INVOICE_FIELDS),
-                    ("credit_note", CreditNote, CREDIT_FIELDS),
-                ):
-                    for row in (
-                        model.objects.filter(organisation_id=_organisation(request))
-                        .order_by("id")
-                        .values(*fields)
-                        .iterator()
-                    ):
-                        append(_item(section, kind, row["id"], row))
+            for kind, row in billing_privacy.export_records(
+                scope=request.scope,
+                organisation_id=_organisation(request) if request.scope == "workspace" else None,
+                identity_ids=self._identity_ids(request) if request.scope == "account" else (),
+            ):
+                append(_item(section, kind, row["id"], row))
         else:
             raise ArchiveRefusalError("Core source unavailable")
         return tuple(entries)
