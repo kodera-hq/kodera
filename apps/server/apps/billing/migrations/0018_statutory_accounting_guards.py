@@ -204,7 +204,14 @@ BEGIN
 END $$;
 CREATE TRIGGER statutory_immutable BEFORE INSERT OR UPDATE OR DELETE ON billing_statutoryrecord
  FOR EACH ROW EXECUTE FUNCTION billing_statutory_guard();
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_invoice_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION billing_invoice_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  mutable text[] := ARRAY['state', 'paid_at', 'amount_paid_minor', 'updated_at',
+                          'external_ref', 'pdf_ref'];
+  line_count bigint;
+  net bigint;
+  vat bigint;
+BEGIN
  IF TG_OP='UPDATE' AND public.retention_context('qualify',TG_TABLE_NAME,NEW.id) IS NOT NULL
  AND (to_jsonb(NEW)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
@@ -212,9 +219,65 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_inv
 
  IF TG_OP='DELETE' AND OLD.purge_after IS NOT NULL AND OLD.purge_after<clock_timestamp()
  AND public.retention_context('purge',TG_TABLE_NAME,OLD.id) IS NOT NULL THEN RETURN OLD; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.state <> 'draft' OR NEW.number IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+        MESSAGE='An invoice is created as a draft';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.state <> 'draft' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_immutable',
+        MESSAGE='An issued invoice is never deleted';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.state = 'draft' THEN
+    IF NEW.state = 'draft' THEN
+      RETURN NEW;
+    END IF;
+    IF NEW.state <> 'issued' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+        MESSAGE='A draft invoice is only issued';
+    END IF;
+    SELECT count(*), coalesce(sum(total_excl_vat_minor), 0), coalesce(sum(vat_amount_minor), 0)
+      INTO line_count, net, vat FROM billing_invoiceline WHERE invoice_id = NEW.id;
+    IF line_count = 0 OR net <> NEW.total_excl_vat_minor OR vat <> NEW.vat_amount_minor
+       OR NEW.number !~ '^[A-Z]{2,8}(-[A-Z]{2,8})?-[0-9]{4}-[0-9]{5}$'
+       OR NEW.amount_paid_minor <> 0 THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_issue',
+        MESSAGE='An invoice is issued with its lines, their totals and a series number';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF (to_jsonb(OLD) - mutable) IS DISTINCT FROM (to_jsonb(NEW) - mutable)
+     OR (OLD.external_ref IS NOT NULL AND NEW.external_ref IS DISTINCT FROM OLD.external_ref)
+     OR (OLD.pdf_ref IS NOT NULL AND NEW.pdf_ref IS DISTINCT FROM OLD.pdf_ref) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_immutable',
+      MESSAGE='An issued invoice never changes';
+  END IF;
+  IF NEW.state IS DISTINCT FROM OLD.state AND (OLD.state || '>' || NEW.state) NOT IN (
+       'issued>paid', 'issued>overdue', 'issued>credited',
+       'overdue>paid', 'overdue>credited',
+       'paid>issued', 'paid>overdue') THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+      MESSAGE='Not an invoice state transition';
+  END IF;
+  -- Credited only by the credit note that credits it, written first in the same transaction.
+  IF NEW.state = 'credited' AND OLD.state <> 'credited' AND NOT EXISTS (
+       SELECT 1 FROM billing_creditnote WHERE invoice_id = NEW.id) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+      MESSAGE='An invoice is credited by its credit note';
+  END IF;
+  RETURN NEW;
+END $$;
 ALTER FUNCTION billing_invoice_guard() SECURITY DEFINER; ALTER FUNCTION billing_invoice_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION billing_invoice_guard() FROM PUBLIC;
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_invoiceline_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION billing_invoiceline_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  parent_state text;
+BEGIN
  IF TG_OP='UPDATE' AND public.retention_context('qualify',TG_TABLE_NAME,NEW.id) IS NOT NULL
  AND (to_jsonb(NEW)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
@@ -226,9 +289,31 @@ IF TG_OP='UPDATE' AND public.retention_context('clock','billing_invoice',NEW.inv
  AND (to_jsonb(NEW)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
  THEN RETURN NEW; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    SELECT state INTO parent_state FROM billing_invoice WHERE id = OLD.invoice_id FOR SHARE;
+    IF parent_state <> 'draft' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoiceline_immutable',
+        MESSAGE='A line of an issued invoice never changes';
+    END IF;
+  END IF;
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    SELECT state INTO parent_state FROM billing_invoice WHERE id = NEW.invoice_id FOR SHARE;
+    IF parent_state <> 'draft' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoiceline_immutable',
+        MESSAGE='A line of an issued invoice never changes';
+    END IF;
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END $$;
 ALTER FUNCTION billing_invoiceline_guard() SECURITY DEFINER; ALTER FUNCTION billing_invoiceline_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION billing_invoiceline_guard() FROM PUBLIC;
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_creditnote_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION billing_creditnote_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  settable text[] := ARRAY['pdf_ref', 'external_ref', 'notice_delivery_id', 'updated_at'];
+BEGIN
  IF TG_OP='UPDATE' AND public.retention_context('qualify',TG_TABLE_NAME,NEW.id) IS NOT NULL
  AND (to_jsonb(NEW)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
@@ -236,9 +321,30 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_cre
 
  IF TG_OP='DELETE' AND OLD.purge_after IS NOT NULL AND OLD.purge_after<clock_timestamp()
  AND public.retention_context('purge',TG_TABLE_NAME,OLD.id) IS NOT NULL THEN RETURN OLD; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  IF TG_OP = 'INSERT' THEN
+    -- Dated in the transaction that issues it: never written afterwards with an older date.
+    IF NEW.issued_at < now() THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+        MESSAGE='A credit note is written in the transaction that issues it';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'DELETE'
+     OR (to_jsonb(OLD) - settable) IS DISTINCT FROM (to_jsonb(NEW) - settable)
+     OR (OLD.pdf_ref IS NOT NULL AND NEW.pdf_ref IS DISTINCT FROM OLD.pdf_ref)
+     OR (OLD.external_ref IS NOT NULL AND NEW.external_ref IS DISTINCT FROM OLD.external_ref) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+      MESSAGE='A credit note never changes';
+  END IF;
+  RETURN NEW;
+END $$;
 ALTER FUNCTION billing_creditnote_guard() SECURITY DEFINER; ALTER FUNCTION billing_creditnote_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION billing_creditnote_guard() FROM PUBLIC;
-DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_creditnoteline_guard()'::regprocedure) INTO definition; definition:=regexp_replace(definition,'BEGIN',$body$BEGIN
+CREATE OR REPLACE FUNCTION billing_creditnoteline_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  note_issued timestamptz;
+  note_invoice uuid;
+BEGIN
  IF TG_OP='UPDATE' AND public.retention_context('qualify',TG_TABLE_NAME,NEW.id) IS NOT NULL
  AND (to_jsonb(NEW)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['accounting_event_at','financial_year_closed_at','purge_after','retention_authority_ref','document_number_snapshot'])
@@ -246,7 +352,24 @@ DO $patch$ DECLARE definition text; BEGIN SELECT pg_get_functiondef('billing_cre
 
  IF TG_OP='DELETE' AND OLD.purge_after IS NOT NULL AND OLD.purge_after<clock_timestamp()
  AND public.retention_context('purge',TG_TABLE_NAME,OLD.id) IS NOT NULL THEN RETURN OLD; END IF;
-$body$); EXECUTE definition; END $patch$;
+
+  IF TG_OP <> 'INSERT' THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+      MESSAGE='A line of a credit note never changes';
+  END IF;
+  SELECT issued_at, invoice_id INTO note_issued, note_invoice
+    FROM billing_creditnote WHERE id = NEW.credit_note_id;
+  IF note_issued < now() THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+      MESSAGE='A line is written with its credit note, never afterwards';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM billing_invoiceline
+                 WHERE id = NEW.invoice_line_id AND invoice_id = note_invoice) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_complete',
+      MESSAGE='A credit note line credits a line of the note''s invoice';
+  END IF;
+  RETURN NEW;
+END $$;
 ALTER FUNCTION billing_creditnoteline_guard() SECURITY DEFINER; ALTER FUNCTION billing_creditnoteline_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION billing_creditnoteline_guard() FROM PUBLIC;
 
 CREATE FUNCTION billing_payment_retention_delete() RETURNS trigger LANGUAGE plpgsql
