@@ -43,10 +43,17 @@ const helloManifest = 'extensions/hello-webhook/kodera-extension.json';
 const edit = (path, change) => change(JSON.parse(files.get(path)));
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
-test('catalogue: generated from the 11 manifests, with nothing to refuse', () => {
+const discoveredExtensionSlugs = new Set(
+  [...files.keys()]
+    .map((path) => /^extensions\/([^/]+)\/.+$/u.exec(path)?.[1])
+    .filter(Boolean),
+);
+
+test('catalogue: generated from every extension manifest, with nothing to refuse', () => {
   assert.deepEqual(problemsIn(files), []);
   assert.equal(files.get(CATALOG_PATH), serialise(catalog));
-  assert.equal(catalog.extensions.length, 11);
+  assert.equal(catalog.extensions.length, discoveredExtensionSlugs.size);
+  assert.ok(catalog.extensions.length >= 17);
   for (const entry of catalog.extensions) {
     assert.equal(entry.label, LABEL);
     const manifest = JSON.parse(files.get(entry.manifest));
