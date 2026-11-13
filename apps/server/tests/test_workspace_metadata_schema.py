@@ -53,7 +53,21 @@ GUARD_TRIGGERS = {
 }
 
 
-def schema_objects():
+PRIVACY_CUTOFF_TRIGGERS = frozenset({(table, "aa_privacy_cutoff") for table in TABLE_CONSTRAINTS})
+PRIVACY_SCHEMA_MARKER = ("relation", "orgs_privacyerasure", "orgs_privacyerasure")
+
+
+def assert_workspace_trigger_inventory(objects):
+    expected = GUARD_TRIGGERS | (
+        PRIVACY_CUTOFF_TRIGGERS if PRIVACY_SCHEMA_MARKER in objects else set()
+    )
+    observed = {
+        (key[1], key[2]) for key in objects if key[0] == "trigger" and key[1] in TABLE_CONSTRAINTS
+    }
+    assert observed == expected, "workspace trigger inventory differs from the declared schema"
+
+
+def schema_objects(database=connection):
     """Stable schema definitions, excluding OIDs, row data and sequence positions."""
     queries = {
         "relation": """
@@ -102,7 +116,7 @@ def schema_objects():
         """,
     }
     result = {}
-    with connection.cursor() as cursor:
+    with database.cursor() as cursor:
         for kind, query in queries.items():
             cursor.execute(query)
             for row in cursor.fetchall():
@@ -136,30 +150,30 @@ def schema():
     )
 
 
-def workspace(schema, slug="alpha"):
-    with transaction.atomic():
-        organisation = schema.Organisation.objects.create(
+def workspace(schema, slug="alpha", *, using="default"):
+    with transaction.atomic(using=using):
+        organisation = schema.Organisation.objects.using(using).create(
             slug=slug,
             realm=slug,
             issuer=f"https://identity.synthetic.test/realms/{slug}",
             name="Synthetic structure authority",
             state="prospect",
         )
-        schema.SlugReservation.objects.create(
+        schema.SlugReservation.objects.using(using).create(
             organisation=organisation,
             slug=slug,
             state="provisional",
         )
-        return schema.Workspace.objects.create(organisation=organisation)
+        return schema.Workspace.objects.using(using).create(organisation=organisation)
 
 
-def category(schema, owner, **changes):
+def category(schema, owner, *, using="default", **changes):
     values = {"workspace_id": owner.pk, "name": "General", "position": 0}
     values.update(changes)
-    return schema.Category.objects.create(**values)
+    return schema.Category.objects.using(using).create(**values)
 
 
-def channel(schema, owner, **changes):
+def channel(schema, owner, *, using="default", **changes):
     values = {
         "workspace_id": owner.pk,
         "category_id": None,
@@ -169,13 +183,13 @@ def channel(schema, owner, **changes):
         "position": 0,
     }
     values.update(changes)
-    return schema.Channel.objects.create(**values)
+    return schema.Channel.objects.using(using).create(**values)
 
 
 @contextmanager
-def refused(sqlstate, constraint):
+def refused(sqlstate, constraint, *, using="default"):
     with pytest.raises(IntegrityError) as error:
-        with transaction.atomic():
+        with transaction.atomic(using=using):
             yield
     assert error.value.__cause__.sqlstate == sqlstate
     assert error.value.__cause__.diag.constraint_name == constraint
@@ -217,9 +231,7 @@ def test_exact_integrity_inventory_has_no_implicit_duplicate_guards(schema):
             for key, value in objects.items()
             if key[0] == "index" and key[1] == table and value[3]
         } == {name for name, kind in expected.items() if kind in {"p", "u"}}
-    assert {
-        (key[1], key[2]) for key in objects if key[0] == "trigger" and key[1] in TABLE_CONSTRAINTS
-    } == GUARD_TRIGGERS
+    assert_workspace_trigger_inventory(objects)
     assert {
         (key[1], key[2])
         for key in objects
@@ -421,17 +433,17 @@ def test_composite_scope_constraint_mutation_is_detected_and_rolled_back(schema)
     assert not schema.Channel.objects.exists()
 
 
-def test_new_app_migrations_reverse_on_empty_disposable_database(schema):
+def test_new_app_migrations_reverse_on_empty_disposable_database(django_db_blocker):
+    from historical_lifecycle import HISTORICAL_LIFECYCLE_TARGETS, historical_lifecycle_database
     from test_workspace_parent_policy import metadata_baseline_objects
 
-    assert not schema.Workspace.objects.exists()
-    complete = schema_objects()
-    before = metadata_baseline_objects(complete)
-    original_existing = existing_schema(before)
-    assert {("relation", name, name) for name in TABLE_CONSTRAINTS} <= before.keys()
-    try:
-        MigrationExecutor(connection).migrate([("workspaces", "0001_initial")])
-        initial = schema_objects()
+    with historical_lifecycle_database(django_db_blocker) as (database, historical):
+        complete = schema_objects(database)
+        before = metadata_baseline_objects(complete)
+        original_existing = existing_schema(before)
+        assert {("relation", name, name) for name in TABLE_CONSTRAINTS} <= before.keys()
+        MigrationExecutor(database).migrate([("workspaces", "0001_initial")])
+        initial = schema_objects(database)
         assert existing_schema(initial) == original_existing
         assert not any(key[0] == "function" and key[1] in GUARD_FUNCTIONS for key in initial)
         assert not any(key[0] == "trigger" and key[1] in TABLE_CONSTRAINTS for key in initial)
@@ -442,17 +454,28 @@ def test_new_app_migrations_reverse_on_empty_disposable_database(schema):
                 if key[0] == "constraint" and key[1] == table
             }
             assert observed == {name: kind for name, kind in expected.items() if kind != "f"}
-        MigrationExecutor(connection).migrate([("workspaces", None)])
-        assert schema_objects() == original_existing
-    finally:
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
-    assert schema_objects() == complete
-    # Exercise the reapplied guard, not just its catalogue spelling.
-    first, second = workspace(schema), workspace(schema, "bravo")
-    foreign = category(schema, second)
-    with refused("23503", "channel_category_workspace_fk"):
-        channel(schema, first, category_id=foreign.pk)
+        MigrationExecutor(database).migrate([("workspaces", None)])
+        assert schema_objects(database) == original_existing
+        MigrationExecutor(database).migrate(HISTORICAL_LIFECYCLE_TARGETS)
+        assert schema_objects(database) == complete
+        # Exercise this disposable database's reapplied guard using its historical models.
+        schema = SimpleNamespace(
+            **{
+                model: historical.get_model(app, model)
+                for model, app in (
+                    ("Workspace", "workspaces"),
+                    ("Category", "workspaces"),
+                    ("Channel", "workspaces"),
+                    ("Organisation", "orgs"),
+                    ("SlugReservation", "orgs"),
+                )
+            }
+        )
+        alias = database.alias
+        first, second = workspace(schema, using=alias), workspace(schema, "bravo", using=alias)
+        foreign = category(schema, second, using=alias)
+        with refused("23503", "channel_category_workspace_fk", using=alias):
+            channel(schema, first, category_id=foreign.pk, using=alias)
 
 
 def test_transactional_flush_cleans_rows_without_disabling_delete_guard(schema):

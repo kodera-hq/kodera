@@ -18,7 +18,7 @@ from uuid import UUID
 
 import pytest
 from django.apps import apps
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.migrations.executor import MigrationExecutor
 from django.utils import timezone
 from test_customer_persistence_concurrency import session
@@ -384,8 +384,8 @@ NEW_TRIGGERS = {
 NEW_FUNCTIONS = {value[0] for value in NEW_TRIGGERS.values()}
 
 
-def catalog_contract():
-    objects = schema_objects()
+def catalog_contract(database=connection):
+    objects = schema_objects(database)
     for table, expected in {
         POLICY_TABLE: {"id", "created_at", "updated_at", "workspace_id", "revision", "visibility"},
         RULE_TABLE: {
@@ -1063,24 +1063,20 @@ def metadata_baseline_objects(objects):
 
 
 def test_policy_migrations_reverse_reapply_exact_definitions_and_preserve_metadata(
-    world, record_property
+    django_db_blocker, record_property
 ):
-    from django.core.management import call_command
+    from historical_lifecycle import HISTORICAL_LIFECYCLE_TARGETS, historical_lifecycle_database
+    from test_workspace_metadata_schema import BASE_TABLE_CONSTRAINTS
 
-    call_command("flush", interactive=False, verbosity=0)
-    assert not world.Workspace.objects.exists()
-    complete = catalog_contract()
-    baseline = metadata_baseline_objects(complete)
-    try:
-        MigrationExecutor(connection).migrate([("workspaces", "0003_policy_state")])
-        assert schema_objects() == without_policy_integrity(
+    with historical_lifecycle_database(django_db_blocker) as (database, historical):
+        complete = catalog_contract(database)
+        baseline = metadata_baseline_objects(complete)
+        MigrationExecutor(database).migrate([("workspaces", "0003_policy_state")])
+        assert schema_objects(database) == without_policy_integrity(
             without_template_key(without_espace_structure(without_warm_pool(complete)))
         )
-        MigrationExecutor(connection).migrate([("workspaces", "0002_integrity")])
-        assert schema_objects() == baseline
-        # Full original D05-2 schema behavior stays independently testable at this leaf.
-        from test_workspace_metadata_schema import BASE_TABLE_CONSTRAINTS
-
+        MigrationExecutor(database).migrate([("workspaces", "0002_integrity")])
+        assert schema_objects(database) == baseline
         for table, expected in BASE_TABLE_CONSTRAINTS.items():
             actual = {
                 key[2]: value[0]
@@ -1088,19 +1084,56 @@ def test_policy_migrations_reverse_reapply_exact_definitions_and_preserve_metada
                 if key[:2] == ("constraint", table)
             }
             assert actual == expected
-    finally:
-        executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes())
-    assert catalog_contract() == complete
-    record_property("policy_migration_definitions", repr(sorted(complete.items())))
-    # A new real fixture after reapplication also exercises the restored scope guard.
-    models = anchor_models()
-    first, _, _ = anchor(models, slug="alpha")
-    second, _, members = anchor(models, slug="bravo")
-    owner = world.Workspace.objects.create(organisation=first)
-    policy = world.Policy.objects.create(workspace=owner)
-    with named_refusal("23514", "policy_rule_scope_valid"):
-        world.Rule.objects.create(policy=policy, kind="allow_member", membership=members[0])
+        MigrationExecutor(database).migrate(HISTORICAL_LIFECYCLE_TARGETS)
+        assert catalog_contract(database) == complete
+        record_property("policy_migration_definitions", repr(sorted(complete.items())))
+        # Reapplication must restore the real scope refusal in this same historical DB.
+        alias = database.alias
+        Organisation = historical.get_model("orgs", "Organisation")
+        reservation_model = historical.get_model("orgs", "SlugReservation")
+        User = historical.get_model("identity", "User")
+        Membership = historical.get_model("orgs", "Membership")
+        Workspace = historical.get_model("workspaces", "Workspace")
+        policy_model = historical.get_model("workspaces", "ResourcePolicy")
+        rule_model = historical.get_model("workspaces", "ResourcePolicyRule")
+        with transaction.atomic(using=alias):
+            organisations, memberships = [], []
+            for slug in ("alpha", "bravo"):
+                org = Organisation.objects.using(alias).create(
+                    slug=slug,
+                    realm=slug,
+                    issuer=f"https://identity.synthetic.test/realms/{slug}",
+                    name="Synthetic historical organisation",
+                    state="active",
+                )
+                reservation_model.objects.using(alias).create(
+                    namespace="organisation",
+                    slug=slug,
+                    organisation=org,
+                    state="permanent",
+                    protected_at=timezone.now(),
+                )
+                user = User.objects.using(alias).create(
+                    email="synthetic@customer.test", enabled=True
+                )
+                memberships.append(
+                    Membership.objects.using(alias).create(
+                        user=user,
+                        organisation=org,
+                        role="org_owner",
+                        state="active",
+                        accepted_at=timezone.now(),
+                    )
+                )
+                organisations.append(org)
+            owner = Workspace.objects.using(alias).create(organisation=organisations[0])
+            policy = policy_model.objects.using(alias).create(workspace=owner)
+            with pytest.raises(IntegrityError) as error, transaction.atomic(using=alias):
+                rule_model.objects.using(alias).create(
+                    policy=policy, kind="allow_member", membership=memberships[1]
+                )
+            assert error.value.__cause__.sqlstate == "23514"
+            assert error.value.__cause__.diag.constraint_name == "policy_rule_scope_valid"
 
 
 def test_frozen_final_kernel_source_is_reused_without_a_second_evaluator(world):

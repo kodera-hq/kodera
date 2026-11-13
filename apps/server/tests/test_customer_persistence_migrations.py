@@ -112,12 +112,18 @@ def test_empty_forward_reverse_reapply_migrations(models, record_property, djang
 
         with target.execute_wrapper(checked_ddl):
             executor = MigrationExecutor(target)
+            # This proof owns the reversible anchor history. Current statutory
+            # operations are qualified by the separate forward-only DDL proof.
             targets = [
-                node
-                for node in executor.loader.graph.leaf_nodes()
-                if node[0] in ("identity", "orgs")
+                ("identity", "0006_discovery_quotas"),
+                ("orgs", "0022_private_export_checkpoints"),
             ]
-            assert {node[0] for node in targets} == {"identity", "orgs"}, "anchor migrations absent"
+            assert set(targets) <= executor.loader.graph.nodes.keys(), "anchor migrations absent"
+            assert all(
+                operation.reversible
+                for migration, backwards in executor.migration_plan(targets)
+                for operation in migration.operations
+            ), "anchor history unexpectedly includes forward-only operations"
             executor.migrate(targets)
             first = schema_objects(target)
             assert expected <= first[0]
