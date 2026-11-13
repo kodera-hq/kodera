@@ -35,6 +35,11 @@ INVENTORY = {
         "/organisations/{organisation_id}/workspace/documents/{document_id}/backlinks",
     ): "listDocumentBacklinks",
     ("get", "/organisations/{organisation_id}/workspace/search"): "searchWorkspace",
+    ("get", "/organisations/{organisation_id}/workspace/collections"): "listWorkspaceCollections",
+    (
+        "post",
+        "/organisations/{organisation_id}/workspace/collections/{collection_id}/query",
+    ): "queryWorkspaceCollection",
     ("get", "/organisations"): "listOrganisations",
     ("get", "/organisations/{organisation_id}/memberships"): "listMemberships",
     ("get", "/organisations/{organisation_id}/invitations"): "listInvitations",
