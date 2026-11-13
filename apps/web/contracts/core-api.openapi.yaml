@@ -8488,6 +8488,7 @@ components:
       - invoice.paid
       - invoice.overdue
       - invoice.voided
+      - invoice.download_requested
       - credit_note.issued
       - credit_note.notice_enqueued
       - payment.received
@@ -8502,7 +8503,9 @@ components:
       - dunning.suspension_notice_sent
       - dunning.suspended
       - dunning.terminated
+      - dunning.proposal_prepared
       - dunning.cleared
+      - dunning.dispute_recorded
       - vat.vies_checked
       - vat.regime_changed
       - workspace.initialised

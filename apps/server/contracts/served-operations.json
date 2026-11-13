@@ -132,6 +132,11 @@
       "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}"
     },
     {
+      "operation_id": "getBillingVatStatus",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/billing/vat-status"
+    },
+    {
       "operation_id": "getChannelAccess",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/access"
@@ -140,6 +145,11 @@
       "operation_id": "getCreditNote",
       "method": "GET",
       "path": "/credit-notes/{credit_note_id}"
+    },
+    {
+      "operation_id": "getCreditNoteDownloadLink",
+      "method": "GET",
+      "path": "/credit-notes/{credit_note_id}/download"
     },
     {
       "operation_id": "getDpa",
@@ -445,6 +455,11 @@
       "operation_id": "updateWorkspaceDocument",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
+      "operation_id": "validateBillingVat",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/billing/vat-status"
     }
   ]
 }
