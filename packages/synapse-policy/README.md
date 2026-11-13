@@ -134,7 +134,10 @@ WITHOUT_MODULE=1 bash tests/integration/run.sh
   publishes no host ports, serves native well-known discovery on internal TLS 443, and
   acquires a machine-wide heavy slot and refuses below 20 GiB free. Ephemeral TLS verification
   exceptions and ordinary `m.login.dummy` account registration exist only inside that disposable
-  network. The fixture has no administrator accounts or shared registration credentials; its
+  network. Only the exact synthetic agent is promoted offline, after its disposable homeserver
+  stops, because real provisioning queries the admin account API. Alice and Bob remain ordinary
+  users. No shared registration credential is stored; the agent login input travels only through
+  process memory/stdin, and its token stays in memory. The fixture's
   private directories use mode 0700 and configuration/TLS inputs use mode 0600. Production
   registration settings are not changed. `WITHOUT_MODULE=1` must fail.
   This is standard Matrix protocol evidence; no Element, Tchap or Cinny client build is claimed

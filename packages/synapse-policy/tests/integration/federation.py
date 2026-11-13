@@ -11,6 +11,7 @@ import os
 import pathlib
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -19,24 +20,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
-
 ROOT = (
     pathlib.Path(__file__).resolve().parents[4]
     if len(pathlib.Path(__file__).resolve().parents) > 4
     else pathlib.Path("/proof")
 )
 sys.path.insert(
-    0, "/proof" if sys.argv[1:] == ["--scenario"] else str(ROOT / "apps/server")
+    0,
+    "/proof"
+    if sys.argv[1:] in (["--scenario"], ["--bootstrap-agent"])
+    else str(ROOT / "apps/server"),
 )
-from tenant_agent.channels import Channels, parse
-from tenant_agent.engines import LiveKit
-from tenant_agent.state import MemberSet, State
-from tenant_agent.synapse import Synapse
-
 IMAGE = "matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6"
 HOME, PEER = "home.example.org", "partner.example.org"
 AGENT, ALICE, BOB = f"@kodera-agent:{HOME}", f"@alice:{HOME}", f"@bob:{PEER}"
@@ -78,9 +72,9 @@ def expect(label, answer, status):
     return answer[1]
 
 
-def register(port, username):
+def register(port, username, password=None):
     # This standard client flow is enabled only on the disposable internal Docker network.
-    # No account needs homeserver-administrator privileges or shared registration credentials.
+    # The trusted agent is promoted offline afterward; no shared registration secret is needed.
     result = expect(
         "synthetic account",
         call(
@@ -89,7 +83,7 @@ def register(port, username):
             "/_matrix/client/v3/register",
             body={
                 "username": username,
-                "password": secrets.token_urlsafe(24),
+                "password": password or secrets.token_urlsafe(24),
                 "auth": {"type": "m.login.dummy"},
             },
         ),
@@ -114,8 +108,26 @@ def wait_message(port, token, room, event_id):
     raise AssertionError("federated event did not arrive within 20 seconds")
 
 
-def scenario(homeport, peerport):
-    agent = register(homeport, "kodera-agent")
+def scenario(homeport, peerport, agent_password):
+    from tenant_agent.channels import Channels, parse
+    from tenant_agent.engines import LiveKit
+    from tenant_agent.state import MemberSet, State
+    from tenant_agent.synapse import Synapse
+
+    agent = expect(
+        "synthetic administrator login",
+        call(
+            homeport,
+            "POST",
+            "/_matrix/client/v3/login",
+            body={
+                "type": "m.login.password",
+                "identifier": {"type": "m.id.user", "user": AGENT},
+                "password": agent_password,
+            },
+        ),
+        200,
+    )["access_token"]
     alice = register(homeport, "alice")
     bob = register(peerport, "bob")
     client = Synapse(BASES[homeport], agent, HOME)
@@ -345,6 +357,51 @@ def scenario(homeport, peerport):
     )
 
 
+def wait_healthy(container):
+    for _ in range(90):
+        if docker("inspect", "--format", "{{.State.Running}}", container) != "true":
+            raise RuntimeError("disposable Synapse exited during startup")
+        try:
+            docker(
+                "exec",
+                container,
+                "python",
+                "-c",
+                'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8008/health", timeout=2).read()',
+            )
+            return
+        except subprocess.CalledProcessError:
+            pass
+        time.sleep(1)
+    raise RuntimeError("disposable Synapse did not become healthy")
+
+
+def promote_fixture_agent(database):
+    # Only called after the disposable homeserver has stopped. Preserve every other cell.
+    database.chmod(0o600)
+    with sqlite3.connect(database, timeout=5) as connection:
+        connection.row_factory = sqlite3.Row
+        before = [
+            dict(row) for row in connection.execute("SELECT * FROM users ORDER BY name")
+        ]
+        matches = [row for row in before if row["name"] == AGENT]
+        if len(matches) != 1 or matches[0]["admin"] != 0:
+            raise RuntimeError("refused: expected exactly one ordinary synthetic agent")
+        changed = connection.execute(
+            "UPDATE users SET admin = 1 WHERE name = ? AND admin = 0", (AGENT,)
+        )
+        after = [
+            dict(row) for row in connection.execute("SELECT * FROM users ORDER BY name")
+        ]
+        expected = [
+            {**row, "admin": 1} if row["name"] == AGENT else row for row in before
+        ]
+        if changed.rowcount != 1 or connection.total_changes != 1 or after != expected:
+            raise RuntimeError(
+                "refused: fixture promotion changed unexpected account data"
+            )
+
+
 def main():
     if shutil.disk_usage(ROOT).free < 20 * 1024**3:
         raise SystemExit("refused: less than 20 GiB free")
@@ -368,6 +425,10 @@ def main():
     try:
         docker("image", "inspect", IMAGE)  # no implicit image pulls
         import jwt
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
 
         if jwt.__version__ != "2.15.1":
             raise RuntimeError(
@@ -526,29 +587,33 @@ def main():
                         "refused: fixture registration cannot publish host ports"
                     )
             print("Started disposable homeserver containers", flush=True)
-            for index in range(2):
-                for _ in range(90):
-                    if (
-                        docker(
-                            "inspect", "--format", "{{.State.Running}}", running[index]
-                        )
-                        != "true"
-                    ):
-                        raise RuntimeError("disposable Synapse exited during startup")
-                    try:
-                        docker(
-                            "exec",
-                            running[index],
-                            "python",
-                            "-c",
-                            'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8008/health", timeout=2).read()',
-                        )
-                        break
-                    except subprocess.CalledProcessError:
-                        pass
-                    time.sleep(1)
-                else:
-                    raise RuntimeError("disposable Synapse did not become healthy")
+            for container in running:
+                wait_healthy(container)
+            agent_password = secrets.token_urlsafe(24)
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    running[0],
+                    "python",
+                    "/proof/federation.py",
+                    "--bootstrap-agent",
+                ],
+                input=json.dumps(agent_password),
+                text=True,
+                check=True,
+                timeout=30,
+            )
+            docker("stop", "--time", "10", running[0])
+            if (
+                docker("inspect", "--format", "{{.State.Running}}", running[0])
+                != "false"
+            ):
+                raise RuntimeError("refused: fixture database owner is still running")
+            promote_fixture_agent(folder / "0" / "homeserver.db")
+            docker("start", running[0])
+            wait_healthy(running[0])
             subprocess.run(
                 [
                     "docker",
@@ -560,6 +625,7 @@ def main():
                     "/proof/federation.py",
                     "--scenario",
                 ],
+                input=json.dumps(agent_password),
                 text=True,
                 check=True,
                 timeout=180,
@@ -580,6 +646,8 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--scenario"]:
-        scenario("home", "peer")
+        scenario("home", "peer", json.load(sys.stdin))
+    elif sys.argv[1:] == ["--bootstrap-agent"]:
+        register("home", "kodera-agent", json.load(sys.stdin))
     else:
         main()
