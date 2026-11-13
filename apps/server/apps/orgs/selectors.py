@@ -162,3 +162,69 @@ def collection_person_is_current(*, membership_id: UUID, organisation_id: UUID) 
         user__enabled=True,
         user__deleted_at__isnull=True,
     ).exists()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class MembershipContact:
+    id: UUID
+    user_id: UUID
+    organisation_id: UUID
+    email: str
+    organisation_name: str
+
+
+def lock_organisation(*, organisation_id: UUID) -> bool:
+    """Hold the organisation fence until the caller's outer transaction ends."""
+    return Organisation.objects.select_for_update().filter(id=organisation_id).first() is not None
+
+
+def lock_membership_user(*, membership_id: UUID) -> UUID:
+    """Lock the membership and its joined user, retaining the original lock set."""
+    row = Membership.objects.select_for_update().select_related("user").get(id=membership_id)
+    return row.user_id
+
+
+def active_organisation(*, organisation_id: UUID) -> bool:
+    return Organisation.objects.filter(
+        id=organisation_id, state="active", deleted_at__isnull=True
+    ).exists()
+
+
+def installation_admin_user(*, membership_id: UUID, organisation_id: UUID) -> UUID | None:
+    """Current accepted installer authority, scoped to the installation's organisation."""
+    return (
+        Membership.objects.filter(
+            id=membership_id,
+            organisation_id=organisation_id,
+            state="active",
+            role__in=("org_owner", "org_admin"),
+            accepted_at__isnull=False,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+        )
+        .values_list("user_id", flat=True)
+        .first()
+    )
+
+
+def digest_member(*, membership_id: UUID) -> MembershipContact | None:
+    row = (
+        Membership.objects.filter(
+            id=membership_id,
+            state="active",
+            accepted_at__isnull=False,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+            organisation__state="active",
+            organisation__deleted_at__isnull=True,
+        )
+        .select_related("user")
+        .first()
+    )
+    if row is None:
+        return None
+    return MembershipContact(
+        row.id, row.user_id, row.organisation_id, row.user.email, row.organisation.name
+    )

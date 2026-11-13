@@ -13,10 +13,10 @@ from uuid import UUID, uuid4
 from django.db import transaction
 from django.utils import timezone
 
-from apps.identity.models import Identity
+from apps.identity import selectors as identities
 from apps.media import outbound
-from apps.orgs.models import Membership, Organisation
-from apps.workspaces.models import Workspace
+from apps.orgs import selectors as organisations
+from apps.workspaces import selectors as workspaces
 
 from .models import Delivery, DeliveryAttempt, Installation, WorkspaceCutoff
 from .wire import ExtensionRefusedError, signed_delivery
@@ -89,30 +89,18 @@ def claim() -> Claim | None:
 
 
 def eligible(row: Installation) -> bool:
-    return (
-        row.revoked_at is None
-        and not WorkspaceCutoff.objects.filter(
-            organisation_id=row.workspace.organisation_id
-        ).exists()
-        and Organisation.objects.filter(
-            id=row.workspace.organisation_id, state="active", deleted_at__isnull=True
-        ).exists()
-        and Membership.objects.filter(
-            id=row.creator_id,
-            organisation_id=row.workspace.organisation_id,
-            state="active",
-            role__in=("org_owner", "org_admin"),
-            accepted_at__isnull=False,
-            deleted_at__isnull=True,
-            user__enabled=True,
-            user__deleted_at__isnull=True,
-        ).exists()
-        and Identity.objects.filter(
-            user_id=row.creator.user_id,
-            organisation_id=row.workspace.organisation_id,
-            enabled=True,
-            deleted_at__isnull=True,
-        ).exists()
+    organisation_id = workspaces.workspace_organisation(workspace_id=row.workspace_id)
+    if (
+        row.revoked_at is not None
+        or WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists()
+        or not organisations.active_organisation(organisation_id=organisation_id)
+    ):
+        return False
+    user_id = organisations.installation_admin_user(
+        membership_id=row.creator_id, organisation_id=organisation_id
+    )
+    return user_id is not None and identities.delivery_identity_exists(
+        user_id=user_id, organisation_id=organisation_id
     )
 
 
@@ -152,22 +140,13 @@ def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
     # Installation revocation and all workspace writers take this same first lock. The bounded
     # request is fenced by it: a revocation committed before this transaction prevents sending.
     with transaction.atomic():
-        organisation_id = Workspace.objects.values_list("organisation_id", flat=True).get(
-            id=job.workspace_id
-        )
-        Organisation.objects.select_for_update().get(id=organisation_id)
-        Workspace.objects.select_for_update().get(id=job.workspace_id)
+        organisation_id = workspaces.workspace_organisation(workspace_id=job.workspace_id)
+        if not organisations.lock_organisation(organisation_id=organisation_id):
+            raise LookupError("installation organisation absent")
+        workspaces.lock_workspace(workspace_id=job.workspace_id)
         installation = Installation.objects.select_for_update().get(id=job.installation_id)
-        member = (
-            Membership.objects.select_for_update()
-            .select_related("user")
-            .get(id=installation.creator_id)
-        )
-        list(
-            Identity.objects.select_for_update().filter(
-                user_id=member.user_id, organisation_id=organisation_id
-            )
-        )
+        user_id = organisations.lock_membership_user(membership_id=installation.creator_id)
+        identities.lock_delivery_identities(user_id=user_id, organisation_id=organisation_id)
         row = (
             Delivery.objects.select_for_update()
             .filter(id=job.delivery_id, state="in_flight", lease_id=job.lease)
@@ -200,7 +179,7 @@ def dispatch_claim(job: Claim, secrets: Secrets | None) -> None:
                             generation=installation.previous_generation,
                         )
                     signed = signed_delivery(
-                        organisation_id=installation.workspace.organisation_id,
+                        organisation_id=organisation_id,
                         installation_id=installation.id,
                         delivery_id=row.id,
                         generation=installation.generation,
