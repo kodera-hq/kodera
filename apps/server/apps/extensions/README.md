@@ -29,7 +29,9 @@ lease fence, bounded attempts and inspectable outcome. The primary signature sta
 installation, delivery id, event type and key generation. During at most 24 hours of absolute
 grace, a separate `X-Kodera-Previous-Signature-256` header carries the old-key signature over the
 same bytes. Reused key material refuses. Existing v1 SDK functions are unchanged; the additive
-SDK helper validates trusted generation/scope/grace and rejects in-process replay. Receivers
+SDK helper validates trusted generation/scope/grace, rejects in-process replay and refuses a
+verified receiver clock rollback before cache pruning, including after refused replay/capacity
+attempts. Unauthenticated input never advances that clock. Receivers
 must persist delivery ids with their effects for durable idempotency. New key distribution and
 receiver adoption remain an explicit cutover; legacy receivers need the current key.
 
@@ -54,11 +56,15 @@ a Discord channel JSON export; and Notion Markdown/CSV ZIP trees. Native pages r
 author names/ids and timestamps as explicit imported attribution; the actual Core creator stays
 the authenticated member. Folder/channel hierarchy becomes native parent links. CSV columns
 infer bounded text/number/checkbox/date properties and create real table Collections with native
-row pages. The existing document create/patch and Collection services enforce Yjs, permissions,
+row pages. A resumed row retains its frozen CSV property ids/types; removed or retyped current
+properties produce a per-item `import_collection_schema_changed`/409 refusal before native page
+work. Property display edits and prior imported pages are preserved; restoring compatible types
+permits an explicit later resume. The existing document create/patch and Collection services enforce Yjs, permissions,
 tree rules, database quotas and conditional row writes.
 
 ZIP input is capped at 20 MiB, 40 MiB expanded, 2 MiB per entry, 1000 entries and 100:1 compression;
-normalized paths, duplicates, traversal, symlinks and encrypted archives are rejected. At most
+only Stored and Deflate codecs are admitted before any member opens. BZIP2/LZMA and unknown
+codecs, normalized path conflicts, traversal, symlinks and encrypted archives are rejected. At most
 500 normalized objects and 200 CSV data rows are accepted. Imported HTML/SVG and remote images
 never execute or fetch; active blocks are stripped, links/mentions are inert, and unsupported
 attachments are counted as omitted. Rich platform blocks, reactions and attachments are not

@@ -1,7 +1,9 @@
 """Golden exported channel/page inputs and archive/active-content refusal vectors."""
 
+import binascii
 import io
 import json
+import struct
 import zipfile
 
 import pytest
@@ -10,9 +12,9 @@ from apps.extensions.import_parsers import parse
 from apps.extensions.wire import ExtensionRefusedError
 
 
-def archive(entries):
+def archive(entries, compression=zipfile.ZIP_DEFLATED):
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as document:
+    with zipfile.ZipFile(output, "w", compression=compression) as document:
         for name, content in entries.items():
             document.writestr(name, content)
     return output.getvalue()
@@ -142,3 +144,40 @@ def test_reference_images_links_and_encoded_html_stay_inert_without_fetching():
     )
     text = result.items[0].markdown
     assert "![" not in text and "[asset]" not in text and "<img" not in text
+
+
+@pytest.mark.parametrize(
+    "compression",
+    [
+        pytest.param(zipfile.ZIP_STORED, id="stored"),
+        pytest.param(zipfile.ZIP_DEFLATED, id="deflated"),
+    ],
+)
+def test_standard_bounded_zip_codecs_remain_supported(compression):
+    result = parse("notion", archive({"Page.md": "# Synthetic page\nBounded content"}, compression))
+    assert result.items[0].markdown == "# Synthetic page\nBounded content"
+
+
+@pytest.mark.parametrize(
+    "compression",
+    [pytest.param(zipfile.ZIP_BZIP2, id="bzip2"), pytest.param(zipfile.ZIP_LZMA, id="lzma")],
+)
+def test_forged_metadata_unbounded_zip_codecs_refuse_before_any_member_opens(
+    compression, monkeypatch
+):
+    raw = bytearray(archive({"Page.md": b"X" * (4 * 1024 * 1024)}, compression))
+    central = raw.index(b"PK\x01\x02")
+    # Forged sizes/CRC used to pass advertised bounds while codec internals expanded 4MiB.
+    crc = binascii.crc32(b"X")
+    for offset, value in [(14, crc), (22, 1), (central + 16, crc), (central + 24, 1)]:
+        struct.pack_into("<I", raw, offset, value)
+    with zipfile.ZipFile(io.BytesIO(raw)) as check:
+        assert check.infolist()[0].file_size == 1
+        assert check.infolist()[0].compress_type == compression
+
+    def opened(*args, **kwargs):
+        pytest.fail("unsupported ZIP member opened before compression refusal")
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", opened)
+    with pytest.raises(ExtensionRefusedError, match="archive_compression"):
+        parse("notion", bytes(raw))

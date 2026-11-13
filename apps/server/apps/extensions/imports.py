@@ -56,7 +56,14 @@ def source_object(workspace_id, source, external_key):
 
 
 @transaction.atomic
-def apply_item(*, verified, organisation_id: UUID, batch_id: UUID, item: Item) -> tuple[UUID, bool]:
+def apply_item(
+    *,
+    verified,
+    organisation_id: UUID,
+    batch_id: UUID,
+    item: Item,
+    frozen_collection: Item | None = None,
+) -> tuple[UUID, bool]:
     workspace_id, principal = admin(verified, organisation_id)
     batch = ImportBatch.objects.select_for_update().get(id=batch_id, workspace_id=workspace_id)
     old = (
@@ -77,6 +84,31 @@ def apply_item(*, verified, organisation_id: UUID, batch_id: UUID, item: Item) -
         if old.collection_id is not None:
             collections.get(workspace_id, old.collection_id, principal, True)
         return old.document_id, False
+    typed = None
+    row_collection_id = None
+    if item.collection_key is not None:
+        table = source_object(workspace_id, batch.source, item.collection_key)
+        if (
+            table.collection_id is None
+            or item.values is None
+            or frozen_collection is None
+            or frozen_collection.external_key != item.collection_key
+            or not frozen_collection.properties
+        ):
+            raise ExtensionRefusedError("import_collection_binding_invalid", 409)
+        model = collections.get(workspace_id, table.collection_id, principal, True)
+        expected = {prop["id"]: prop["type"] for prop in frozen_collection.properties}
+        actual = {prop["id"]: prop["type"] for prop in model.properties}
+        # The archive's inferred CSV types are frozen source data. User schema edits never
+        # reinterpret them; refuse before any native row document is created or transformed.
+        if (
+            table.source_sha256 != frozen_collection.sha256
+            or item.values.keys() != expected.keys()
+            or any(actual.get(key) != kind for key, kind in expected.items())
+        ):
+            raise ExtensionRefusedError("import_collection_schema_changed", 409)
+        typed = {key: {"type": expected[key], "value": value} for key, value in item.values.items()}
+        row_collection_id = table.collection_id
     parent_id = None
     if item.parent_key is not None:
         parent_id = source_object(workspace_id, batch.source, item.parent_key).document_id
@@ -107,19 +139,11 @@ def apply_item(*, verified, organisation_id: UUID, batch_id: UUID, item: Item) -
             request_id=str(batch.id),
         )
         collection_id = UUID(collection["id"])
-    if item.collection_key is not None:
-        table = source_object(workspace_id, batch.source, item.collection_key)
-        if table.collection_id is None or item.values is None:
-            raise ExtensionRefusedError("import_collection_binding_invalid", 409)
-        model = collections.get(workspace_id, table.collection_id, principal, True)
-        definitions = {prop["id"]: prop["type"] for prop in model.properties}
-        typed = {
-            key: {"type": definitions[key], "value": value} for key, value in item.values.items()
-        }
+    if typed is not None:
         collections.put_row(
             verified=verified,
             organisation_id=organisation_id,
-            collection_id=table.collection_id,
+            collection_id=row_collection_id,
             document_id=document_id,
             body={"values": typed},
             if_match="",
@@ -159,6 +183,7 @@ def execute(*, verified, organisation_id: UUID, source: str, raw: bytes, limit: 
         raise ExtensionRefusedError("import_batch_limit")
     batch = start(verified=verified, organisation_id=organisation_id, source=source, raw=raw)
     parsed = parse(source, raw)
+    frozen_items = {item.external_key: item for item in parsed.items}
     outcomes: list[dict[str, Any]] = []
     attempted = 0
     for item in parsed.items:
@@ -168,7 +193,13 @@ def execute(*, verified, organisation_id: UUID, source: str, raw: bytes, limit: 
             break
         try:
             document_id, created = apply_item(
-                verified=verified, organisation_id=organisation_id, batch_id=batch.id, item=item
+                verified=verified,
+                organisation_id=organisation_id,
+                batch_id=batch.id,
+                item=item,
+                frozen_collection=frozen_items.get(item.collection_key)
+                if item.collection_key
+                else None,
             )
             outcomes.append(
                 {
@@ -185,6 +216,7 @@ def execute(*, verified, organisation_id: UUID, source: str, raw: bytes, limit: 
                 {
                     "key": item.external_key,
                     "outcome": "refused",
+                    "status": refused.status,
                     "reason": str(refused)
                     if isinstance(refused, ExtensionRefusedError)
                     else "native_document_refused",
