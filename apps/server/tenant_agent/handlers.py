@@ -161,7 +161,18 @@ class Handlers:
             return _failed("invalid_payload", "the channel set is missing, malformed or too large")
         try:
             in_force = self._state.keep_channel_set(
-                candidate.revision, list(candidate.channels), sorted(candidate.all_members)
+                candidate.revision,
+                list(candidate.channels),
+                sorted(candidate.all_members),
+                moderation={
+                    "banned_subjects": sorted(candidate.banned_subjects),
+                    "muted_subjects": [
+                        {"subject": subject, "expires_at": until}
+                        for subject, until in candidate.muted_subjects
+                    ],
+                }
+                if candidate.moderation_present
+                else None,
             )
             return self.apply_channels(in_force)
         except Exception:  # noqa: BLE001 - reported as internal_error, never a crash

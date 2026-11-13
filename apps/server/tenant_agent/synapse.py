@@ -207,6 +207,43 @@ class Synapse:
             {"user_id": user_id, "reason": "access changed in Kodera"},
         )
 
+    def moderation_bans(self, room_id: str) -> tuple[set[str], set[str]]:
+        """All current room bans, then only those this agent may reverse."""
+        _, answer = self._call(
+            "GET", f"/_matrix/client/v3/rooms/{self._q(room_id)}/members?membership=ban"
+        )
+        entries = answer.get("chunk")
+        if not isinstance(entries, list):
+            raise EngineError("the homeserver's banned membership list is invalid")
+        everyone, owned = set(), set()
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("content"), dict):
+                raise EngineError("the homeserver's banned membership event is invalid")
+            if entry["content"].get("membership") != "ban":
+                continue
+            user = entry.get("state_key")
+            if not isinstance(user, str):
+                raise EngineError("the homeserver's banned membership target is invalid")
+            everyone.add(user)
+            if (
+                entry.get("sender") == self.me()
+                and entry["content"].get("reason") == "workspace moderation in Kodera"
+            ):
+                owned.add(user)
+        return everyone, owned
+
+    def ban(self, room_id: str, user_id: str) -> None:
+        self._call(
+            "POST",
+            f"/_matrix/client/v3/rooms/{self._q(room_id)}/ban",
+            {"user_id": user_id, "reason": "workspace moderation in Kodera"},
+        )
+
+    def unban(self, room_id: str, user_id: str) -> None:
+        self._call(
+            "POST", f"/_matrix/client/v3/rooms/{self._q(room_id)}/unban", {"user_id": user_id}
+        )
+
     def notice(self, room_id: str, notice_id: str, body: str) -> None:
         # The transaction id is the notice id: a resend by the same account is deduplicated.
         self._call(

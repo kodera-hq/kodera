@@ -88,7 +88,29 @@ def _audience_allows(policy: dict[str, Any], user: str, agent: str) -> bool:
     local_only = policy.get("local_only", False)
     if type(local_only) is not bool:
         return False
+    banned = policy.get("banned", [])
+    if (
+        not isinstance(banned, list)
+        or not all(isinstance(value, str) for value in banned)
+        or user in banned
+    ):
+        return False
     return not local_only or user.partition(":")[2] == agent.partition(":")[2]
+
+
+def _muted(policy: dict[str, Any], user: str) -> bool:
+    from datetime import UTC, datetime
+
+    muted = policy.get("muted_until", {})
+    if not isinstance(muted, dict):
+        return True
+    if user not in muted:
+        return False
+    try:
+        until = datetime.fromisoformat(muted[user].replace("Z", "+00:00"))
+        return until.tzinfo is None or until > datetime.now(UTC)
+    except (ValueError, TypeError, AttributeError):
+        return True
 
 
 @dataclass
@@ -158,8 +180,8 @@ class Service:
         self.livekit.create_room(name, room_id)
         with self._guard:
             self._rooms[name] = room_id
-        listen_only = bool(policy.get("listen_only")) and user_id not in policy.get(
-            "may_publish", []
+        listen_only = _muted(policy, user_id) or (
+            bool(policy.get("listen_only")) and user_id not in policy.get("may_publish", [])
         )
         token = self.livekit.token(
             name, identity(user_id, device_id), can_publish=not listen_only, ttl_s=self.token_ttl_s
@@ -202,7 +224,9 @@ class Service:
                     self.livekit.remove(name, who)
                     removed += 1
                     continue
-                allowed = not policy.get("listen_only") or user in may_publish
+                allowed = not _muted(policy, user) and (
+                    not policy.get("listen_only") or user in may_publish
+                )
                 permission = participant.get("permission") or {}
                 if who not in rights:
                     # First sight (or after a restart): what LiveKit says, else what the token

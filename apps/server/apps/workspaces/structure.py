@@ -126,6 +126,10 @@ def read_workspace(*, verified: VerifiedAccessToken, organisation_id: UUID) -> W
                 categories=(),
                 uncategorised_channels=(),
             )
+        from .moderation import member_restrictions
+
+        if member_restrictions(workspace[0], caller.membership_id)[0]:
+            raise WorkspaceNotFoundError()
         categories, uncategorised = _visible_structure(caller, *workspace)
         return WorkspaceView(
             organisation_id=organisation_id,

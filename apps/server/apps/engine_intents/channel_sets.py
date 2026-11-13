@@ -159,6 +159,7 @@ def emit_channel_set(
     reason: str,
     all_members: list[str],
     channels: list[dict[str, Any]],
+    moderation: dict[str, Any] | None = None,
 ) -> EngineChannelSet:
     """Record the organisation's next channel set and one command per active agent credential."""
     from .services import _issue, _next_revision, _supersede, lock_heads
@@ -168,6 +169,29 @@ def emit_channel_set(
     if not isinstance(reason, str) or not _REASON.fullmatch(reason):
         raise ChannelSetError("reason is a lower-case identifier")
     everyone, normalised = normalise(all_members, channels)
+    if moderation:
+        if set(moderation) != {"banned_subjects", "muted_subjects"}:
+            raise ChannelSetError("moderation carries exactly bans and mutes")
+        banned = _subjects(moderation["banned_subjects"], "banned_subjects")
+        muted = moderation["muted_subjects"]
+        if not isinstance(muted, list) or len(banned) + len(muted) > MAX_MEMBERS:
+            raise ChannelSetError("moderation exceeds the subject bound")
+        seen = set()
+        for entry in muted:
+            if not isinstance(entry, dict) or set(entry) != {"subject", "expires_at"}:
+                raise ChannelSetError("a mute carries subject and expiration")
+            subject = _subjects([entry["subject"]], "muted_subjects")[0]
+            if subject in seen:
+                raise ChannelSetError("duplicate muted subject")
+            seen.add(subject)
+            from datetime import datetime
+
+            try:
+                expiration = datetime.fromisoformat(entry["expires_at"].replace("Z", "+00:00"))
+                if expiration.tzinfo is None:
+                    raise ValueError
+            except (ValueError, AttributeError, TypeError):
+                raise ChannelSetError("mute expiration needs an explicit timezone") from None
     _, head = lock_heads(organisation_id)
     # The credentials next, in id order, as the member set's emitter takes them.
     credential_ids = list(
@@ -183,6 +207,7 @@ def emit_channel_set(
         revision=head.revision,
         all_members=everyone,
         channels=normalised,
+        moderation=moderation or {},
         reason=reason,
     )
     record_engine_channel_set_event(

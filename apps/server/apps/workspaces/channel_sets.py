@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.audit.services import record_channel_set_refused
@@ -77,6 +78,14 @@ def channel_set_input(workspace_id: UUID) -> tuple[list[str], list[dict[str, Any
     )
     revision = organisation_authority_revision(organisation_id=organisation_id)
     members = current_members(organisation_id=organisation_id)
+    from .models import WorkspaceMemberRestriction
+
+    excluded = set(
+        WorkspaceMemberRestriction.objects.filter(workspace_id=workspace_id)
+        .filter(Q(banned=True) | Q(kicked=True))
+        .values_list("membership_id", flat=True)
+    )
+    members = {key: value for key, value in members.items() if key not in excluded}
     usable: dict[UUID, set[str]] = {}
     for user_id, subject, is_usable in realm_subjects(organisation_id=organisation_id):
         if is_usable and SUBJECT.fullmatch(subject):
@@ -189,11 +198,14 @@ def emit_for(
     if computed is None:
         lock_heads(organisation_id)
         computed = channel_set_input(workspace_id)
+    from .moderation import projection
+
     emit_channel_set(
         organisation_id=organisation_id,
         reason=reason,
         all_members=computed[0],
         channels=computed[1],
+        moderation=projection(workspace_id),
     )
 
 

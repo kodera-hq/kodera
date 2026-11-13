@@ -968,7 +968,7 @@ def without_template_key(objects):
 # 0007_room_state_revision, the channel set's result order (§13.3). Reversals below them
 # remove these objects and restore the two position constraints to immediate first.
 # Every test restores the current leaf, including the later warm-pool allocation table.
-LEAF = "0008_warmpoolallocation"
+LEAF = "0010_moderation_scope_guards"
 WARM_POOL_TABLE = "workspaces_warmpoolallocation"
 NOTICE_TABLE = "workspaces_channelnotice"
 ESPACE_OBJECTS = {
@@ -991,6 +991,9 @@ DEFERRED = " DEFERRABLE INITIALLY DEFERRED"
 
 def without_warm_pool(objects):
     """0008 owns only the warm-pool table; retain every unrelated schema object."""
+    from workspace_safety.schema_inventory import without_moderation
+
+    objects = without_moderation(objects)
     assert ("relation", WARM_POOL_TABLE, WARM_POOL_TABLE) in objects
     assert ("constraint", WARM_POOL_TABLE, "warm_pool_offer_valid") in objects
     return {key: value for key, value in objects.items() if key[1] != WARM_POOL_TABLE}

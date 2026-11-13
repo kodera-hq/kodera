@@ -14,6 +14,8 @@ SOURCE = ROOT / "src" / "kodera_synapse_policy" / "__init__.py"
 
 # (description, original text, mutated text, test that must fail)
 MUTANTS = [
+    ("workspace ban native join open", "if user in content.get('banned', ()):", "if False:", "test_workspace_ban_refuses_native_public_join_and_post"),
+    ("workspace mute posting open", "if event.type in {'m.room.message', 'm.sticker'} and _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
     ("archived native join open", 'if content.get("archived", False) is not False:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("archived event posting open", 'if content.get("archived") is True:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("public native remote join open", 'if content.get("local_only") is True and not self._api.is_mine(user):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),

@@ -28,7 +28,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import OperationalError, connection, transaction
-from django.db.models import F, QuerySet
+from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 
 from apps.audit.services import record_authz_denied, record_structure_event
@@ -274,7 +274,18 @@ _CHANNEL_FIELDS = (
 
 def read_caller(verified: VerifiedAccessToken, organisation_id: UUID) -> TenantCaller:
     try:
-        return read_tenant_caller(verified=verified, organisation_id=organisation_id)
+        caller = read_tenant_caller(verified=verified, organisation_id=organisation_id)
+        from .models import WorkspaceMemberRestriction
+
+        if (
+            WorkspaceMemberRestriction.objects.filter(
+                workspace__organisation_id=organisation_id, membership_id=caller.membership_id
+            )
+            .filter(Q(banned=True) | Q(kicked=True))
+            .exists()
+        ):
+            raise AdministrationForbiddenError(caller)
+        return caller
     except TenantCallerUnknownError:
         raise WorkspaceCallerUnknownError() from None
     except TenantCallerNotFoundError:

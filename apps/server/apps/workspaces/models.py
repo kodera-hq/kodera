@@ -344,3 +344,100 @@ class WarmPoolAllocation(StoredModel):
                 condition=models.Q(offer_mode__in=["cloud-shared", "cloud-dedicated"]),
             )
         ]
+
+
+class WorkspaceModerator(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "membership"], name="workspace_moderator_unique"
+            )
+        ]
+
+
+class WorkspaceMemberRestriction(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    banned = models.BooleanField(default=False)
+    kicked = models.BooleanField(default=False)
+    muted_until = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "membership"], name="workspace_restriction_unique"
+            )
+        ]
+
+
+class WorkspaceInviteLink(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    code_digest = models.TextField(unique=True)
+    expires_at = models.DateTimeField()
+    max_uses = models.IntegerField()
+    uses_count = models.IntegerField(default=0)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    channel = models.ForeignKey(Channel, null=True, blank=True, on_delete=models.RESTRICT)
+    role = models.TextField(default="org_member")
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(max_uses__gt=0), name="workspace_invite_capacity_positive"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(uses_count__gte=0), name="workspace_invite_uses_nonnegative"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(uses_count__lte=models.F("max_uses")),
+                name="workspace_invite_uses_within_capacity",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(role__in=["org_member", "moderator"]),
+                name="workspace_invite_role_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(code_digest__regex=r"^[a-f0-9]{64}$"),
+                name="workspace_invite_digest_valid",
+            ),
+        ]
+
+
+class WorkspaceInviteRedemption(StoredModel):
+    link = models.ForeignKey(WorkspaceInviteLink, on_delete=models.RESTRICT)
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["link", "membership"], name="workspace_invite_redemption_unique"
+            )
+        ]
+
+
+class WorkspaceAbuseReport(StoredModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.RESTRICT)
+    reporter = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT, related_name="+")
+    membership = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT, related_name="+")
+    channel = models.ForeignKey(Channel, on_delete=models.RESTRICT, null=True, blank=True)
+    event_id = models.TextField(blank=True, default="")
+    reason = models.TextField()
+    status = models.TextField(default="open")
+    resolution = models.TextField(null=True, blank=True)  # noqa: DJ001 - unresolved report
+    resolved_by = models.ForeignKey(
+        "orgs.Membership", on_delete=models.RESTRICT, null=True, blank=True, related_name="+"
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["open", "resolved", "dismissed"]),
+                name="workspace_report_status_valid",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "status", "id"], name="workspace_report_queue")
+        ]

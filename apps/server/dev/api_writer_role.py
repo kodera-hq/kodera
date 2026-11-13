@@ -26,6 +26,13 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 # Read by the intake path itself, or by an `INSERT ... RETURNING` of a column with a database
 # default, or by the deferred constraint triggers of orgs.0002 that run at commit.
 SELECT = (
+    # Workspace moderation, reports and bounded invite redemption.
+    "workspaces_workspacemoderator",
+    "workspaces_workspacememberrestriction",
+    "workspaces_workspaceinvitelink",
+    "workspaces_workspaceinviteredemption",
+    "workspaces_workspaceabusereport",
+
     "identity_user",
     "identity_identity",
     "identity_staffrole",
@@ -82,6 +89,13 @@ SELECT = (
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
 INSERT = (
+    # Workspace moderation, reports and bounded invite redemption.
+    "workspaces_workspacemoderator",
+    "workspaces_workspacememberrestriction",
+    "workspaces_workspaceinvitelink",
+    "workspaces_workspaceinviteredemption",
+    "workspaces_workspaceabusereport",
+
     "orgs_organisation",
     "orgs_slugreservation",
     "orgs_organisationintake",
@@ -174,6 +188,19 @@ INSERT = (
 #   resending, revoking and accepting; never its address, role, token or inviter.
 # - orgs_membership.accepted_at: accepting revives a removed membership of the same person.
 UPDATE_COLUMNS = (
+    # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
+    ("workspaces_workspacememberrestriction", "banned"),
+    ("workspaces_workspacememberrestriction", "kicked"),
+    ("workspaces_workspacememberrestriction", "muted_until"),
+    ("workspaces_workspacememberrestriction", "updated_at"),
+    ("workspaces_workspaceinvitelink", "uses_count"),
+    ("workspaces_workspaceinvitelink", "revoked_at"),
+    ("workspaces_workspaceinvitelink", "updated_at"),
+    ("workspaces_workspaceabusereport", "status"),
+    ("workspaces_workspaceabusereport", "resolution"),
+    ("workspaces_workspaceabusereport", "resolved_by_id"),
+    ("workspaces_workspaceabusereport", "updated_at"),
+
     ("identity_staffrole", "created_at"),
     ("orgs_organisation", "owner_guard_revision"),
     ("jobs_job", "lock_requested_at"),
