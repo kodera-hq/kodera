@@ -2,7 +2,11 @@
 
 import pathlib
 import re
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pytest supplies the backport on Python 3.10.
+    import tomli as tomllib
 
 import pytest
 from packaging.requirements import Requirement

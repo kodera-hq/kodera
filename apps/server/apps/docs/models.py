@@ -118,3 +118,6 @@ class CollaborationTicket(models.Model):
 
     nonce = models.UUIDField(primary_key=True)
     expires = models.BigIntegerField(db_index=True)
+
+    def __str__(self) -> str:
+        return "Redeemed collaboration ticket"
