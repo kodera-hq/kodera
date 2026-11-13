@@ -51,11 +51,18 @@ export const webhookHandler = createWebhookHandler({
 ## Reference implementations
 
 [`extensions/`](../../extensions/README.md) holds worked examples built on this SDK, each labelled
-*Reference implementation*. They are exercised with the test harness and synthetic fixtures;
-Kodera's server does not yet register a manifest, install an extension or deliver a webhook
-(Status: Planned), so the SDK is what you can build and test against today. The catalogue of
-those examples, [`extensions/catalog.json`](../../extensions/catalog.json), is generated from
-their manifests and checked by this package's test suite (`test/catalog.test.mjs`).
+*Reference implementation*. They are exercised with the test harness and synthetic fixtures.
+
+Status: Implemented source for scoped operator commands and durable dispatch. The server's
+[`extension backend`](../../apps/server/apps/extensions/README.md) supports authenticated manual
+installation, enqueue, inspection and reconciliation through operator commands; a bounded
+worker dispatches signed deliveries through the shared pinned egress transport. This does not
+establish a deployed service. Public HTTP/console UI and automatic manifest registration remain
+held, as do application-secret provisioning, receiver generation rollout and provider activation.
+No live provider or application key is configured by default.
+
+The catalogue of examples, [`extensions/catalog.json`](../../extensions/catalog.json), is generated
+from their manifests and checked by this package's test suite (`test/catalog.test.mjs`).
 
 ## Replay and transport boundaries
 
@@ -81,7 +88,9 @@ The previous key is refused at expiry equality; incoming data cannot extend trus
 
 Pass the raw body plus signature/timestamp/event/delivery headers to the helper. Scope/header
 mismatch, malformed signatures, invalid UTF-8, oversized bodies and expired grace refuse. The
-factory additionally bounds and rejects in-process delivery-id replay. For durable side effects,
+factory additionally bounds and rejects in-process delivery-id replay. It records the latest
+verified clock before pruning, including replay/capacity refusals, and rejects clock rollback;
+invalid signatures cannot advance it. For durable side effects,
 commit the scoped delivery id with the effect in receiver storage; an in-memory cache cannot
 provide that guarantee across process restarts or later producer retries. Provision receiver
 keys and generation configuration before changing the producer. A receiver still using only

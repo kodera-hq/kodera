@@ -582,3 +582,78 @@ def test_import_operator_command_admits_real_signed_owner_stdin_and_refuses_memb
             max_objects=25,
             stdout=io.StringIO(),
         )
+
+
+@pytest.mark.parametrize("change", ["removed", "changed_type"])
+def test_paused_csv_resume_refuses_user_schema_changes_before_native_row_work(
+    world, native_engine, monkeypatch, change
+):
+    from apps.docs import collections
+
+    org, workspace, _, tokens = world
+    raw = archive({"Tasks.csv": "Title,Estimate\nBuild,2\nReview,3\n"})
+    WorkspaceQuota.objects.filter(workspace=workspace).update(pages=1)
+    paused = imports.execute(verified=tokens[0], organisation_id=org.id, source="notion", raw=raw)
+    assert (
+        not paused["complete"]
+        and Document.objects.count() == 1
+        and not CollectionRow.objects.exists()
+    )
+    table = ImportedObject.objects.get(external_key="notion:page:Tasks.csv")
+    schema = collections.read(
+        verified=tokens[0], organisation_id=org.id, collection_id=table.collection_id
+    )
+    properties = [dict(prop) for prop in schema["properties"]]
+    properties = (
+        properties[:1] if change == "removed" else [dict(prop, type="text") for prop in properties]
+    )
+    edited = collections.patch(
+        verified=tokens[0],
+        organisation_id=org.id,
+        collection_id=table.collection_id,
+        body={"properties": properties},
+        if_match=documents.tag(schema),
+        request_id="controlled-schema-edit",
+    )
+    WorkspaceQuota.objects.filter(workspace=workspace).update(pages=10)
+    created = []
+    create = documents.create
+
+    def observed_create(**kwargs):
+        created.append(kwargs["name"])
+        return create(**kwargs)
+
+    monkeypatch.setattr(documents, "create", observed_create)
+    report = imports.execute(verified=tokens[0], organisation_id=org.id, source="notion", raw=raw)
+    assert not report["complete"] and report["objects"][0]["outcome"] == "reused"
+    refused = report["objects"][1:]
+    assert len(refused) == 2 and all(
+        row["reason"] == "import_collection_schema_changed" and row["status"] == 409
+        for row in refused
+    )
+    assert created == [] and Document.objects.count() == 1 and ImportedObject.objects.count() == 1
+    assert not CollectionRow.objects.exists()
+    current = collections.read(
+        verified=tokens[0], organisation_id=org.id, collection_id=table.collection_id
+    )
+    assert current["properties"] == edited["properties"]
+    # Restoring the original types explicitly admits the same frozen source on a later resume.
+    collections.patch(
+        verified=tokens[0],
+        organisation_id=org.id,
+        collection_id=table.collection_id,
+        body={"properties": schema["properties"]},
+        if_match=documents.tag(current),
+        request_id="controlled-schema-restore",
+    )
+    resumed = imports.execute(verified=tokens[0], organisation_id=org.id, source="notion", raw=raw)
+    assert (
+        resumed["complete"] and Document.objects.count() == 3 and CollectionRow.objects.count() == 2
+    )
+    assert list(CollectionRow.objects.order_by("document__title").values_list("values", flat=True))[
+        0
+    ]["c1"] == {"type": "number", "value": 2.0}
+    assert imports.execute(verified=tokens[0], organisation_id=org.id, source="notion", raw=raw)[
+        "complete"
+    ]
+    assert Document.objects.count() == 3 and created == ["Build", "Review"]

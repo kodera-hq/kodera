@@ -116,6 +116,13 @@ def archive(raw: bytes) -> dict[str, bytes]:
             entries = source.infolist()
             if len(entries) > 1000:
                 raise ExtensionRefusedError("import_archive_bound", 413)
+            # Other codecs can allocate an unbounded expansion/dictionary before ZipExtFile
+            # slices to the advertised size. Preflight every entry before opening any member.
+            if any(
+                info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+                for info in entries
+            ):
+                raise ExtensionRefusedError("import_archive_compression")
             for info in entries:
                 name = unicodedata.normalize("NFC", info.filename)
                 if (
