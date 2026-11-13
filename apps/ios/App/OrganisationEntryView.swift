@@ -15,7 +15,7 @@ struct OrganisationEntryView: View {
     }
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
 
     var body: some View {
