@@ -23,4 +23,14 @@ CREATE TRIGGER extension_decision_guard BEFORE INSERT OR UPDATE OR DELETE ON ext
 
 class Migration(migrations.Migration):
     dependencies=[("extensions","0003_observed_delivery_decisions")]
-    operations=[migrations.RunSQL(FORWARD,"DROP TRIGGER extension_decision_guard ON extensions_deliverydecision; DROP FUNCTION extension_decision_guard();")]
+    operations=[
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+migrations.RunSQL(FORWARD,"DROP TRIGGER extension_decision_guard ON extensions_deliverydecision; DROP FUNCTION extension_decision_guard();"),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+    ]
