@@ -87,4 +87,14 @@ REVOKE ALL ON FUNCTION extension_scope_guard() FROM PUBLIC;
 
 class Migration(migrations.Migration):
     dependencies=[("extensions","0005_nonstatutory_payload_expiry")]
-    operations=[migrations.RunSQL(FORWARD,migrations.RunSQL.noop)]
+    operations=[
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+migrations.RunSQL(FORWARD,migrations.RunSQL.noop),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+    ]

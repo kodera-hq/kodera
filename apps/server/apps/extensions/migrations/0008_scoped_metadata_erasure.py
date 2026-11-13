@@ -143,4 +143,14 @@ REVOKE ALL ON FUNCTION extension_decision_guard() FROM PUBLIC;
 
 class Migration(migrations.Migration):
     dependencies=[("extensions","0007_workspace_cutoff")]
-    operations=[migrations.RunSQL(FORWARD)]
+    operations=[
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
+migrations.RunSQL(FORWARD),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+        ),
+    ]
