@@ -451,14 +451,23 @@ function ChannelSidebarView({
                   },
                 ]
               : []),
-            ...mentionCandidates.map((member) => ({
-              id: `member:${member.userId}`,
-              label: `@${member.label}`,
-              open: () => {
-                insertRef.current?.(`@${member.label} `)
-              },
-            })),
           ]}
+          members={mentionCandidates.map((member) => ({
+            id: member.userId,
+            label: `@${member.label}`,
+            open: () => {
+              insertRef.current?.(`@${member.label} `)
+            },
+          }))}
+          directMessages={
+            simulation || onSelectDirect === undefined || store.getDirects === undefined
+              ? []
+              : store.getDirects().map((dm) => ({
+                  id: dm.roomId,
+                  label: dm.name,
+                  open: () => onSelectDirect(dm.roomId),
+                }))
+          }
           documents={(onOpenDocument ? documents : []).map((doc) => ({
             id: doc.id,
             label: doc.title,

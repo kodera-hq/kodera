@@ -1477,6 +1477,63 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.docs.panel.label-new-pad` | Nouveau document collaboratif |
 | `console.docs.panel.placeholder-new-pad` | Ordre du jour, compte-rendu… |
 | `console.docs.panel.action-create-pad` | Créer le pad |
+| `console.docs.collab.tree-title` | Pages de l’espace |
+| `console.docs.collab.action-new-page` | Nouvelle page |
+| `console.docs.collab.action-new-subpage` | Ajouter une sous-page |
+| `console.docs.collab.label-parent-page` | Page parente |
+| `console.docs.collab.option-root-page` | Racine de l’espace |
+| `console.docs.collab.action-move-up` | Monter la page |
+| `console.docs.collab.action-move-down` | Descendre la page |
+| `console.docs.collab.action-delete-page` | Supprimer la page |
+| `console.docs.collab.template-blank` | Page vierge |
+| `console.docs.collab.template-spec` | Spécification |
+| `console.docs.collab.template-adr` | Décision d’architecture |
+| `console.docs.collab.template-meeting-notes` | Compte-rendu de réunion |
+| `console.docs.collab.template-runbook` | Procédure d’exploitation |
+| `console.docs.collab.mode-markdown` | Source Markdown |
+| `console.docs.collab.mode-blocks` | Éditeur collaboratif |
+| `console.docs.collab.editor-aria-label` | Contenu du document collaboratif |
+| `console.docs.collab.editor-loading` | Chargement de l’éditeur collaboratif… |
+| `console.docs.collab.editor-placeholder` | Saisissez / pour insérer un bloc ou [[ pour lier une page… |
+| `console.docs.collab.status-synced` | Synchronisé en direct |
+| `console.docs.collab.status-connecting` | Connexion en cours… |
+| `console.docs.collab.status-reconnecting` | Reconnexion en cours… |
+| `console.docs.collab.status-offline` | Hors ligne · modifications conservées sur cet appareil |
+| `console.docs.collab.status-local` | Édition locale |
+| `console.docs.collab.status-readonly` | Lecture seule |
+| `console.docs.collab.banner-readonly` | Vous consultez ce document en lecture seule. Demandez un accès d’édition pour le modifier. |
+| `console.docs.collab.presence-label` | Collaborateurs actifs |
+| `console.docs.collab.presence-count` | {count, plural, one {{count} personne présente} other {{count} personnes présentes}} |
+| `console.docs.collab.slash-menu-label` | Insérer un bloc |
+| `console.docs.collab.slash-empty` | Aucun bloc ne correspond. |
+| `console.docs.collab.block-h1` | Titre 1 |
+| `console.docs.collab.block-h2` | Titre 2 |
+| `console.docs.collab.block-h3` | Titre 3 |
+| `console.docs.collab.block-bullet` | Liste à puces |
+| `console.docs.collab.block-ordered` | Liste numérotée |
+| `console.docs.collab.block-task` | Liste de tâches |
+| `console.docs.collab.block-callout` | Encadré |
+| `console.docs.collab.block-quote` | Citation |
+| `console.docs.collab.block-divider` | Séparateur |
+| `console.docs.collab.block-code` | Bloc de code |
+| `console.docs.collab.block-table` | Tableau |
+| `console.docs.collab.block-diagram` | Diagramme |
+| `console.docs.collab.table-add-row` | Ajouter une ligne |
+| `console.docs.collab.table-add-column` | Ajouter une colonne |
+| `console.docs.collab.diagram-label` | Aperçu du diagramme |
+| `console.docs.collab.diagram-source-label` | Définition du diagramme |
+| `console.docs.collab.diagram-toggle-source` | Modifier le diagramme |
+| `console.docs.collab.diagram-hide-source` | Masquer la source |
+| `console.docs.collab.wikilink-menu-label` | Lier une page de l’espace |
+| `console.docs.collab.wikilink-empty` | Aucune page ne correspond. |
+| `console.docs.collab.wikilink-open` | Ouvrir la page {title} |
+| `console.docs.collab.backlinks-title` | Pages liées à ce document |
+| `console.docs.collab.backlinks-empty` | Aucune autre page ne pointe vers ce document pour l’instant. |
+| `console.docs.collab.error-max-depth` | La profondeur maximale de 16 niveaux est atteinte. Choisissez une page parente plus haute. |
+| `console.docs.collab.error-cycle` | Une page ne peut pas être déplacée sous elle-même ni sous l’une de ses sous-pages. |
+| `console.docs.collab.error-delete-has-children` | Cette page contient des sous-pages. Déplacez ou supprimez d’abord ses sous-pages. |
+| `console.docs.collab.error-save` | Vos modifications n’ont pas pu être enregistrées sur le serveur. Réessayez dans un instant. |
+| `console.docs.collab.empty-workspace` | Aucune page dans cet espace pour l’instant. Choisissez un modèle pour créer la première. |
 
 ## Workspace
 
