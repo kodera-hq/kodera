@@ -222,10 +222,10 @@ export function workspaceDocumentsDemoHandlers(
       }
     ),
 
-    // Demo MSW runs without a live Yjs WebSocket relay; 501 keeps the editor in local IndexedDB mode.
+    // Demo MSW runs without a live Yjs WebSocket relay; 404 keeps the editor in local IndexedDB mode.
     http.post(
       `${base}/organisations/:organisation_id/workspace/documents/:document_id/collab-session`,
-      () => problem('https://kodera.io/problems/not-implemented')
+      () => problem('https://kodera.io/problems/not-found')
     ),
 
     http.get(`${base}/organisations/:organisation_id/workspace/search`, ({ params, request }) => {
