@@ -63,6 +63,8 @@ class ProximityV2CheckInController(
     private var activeEmissionWindow: Long? = null
     private var emissionsInCurrentWindow: Int = 0
     private val peerObservations = ArrayDeque<BeaconObservationV2>()
+    private var radioContext = Any()
+    private var nativeRadioOperation = false
 
     var organisationId by mutableStateOf<String?>(null)
         private set
@@ -109,13 +111,17 @@ class ProximityV2CheckInController(
             throw ProximityBeaconV2Failure(ProximityBeaconV2Error.INVALID_INPUT)
         }
         if (organisationId == incomingOrganisationId) return
-        teardownRadioMaterial()
-        organisationId = incomingOrganisationId
-        hasForegroundConsent = false
-        lastOnlineMatrixDraft = null
-        onlineMatrixDraftCount = 0
-        lastError = null
-        refreshPosture()
+        try {
+            val context = teardownRadioMaterial()
+            requireRadioContext(context)
+            organisationId = incomingOrganisationId
+            hasForegroundConsent = false
+            lastOnlineMatrixDraft = null
+            onlineMatrixDraftCount = 0
+            lastError = null
+        } finally {
+            refreshPosture()
+        }
     }
 
     @Synchronized
@@ -125,21 +131,37 @@ class ProximityV2CheckInController(
         deviceSeed: ByteArray,
         radioAdapter: LocalBleProximityRadio,
     ) {
-        if (!TrustPolicy.canonicalNonNilUUID(targetOrganisationId)) {
-            throw ProximityBeaconV2Failure(ProximityBeaconV2Error.INVALID_INPUT)
+        var nextSender: ProximityBeaconV2Sender? = null
+        var nextReceiver: ProximityBeaconV2Receiver? = null
+        try {
+            // Retire before replacement, including same-organisation and failed provisioning.
+            // Same-org key refresh must not refund already consumed physical radio duty.
+            val changesOrganisation = TrustPolicy.canonicalNonNilUUID(targetOrganisationId) &&
+                organisationId != targetOrganisationId
+            val context = teardownRadioMaterial(resetBudget = changesOrganisation)
+            requireRadioContext(context)
+            if (!TrustPolicy.canonicalNonNilUUID(targetOrganisationId)) {
+                throw ProximityBeaconV2Failure(ProximityBeaconV2Error.INVALID_INPUT)
+            }
+            if (organisationId != targetOrganisationId) {
+                organisationId = targetOrganisationId
+                hasForegroundConsent = false
+                lastOnlineMatrixDraft = null
+                onlineMatrixDraftCount = 0
+            }
+            nextSender = ProximityBeaconV2Sender(targetOrganisationId, discoveryKey, deviceSeed)
+            nextReceiver = ProximityBeaconV2Receiver(targetOrganisationId, discoveryKey)
+            sender = nextSender
+            receiver = nextReceiver
+            radio = radioAdapter
+            nextSender = null
+            nextReceiver = null
+            lastError = null
+        } finally {
+            nextSender?.close()
+            nextReceiver?.close()
+            refreshPosture()
         }
-        if (organisationId != targetOrganisationId) {
-            configureOrganisation(targetOrganisationId)
-        }
-        val nextSender = ProximityBeaconV2Sender(targetOrganisationId, discoveryKey, deviceSeed)
-        val nextReceiver = ProximityBeaconV2Receiver(targetOrganisationId, discoveryKey)
-        sender?.close()
-        receiver?.close()
-        sender = nextSender
-        receiver = nextReceiver
-        radio = radioAdapter
-        lastError = null
-        refreshPosture()
     }
 
     @Synchronized
@@ -149,13 +171,26 @@ class ProximityV2CheckInController(
         deviceContext: String,
         radioAdapter: LocalBleProximityRadio,
     ) {
-        ProximityBeaconKeyDerivation.deriveKeys(targetOrganisationId, rootMaterial, deviceContext).use { keys ->
-            provisionLocalRadio(
-                targetOrganisationId = targetOrganisationId,
-                discoveryKey = keys.discoveryKeyBytes(),
-                deviceSeed = keys.deviceSeedBytes(),
-                radioAdapter = radioAdapter,
-            )
+        val context = radioContext
+        try {
+            ProximityBeaconKeyDerivation.deriveKeys(targetOrganisationId, rootMaterial, deviceContext).use { keys ->
+                val discovery = keys.discoveryKeyBytes()
+                val seed = keys.deviceSeedBytes()
+                try {
+                    provisionLocalRadio(targetOrganisationId, discovery, seed, radioAdapter)
+                } finally {
+                    discovery.fill(0)
+                    seed.fill(0)
+                }
+            }
+        } catch (failure: Throwable) {
+            // Derivation can fail before provisionLocalRadio has retired anything.
+            // Do not clear a newer context installed by a reentrant adapter callback.
+            if (radioContext === context) {
+                // No organisation transition happened when derivation failed in this context.
+                try { teardownRadioMaterial(resetBudget = false) } finally { refreshPosture() }
+            }
+            throw failure
         }
     }
 
@@ -166,7 +201,8 @@ class ProximityV2CheckInController(
         }
         hasForegroundConsent = granted
         if (!granted) {
-            radio?.stopForegroundScanWindow()
+            radioContext = Any()
+            stopRadio(radio)
         }
         lastError = null
         refreshPosture()
@@ -181,7 +217,8 @@ class ProximityV2CheckInController(
     @Synchronized
     fun onBackground() {
         isForegroundActive = false
-        radio?.stopForegroundScanWindow()
+        radioContext = Any()
+        stopRadio(radio)
         refreshPosture()
     }
 
@@ -191,7 +228,8 @@ class ProximityV2CheckInController(
         try {
             budget.validateBattery(snapshot)
         } catch (_: ProximityBeaconV2Failure) {
-            radio?.stopForegroundScanWindow()
+            radioContext = Any()
+            stopRadio(radio)
         }
         refreshPosture()
     }
@@ -233,6 +271,7 @@ class ProximityV2CheckInController(
             refreshPosture()
             throw ProximityBeaconV2Failure(ProximityBeaconV2Error.INVALID_INPUT)
         }
+        requireRadioIoAvailable()
         try {
             budget.validateScanStart(battery, lastScanStartedAtUnixSeconds, nowUnixSeconds)
         } catch (failure: ProximityBeaconV2Failure) {
@@ -241,13 +280,26 @@ class ProximityV2CheckInController(
             throw failure
         }
 
-        activeRadio.startForegroundScanWindow(budget.maxScanWindowSeconds)
+        val context = radioContext
         lastScanStartedAtUnixSeconds = nowUnixSeconds
-        lastError = null
-        localRadioPosture = LocalBleRadioPosture.ScanningWindowActive(
-            startedAtUnixSeconds = nowUnixSeconds,
-            expiresAtUnixSeconds = nowUnixSeconds + budget.maxScanWindowSeconds,
-        )
+        nativeRadioOperation = true
+        try {
+            try {
+                activeRadio.startForegroundScanWindow(budget.maxScanWindowSeconds)
+            } finally {
+                // A same-thread callback may reset while the native start still completes.
+                // No replacement IO can start until this captured old window is retired.
+                if (radioContext !== context) stopRadio(activeRadio)
+            }
+            requireRadioContext(context)
+            lastError = null
+            localRadioPosture = LocalBleRadioPosture.ScanningWindowActive(
+                startedAtUnixSeconds = nowUnixSeconds,
+                expiresAtUnixSeconds = nowUnixSeconds + budget.maxScanWindowSeconds,
+            )
+        } finally {
+            nativeRadioOperation = false
+        }
     }
 
     @Synchronized
@@ -274,6 +326,7 @@ class ProximityV2CheckInController(
             throw ProximityBeaconV2Failure(ProximityBeaconV2Error.INVALID_INPUT)
         }
 
+        requireRadioIoAvailable()
         val currentWindow = nowUnixSeconds / ProximityBeaconV2.ROTATION_WINDOW_SECONDS
         val windowCount = if (activeEmissionWindow == currentWindow) emissionsInCurrentWindow else 0
         try {
@@ -285,15 +338,23 @@ class ProximityV2CheckInController(
         }
 
         val beacon = activeSender.emitAt(nowUnixSeconds)
-        activeRadio.broadcastBeacon(beacon, status)
+        val context = radioContext
+        // An uncertain callback may already have transmitted: never refund duty or sequence.
         activeEmissionWindow = currentWindow
         emissionsInCurrentWindow = windowCount + 1
-        verifiedLocalBroadcastCount += 1
-        lastEmittedPseudonymHex = beacon.pseudonymHex
-        lastEmittedWindow = beacon.window
-        lastError = null
-        refreshPosture()
-        return beacon
+        nativeRadioOperation = true
+        try {
+            activeRadio.broadcastBeacon(beacon, status)
+            requireRadioContext(context)
+            verifiedLocalBroadcastCount += 1
+            lastEmittedPseudonymHex = beacon.pseudonymHex
+            lastEmittedWindow = beacon.window
+            lastError = null
+            refreshPosture()
+            return beacon
+        } finally {
+            nativeRadioOperation = false
+        }
     }
 
     @Synchronized
@@ -323,30 +384,52 @@ class ProximityV2CheckInController(
 
     @Synchronized
     override fun close() {
-        teardownRadioMaterial()
         organisationId = null
         hasForegroundConsent = false
         isForegroundActive = false
         lastOnlineMatrixDraft = null
         onlineMatrixDraftCount = 0
-        localRadioPosture = LocalBleRadioPosture.Unprovisioned
+        try { teardownRadioMaterial() } finally { refreshPosture() }
     }
 
-    private fun teardownRadioMaterial() {
-        radio?.stopForegroundScanWindow()
+    private fun teardownRadioMaterial(resetBudget: Boolean = true): Any {
+        val context = Any()
+        radioContext = context
+        val oldRadio = radio
+        val oldSender = sender
+        val oldReceiver = receiver
         radio = null
-        sender?.close()
         sender = null
-        receiver?.close()
         receiver = null
-        lastScanStartedAtUnixSeconds = null
-        activeEmissionWindow = null
-        emissionsInCurrentWindow = 0
+        if (resetBudget) {
+            lastScanStartedAtUnixSeconds = null
+            activeEmissionWindow = null
+            emissionsInCurrentWindow = 0
+        }
         verifiedLocalBroadcastCount = 0
         peerObservations.clear()
         verifiedPeerCount = 0
         lastEmittedPseudonymHex = null
         lastEmittedWindow = null
+        // Detach and close owned material before calling an adapter that can throw or reenter.
+        oldSender?.close()
+        oldReceiver?.close()
+        stopRadio(oldRadio)
+        return context
+    }
+
+    private fun stopRadio(target: LocalBleProximityRadio?) {
+        val previous = nativeRadioOperation
+        nativeRadioOperation = true
+        try { target?.stopForegroundScanWindow() } finally { nativeRadioOperation = previous }
+    }
+
+    private fun requireRadioIoAvailable() {
+        if (nativeRadioOperation) throw ProximityBeaconV2Failure(ProximityBeaconV2Error.DUTY_CYCLE_THROTTLED)
+    }
+
+    private fun requireRadioContext(context: Any) {
+        if (radioContext !== context) throw ProximityBeaconV2Failure(ProximityBeaconV2Error.SCOPE_MISMATCH)
     }
 
     private fun refreshPosture() {

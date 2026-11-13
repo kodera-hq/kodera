@@ -98,9 +98,11 @@ class TelecomPushCoordinator(
             } else {
                 CallRejectionReason.UNTRUSTED_PUSH_PAYLOAD
             }
-            stateMachine.recordRejection(rejection)
-            phase = stateMachine.phase
-            driver?.onCallRejected(null, rejection)
+            if (stateMachine.activeConnectionId == null) {
+                stateMachine.recordRejection(rejection)
+                phase = stateMachine.phase
+                driver?.onCallRejected(null, rejection)
+            }
             throw failure
         }
 
@@ -111,7 +113,9 @@ class TelecomPushCoordinator(
             rejectedPushCount += 1
             phase = stateMachine.phase
             val rejection = (phase as? TelecomCallPhase.Rejected)?.reason ?: CallRejectionReason.UNTRUSTED_PUSH_PAYLOAD
-            driver?.onCallRejected(wakeup.connectionId, rejection)
+            // A busy/replayed wakeup can carry the active connection's ID. Never let
+            // its rejection end or replace the already admitted native call.
+            if (stateMachine.activeConnectionId == null) driver?.onCallRejected(wakeup.connectionId, rejection)
             throw failure
         }
 
