@@ -40,6 +40,24 @@ PERMISSIVE = frozenset(
         "Unlicense",
     }
 )
+# Recognised alternatives remain non-admitted unless an OR branch supplies a
+# reviewed permissive choice. Unknown IDs cannot hide behind an admitted branch.
+KNOWN_NONPERMISSIVE = frozenset(
+    {
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "LGPL-2.0-only",
+        "LGPL-2.0-or-later",
+        "LGPL-2.1-only",
+        "LGPL-2.1-or-later",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+    }
+)
 TARGETS = {
     "android-apk": {"AndroidManifest.xml": None, "classes.dex": b"dex\n"},
     "android-aab": {
@@ -151,6 +169,8 @@ def acceptable_license(expression):
             index += 1
             return result
         if token in {"AND", "OR", "WITH", ")"}:
+            raise ValueError
+        if token not in PERMISSIVE and token not in KNOWN_NONPERMISSIVE:
             raise ValueError
         return token in PERMISSIVE
 
@@ -499,6 +519,8 @@ def verify(first, second, sbom, evidence, toolchain, revision, target):
         )
     return {
         "schema_version": 1,
+        "validation_profile": "kodera-native-inventory-v1",
+        "cyclonedx_full_schema_validated": False,
         "revision": revision,
         "target": target,
         "artifact_sha256": hashes[0],

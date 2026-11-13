@@ -254,6 +254,8 @@ def run():
             result = f.verify()
             assert result["reproducible_bytes"] and result["distinct_declared_builds"]
             assert not result["builder_authenticity_verified"] and not result["release_approved"]
+            assert result["validation_profile"] == "kodera-native-inventory-v1"
+            assert not result["cyclonedx_full_schema_validated"]
             output, error = io.StringIO(), io.StringIO()
             with redirect_stdout(output), redirect_stderr(error):
                 status = gate.main(f.argv())
@@ -359,6 +361,22 @@ def run():
                 lambda f: f.bom["components"][0],
                 "licenses",
                 [{"license": {"id": "LicenseRef-Unknown"}}],
+            ),
+            "licence is absent, unreviewed or not permissive",
+        ),
+        (
+            "invalid SPDX hidden by permissive OR",
+            field(
+                lambda f: f.bom["components"][0], "licenses", [{"expression": "MIT OR garbage!!!"}]
+            ),
+            "licence is absent, unreviewed or not permissive",
+        ),
+        (
+            "unreviewed SPDX branch hidden by permissive OR",
+            field(
+                lambda f: f.bom["components"][0],
+                "licenses",
+                [{"expression": "MIT OR LicenseRef-unreviewed"}],
             ),
             "licence is absent, unreviewed or not permissive",
         ),

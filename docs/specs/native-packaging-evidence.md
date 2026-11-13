@@ -76,7 +76,7 @@ build service and reviewer must establish that provenance separately.
 
 ## SBOM and licence policy
 
-The supported policy profile is [CycloneDX JSON 1.6](https://cyclonedx.org/docs/1.6/json/).
+The restricted `kodera-native-inventory-v1` policy profile consumes [CycloneDX JSON 1.6](https://cyclonedx.org/docs/1.6/json/).
 This verifier checks the fields it consumes; it does not claim complete schema
 validation of every optional CycloneDX feature.
 
@@ -97,7 +97,10 @@ currently refused.
 
 The explicit permissive identifier set is `Apache-2.0`, `MIT`, `BSD-2-Clause`,
 `BSD-3-Clause`, `ISC`, `0BSD`, `Zlib`, `BSL-1.0`, `CC0-1.0` and `Unlicense`.
-Unknown identifiers and copyleft-only choices refuse rather than being inferred
+All expression identifiers must belong to the explicitly recognised policy subset.
+Unknown identifiers and unreviewed LicenseRef branches refuse even beside an
+admitted OR alternative. Recognised GPL/LGPL/AGPL alternatives can participate in
+an explicit OR selection, but copyleft-only choices refuse rather than being inferred
 permissive from the absence of a deny-list match. Adding a licence is a reviewed
 policy change with an accepting case and a named refusing mutation.
 
@@ -124,7 +127,8 @@ python3 scripts/ci/check-native-packaging-workflow.py
 ```
 
 Success prints bound hashes and counts, `reproducible_bytes: true` and
-`distinct_declared_builds: true`. `builder_authenticity_verified` and
+`distinct_declared_builds: true`. `validation_profile` is `kodera-native-inventory-v1` and
+`cyclonedx_full_schema_validated` is false. `builder_authenticity_verified` and
 `release_approved` remain false. A refusal exits `1`, names the violated boundary
 on stderr and prints no successful report. JSON rejects duplicate keys and
 nonfinite numbers. Verification runs on POSIX descriptors, as in the Ubuntu
