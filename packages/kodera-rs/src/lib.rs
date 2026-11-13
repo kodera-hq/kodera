@@ -43,7 +43,10 @@ pub use megolm_engine::{MegolmEpochKey, MegolmEpochReceiver, MegolmEpochSender, 
 #[cfg(feature = "passkey-bindings")]
 mod passkey_binding;
 #[cfg(feature = "passkey-bindings")]
-pub use passkey_binding::{PasskeyAssertion, PasskeyBinding, PasskeyChallenge};
+pub use passkey_binding::{
+    PasskeyAssertion, PasskeyBackupPolicy, PasskeyBinding, PasskeyChallenge,
+    PasskeyResidencyPosture,
+};
 
 mod poll_connector;
 pub use poll_connector::{

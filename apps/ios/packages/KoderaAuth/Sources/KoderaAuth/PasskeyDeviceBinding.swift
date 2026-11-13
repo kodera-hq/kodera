@@ -15,6 +15,25 @@ public enum PasskeyBindingError: Error, Equatable, Sendable {
     case authenticationFailed
 }
 
+/// Backup flag policy for WebAuthn Level 3 §6.5 assertion flags.
+///
+/// - `.universal` (default): admits single-device security keys (`0x05`), backup-eligible local
+///   passkeys (`0x0D`), and multi-device synced passkeys (`0x1D`, including platform keychains and
+///   self-hosted software vaults) while still requiring `UP|UV` and rejecting invalid `BS=1, BE=0`
+///   (`0x15`), attested-data (`AT`), extension (`ED`), and reserved (`RFU`) bits.
+/// - `.strictNonBackupable`: additionally requires `(flags & 0x18) == 0` (`0x05`).
+public enum PasskeyBackupPolicy: Equatable, Sendable {
+    case universal
+    case strictNonBackupable
+}
+
+/// Authenticator backup/residency posture reported by signed WebAuthn Level 3 assertion flags.
+public enum PasskeyResidencyPosture: Equatable, Sendable {
+    case singleDeviceBound
+    case backupEligibleLocal
+    case multiDeviceSynced
+}
+
 /// Sensitive 256-bit WebAuthn challenge bound to a single organisation and expiry epoch.
 public struct PasskeyChallenge: Equatable, Sendable, CustomDebugStringConvertible {
     public let organisationId: String
@@ -58,11 +77,18 @@ public struct PasskeyAssertion: Equatable, Sendable, CustomDebugStringConvertibl
     }
 }
 
-/// Strict ES256 WebAuthn assertion verifier aligned with `kodera-rs` `passkey_binding`.
-/// Requires UP+UV (`0x05`) and refuses backup-eligible/backed-up flags (`BE`/`BS`), attested credential
-/// data (`AT`), and extensions (`ED`) during assertion verification.
+/// ES256 WebAuthn assertion verifier aligned with `kodera-rs` `passkey_binding`.
+/// Requires `UP+UV` (`0x05`) and enforces `PasskeyBackupPolicy` (`.universal` by default: `0x05`,
+/// `0x0D`, `0x1D`, rejecting invalid `BS=1, BE=0` `0x15`, `AT`, `ED`, and RFU bits).
 public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
     public static let maxChallenges = 64
+    private static let flagUP: UInt8 = 0x01
+    private static let flagUV: UInt8 = 0x04
+    private static let flagBE: UInt8 = 0x08
+    private static let flagBS: UInt8 = 0x10
+    private static let flagAT: UInt8 = 0x40
+    private static let flagED: UInt8 = 0x80
+    private static let flagRFUMask: UInt8 = 0x22
 
     private struct ChallengeState: Sendable {
         let expiresAt: UInt64
@@ -73,13 +99,42 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
     public let rpId: String
     public let origin: String
     public let credentialId: Data
+    public let backupPolicy: PasskeyBackupPolicy
     private let publicKey: P256.Signing.PublicKey
     public private(set) var lastCounter: UInt32 = 0
     public private(set) var latestNow: UInt64 = 0
     public private(set) var verifiedAssertionCount: Int = 0
+    public private(set) var lastResidencyPosture: PasskeyResidencyPosture? = nil
     private var challenges: [Data: ChallengeState] = [:]
 
     public var debugDescription: String { "PasskeyDeviceBinding([redacted])" }
+
+    private static func validateAssertionFlags(
+        _ flags: UInt8,
+        policy: PasskeyBackupPolicy
+    ) throws -> PasskeyResidencyPosture {
+        guard (flags & (flagUP | flagUV)) == (flagUP | flagUV) else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        guard (flags & (flagRFUMask | flagAT | flagED)) == 0 else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        let backupBits = flags & (flagBE | flagBS)
+        guard backupBits != flagBS else {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        if policy == .strictNonBackupable && backupBits != 0 {
+            throw PasskeyBindingError.authenticationFailed
+        }
+        switch backupBits {
+        case 0:
+            return .singleDeviceBound
+        case flagBE:
+            return .backupEligibleLocal
+        default:
+            return .multiDeviceSynced
+        }
+    }
 
     public static func isAdmittedOrigin(rpId: String, origin: String) -> Bool {
         guard origin.utf8.count <= 512 else { return false }
@@ -105,7 +160,8 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         rpId: String,
         origin: String,
         credentialId: Data,
-        publicSEC1Key: Data
+        publicSEC1Key: Data,
+        backupPolicy: PasskeyBackupPolicy = .universal
     ) throws {
         guard TrustPolicy.canonicalNonNilUUID(organisationId),
               TrustPolicy.validDNSName(rpId),
@@ -133,6 +189,7 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         self.rpId = rpId
         self.origin = origin
         self.credentialId = credentialId
+        self.backupPolicy = backupPolicy
         self.publicKey = parsedKey
     }
 
@@ -176,12 +233,13 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         return PasskeyChallenge(organisationId: organisationId, nonce: nonce, expiresAt: expiresAt)
     }
 
+    @discardableResult
     public mutating func verifyAssertion(
         organisationId incomingOrganisationId: String,
         challenge: PasskeyChallenge,
         assertion: PasskeyAssertion,
         now: UInt64
-    ) throws {
+    ) throws -> PasskeyResidencyPosture {
         guard incomingOrganisationId == organisationId,
               challenge.organisationId == organisationId else {
             throw PasskeyBindingError.scopeMismatch
@@ -222,10 +280,10 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
 
         let authBytes = Array(assertion.authenticatorData)
         let expectedRPHash = Data(SHA256.hash(data: Data(rpId.utf8)))
-        guard Data(authBytes[0..<32]) == expectedRPHash,
-              authBytes[32] == 0x05 else {
+        guard Data(authBytes[0..<32]) == expectedRPHash else {
             throw PasskeyBindingError.authenticationFailed
         }
+        let posture = try Self.validateAssertionFlags(authBytes[32], policy: backupPolicy)
 
         let counter = (UInt32(authBytes[33]) << 24)
             | (UInt32(authBytes[34]) << 16)
@@ -251,6 +309,8 @@ public struct PasskeyDeviceBinding: Sendable, CustomDebugStringConvertible {
         challenges[challenge.bytes]?.used = true
         lastCounter = counter
         verifiedAssertionCount += 1
+        lastResidencyPosture = posture
+        return posture
     }
 }
 

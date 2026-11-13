@@ -107,13 +107,16 @@ The signed counter cannot decrease once nonzero; authenticators reporting zero
 still require a fresh challenge for every assertion. Capacity refuses instead
 of evicting outstanding one-use state. Observed clock rollback refuses.
 
-The strict profile checks the registered credential, ceremony type, exact
+The verifier checks the registered credential, ceremony type, exact
 challenge, canonical unpadded base64url, exact origin, RP ID hash and actual
-signature. It requires UP and UV, and refuses backup eligibility/state,
-attested-data flags, extensions, cross-origin assertions, unknown/duplicate JSON
-fields and malformed signatures. It intentionally supports the bounded
-37-byte authenticator-data profile; it is not a complete WebAuthn server or an
-enrolment/attestation ceremony.
+signature. It requires UP and UV (`0x05`), admits WebAuthn Level 3 backup-eligible
+(`0x0D`) and synced (`0x1D`) passkeys by default under `PasskeyBackupPolicy::Universal`
+(or restricts to `0x05` under `PasskeyBackupPolicy::StrictNonBackupable`), and
+refuses invalid `BS=1, BE=0` (`0x15`), attested-data flags, extensions, reserved
+bits, cross-origin assertions, unknown/duplicate JSON fields and malformed
+signatures. It intentionally supports the bounded 37-byte authenticator-data
+profile; it is not a complete WebAuthn server or an enrolment/attestation
+ceremony.
 
 HTTPS origins must be canonical RP hosts or their explicit subdomains. Exact
 Android public signing-certificate facets use

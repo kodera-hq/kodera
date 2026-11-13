@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Align `PasskeyDeviceBinding` with `kodera-rs` `PasskeyBackupPolicy` and Android WebAuthn Level 3 flags so hardware security keys (`0x05`), backup-eligible passkeys (`0x0D`) and synced keychain or software vault passkeys (`0x1D`) verify under `.universal` while still rejecting invalid `0x15` (`BS=1, BE=0`), missing `UP`/`UV`, `AT`/`ED` and reserved bits, with opt-in `.strictNonBackupable`.
 - Adopt the `ciel` (light) and `cielNuit` (dark) generated design-token palettes across the entry, signed-in, call, passkey, community and `#proximity` surfaces.
 - Add the canonical three-category `community.kodera.io` workspace structure (`Community`, `Core Kodera`, `Design Partners`) with localized FR/EN audience subtitles, federated partner badges, universal Matrix invitation URI builder/parser (`matrix.to`, `matrix:` URIs, `#alias:domain`, `@user:domain`), `ChannelInviteCoordinator` and clipboard-only `ChannelInviteSheet`.
 - Add `PayloadFreePushEnvelope`, `CallSessionState` and `CallKitPushCoordinator` enforcing Core's payload-free VoIP push invariant and deterministic `idle -> ringing -> connecting -> active -> muted/held -> ended/failed` transitions without adding unqualified background modes to `Info.plist`.

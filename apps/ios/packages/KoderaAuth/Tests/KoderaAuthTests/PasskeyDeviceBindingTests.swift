@@ -13,7 +13,8 @@ final class PasskeyDeviceBindingTests: XCTestCase {
 
     private func makeSetup(
         origin: String = "https://accounts.example.test",
-        compressed: Bool = false
+        compressed: Bool = false,
+        backupPolicy: PasskeyBackupPolicy = .universal
     ) throws -> (PasskeyDeviceBinding, P256.Signing.PrivateKey) {
         let signer = P256.Signing.PrivateKey()
         let sec1 = compressed
@@ -24,7 +25,8 @@ final class PasskeyDeviceBindingTests: XCTestCase {
             rpId: "accounts.example.test",
             origin: origin,
             credentialId: credentialID,
-            publicSEC1Key: sec1
+            publicSEC1Key: sec1,
+            backupPolicy: backupPolicy
         )
         return (binding, signer)
     }
@@ -229,11 +231,58 @@ final class PasskeyDeviceBindingTests: XCTestCase {
         XCTAssertEqual(binding.lastCounter, 2)
     }
 
-    func testScopeOriginUVBackupExpiryClockAndRedactionInvariants() throws {
+    func testUniversalPolicyAdmitsSingleDeviceBackupEligibleAndSyncedPasskeysAndRefusesInvalidFlags() throws {
         var (binding, signer) = try makeSetup()
+        XCTAssertEqual(binding.backupPolicy, .universal)
+        XCTAssertNil(binding.lastResidencyPosture)
+
+        let challenge = try binding.issueChallenge(organisationId: org, now: 100, lifetimeSeconds: 30)
+        for disallowedFlags: UInt8 in [0x00, 0x01, 0x04, 0x09, 0x15, 0x19, 0x25, 0x45, 0x85] {
+            let badFlags = try makeAssertion(
+                signer: signer,
+                challenge: challenge,
+                counter: 1,
+                flags: disallowedFlags,
+                origin: "https://accounts.example.test"
+            )
+            XCTAssertThrowsError(
+                try binding.verifyAssertion(organisationId: org, challenge: challenge, assertion: badFlags, now: 101)
+            ) {
+                XCTAssertEqual($0 as? PasskeyBindingError, .authenticationFailed)
+            }
+        }
+
+        let admitted: [(UInt8, PasskeyResidencyPosture)] = [
+            (0x05, .singleDeviceBound),
+            (0x0D, .backupEligibleLocal),
+            (0x1D, .multiDeviceSynced),
+        ]
+        for (index, entry) in admitted.enumerated() {
+            let now = UInt64(102 + index * 2)
+            let stepChallenge = try binding.issueChallenge(organisationId: org, now: now, lifetimeSeconds: 30)
+            let assertion = try makeAssertion(
+                signer: signer,
+                challenge: stepChallenge,
+                counter: UInt32(index + 1),
+                flags: entry.0,
+                origin: "https://accounts.example.test"
+            )
+            let posture = try binding.verifyAssertion(
+                organisationId: org,
+                challenge: stepChallenge,
+                assertion: assertion,
+                now: now + 1
+            )
+            XCTAssertEqual(posture, entry.1)
+            XCTAssertEqual(binding.lastResidencyPosture, entry.1)
+        }
+    }
+
+    func testScopeOriginUVStrictNonBackupableExpiryClockAndRedactionInvariants() throws {
+        var (binding, signer) = try makeSetup(backupPolicy: .strictNonBackupable)
         let challenge = try binding.issueChallenge(organisationId: org, now: 100, lifetimeSeconds: 30)
 
-        for disallowedFlags: UInt8 in [0x00, 0x01, 0x04, 0x0D, 0x1D, 0x45, 0x85] {
+        for disallowedFlags: UInt8 in [0x00, 0x01, 0x04, 0x0D, 0x15, 0x1D, 0x45, 0x85] {
             let badFlags = try makeAssertion(
                 signer: signer,
                 challenge: challenge,
