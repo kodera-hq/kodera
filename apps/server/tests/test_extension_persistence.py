@@ -407,66 +407,55 @@ def test_expired_payload_is_cut_off_purged_and_retains_only_idempotency_hash(wor
         Delivery.objects.filter(id=job.id).update(expires_at=timezone.now() + timedelta(days=1))
 
 
-def test_local_cutoff_cancels_stale_worker_and_never_claims_external_absence(world, monkeypatch):
-    from django.db import transaction
-
-    from apps.extensions.retention import (
-        cutoff_workspace,
-        database_now,
-        local_payloads_absent,
-        purge_due,
-    )
+def test_local_cutoff_fences_stale_worker_without_shortening_recovery_or_claiming_absence(
+    world, monkeypatch
+):
+    from apps.extensions.models import WorkspaceCutoff
+    from apps.extensions.retention import database_now, local_payloads_absent
 
     org, _, _, _ = world
     _, job = queued(world)
+    original_expiry = job.expires_at
     claim = dispatcher.claim()
-    with transaction.atomic():
-        counts = cutoff_workspace(
-            organisation_id=org.id, cutoff_at=database_now() - timedelta(milliseconds=1)
-        )
-    assert counts["installations_revoked"] == 1
-    assert not local_payloads_absent(organisation_id=org.id)
-    assert purge_due(organisation_id=org.id) == 1
-    assert local_payloads_absent(organisation_id=org.id)
+    WorkspaceCutoff.objects.create(organisation_id=org.id, cutoff_at=database_now())
     monkeypatch.setattr(dispatcher, "send", lambda *a: pytest.fail("cut-off worker sent"))
     dispatcher.dispatch_claim(claim, Secrets())
     job.refresh_from_db()
-    assert bytes(job.event) == b"" and job.state == "obsolete"
+    assert job.state == "obsolete" and job.expires_at == original_expiry
+    assert bytes(job.event) and not local_payloads_absent(organisation_id=org.id)
 
 
-def test_scoped_metadata_erasure_clears_native_import_fk_after_receipt_boundary(
-    world, native_engine
-):
+def test_scoped_import_metadata_refuses_erasure_without_approved_request(world, native_engine):
+    from uuid import uuid4
+
     from django.db import IntegrityError, transaction
 
-    from apps.extensions.models import ImportBatch, WorkspaceCutoff
-    from apps.extensions.retention import (
-        cutoff_workspace,
-        database_now,
-        metadata_absent,
-        purge_due,
-        purge_workspace_metadata,
-        receiver_inventory,
-    )
+    from apps.extensions import retention
+    from apps.extensions.models import WorkspaceCutoff
 
     org, _, _, tokens = world
-    installation, job = queued(world)
+    installation, _ = queued(world)
     raw = json.dumps({"channel": {"id": "1", "name": "studio"}, "messages": []}).encode()
     assert imports.execute(verified=tokens[0], organisation_id=org.id, source="discord", raw=raw)[
         "complete"
     ]
-    assert receiver_inventory(organisation_id=org.id)[0].startswith(
+    assert retention.receiver_inventory(organisation_id=org.id)[0].startswith(
         "urn:kodera:extension-installation:" + str(installation.id)
     )
-    with (
-        pytest.raises(ExtensionRefusedError, match="cutoff_or_payloads_missing"),
-        transaction.atomic(),
-    ):
-        purge_workspace_metadata(organisation_id=org.id)
-    cutoff = database_now() - timedelta(milliseconds=1)
-    with transaction.atomic():
-        cutoff_workspace(organisation_id=org.id, cutoff_at=cutoff)
-    assert purge_due(organisation_id=org.id) == 1
+    with pytest.raises(IntegrityError, match="Core"), transaction.atomic():
+        retention.worker_step(
+            erasure_id=uuid4(),
+            organisation_id=org.id,
+            cutoff_at=retention.database_now(),
+            inventory_sha256="1" * 64,
+        )
+    with pytest.raises(IntegrityError, match="retained"), transaction.atomic():
+        ImportedObject.objects.all().delete()
+    assert ImportedObject.objects.exists() and Document.objects.count() == 1
+    assert not hasattr(retention, "cutoff_workspace") and not hasattr(
+        retention, "purge_workspace_metadata"
+    )
+    WorkspaceCutoff.objects.create(organisation_id=org.id, cutoff_at=retention.database_now())
     with pytest.raises(ExtensionRefusedError, match="cut_off"):
         services.install(
             verified=tokens[0],
@@ -475,17 +464,6 @@ def test_scoped_metadata_erasure_clears_native_import_fk_after_receipt_boundary(
             endpoint="https://example.org/",
             events=["command.invoked"],
         )
-    # The caller owns independently verified receiver receipts at this boundary. This helper
-    # proves only local teardown and deliberately leaves Core Docs to its own purge graph.
-    with transaction.atomic():
-        counts = purge_workspace_metadata(organisation_id=org.id)
-    assert (
-        counts["import_objects"] == 1
-        and not ImportedObject.objects.exists()
-        and not ImportBatch.objects.exists()
-    )
-    assert metadata_absent(organisation_id=org.id) and Document.objects.count() == 1
-    assert WorkspaceCutoff.objects.filter(organisation_id=org.id).exists()
     with pytest.raises(IntegrityError, match="marker immutable"), transaction.atomic():
         WorkspaceCutoff.objects.filter(organisation_id=org.id).delete()
 

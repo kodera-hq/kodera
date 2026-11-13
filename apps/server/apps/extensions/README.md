@@ -108,9 +108,11 @@ including `external_extension_receivers`. A single missing receipt holds every m
 The scoped teardown removes decisions/attempts/deliveries, import mappings/reports, digest
 linkage and installation endpoints before Core document purge. Immutable admission and cutoff
 markers remain to prevent replay drift and resurrection. Ordinary evidence edits/deletes remain
-refused. Owner-local helpers (`cutoff_workspace`, `purge_due`, `purge_workspace_metadata`) remain
-available for explicitly authorized local transactions and tests; the least-privilege Core worker
-uses the request-bound definer rather than those owner-only helpers.
+refused. The obsolete owner-ORM cutoff and metadata-purge helpers are removed; all erasure-driven
+disposal uses the approved request-bound boundary. The ordinary seven-day expiry command remains
+limited to already-expired event bodies. `native_documents_released` reports actual import-mapping
+FK absence independently of remote receipts, allowing Core native purge when no local blockers
+remain while full completion stays held on provider proof.
 
 Before deleting metadata, capture `receiver_inventory(organisation_id=...)`: each exact receiver
 is `urn:kodera:extension-installation:UUID:endpoint-sha256:HASH`. All installations, including
