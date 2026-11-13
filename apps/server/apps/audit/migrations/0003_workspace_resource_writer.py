@@ -22,6 +22,7 @@ BEGIN
   VALUES(p_id,p_action,'tenant',p_actor,'urn:kodera:identity:'||p_actor,p_organisation,
          'urn:kodera:workspace-resource:'||p_target,p_request,'standard','{}'::jsonb);
 END $$;
+REVOKE ALL ON FUNCTION audit_workspace_resource_event(uuid,text,uuid,uuid,uuid,text) FROM PUBLIC;
 '''
 REVERSE = r'''
 SET LOCAL lock_timeout='5s';

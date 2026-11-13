@@ -23,23 +23,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 @pytest.fixture
 def writer(world):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "REVOKE ALL ON FUNCTION "
-            "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text), "
-            "docs_document_role(uuid, uuid, uuid, uuid, text, text) "
-            "FROM PUBLIC"
-        )
-    try:
-        yield from _role()
-    finally:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "GRANT EXECUTE ON FUNCTION "
-                "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text), "
-                "docs_document_role(uuid, uuid, uuid, uuid, text, text) "
-                "TO PUBLIC"
-            )
+    yield from _role()
 
 
 def test_writer_role_serves_document_operations_and_refuses_tampering(

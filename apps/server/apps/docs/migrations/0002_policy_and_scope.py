@@ -71,9 +71,10 @@ BEGIN
     ELSIF node.visibility<>'workspace' THEN RETURN NULL;
     END IF;
     current_id := node.parent_id;
-  END LOOP;
+   END LOOP;
   RETURN result_role;
 END $$;
+REVOKE ALL ON FUNCTION docs_document_role(uuid,uuid,uuid,uuid,text,text) FROM PUBLIC;
 
 ALTER TABLE docs_document ADD CONSTRAINT docs_parent_workspace_fk
   FOREIGN KEY(parent_id,workspace_id) REFERENCES docs_document(id,workspace_id)
