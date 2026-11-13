@@ -103,6 +103,16 @@ export function cursorSlotForClient(clientId: number, userId: string): CursorPal
   return ((hash % 6) + 1) as CursorPaletteSlot
 }
 
+/**
+ * Whether the block editor may seed an empty Yjs document from the REST Markdown. With a server
+ * session the server's Yjs state is the document: seeding before it arrives writes a second copy
+ * that the merge keeps, so every open would duplicate the page. Only a local document, or a
+ * server that declined collaboration (`local` after a 404/501), seeds.
+ */
+export function maySeedFromMarkdown(remote: boolean, status: CollabConnectionStatus): boolean {
+  return !remote || status === 'local'
+}
+
 export function validateCollabWebSocketUrl(rawUrl: string): {
   readonly ok: true
   readonly normalizedUrl: string
@@ -233,6 +243,9 @@ export class CollabSessionController {
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? DEFAULT_MAX_RECONNECT_ATTEMPTS
     this.baseBackoffMs = options.baseBackoffMs ?? BASE_BACKOFF_MS
 
+    // A server-backed session is not local even before `connect()`: an editor that saw `local`
+    // would seed the document from Markdown and duplicate it once the server state arrives.
+    if (this.fetchSession) this.status = 'connecting'
     this.publishLocalAwareness(null)
     this.cachedSnapshot = this.buildSnapshot()
 
@@ -385,17 +398,25 @@ export class CollabSessionController {
     this.emit()
   }
 
-  private handleAwarenessBroadcast = ({
-    added,
-    updated,
-    removed,
-  }: {
-    added: number[]
-    updated: number[]
-    removed: number[]
-  }): void => {
+  private handleAwarenessBroadcast = (
+    {
+      added,
+      updated,
+      removed,
+    }: {
+      added: number[]
+      updated: number[]
+      removed: number[]
+    },
+    origin: unknown
+  ): void => {
     if (this.destroyed || !this.ws || this.ws.readyState !== 1) return
-    const changed = [...added, ...updated, ...removed]
+    // The server binds one presence identity to each socket and closes a socket that sends any
+    // other (`presence.mjs`). Applying a peer's state, or expiring it, fires this same event, so
+    // only this client's own state is ever sent back.
+    if (origin === REMOTE_SYNC_ORIGIN) return
+    const ownId = this.ydoc.clientID
+    const changed = [...added, ...updated, ...removed].filter((clientId) => clientId === ownId)
     if (changed.length === 0) return
     try {
       this.ws.send(encodeAwarenessFrame(this.awareness, changed))
@@ -469,7 +490,7 @@ export class CollabSessionController {
           })
         )
         socket.send(encodeAwarenessFrame(this.awareness, [this.ydoc.clientID]))
-        this.transitionStatus('synced')
+        // `synced` waits for the server's state (sync step 2): an open socket has delivered nothing.
       } catch {
         socket.close()
       }

@@ -9,6 +9,7 @@ import { CollaborativeBlockEditor } from './CollaborativeBlockEditor'
 import { CollaboratorPresence } from './CollaboratorPresence'
 import {
   CollabSessionController,
+  maySeedFromMarkdown,
   type CollabSessionSnapshot,
   type WebSocketLike,
 } from './collabSession'
@@ -39,6 +40,7 @@ import {
   listWorkspaceDocumentBacklinks,
   listWorkspaceDocuments,
   updateWorkspaceDocument,
+  updateWorkspaceDocumentMetadata,
 } from './workspaceDocumentsApi'
 
 export interface WorkspacePageRecord {
@@ -434,7 +436,12 @@ export function WorkspaceCollaborativeDocs({
     saveTimerRef.current = setTimeout(() => {
       const etag = etagsRef.current.get(docId)
       if (!etag) return
-      void updateWorkspaceDocument(organisationId, docId, etag, patch)
+      const { markdown, ...metadata } = patch
+      const save =
+        markdown === undefined
+          ? updateWorkspaceDocumentMetadata(organisationId, docId, etag, metadata)
+          : updateWorkspaceDocument(organisationId, docId, etag, patch)
+      void save
         .then(({ etag: nextEtag }) => {
           if (nextEtag) etagsRef.current.set(docId, nextEtag)
         })
@@ -462,6 +469,11 @@ export function WorkspaceCollaborativeDocs({
     commitDocs((prev) =>
       prev.map((d) => (d.id === currentDoc.id ? { ...d, markdown: nextMarkdown } : d))
     )
+    // While the realtime session is synced, the collaboration server commits the body and its
+    // Markdown itself. A second REST write of the same body carried the tag read on open, which
+    // that commit had already made stale: it failed with 412 and showed a save error on every
+    // edit, and it would replace the whole fragment under a collaborator typing at the same time.
+    if (collabSnapshot.status === 'synced') return
     scheduleRemotePatch(currentDoc.id, { markdown: nextMarkdown })
   }
 
@@ -485,7 +497,7 @@ export function WorkspaceCollaborativeDocs({
       const etag = etagsRef.current.get(currentDoc.id)
       if (etag) {
         try {
-          const { etag: nextEtag } = await updateWorkspaceDocument(
+          const { etag: nextEtag } = await updateWorkspaceDocumentMetadata(
             organisationId,
             currentDoc.id,
             etag,
@@ -786,7 +798,7 @@ export function WorkspaceCollaborativeDocs({
                 onMarkdownChange={handleMarkdownChange}
                 role={effectiveRole}
                 ydoc={ydocForEditor}
-                seedMarkdown={!isRemoteMode || currentDoc.markdown.length > 0}
+                seedMarkdown={maySeedFromMarkdown(isRemoteMode, collabSnapshot.status)}
                 peers={collabSnapshot.peers}
                 onSelectionChange={(sel) => sessionController?.updateSelection(sel)}
                 availablePages={docs.map((d) => ({

@@ -52,8 +52,8 @@ test('concurrent editors converge and snapshot reload retains binary identity', 
   const left = load(Y.encodeStateAsUpdate(base))
   const right = load(Y.encodeStateAsUpdate(base))
   try {
-    const textLeft = left.getXmlFragment('prosemirror').get(1).get(0)
-    const textRight = right.getXmlFragment('prosemirror').get(1).get(0)
+    const textLeft = left.getXmlFragment('content').get(1).get(0)
+    const textRight = right.getXmlFragment('content').get(1).get(0)
     textLeft.insert(0, 'Left ')
     textRight.insert(textRight.length, ' Right')
     const first = Y.encodeStateAsUpdate(left), second = Y.encodeStateAsUpdate(right)
@@ -130,7 +130,7 @@ test('stored block links cannot execute script or inline SVG payloads', () => {
 test('unresolved causal updates and NUL text cannot poison the durable document', () => {
   const original = native(), peer = load(Y.encodeStateAsUpdate(original))
   try {
-    const text = peer.getXmlFragment('prosemirror').get(1).get(0)
+    const text = peer.getXmlFragment('content').get(1).get(0)
     text.insert(0, 'Earlier ')
     const vector = Y.encodeStateVector(peer)
     text.insert(0, 'Later ')
@@ -215,10 +215,31 @@ test('simultaneously non-empty prosemirror and content fragments are refused', (
     const extraText = new Y.XmlText()
     extraText.insert(0, 'Conflicting fragment')
     extraPara.insert(0, [extraText])
-    doc.getXmlFragment('content').insert(0, [extraPara])
+    doc.getXmlFragment('prosemirror').insert(0, [extraPara])
     assert.throws(() => inspect(doc), /ambiguous shared document fragments/)
     assert.throws(() => replace(doc, '# Clean\n'), /ambiguous shared document fragments/)
   } finally {
     doc.destroy()
   }
+})
+
+test('replacement writes the block editor content fragment and migrates a legacy prosemirror document', () => {
+  // Django creates every document through `replace` on an empty snapshot; the browser binds `content`.
+  const created = load()
+  try {
+    replace(created, '# Created\n\nFirst line\n')
+    assert.equal(created.share.has('prosemirror'), false)
+    assert.ok(created.getXmlFragment('content').length > 0)
+    assert.match(inspect(created).markdown, /First line/)
+  } finally { created.destroy() }
+  const legacy = load()
+  try {
+    prosemirrorToYXmlFragment(schema.node('doc', null, [schema.node('paragraph', null, [schema.text('Legacy text')])]), legacy.getXmlFragment('prosemirror'))
+    assert.match(inspect(legacy).markdown, /Legacy text/)
+    const replaced = replace(legacy, '# Moved\n\nNew text\n')
+    assert.equal(legacy.getXmlFragment('prosemirror').length, 0)
+    assert.ok(legacy.getXmlFragment('content').length > 0)
+    assert.match(replaced.markdown, /New text/)
+    assert.doesNotMatch(replaced.markdown, /Legacy text/)
+  } finally { legacy.destroy() }
 })

@@ -257,9 +257,11 @@ function selectFragmentName(doc, forReplace = false) {
   if (prosemirrorLength > 0 && contentLength > 0) {
     throw new Refused('ambiguous shared document fragments')
   }
-  if (forReplace) {
-    return hasContent && (!hasProsemirror || contentLength > 0) ? 'content' : 'prosemirror'
-  }
+  // A replacement always writes the fragment the web block editor binds (TipTap's
+  // `Collaboration` field `content`). Writing `prosemirror` for a new document left the
+  // browser an empty editor whose first keystroke made both fragments non-empty, which
+  // every later inspection refuses as ambiguous.
+  if (forReplace) return 'content'
   if (contentLength > 0) return 'content'
   if (prosemirrorLength > 0) return 'prosemirror'
   return hasContent && !hasProsemirror ? 'content' : 'prosemirror'
@@ -368,6 +370,11 @@ export function replace(doc, markdown) {
     // Mutate the existing fragment. Its delete set and client clocks survive a
     // replacement, so replaying a stale pre-replacement snapshot cannot restore it.
     doc.transact(() => {
+      // A legacy document held in `prosemirror` moves to `content` on its next replacement.
+      if (doc.share.has('prosemirror')) {
+        const legacy = doc.getXmlFragment('prosemirror')
+        legacy.delete(0, legacy.length)
+      }
       const fragment = doc.getXmlFragment(field)
       fragment.delete(0, fragment.length)
       prosemirrorToYXmlFragment(blocks, fragment)
