@@ -35,6 +35,61 @@
       "webhookUrl": "https://extensions.example.invalid/hooks/alertmanager"
     },
     {
+      "slug": "billing-webhooks",
+      "id": "io.kodera.ext.billing-webhooks",
+      "name": "Billing & Quota Ops Webhooks Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Subscription lifecycle, invoice status, and infrastructure quota threshold reference implementation with timestamped t=,v1= HMAC-SHA256 verification and strict PII redaction.",
+      "manifest": "extensions/billing-webhooks/manifest.json",
+      "readme": "extensions/billing-webhooks/README.md",
+      "scopes": [
+        "messages:write",
+        "ephemeral:write",
+        "incidents:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "incident.opened"
+      ],
+      "commands": [
+        {
+          "name": "/billing-ops",
+          "description": "Inspect redacted workspace plan, invoice status, or quota thresholds in authorized ops channels"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/billing-webhooks"
+    },
+    {
+      "slug": "calcom",
+      "id": "io.kodera.ext.calcom",
+      "name": "Cal.com Scheduling & Voice Room Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Open-source Cal.com booking lifecycle webhooks, UTC/ISO-8601 window validation, Kodera voice room jump cards, and X-Cal-Signature-256 verification reference implementation.",
+      "manifest": "extensions/calcom/manifest.json",
+      "readme": "extensions/calcom/README.md",
+      "scopes": [
+        "messages:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/schedule",
+          "description": "Inspect upcoming booking windows, configure a Kodera voice room jump target, or check scheduling status"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/calcom"
+    },
+    {
       "slug": "docs-collab-announcer",
       "id": "io.kodera.ext.docs-collab-announcer",
       "name": "Docs Collaborative Pad Announcer",
@@ -59,6 +114,33 @@
         }
       ],
       "webhookUrl": "https://extensions.example.org/hooks/docs-collab-announcer"
+    },
+    {
+      "slug": "frameio",
+      "id": "io.kodera.ext.frameio",
+      "name": "Frame.io & OpenTimelineIO Timecode Review Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Timecode-synced dailies comments, SMPTE HH:MM:SS:FF and drop-frame calculation, OpenTimelineIO marker summaries, and Frame.io HMAC-SHA256 webhook verification reference implementation.",
+      "manifest": "extensions/frameio/manifest.json",
+      "readme": "extensions/frameio/README.md",
+      "scopes": [
+        "messages:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/dailies",
+          "description": "Format SMPTE timecodes, summarize OTIO markers, or inspect dailies reviews"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/frameio"
     },
     {
       "slug": "frameio-review-bridge",
@@ -323,6 +405,33 @@
       "webhookUrl": "https://extensions.example.org/hooks/notion-workspace-bridge"
     },
     {
+      "slug": "openproject",
+      "id": "io.kodera.ext.openproject",
+      "name": "OpenProject & Jira Sovereign Work Bridge",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Unified OpenProject work package and Jira issue or sprint lifecycle timeline reference implementation with HMAC-SHA256 verification and anti-SSRF link validation.",
+      "manifest": "extensions/openproject/manifest.json",
+      "readme": "extensions/openproject/README.md",
+      "scopes": [
+        "messages:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "message.created"
+      ],
+      "commands": [
+        {
+          "name": "/work",
+          "description": "Inspect OpenProject work packages, Jira issues, or active sprint timelines"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/openproject"
+    },
+    {
       "slug": "qonto-treasury-feed",
       "id": "io.kodera.ext.qonto-treasury-feed",
       "name": "Qonto Corporate Treasury Feed",
@@ -347,6 +456,63 @@
         }
       ],
       "webhookUrl": "https://extensions.example.org/hooks/qonto-treasury-feed"
+    },
+    {
+      "slug": "release-assistant",
+      "id": "io.kodera.ext.release-assistant",
+      "name": "Opt-In Bilingual Release Notes Assistant",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Per-room opt-in bilingual (FR/EN) conventional-commit and pull-request changelog formatter with optional anti-SSRF validated HTTPS Ollama or vLLM request builder and zero telemetry.",
+      "manifest": "extensions/release-assistant/manifest.json",
+      "readme": "extensions/release-assistant/README.md",
+      "scopes": [
+        "messages:write",
+        "ephemeral:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "release.published"
+      ],
+      "commands": [
+        {
+          "name": "/release-draft",
+          "description": "Generate deterministic bilingual (FR/EN) release notes in opted-in channels"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/release-assistant"
+    },
+    {
+      "slug": "renderfarm",
+      "id": "io.kodera.ext.renderfarm",
+      "name": "Render Farm Queue Monitor (Flamenco & Deadline)",
+      "version": "0.1.0",
+      "label": "Reference implementation",
+      "description": "Blender Flamenco and Thinkbox Deadline render-queue webhook reference implementation surfacing shot codes, frame ranges, average frame render times, worker OOM kills, and sanitized output URIs.",
+      "manifest": "extensions/renderfarm/manifest.json",
+      "readme": "extensions/renderfarm/README.md",
+      "scopes": [
+        "messages:write",
+        "incidents:write",
+        "threads:write",
+        "webhooks:incoming",
+        "commands:register"
+      ],
+      "events": [
+        "command.invoked",
+        "incident.opened",
+        "incident.resolved",
+        "ci.workflow_failed"
+      ],
+      "commands": [
+        {
+          "name": "/render",
+          "description": "Inspect Flamenco or Deadline render queue status, shot progress, or worker nodes"
+        }
+      ],
+      "webhookUrl": "https://extensions.example.invalid/hooks/renderfarm"
     },
     {
       "slug": "rss-advisories",

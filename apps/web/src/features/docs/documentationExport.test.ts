@@ -26,8 +26,8 @@ it('keeps all generated public guides and llms.txt byte-identical to the rendere
     }
   }
 })
-it('indexes the actual ten reference connectors with existing source paths', () => {
-  expect(developerDocsContent.connectors).toHaveLength(10)
+it('indexes the actual twenty-two reference connectors with existing source paths', () => {
+  expect(developerDocsContent.connectors).toHaveLength(22)
   expect(developerDocsContent.connectors.map((connector) => connector.slug).sort()).toEqual(
     OFFICIAL_EXTENSIONS_CATALOG.map((connector) => connector.slug).sort()
   )
