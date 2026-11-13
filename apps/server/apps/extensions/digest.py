@@ -6,15 +6,14 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import transaction
 from django.utils import timezone
 
-from apps.docs import services as documents
-from apps.docs.models import Collection, Document
-from apps.identity.models import Identity
-from apps.orgs.models import Membership, Organisation
+from apps.docs import selectors as document_reads, services as documents
+from apps.identity import selectors as identities
+from apps.orgs import selectors as organisations
 from apps.outbox.services import enqueue_message
-from apps.workspaces.models import Workspace, WorkspaceMemberRestriction
+from apps.workspaces import selectors as workspaces
 from core.db.ids import new_uuid7
 
 from .models import DigestConsent, DigestJob, WorkspaceCutoff
@@ -70,64 +69,38 @@ def set_consent(
     return row
 
 
-def current(row: DigestConsent) -> tuple[Membership, Identity, UUID] | None:
+def current(
+    row: DigestConsent,
+) -> tuple[organisations.MembershipContact, identities.DeliveryIdentity, UUID] | None:
     if not row.enabled or row.revoked_at is not None or row.consented_at is None:
         return None
-    member = (
-        Membership.objects.filter(
-            id=row.membership_id,
-            state="active",
-            accepted_at__isnull=False,
-            deleted_at__isnull=True,
-            user__enabled=True,
-            user__deleted_at__isnull=True,
-            organisation__state="active",
-            organisation__deleted_at__isnull=True,
-        )
-        .select_related("user")
-        .first()
-    )
-    identity = Identity.objects.filter(
-        id=row.identity_id, enabled=True, deleted_at__isnull=True
-    ).first()
+    member = organisations.digest_member(membership_id=row.membership_id)
+    identity = identities.delivery_identity(identity_id=row.identity_id)
     if (
         member is None
         or identity is None
         or identity.user_id != member.user_id
         or identity.organisation_id != member.organisation_id
-        or identity.email != member.user.email
+        or identity.email != member.email
     ):
         return None
     if WorkspaceCutoff.objects.filter(organisation_id=member.organisation_id).exists():
         return None
-    workspace = Workspace.objects.filter(organisation_id=member.organisation_id).first()
-    if (
-        workspace is None
-        or WorkspaceMemberRestriction.objects.filter(workspace=workspace, membership=member)
-        .filter(banned=True)
-        .exists()
-        or WorkspaceMemberRestriction.objects.filter(
-            workspace=workspace, membership=member, kicked=True
-        ).exists()
-    ):
-        return None
-    return member, identity, workspace.id
+    workspace_id = workspaces.digest_workspace(
+        organisation_id=member.organisation_id, membership_id=member.id
+    )
+    return None if workspace_id is None else (member, identity, workspace_id)
 
 
-def visible(document_id: UUID, member: Membership, identity: Identity) -> bool:
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT docs_document_role(%s,%s,%s,%s,%s,%s)",
-            [
-                document_id,
-                member.organisation_id,
-                member.id,
-                identity.id,
-                identity.issuer,
-                identity.subject,
-            ],
-        )
-        return cursor.fetchone()[0] in {"viewer", "editor"}
+def visible(document_id, member, identity) -> bool:
+    return document_reads.document_is_visible(
+        document_id=document_id,
+        organisation_id=member.organisation_id,
+        membership_id=member.id,
+        identity_id=identity.id,
+        issuer=identity.issuer,
+        subject=identity.subject,
+    )
 
 
 @transaction.atomic
@@ -143,8 +116,9 @@ def enqueue_digest(*, consent_id: UUID, period_start: datetime, period_end: date
     organisation_id = DigestConsent.objects.values_list(
         "membership__organisation_id", flat=True
     ).get(id=consent_id)
-    Organisation.objects.select_for_update().get(id=organisation_id)
-    Workspace.objects.select_for_update().get(organisation_id=organisation_id)
+    if not organisations.lock_organisation(organisation_id=organisation_id):
+        raise LookupError("digest organisation absent")
+    workspaces.lock_organisation_workspace(organisation_id=organisation_id)
     row = DigestConsent.objects.select_for_update().get(id=consent_id)
     authority = current(row)
     if authority is None:
@@ -156,24 +130,14 @@ def enqueue_digest(*, consent_id: UUID, period_start: datetime, period_end: date
         return old
     member, identity, workspace_id = authority
     pages = [
-        doc.id
-        for doc in Document.objects.filter(
-            workspace_id=workspace_id,
-            deleted_at__isnull=True,
-            updated_at__gte=period_start,
-            updated_at__lt=period_end,
-        ).order_by("id")[:1000]
-        if visible(doc.id, member, identity)
-    ]
-    tables = list(
-        Collection.objects.filter(
-            workspace_id=workspace_id,
-            deleted_at__isnull=True,
-            updated_at__gte=period_start,
-            updated_at__lt=period_end,
+        document_id
+        for document_id in document_reads.digest_document_candidates(
+            workspace_id=workspace_id, period_start=period_start, period_end=period_end
         )
-        .order_by("id")
-        .values_list("id", flat=True)[:1000]
+        if visible(document_id, member, identity)
+    ]
+    tables = document_reads.digest_collections(
+        workspace_id=workspace_id, period_start=period_start, period_end=period_end
     )
     job = DigestJob.objects.create(
         consent=row,
@@ -190,9 +154,9 @@ def enqueue_digest(*, consent_id: UUID, period_start: datetime, period_end: date
             organisation_id=member.organisation_id,
             template_id="workspace_digest",
             locale=row.locale,
-            recipient=member.user.email,
+            recipient=member.email,
             params={
-                "organisation_name": member.organisation.name,
+                "organisation_name": member.organisation_name,
                 "updated_pages": str(len(pages)),
                 "updated_collections": str(len(tables)),
                 "period_start": period_start.date().isoformat(),
@@ -223,12 +187,11 @@ def send_guard(delivery_id: UUID, recipient: str):
             yield False
             return
         org_id = record["consent__membership__organisation_id"]
-        Organisation.objects.select_for_update().get(id=org_id)
-        workspace = Workspace.objects.select_for_update().get(organisation_id=org_id)
-        Membership.objects.select_for_update().select_related("user").get(
-            id=record["consent__membership_id"]
-        )
-        Identity.objects.select_for_update().get(id=record["consent__identity_id"])
+        if not organisations.lock_organisation(organisation_id=org_id):
+            raise LookupError("digest organisation absent")
+        workspace_id = workspaces.lock_organisation_workspace(organisation_id=org_id)
+        organisations.lock_membership_user(membership_id=record["consent__membership_id"])
+        identities.lock_delivery_identity(identity_id=record["consent__identity_id"])
         consent = DigestConsent.objects.select_for_update().get(id=record["consent_id"])
         job = DigestJob.objects.select_for_update().get(delivery_id=delivery_id)
         authority = current(consent)
@@ -241,13 +204,13 @@ def send_guard(delivery_id: UUID, recipient: str):
             member, identity, _ = authority
             allowed = (
                 allowed
-                and recipient == member.user.email
+                and recipient == member.email
                 and len(job.document_ids) <= 1000
                 and len(job.collection_ids) <= 1000
                 and all(visible(UUID(value), member, identity) for value in job.document_ids)
-                and Collection.objects.filter(
-                    id__in=job.collection_ids, workspace=workspace, deleted_at__isnull=True
-                ).count()
+                and document_reads.digest_collection_count(
+                    collection_ids=job.collection_ids, workspace_id=workspace_id
+                )
                 == len(job.collection_ids)
             )
         if not allowed:

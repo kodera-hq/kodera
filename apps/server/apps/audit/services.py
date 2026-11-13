@@ -588,7 +588,16 @@ BILLING_ACTIONS: Mapping[str, frozenset[str]] = {
     "dunning.proposal_prepared": frozenset({"system"}),
     "dunning.cleared": frozenset({"system"}),
     "dunning.dispute_recorded": frozenset({"staff"}),
-    **dict.fromkeys(("dunning.reminder_sent", "dunning.formal_notice_sent", "dunning.suspension_notice_sent", "dunning.suspended", "dunning.terminated"), frozenset({"staff"})),
+    **dict.fromkeys(
+        (
+            "dunning.reminder_sent",
+            "dunning.formal_notice_sent",
+            "dunning.suspension_notice_sent",
+            "dunning.suspended",
+            "dunning.terminated",
+        ),
+        frozenset({"staff"}),
+    ),
     "invoice.download_requested": frozenset({"tenant"}),
     "vat.vies_checked": frozenset({"system", "staff"}),
     **dict.fromkeys(
@@ -865,4 +874,42 @@ def record_workspace_quota_configured(
         target_urn=f"urn:kodera:workspace-resource:{quota_id}",
         retention_class="standard",
         metadata={"policy_ref": policy_ref},
+    )
+
+
+AUDIT_FIELDS = {
+    "installed": frozenset({"generation"}),
+    "rotated": frozenset({"generation", "previous_generation", "grace_expires_at"}),
+    "revoked": frozenset(),
+    "delivery_queued": frozenset({"delivery_id", "event_type"}),
+    "delivery_reconciled": frozenset(
+        {"delivery_id", "decision_id", "observed", "evidence_ref", "evidence_kind"}
+    ),
+    "import_started": frozenset({"source", "archive_sha256"}),
+    "object_imported": frozenset({"source", "document_id", "source_sha256"}),
+    "digest_consent_changed": frozenset({"enabled", "consent_version"}),
+}
+
+
+def record_extension_event(
+    *,
+    action: str,
+    identity_id: UUID,
+    organisation_id: UUID,
+    target_id: UUID,
+    metadata: object,
+) -> None:
+    """Only the eight registered extension actions and their closed metadata shapes."""
+    fields = AUDIT_FIELDS.get(action)
+    if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
+        raise ValueError("extension audit action or metadata refused")
+    AuditEvent.objects.create(
+        action="extension." + action,
+        actor_type="tenant",
+        actor_id=identity_id,
+        actor_label="urn:kodera:identity:" + str(identity_id),
+        organisation_id=organisation_id,
+        target_urn="urn:kodera:extension:" + str(target_id),
+        retention_class="standard",
+        metadata=metadata,
     )

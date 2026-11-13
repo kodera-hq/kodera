@@ -10,11 +10,11 @@ from uuid import UUID
 from django.db import transaction
 from django.utils import timezone
 
-from apps.audit.models import AuditEvent
+from apps.audit.services import record_extension_event
 from apps.docs import services as documents
-from apps.identity.models import Identity
+from apps.identity.selectors import lock_delivery_identity
 from apps.media import outbound
-from apps.orgs.models import Membership, Organisation
+from apps.orgs.selectors import lock_membership_user, lock_organisation
 from core.db.ids import new_uuid7
 
 from .models import Delivery, Installation, WorkspaceCutoff
@@ -22,13 +22,13 @@ from .wire import EVENTS, MAX_GRACE_SECONDS, ExtensionRefusedError, event_payloa
 
 
 def admin(verified, organisation_id):
-    if Organisation.objects.select_for_update().filter(id=organisation_id).first() is None:
+    if not lock_organisation(organisation_id=organisation_id):
         raise ExtensionRefusedError("extension_workspace_absent", 404)
     if WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
     workspace_id, principal = documents.context(verified, organisation_id)
-    Membership.objects.select_for_update().select_related("user").get(id=principal.membership_id)
-    Identity.objects.select_for_update().get(id=principal.identity_id)
+    lock_membership_user(membership_id=principal.membership_id)
+    lock_delivery_identity(identity_id=principal.identity_id)
     # A current-role read after the actor locks sees a revocation that committed first.
     workspace_id, principal = documents.context(verified, organisation_id)
     if principal.role not in {"org_owner", "org_admin"}:
@@ -36,32 +36,12 @@ def admin(verified, organisation_id):
     return workspace_id, principal
 
 
-AUDIT_FIELDS = {
-    "installed": frozenset({"generation"}),
-    "rotated": frozenset({"generation", "previous_generation", "grace_expires_at"}),
-    "revoked": frozenset(),
-    "delivery_queued": frozenset({"delivery_id", "event_type"}),
-    "delivery_reconciled": frozenset(
-        {"delivery_id", "decision_id", "observed", "evidence_ref", "evidence_kind"}
-    ),
-    "import_started": frozenset({"source", "archive_sha256"}),
-    "object_imported": frozenset({"source", "document_id", "source_sha256"}),
-    "digest_consent_changed": frozenset({"enabled", "consent_version"}),
-}
-
-
 def audit(action, principal, organisation_id, target_id, metadata):
-    fields = AUDIT_FIELDS.get(action)
-    if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
-        raise ValueError("extension audit action or metadata refused")
-    AuditEvent.objects.create(
-        action="extension." + action,
-        actor_type="tenant",
-        actor_id=principal.identity_id,
-        actor_label="urn:kodera:identity:" + str(principal.identity_id),
+    record_extension_event(
+        action=action,
+        identity_id=principal.identity_id,
         organisation_id=organisation_id,
-        target_urn="urn:kodera:extension:" + str(target_id),
-        retention_class="standard",
+        target_id=target_id,
         metadata=metadata,
     )
 
