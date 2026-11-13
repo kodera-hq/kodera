@@ -1,4 +1,6 @@
 import * as decoding from 'lib0/decoding'
+import * as encoding from 'lib0/encoding'
+import * as syncProtocol from 'y-protocols/sync'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
 import {
@@ -14,6 +16,14 @@ import {
   validateCollabWebSocketUrl,
   type WebSocketLike,
 } from './collabSession'
+
+/** The server's state answer (sync step 2), the frame that makes a session `synced`. */
+function serverState(): Uint8Array {
+  const encoder = encoding.createEncoder()
+  encoding.writeVarUint(encoder, MSG_SYNC)
+  syncProtocol.writeSyncStep2(encoder, new Y.Doc())
+  return encoding.toUint8Array(encoder)
+}
 
 class MockCollabSocket implements WebSocketLike {
   binaryType: BinaryType = 'arraybuffer'
@@ -262,8 +272,12 @@ describe('CollabSessionController and Yjs transport rules', () => {
       },
     })
 
+    expect(ctrl.getSnapshot().status).toBe('connecting')
     await ctrl.connect()
     sockets[0]?.open()
+    // An open socket has delivered nothing yet: only the server's state makes the session synced.
+    expect(ctrl.getSnapshot().status).toBe('connecting')
+    sockets[0]?.receive(serverState())
     expect(ctrl.getSnapshot().status).toBe('synced')
 
     // Unexpected network drop transitions to `offline-buffered` and schedules bounded reconnect.
@@ -274,6 +288,7 @@ describe('CollabSessionController and Yjs transport rules', () => {
     await vi.advanceTimersByTimeAsync(100)
     expect(sessionFetches).toBe(2)
     sockets[1]?.open()
+    sockets[1]?.receive(serverState())
     expect(ctrl.getSnapshot().status).toBe('synced')
 
     // 4401 refreshes ticket immediately once; 4403 transitions to `forbidden` with no retry.

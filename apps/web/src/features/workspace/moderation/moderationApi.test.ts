@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiProblem } from '../../../api/client'
-import { expiryIn, inviteUrl, ReportAlreadyDecided, resolveReport } from './moderationApi'
+import { expiryIn, inviteUrl, moderationBody, ReportAlreadyDecided, resolveReport } from './moderationApi'
 
 const ORG = crypto.randomUUID()
 const REPORT = crypto.randomUUID()
@@ -30,6 +30,19 @@ describe('an invite link', () => {
     const now = new Date('2026-11-12T00:00:00Z')
     expect(expiryIn(0, now)).toBe('2026-11-13T00:00:00.000Z')
     expect(expiryIn(90, now)).toBe('2026-12-12T00:00:00.000Z')
+  })
+})
+
+describe('a moderation request', () => {
+  const base = { membershipId: crypto.randomUUID(), reason: 'spam', days: 7 }
+  const now = new Date('2026-11-12T00:00:00Z')
+
+  it('gives a mute its expiry', () => {
+    expect(moderationBody({ ...base, action: 'mute' }, now).expiresAt).toBe('2026-11-19T00:00:00.000Z')
+  })
+
+  it.each(['ban', 'kick', 'unban'] as const)('never sends an expiry with %s, which Core refuses', (action) => {
+    expect(moderationBody({ ...base, action }, now)).not.toHaveProperty('expiresAt')
   })
 })
 

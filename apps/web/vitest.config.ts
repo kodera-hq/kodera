@@ -28,5 +28,9 @@ export default defineConfig({
     // its test must stub the variable it reads, as every existing reader's test does.
     env: { VITE_ENABLE_MSW: '1', VITE_MOCK_UNSERVED: '1' },
     restoreMocks: true,
+    // The collaboration wire suite runs the real yjs_collab server, which has its own locked
+    // install. Inlined, its imports resolved partly from the web workspace: two prosemirror-model
+    // copies, whose schemas do not recognise each other. Node loads it as production does.
+    server: { deps: { external: [/\/apps\/server\/yjs_collab\//] } },
   },
 })

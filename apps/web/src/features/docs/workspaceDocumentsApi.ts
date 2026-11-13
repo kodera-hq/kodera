@@ -101,6 +101,31 @@ export async function updateWorkspaceDocument(
   }
 }
 
+/**
+ * A title or parent change, re-read once on 412. Every realtime commit bumps the document's
+ * revision and so its tag, so the tag a tab read on open is stale after the first keystroke
+ * anyone makes; without the re-read every rename during a live session failed. Markdown is never
+ * retried blind: overwriting a body edited since the read would discard someone's text.
+ */
+export async function updateWorkspaceDocumentMetadata(
+  organisationId: string,
+  documentId: string,
+  etag: string,
+  body: Omit<CoreWorkspaceDocumentPatch, 'markdown'>,
+  io: { update?: typeof updateWorkspaceDocument; get?: typeof getWorkspaceDocument } = {}
+): Promise<WorkspaceDocumentWithEtag> {
+  const update = io.update ?? updateWorkspaceDocument
+  const get = io.get ?? getWorkspaceDocument
+  try {
+    return await update(organisationId, documentId, etag, body)
+  } catch (error) {
+    if (!(error instanceof ApiProblem) || error.status !== 412) throw error
+    const fresh = await get(organisationId, documentId)
+    if (!fresh.etag) throw error
+    return update(organisationId, documentId, fresh.etag, body)
+  }
+}
+
 export async function deleteWorkspaceDocument(
   organisationId: string,
   documentId: string

@@ -47,7 +47,7 @@ async function connect(raw, claims, requested = {}) {
 }
 function edit(peer, text) {
   const vector = Y.encodeStateVector(peer.doc)
-  const paragraph = peer.doc.getXmlFragment('prosemirror').toArray().find(node => node.nodeName === 'paragraph')
+  const paragraph = peer.doc.getXmlFragment('content').toArray().find(node => node.nodeName === 'paragraph')
   if (paragraph.length === 0) paragraph.insert(0, [new Y.XmlText()])
   paragraph.get(0).insert(paragraph.get(0).length, text)
   peer.socket.send(updateFrame(Y.encodeStateAsUpdate(peer.doc, vector)))

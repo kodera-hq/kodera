@@ -29,7 +29,9 @@ def _json(body: Any, status: int = 200, *, etag: bool = False) -> HttpResponse:
     return response
 
 
-def _problem(status: int, request_id: str, kind: str | None = None) -> HttpResponse:
+def _problem(
+    status: int, request_id: str, kind: str | None = None, current_etag: str | None = None
+) -> HttpResponse:
     kinds = {
         400: "malformed-request",
         401: "unauthenticated",
@@ -48,6 +50,7 @@ def _problem(status: int, request_id: str, kind: str | None = None) -> HttpRespo
                 "title": "Workspace request refused",
                 "status": status,
                 "request_id": request_id,
+                **({"current_etag": current_etag} if current_etag is not None else {}),
             }
         ),
         status=status,
@@ -55,6 +58,8 @@ def _problem(status: int, request_id: str, kind: str | None = None) -> HttpRespo
     )
     if status == 401:
         response["WWW-Authenticate"] = "Bearer"
+    if current_etag is not None:
+        response["ETag"] = current_etag
     return response
 
 
@@ -123,7 +128,7 @@ def _serve(request: HttpRequest, handlers: dict[str, Any]) -> HttpResponse:
                 try:
                     return handlers[method](verified, request_id)
                 except service.RefusalError as error:
-                    return _problem(error.status, request_id, error.kind)
+                    return _problem(error.status, request_id, error.kind, error.current_etag)
 
             if method == "POST":
                 # Authorization is checked again inside the effect transaction. Also check
@@ -154,7 +159,7 @@ def _serve(request: HttpRequest, handlers: dict[str, Any]) -> HttpResponse:
     except RequestDataTooBig:
         response = _problem(400, request_id)
     except service.RefusalError as error:
-        response = _problem(error.status, request_id, error.kind)
+        response = _problem(error.status, request_id, error.kind, error.current_etag)
     return responses.finish(response, request_id)
 
 

@@ -20,7 +20,10 @@ function setup(direct: Record<string, string[]>) {
     .spyOn(client, 'createRoom')
     .mockResolvedValue({ room_id: '!new:example.test' })
   const setAccountData = vi.spyOn(client, 'setAccountData').mockResolvedValue({})
-  return { store, client, createRoom, setAccountData }
+  const sendStateEvent = vi
+    .spyOn(client, 'sendStateEvent')
+    .mockResolvedValue({ event_id: '$visibility' })
+  return { store, client, createRoom, setAccountData, sendStateEvent }
 }
 
 describe('direct conversations in the store', () => {
@@ -33,8 +36,23 @@ describe('direct conversations in the store', () => {
     expect(createRoom).not.toHaveBeenCalled()
   })
 
+  it('creates a direct message the Kodera room policy admits: one invitee, no initial state', async () => {
+    const { store, client, createRoom, sendStateEvent } = setup({})
+    vi.spyOn(client, 'getRoom').mockReturnValue(null)
+    await expect(store.openDirect([ALICE])).resolves.toBe('!new:example.test')
+    // The conditions of packages/synapse-policy `_is_direct_message`, which refuses anything else.
+    const [options] = createRoom.mock.calls[0]!
+    expect(options).toEqual({ is_direct: true, invite: [ALICE], preset: 'private_chat', visibility: 'private' })
+    expect(sendStateEvent).toHaveBeenCalledWith(
+      '!new:example.test',
+      'm.room.history_visibility',
+      { history_visibility: 'invited' },
+      ''
+    )
+  })
+
   it('creates a private group room, invites everyone and lists it under each of them', async () => {
-    const { store, client, createRoom, setAccountData } = setup({ [ALICE]: ['!a:example.test'] })
+    const { store, client, createRoom, setAccountData, sendStateEvent } = setup({ [ALICE]: ['!a:example.test'] })
     vi.spyOn(client, 'getRoom').mockReturnValue(null)
     await expect(store.openDirect([BOB, ALICE, session.userId])).resolves.toBe('!new:example.test')
     expect(createRoom).toHaveBeenCalledWith(
@@ -45,11 +63,13 @@ describe('direct conversations in the store', () => {
     const [options] = createRoom.mock.calls[0]!
     expect(options.preset).toBe('private_chat')
     expect(options.power_level_content_override).toBeUndefined()
-    expect(options.initial_state).toContainEqual({
-      type: 'm.room.history_visibility',
-      state_key: '',
-      content: { history_visibility: 'invited' },
-    })
+    expect(options.initial_state).toBeUndefined()
+    expect(sendStateEvent).toHaveBeenCalledWith(
+      '!new:example.test',
+      'm.room.history_visibility',
+      { history_visibility: 'invited' },
+      ''
+    )
     expect(setAccountData).toHaveBeenCalledWith('m.direct', {
       [ALICE]: ['!a:example.test', '!new:example.test'],
       [BOB]: ['!new:example.test'],

@@ -1355,20 +1355,23 @@ export class EspaceStore {
     if (held !== undefined) return held
     // `private_chat`, not `trusted_private_chat`: the latter gives every invitee the creator's
     // power level, so anyone in a group conversation could remove the others or change the room.
-    // Someone invited later reads only what is sent from their invitation on.
+    // No `initial_state`: the Kodera room policy admits a member-created room only as a plain
+    // direct message and refuses any creation that carries initial state
+    // (packages/synapse-policy, `_is_direct_message`), so it is set as the first event instead.
     const { room_id: roomId } = await this.#client.createRoom({
       is_direct: true,
       invite: people,
       preset: Preset.PrivateChat,
       visibility: Visibility.Private,
-      initial_state: [
-        {
-          type: EventType.RoomHistoryVisibility,
-          state_key: '',
-          content: { history_visibility: HistoryVisibility.Invited },
-        },
-      ],
     })
+    // Someone invited later reads only what is sent from their invitation on. Nothing has been
+    // sent yet, so nobody reads anything before it.
+    await this.#client.sendStateEvent(
+      roomId,
+      EventType.RoomHistoryVisibility,
+      { history_visibility: HistoryVisibility.Invited },
+      ''
+    )
     await this.#client.setAccountData(EventType.Direct, withDirect(map, roomId, people) as never)
     return roomId
   }

@@ -54,6 +54,23 @@ export function cleanText(value: unknown, max: number): string {
 }
 
 /**
+ * The resource an address names, as Core's fetcher sees it: no fragment (a browser never sends
+ * one, and Core's canonical form drops it) and the path and query with their unreserved
+ * percent-escapes decoded, since Core escapes `|`, `^`, `[` and `]` where a browser keeps them.
+ * `decodeURI` leaves the reserved escapes (`%2F`, `%3F`, `%23`, `%26`, …) as they are.
+ */
+function resourceOf(url: URL): string {
+  const rest = url.pathname + url.search
+  let decoded = rest
+  try {
+    decoded = decodeURI(rest)
+  } catch {
+    // A malformed escape is compared as written.
+  }
+  return url.protocol + '//' + url.host + decoded
+}
+
+/**
  * The card for a link the member sent, or null to draw none. `sent` is the address in the message:
  * a result for another address is refused, and a canonical address on another site is not
  * followed, so a preview never leads somewhere the message did not.
@@ -63,11 +80,12 @@ export function safeUnfurl(result: unknown, sent: string): SafeUnfurl | null {
   const card = result as Partial<Record<keyof UnfurlResult, unknown>>
   const asked = safeHref(sent)
   const url = safeHref(card.url)
-  if (asked === null || url === null || url.href !== asked.href) return null
+  if (asked === null || url === null || resourceOf(url) !== resourceOf(asked)) return null
   const canonical = safeHref(card.canonicalUrl)
   // A canonical address in any other scheme refuses the card: the server should never return one.
   if (card.canonicalUrl !== undefined && canonical === null) return null
-  const target = canonical !== null && canonical.host === url.host ? canonical : url
+  // Without a same-site canonical address the card leads where the message does, fragment included.
+  const target = canonical !== null && canonical.host === url.host ? canonical : asked
   const title = cleanText(card.title, 120)
   const description = cleanText(card.description, 300)
   const siteName = cleanText(card.siteName, 80)

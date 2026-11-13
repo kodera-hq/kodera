@@ -22,7 +22,7 @@ try {
     const obsolete = Y.encodeStateAsUpdate(client)
     for (let index = 0; index < 33; index += 1) {
       const vector = Y.encodeStateVector(client)
-      const paragraph = client.getXmlFragment('prosemirror').toArray().find(node => node.nodeName === 'paragraph')
+      const paragraph = client.getXmlFragment('content').toArray().find(node => node.nodeName === 'paragraph')
       if (paragraph.length === 0) paragraph.insert(0, [new Y.XmlText()])
       paragraph.get(0).insert(paragraph.get(0).length, ' change' + index)
       const result = await store.update(editor, Y.encodeStateAsUpdate(client, vector))

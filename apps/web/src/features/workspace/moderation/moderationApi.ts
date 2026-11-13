@@ -121,10 +121,21 @@ function patchReport(
   )
 }
 
-export async function moderateMember(
-  organisationId: string,
-  request: { membershipId: string; action: ModerationAction; reason: string; days?: number }
-): Promise<void> {
+type ModerationRequest = { membershipId: string; action: ModerationAction; reason: string; days?: number }
+
+/** The wire body. Only a mute lasts: Core refuses `expiresAt` on kick, ban and unban with 422. */
+export function moderationBody(request: ModerationRequest, now = new Date()) {
+  return {
+    membershipId: request.membershipId,
+    action: request.action,
+    reason: request.reason,
+    ...(request.action === 'mute' && request.days !== undefined
+      ? { expiresAt: expiryIn(request.days, now) }
+      : {}),
+  }
+}
+
+export async function moderateMember(organisationId: string, request: ModerationRequest): Promise<void> {
   await mutate(
     { method: 'post', path: '/organisations/{organisation_id}/workspace/moderation' },
     {
@@ -132,12 +143,7 @@ export async function moderateMember(
         path: { organisation_id: organisationId },
         header: { 'Idempotency-Key': crypto.randomUUID() },
       },
-      body: {
-        membershipId: request.membershipId,
-        action: request.action,
-        reason: request.reason,
-        ...(request.days === undefined ? {} : { expiresAt: expiryIn(request.days) }),
-      },
+      body: moderationBody(request),
     }
   )
 }
