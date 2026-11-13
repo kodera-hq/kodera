@@ -1,0 +1,34 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.rss-advisories",
+  "name": "RSS, Atom & Security Advisory Feed",
+  "version": "0.1.0",
+  "description": "Normalized Atom, RSS, GHSA, CVE, and CERT-FR security advisory reference implementation for upstream dependencies with bounded deduplication.",
+  "permissions": [
+    "messages:write",
+    "incidents:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "incidents:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "incident.opened",
+    "release.published",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/advisories",
+      "name": "/advisories",
+      "description": "Inspect upstream security advisories, CVSS thresholds, or tracked components"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/rss-advisories"
+}
