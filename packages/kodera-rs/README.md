@@ -2,10 +2,13 @@
 
 Shared native Rust engine (`#![forbid(unsafe_code)]`) shared by the Kodera Desktop developer preview, **Kodera iOS (`SwiftUI`)** and **Kodera Android (`Jetpack Compose`)**.
 
+Status: Optional native cryptographic engines available for local integration; platform activation,
+hardware attestation, protected persistence and live radio/service acceptance remain pending.
+
 ## Responsibilities
 
 1. **Transport-Independent Identifiers (`UuidV7`):** RFC 9562 monotonic identifiers isolating client navigation and caches from backend Matrix/Synapse room identifiers.
-2. **Device Identity & Crypto Provider Seam:** `Ed25519` device signing, and `MlsCiphertextEnvelope` metadata for a future OpenMLS (RFC 9420) provider. No MLS provider, hardware-backed key or LiveKit E2EE ships today.
+2. **Device Identity & Crypto Providers:** The dependency-free default retains the signing/envelope seams. Optional OpenMLS (RFC 9420) and Vodozemac Megolm engines perform real authenticated encryption and key rotation; optional ES256 passkey helpers verify scoped assertions. These local engines do not activate hardware-backed keys or LiveKit E2EE in a client.
 3. **`#proximity` channel:** Pre-provisioned intra-organisation proximity beacon (`HMAC-SHA256` rotating every 5 minutes) and bounded `<= 256`-byte store-and-forward frame codec (`TTL <= 6` hops) over local Wi-Fi (`mDNS + QUIC`) and `BLE GATT`. It is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service.
 
 ## Proximity naming and the frozen frame v1
@@ -22,9 +25,15 @@ A handle is a display label. It is never an identity and never an authorisation 
 
 ## Session envelope metadata
 
-`SessionEnvelopeHeader` and `SessionEnvelopeTracker` add one-organisation room metadata tracking alongside the existing `MlsCiphertextEnvelope`; existing crypto algorithm names/discriminants and proximity frame wire bytes are unchanged. A trusted `SessionEnvelopeVerifier` must authenticate every header field against the actual envelope/session before acceptance. There is no built-in MLS engine or ciphertext authentication provider here.
+`SessionEnvelopeHeader` and `SessionEnvelopeTracker` add one-organisation room metadata tracking alongside the existing `MlsCiphertextEnvelope`; existing crypto algorithm names/discriminants and proximity frame wire bytes are unchanged. A trusted `SessionEnvelopeVerifier` must authenticate every header field against the actual envelope/session before acceptance. That default metadata tracker does not authenticate ciphertext itself; the optional engines below supply actual cryptographic operations.
 
 Room epochs cannot decrease, and a room's established algorithm cannot change until the trusted session is explicitly cleared. Rejected scope, replay, algorithm, epoch, capacity or verification checks do not modify state. Each room and replay capacity is independently limited to 1–4096 entries. Room state never evicts; new rooms fail at capacity rather than resetting old epoch/algorithm guarantees. The shared FIFO replay history keys IDs by room and retains them across epoch advances, but loses old ID protection on eviction. No cross-process persistence or lifetime replay guarantee is provided.
+
+The optional actual engines are separate from that metadata tracker. See
+[native crypto and discovery v2](docs/native-crypto.md) for their authenticated
+scope, real commit/key rotation, passkey assertion profile, replay rules and
+trusted adapter boundaries. The default crate and desktop dependency remain
+compatible with Rust 1.80; the optional OpenMLS provider requires Rust 1.91.
 
 ## Docs link policy and native webhook seam
 
