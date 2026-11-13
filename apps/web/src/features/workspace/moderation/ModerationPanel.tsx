@@ -260,7 +260,8 @@ function ModerateMember({ organisationId }: { organisationId: string }) {
   const [days, setDays] = useState('1')
   const [notice, setNotice] = useState('')
   const validId = UUID.test(membershipId.trim())
-  const lasting = action === 'mute' || action === 'ban'
+  // A ban stands until an unban; only a mute takes a duration (Core refuses `expiresAt` otherwise).
+  const lasting = action === 'mute'
   return (
     <section className={SECTION} aria-labelledby="moderate-title">
       <h3 id="moderate-title" className="font-semibold">

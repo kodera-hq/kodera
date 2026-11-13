@@ -43,9 +43,13 @@ ADMINS = frozenset({"org_owner", "org_admin"})
 
 
 class RefusalError(Exception):
-    def __init__(self, status: int, kind: str | None = None) -> None:
+    def __init__(
+        self, status: int, kind: str | None = None, *, current_etag: str | None = None
+    ) -> None:
         super().__init__("workspace action refused")
         self.status = status
+        # On `412`, the tag to re-read against (contract `PreconditionFailed`).
+        self.current_etag = current_etag
         self.kind = (
             kind
             or {
@@ -446,8 +450,9 @@ def resolve_report(
         raise RefusalError(404)
     if not if_match:
         raise RefusalError(428)
-    if if_match not in {"*", tag(report_wire(row))}:
-        raise RefusalError(412)
+    current = tag(report_wire(row))
+    if if_match not in {"*", current}:
+        raise RefusalError(412, current_etag=current)
     if not isinstance(status, str) or status not in {"resolved", "dismissed"}:
         raise RefusalError(422)
     _text(resolution, 4000)

@@ -62,12 +62,23 @@ def test_real_http_moderator_boundary_and_report_queue(world, http):
     queue = client.get(base + "/reports", HTTP_AUTHORIZATION="Bearer " + credentials[2])
     call(queue, "/organisations/{organisation_id}/workspace/reports", "get")
     assert len(queue.json()["data"]) == 1
+    # A list row carries no tag, so the console patches blind and re-reads from the 412.
+    stale = client.patch(
+        base + "/reports/" + created.json()["id"],
+        data=json.dumps({"status": "resolved", "resolution": "Handled"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION="Bearer " + credentials[2],
+        HTTP_IF_MATCH='"unknown"',
+    )
+    call(stale, "/organisations/{organisation_id}/workspace/reports/{report_id}", "patch")
+    assert stale.status_code == 412
+    assert stale.json()["current_etag"] == created["ETag"] == stale["ETag"]
     resolution = client.patch(
         base + "/reports/" + created.json()["id"],
         data=json.dumps({"status": "resolved", "resolution": "Handled"}),
         content_type="application/json",
         HTTP_AUTHORIZATION="Bearer " + credentials[2],
-        HTTP_IF_MATCH=created["ETag"],
+        HTTP_IF_MATCH=stale.json()["current_etag"],
     )
     call(resolution, "/organisations/{organisation_id}/workspace/reports/{report_id}", "patch")
     assert resolution.status_code == 200
