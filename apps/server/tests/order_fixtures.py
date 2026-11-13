@@ -31,6 +31,9 @@ def owner_token(issuer: str, subject: str) -> VerifiedAccessToken:
 
 
 def commit_order(organisation_id: UUID, issuer: str, subject: str) -> services.PlacedOrder:
+    from billing_fiscal_fixtures import register_test_fiscal_periods
+
+    register_test_fiscal_periods()
     if not Plan.objects.exists():
         catalogue.load(catalogue.read(catalogue.PLACEHOLDER), allow_placeholder=True)
     if not LegalDocument.objects.exists():

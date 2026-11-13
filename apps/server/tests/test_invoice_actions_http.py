@@ -178,6 +178,11 @@ def test_an_invoice_that_is_not_owed_has_no_link(w, placed, fake):
 
 
 def test_a_debit_still_settling_gets_no_second_link(w, placed, fake):
+    from billing_fiscal_fixtures import register_test_fiscal_year
+
+    # Processing-age refusal and its synthetic fiscal authority use this scenario's clock.
+    event_at = timezone.now()
+    register_test_fiscal_year(event_at.year)
     Payment.objects.create(
         organisation_id=w.alpha.id,
         invoice_id=placed.invoice.id,
@@ -186,7 +191,7 @@ def test_a_debit_still_settling_gets_no_second_link(w, placed, fake):
         state="processing",
         amount_minor=placed.invoice.total_incl_vat_minor,
         currency="EUR",
-        last_event_at=timezone.now(),
+        last_event_at=event_at,
     )
     found = problem(post(w, w.owner, placed.invoice.id), LINK, "post", 409, "conflict")
     assert "reason" not in found and fake.links == []
@@ -442,8 +447,9 @@ def test_a_stored_pdf_with_no_signer_fails_loudly_never_as_a_link(w, placed):
 def _without(monkeypatch, needle):
     from config import customer_urls
 
-    kept = [p for p in customer_urls.urlpatterns if not str(p.pattern).endswith(needle)]
-    assert len(kept) == len(customer_urls.urlpatterns) - 1, f"{needle} is not routed once"
+    target = "api/v1/invoices/<uuid:invoice_id>" + needle
+    kept = [p for p in customer_urls.urlpatterns if str(p.pattern) != target]
+    assert len(kept) == len(customer_urls.urlpatterns) - 1, f"{target} is not routed once"
     monkeypatch.setattr(customer_urls, "urlpatterns", kept)
     clear_url_caches()
 
