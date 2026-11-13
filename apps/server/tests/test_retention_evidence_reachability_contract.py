@@ -1895,6 +1895,44 @@ def source_table_names(source: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
+PURE_DELIVERY_EXPIRY = """from datetime import timedelta
+
+from django.utils import timezone
+
+
+def delivery_expiry():
+    return timezone.now() + timedelta(days=7)
+"""
+
+
+def delivery_expiry_default_is_inspectable(root: Path) -> bool:
+    """Prove the pure clock and inert importing packages without executing them."""
+    try:
+        helper = root.resolve(strict=True)
+        for component in ("apps", "extensions", "expiry.py"):
+            helper = helper / component
+            if helper.is_symlink():
+                return False
+            if component != "expiry.py":
+                initializer = helper / "__init__.py"
+                if initializer.is_symlink() or not initializer.is_file():
+                    return False
+                statements = ast.parse(initializer.read_bytes()).body
+                if statements and not (
+                    len(statements) == 1
+                    and isinstance(statements[0], ast.Expr)
+                    and isinstance(statements[0].value, ast.Constant)
+                    and isinstance(statements[0].value.value, str)
+                ):
+                    return False
+        if not helper.is_file():
+            return False
+        source = helper.read_bytes()
+        return ast.dump(ast.parse(source)) == ast.dump(ast.parse(PURE_DELIVERY_EXPIRY))
+    except (OSError, UnicodeError, SyntaxError):
+        return False
+
+
 def migration_create_model_names(
     root: Path = ROOT, *, within: str | None = None, outside: str | None = None
 ) -> set[str]:
@@ -1902,6 +1940,7 @@ def migration_create_model_names(
     migration, or only those `within` one directory, or all but those of one (`outside`)."""
     names = set()
     projections = set(NON_PERSISTED_MODEL_PROJECTIONS)
+    verified_expiry_default = delivery_expiry_default_is_inspectable(root)
     for path in sorted(root.glob("apps/**/migrations/*.py")):
         relative = path.relative_to(root).as_posix()
 
@@ -1912,7 +1951,7 @@ def migration_create_model_names(
             continue
         if outside is not None and under(outside):
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(path.read_bytes(), filename=str(path))
         create_model_aliases = set()
         run_sql_aliases = set()
         run_python_aliases = set()
@@ -3166,6 +3205,11 @@ def migration_create_model_names(
             "django.db.models.functions:Length",
             "django.db.models.lookups:GreaterThan",
         }
+        if verified_expiry_default:
+            approved_operation_import_sources.add("apps.extensions.expiry")
+        verified_by_value_defaults = (
+            {"apps.extensions.expiry.delivery_expiry"} if verified_expiry_default else set()
+        )
         trusted_operation_value_names = {
             name
             for name, sources in module_import_sources.items()
@@ -3230,6 +3274,10 @@ def migration_create_model_names(
                 ("django.db.models.OneToOneField", "on_delete"),
             },
         }
+        if verified_expiry_default:
+            approved_operation_by_value_slots["apps.extensions.expiry.delivery_expiry"] = {
+                ("django.db.models.DateTimeField", "default")
+            }
         approved_operation_root_values = {
             "django.db.migrations.RunPython.noop",
             "django.db.migrations.RunSQL.noop",
@@ -3296,6 +3344,7 @@ def migration_create_model_names(
                 str, set[tuple[str, str]]
             ] = approved_operation_by_value_slots,
             _approved_root_values: set[str] = approved_operation_root_values,
+            _verified_defaults: set[str] = verified_by_value_defaults,
             _canonical_import_paths: Callable[[tuple[str, ...]], set[str]] = (
                 canonical_import_paths
             ),
@@ -3415,6 +3464,10 @@ def migration_create_model_names(
                     if isinstance(parent, ast.Attribute) and parent.value is child:
                         continue
                     candidates = _canonical_import_paths(path)
+                    if candidates & _verified_defaults:
+                        if len(candidates) != 1 or not approved_by_value_use(child, candidates):
+                            return True
+                        continue
                     if not any(candidate in _approved_paths for candidate in candidates):
                         return True
                     if not (
@@ -3444,6 +3497,10 @@ def migration_create_model_names(
                         return True
                     continue
                 candidates = _canonical_import_paths((child.id,))
+                if candidates & _verified_defaults:
+                    if len(candidates) != 1 or not approved_by_value_use(child, candidates):
+                        return True
+                    continue
                 if not any(candidate in _approved_paths for candidate in candidates):
                     return True
                 if not (
@@ -17368,3 +17425,224 @@ def test_migration_positive_big_integer_field_preserves_projection_detection(
         f"('bytes', models.PositiveBigIntegerField({default}))])",
     )
     assert migration_create_model_names(tmp_path) == expected
+
+
+def _pure_expiry_migration(root: Path, operation: str) -> Path:
+    _migration(root, "extensions", "0001_probe.py", operation)
+    migration = root / "apps/extensions/migrations/0001_probe.py"
+    migration.write_text("import apps.extensions.expiry\n" + migration.read_text())
+    helper = root / "apps/extensions/expiry.py"
+    (root / "apps/__init__.py").write_text("")
+    (root / "apps/extensions/__init__.py").write_text('"""Extension package."""\n')
+    helper.write_text(PURE_DELIVERY_EXPIRY)
+    return helper
+
+
+PURE_EXPIRY_FIELD = (
+    "migrations.AddField(model_name='Delivery', name='expires_at', "
+    "field=models.DateTimeField(default=apps.extensions.expiry.delivery_expiry))"
+)
+
+
+def test_pure_delivery_expiry_default_is_inspectable_only_in_its_field_slot(tmp_path: Path) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    assert delivery_expiry_default_is_inspectable(tmp_path)
+    assert migration_create_model_names(tmp_path) == set()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda source: "import os\n" + source,
+        lambda source: (
+            source
+            + "\nimport sqlite3\nsqlite3.connect(':memory:').execute('CREATE TABLE entitlement(id)')\n"
+        ),
+        lambda source: source + "\ndelivery_expiry = lambda: None\n",
+        lambda source: source + "\ntimezone = None\n",
+        lambda source: source + "\ntimedelta = lambda **kwargs: None\n",
+        lambda source: source.replace("timezone.now()", "timezone.localtime()"),
+        lambda source: source.replace("days=7", "days=1"),
+        lambda source: source.replace("def delivery_expiry():", "@unknown\ndef delivery_expiry():"),
+        lambda source: source.replace("def delivery_expiry():", "def delivery_expiry(value=None):"),
+        lambda source: source.replace(
+            "return timezone.now()", "raise RuntimeError('changed')\n    return timezone.now()"
+        ),
+        lambda source: source.replace("return timezone.now() + timedelta(days=7)", "return None"),
+    ],
+)
+def test_pure_delivery_expiry_proof_rejects_changed_module_authority(
+    tmp_path: Path, mutation: Callable[[str], str]
+) -> None:
+    helper = _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    helper.write_text(mutation(PURE_DELIVERY_EXPIRY))
+    assert not delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        PURE_EXPIRY_FIELD.replace("expiry.delivery_expiry)", "expiry.delivery_expiry())"),
+        PURE_EXPIRY_FIELD.replace("DateTimeField", "IntegerField"),
+        PURE_EXPIRY_FIELD.replace("default=", "db_default="),
+        "migrations.RunPython(apps.extensions.expiry.delivery_expiry)",
+    ],
+)
+def test_pure_delivery_expiry_proof_rejects_calls_and_other_operation_slots(
+    tmp_path: Path, operation: str
+) -> None:
+    _pure_expiry_migration(tmp_path, operation)
+    assert delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+@pytest.mark.parametrize("link_parent", [False, True])
+def test_pure_delivery_expiry_proof_rejects_symlinked_source(
+    tmp_path: Path, link_parent: bool
+) -> None:
+    helper = _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    if link_parent:
+        # Keep the importing migration visible to the root glob while redirecting
+        # only the helper's package path; a hidden migration is not this proof.
+        probe = tmp_path / "apps/probe/migrations/0001_probe.py"
+        probe.parent.mkdir(parents=True)
+        probe.write_text((helper.parent / "migrations/0001_probe.py").read_text())
+        original = helper.parent
+        moved = tmp_path / "redirected_extensions"
+        original.rename(moved)
+        original.symlink_to(moved, target_is_directory=True)
+    else:
+        moved = tmp_path / "redirected_clock.py"
+        helper.rename(moved)
+        helper.symlink_to(moved)
+    assert not delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+def test_delivery_expiry_runtime_and_model_alias_retain_the_seven_day_clock(monkeypatch) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from apps.extensions import expiry, models
+
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr(expiry.timezone, "now", lambda: now)
+    assert models.delivery_expiry is expiry.delivery_expiry
+    assert models.Delivery._meta.get_field("expires_at").get_default() == now + timedelta(days=7)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "apps.extensions.expiry.delivery_expiry = lambda: None",
+        "apps.extensions.expiry.timezone.now = lambda: None",
+        "apps.extensions.expiry.timedelta = lambda **kwargs: None",
+    ],
+)
+def test_pure_delivery_expiry_proof_rejects_caller_dependency_rebinding(
+    tmp_path: Path, statement: str
+) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    migration = tmp_path / "apps/extensions/migrations/0001_probe.py"
+    migration.write_text(
+        migration.read_text().replace("class Migration", statement + "\nclass Migration")
+    )
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+def test_pure_delivery_expiry_proof_keeps_computed_projection_detection(tmp_path: Path) -> None:
+    _pure_expiry_migration(
+        tmp_path,
+        "migrations.CreateModel(name='Entitlement', fields=[('expires_at', "
+        "models.DateTimeField(default=apps.extensions.expiry.delivery_expiry))])",
+    )
+    assert migration_create_model_names(tmp_path) == {"Entitlement"}
+
+
+def test_pure_delivery_expiry_proof_does_not_trust_the_legacy_model_module(tmp_path: Path) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    migration = tmp_path / "apps/extensions/migrations/0001_probe.py"
+    migration.write_text(
+        migration.read_text().replace("apps.extensions.expiry", "apps.extensions.models")
+    )
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+@pytest.mark.parametrize("package", ["apps", "apps/extensions"])
+def test_pure_delivery_expiry_proof_rejects_importing_package_side_effects(
+    tmp_path: Path, package: str
+) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    initializer = tmp_path / package / "__init__.py"
+    initializer.write_text(
+        "import sqlite3\nsqlite3.connect(':memory:').execute('CREATE TABLE entitlement(id)')\n"
+    )
+    assert not delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+@pytest.mark.parametrize("package", ["apps", "apps/extensions"])
+def test_pure_delivery_expiry_proof_rejects_symlinked_package_initializer(
+    tmp_path: Path, package: str
+) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    initializer = tmp_path / package / "__init__.py"
+    target = tmp_path / "redirected_initializer.py"
+    initializer.rename(target)
+    initializer.symlink_to(target)
+    assert not delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+ENCODED_DDL_COMMENT = (
+    b"# coding: unicode_escape\n"
+    b"#\\u000aimport sqlite3; sqlite3.connect(':memory:').execute('CREATE TABLE entitlement(id)')\n"
+)
+
+
+@pytest.mark.parametrize(
+    "relative", ["apps/extensions/expiry.py", "apps/__init__.py", "apps/extensions/__init__.py"]
+)
+def test_pure_delivery_expiry_proof_uses_import_encoding_for_every_source(
+    tmp_path: Path, relative: str
+) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    target = tmp_path / relative
+    target.write_bytes(ENCODED_DDL_COMMENT + target.read_bytes())
+    # No poison is executed. Prove the payload is a comment under a forced UTF-8
+    # read but is executable import syntax under CPython's declared encoding.
+    forced_utf8 = ast.parse(target.read_bytes().decode("utf-8"))
+    actual_import = ast.parse(target.read_bytes())
+    assert not any(
+        isinstance(node, ast.Import) and any(alias.name == "sqlite3" for alias in node.names)
+        for node in ast.walk(forced_utf8)
+    )
+    assert any(
+        isinstance(node, ast.Import) and any(alias.name == "sqlite3" for alias in node.names)
+        for node in ast.walk(actual_import)
+    )
+    assert not delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "relative", ["apps/extensions/expiry.py", "apps/__init__.py", "apps/extensions/__init__.py"]
+)
+@pytest.mark.parametrize("content", [b"# coding: nonexistent_codec\n", b"# coding: utf-8\n\xff"])
+def test_pure_delivery_expiry_proof_refuses_invalid_import_encodings(
+    tmp_path: Path, relative: str, content: bytes
+) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    (tmp_path / relative).write_bytes(content)
+    assert not delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)
+
+
+def test_migration_projection_scanner_uses_the_actual_declared_source_encoding(
+    tmp_path: Path,
+) -> None:
+    _pure_expiry_migration(tmp_path, PURE_EXPIRY_FIELD)
+    migration = tmp_path / "apps/extensions/migrations/0001_probe.py"
+    migration.write_bytes(ENCODED_DDL_COMMENT + migration.read_bytes())
+    assert delivery_expiry_default_is_inspectable(tmp_path)
+    assert set(NON_PERSISTED_MODEL_PROJECTIONS) <= migration_create_model_names(tmp_path)

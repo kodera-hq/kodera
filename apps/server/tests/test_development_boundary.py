@@ -372,6 +372,7 @@ def assert_image_boundary(ignore):
         "!apps/extensions/__init__.py",
         "!apps/extensions/apps.py",
         "!apps/extensions/models.py",
+        "!apps/extensions/expiry.py",
         "!apps/docs/__init__.py",
         "!apps/docs/apps.py",
         "!apps/docs/access.py",
@@ -493,9 +494,10 @@ def test_api_image_excludes_deployed_operator_profile_and_detects_restoration():
         assert_image_boundary(rules)
 
 
-def test_image_guard_refuses_missing_customer_runtime_source():
+@pytest.mark.parametrize("path", ["services/identity/access_tokens.py", "apps/extensions/expiry.py"])
+def test_image_guard_refuses_missing_customer_runtime_source(path):
     ignore = (ROOT / ".dockerignore").read_text().splitlines()
-    ignore.remove("!services/identity/access_tokens.py")
+    ignore.remove("!" + path)
     with pytest.raises(
         AssertionError, match="build inputs differ from the exact runtime allowlist"
     ):
