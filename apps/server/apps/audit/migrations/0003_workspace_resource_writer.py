@@ -3,6 +3,8 @@
 from django.db import migrations
 
 FORWARD = r'''
+SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
 CREATE FUNCTION audit_workspace_resource_event(p_id uuid,p_action text,p_organisation uuid,
                                               p_target uuid,p_actor uuid,p_request text)
 RETURNS void LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
@@ -21,7 +23,11 @@ BEGIN
          'urn:kodera:workspace-resource:'||p_target,p_request,'standard','{}'::jsonb);
 END $$;
 '''
-REVERSE = 'DROP FUNCTION audit_workspace_resource_event(uuid,text,uuid,uuid,uuid,text);'
+REVERSE = r'''
+SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
+DROP FUNCTION audit_workspace_resource_event(uuid,text,uuid,uuid,uuid,text);
+'''
 
 
 class Migration(migrations.Migration):
