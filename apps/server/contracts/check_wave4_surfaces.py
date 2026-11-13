@@ -74,6 +74,21 @@ def validate(document: dict[str, Any]) -> None:
                 {"$ref": "#/components/parameters/IfMatch"} in operation["parameters"],
                 "wave4 precondition",
             )
+    row_put = document["paths"][COLLECTION + "/{collection_id}/rows/{document_id}"]["put"]
+    headers = {p.get("name"): p for p in row_put["parameters"]}
+    require(
+        row_put.get("x-kodera-one-of-preconditions") is True
+        and "201" in row_put["responses"]
+        and set(headers) == {"If-Match", "If-None-Match"}
+        and all(p.get("required") is False for p in headers.values())
+        and headers["If-None-Match"]["schema"] == {"type": "string", "const": "*"},
+        "conditional row preconditions",
+    )
+    for path, item in document["paths"].items():
+        if "/privacy/" in path:
+            for op in item.values():
+                if isinstance(op, dict) and "responses" in op:
+                    require("503" in op["responses"], "privacy configuration refusal")
     for name in ("CollectionProperty", "CollectionValue"):
         branches = schemas[name]["oneOf"]
         kinds = [
@@ -253,6 +268,20 @@ def main() -> None:
                 ]["enum"].append("ready"),
             ),
         ]
+        mutations.extend(
+            [
+                (
+                    "conditional row preconditions",
+                    lambda d: d["paths"][COLLECTION + "/{collection_id}/rows/{document_id}"][
+                        "put"
+                    ].pop("x-kodera-one-of-preconditions"),
+                ),
+                (
+                    "privacy configuration refusal",
+                    lambda d: d["paths"]["/me/privacy/exports"]["post"]["responses"].pop("503"),
+                ),
+            ]
+        )
         for expected, mutate in mutations:
             changed = copy.deepcopy(document)
             mutate(changed)
