@@ -98,8 +98,33 @@ function parseInlineFormatting(segment: string): JSONContent[] {
 function splitPipeRow(line: string): string[] {
   const trimmed = line.trim()
   const inner = trimmed.startsWith('|') ? trimmed.slice(1) : trimmed
-  const withoutTrailing = inner.endsWith('|') ? inner.slice(0, -1) : inner
-  return withoutTrailing.split('|').map((cell) => cell.trim())
+  const cells: string[] = []
+  let current = ''
+  let endedOnDelimiter = false
+
+  for (let idx = 0; idx < inner.length; idx += 1) {
+    const ch = inner[idx] ?? ''
+    const next = inner[idx + 1]
+    if (ch === '\\' && (next === '|' || next === '\\')) {
+      current += next
+      endedOnDelimiter = false
+      idx += 1
+      continue
+    }
+    if (ch === '|') {
+      cells.push(current.trim())
+      current = ''
+      endedOnDelimiter = true
+      continue
+    }
+    current += ch
+    endedOnDelimiter = false
+  }
+
+  if (!endedOnDelimiter) {
+    cells.push(current.trim())
+  }
+  return cells
 }
 
 function isTableSeparatorRow(line: string): boolean {
@@ -456,7 +481,7 @@ export function tiptapDocToMarkdown(doc: JSONContent): string {
           const tableLines: string[] = []
           rows.forEach((row, rowIndex) => {
             const cells = (row.content ?? []).map((cell) =>
-              serializeInlineNodes(cell.content).replace(/\|/g, '\\|')
+              serializeInlineNodes(cell.content).replace(/\\/g, '\\\\').replace(/\|/g, '\\|')
             )
             tableLines.push(`| ${cells.join(' | ')} |`)
             if (rowIndex === 0) {

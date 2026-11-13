@@ -5,6 +5,7 @@ import '@/i18n'
 import { ApiProblem } from '@/api/client'
 import type { DocumentAccessRole } from './pageTree'
 import { CollaborativeBlockEditor } from './CollaborativeBlockEditor'
+import { markdownToTiptapDoc, tiptapDocToMarkdown } from './markdownBlocks'
 import { WorkspaceCollaborativeDocs, type WorkspacePageRecord } from './WorkspaceCollaborativeDocs'
 import * as docsApi from './workspaceDocumentsApi'
 
@@ -127,6 +128,14 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
     expect(textbox).toHaveAttribute('aria-readonly', 'true')
     expect(textbox).toHaveAttribute('contenteditable', 'false')
     expect(onMarkdownChange).not.toHaveBeenCalled()
+  })
+
+  it('round-trips table cells containing backslashes and escaped pipes losslessly', () => {
+    const doc = markdownToTiptapDoc('| Key | Path |\n| --- | --- |\n| a \\| b | C:\\\\logs\\\\app |\n')
+    const serialized = tiptapDocToMarkdown(doc)
+    expect(serialized).toContain('| a \\| b | C:\\\\logs\\\\app |')
+    const reparsed = markdownToTiptapDoc(serialized)
+    expect(tiptapDocToMarkdown(reparsed)).toBe(serialized)
   })
 
   it('manages nested Core 0.43.0 workspace pages, 4 starter templates, backlinks, and non-empty parent delete refusal', async () => {
