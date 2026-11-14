@@ -65,6 +65,32 @@ def existing_ancestor(path: Path) -> Path:
     return path
 
 
+def dependency_search_directories(messages: Path, target: Path) -> list[Path]:
+    """Use Cargo's actual artifacts, whose intermediate layout is not stable."""
+    directories = set()
+    for line in messages.read_text().splitlines():
+        if not line.strip():
+            continue
+        message = json.loads(line)
+        if message.get('reason') != 'compiler-artifact':
+            continue
+        for filename in message.get('filenames', []):
+            path = Path(filename)
+            if path.suffix not in {'.rlib', '.so', '.dylib'}:
+                continue
+            resolved = path.resolve()
+            if not path.is_absolute() or not resolved.is_relative_to(target.resolve()):
+                raise ValueError('Cargo dependency artifact is outside the selected target')
+            if not resolved.is_file() or resolved.stat().st_size == 0:
+                raise ValueError('Cargo dependency artifact is missing or empty')
+            directories.add(resolved.parent)
+            if len(directories) > 1024:
+                raise ValueError('Cargo dependency search exceeds its bound')
+    if not directories:
+        raise ValueError('Cargo reported no library dependency search directories')
+    return sorted(directories)
+
+
 def selftest() -> None:
     positive_result('test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;', 0)
     oracle_result('test result: FAILED. 0 passed; 1 failed; 0 ignored;', ORACLE_VALUE, 101)
@@ -86,6 +112,37 @@ def selftest() -> None:
             raise AssertionError('negative qualification fixture admitted')
     source = (CANDIDATE / 'tests/variant_str_iter_out_pointer.rs').read_text()
     assert ORACLE_VALUE in oracle_source(source)
+    with tempfile.TemporaryDirectory(prefix='glib-search-fixture-') as directory:
+        root = Path(directory).resolve()
+        target = root / 'target'
+        legacy = target / 'release/deps/libdependency.rlib'
+        per_unit = target / 'units/macro/libfixture.so'
+        for path in [legacy, per_unit]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'path-selection fixture, not a compiled library')
+        messages = root / 'messages.json'
+        def emit(paths):
+            messages.write_text(json.dumps({'reason': 'compiler-artifact', 'filenames': [str(p) for p in paths]}) + '\n')
+        emit([legacy, per_unit, legacy])
+        assert dependency_search_directories(messages, target) == sorted([legacy.parent, per_unit.parent])
+        alias = target / 'alias.rlib'
+        alias.symlink_to(legacy)
+        emit([alias])
+        assert dependency_search_directories(messages, target) == [legacy.parent]
+        outside = root / 'outside.rlib'
+        outside.write_bytes(b'outside fixture')
+        empty = target / 'empty.rlib'
+        empty.touch()
+        link = target / 'link.rlib'
+        link.symlink_to(outside)
+        for paths in [[], [outside], [target / 'missing.rlib'], [empty], [link]]:
+            emit(paths)
+            try:
+                dependency_search_directories(messages, target)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('invalid Cargo search path admitted')
     print('Qualification parser/oracle source checks passed; no compiler or native process ran.')
 
 
@@ -183,13 +240,10 @@ def qualify(revision: str, evidence_path: Path) -> None:
             artifact = verifier.optimized_artifact(messages, target)
             evidence['glib_rlib'] = str(artifact)
             evidence['glib_rlib_sha256'] = verifier.sha(artifact.read_bytes())
-            # Cargo can report the top-level libglib.rlib while its transitive
-            # Rust libraries are emitted in release/deps. rustc needs that
-            # dependency directory even when --extern names the exact artifact.
-            dependency_directory = target / 'release' / 'deps'
-            if not dependency_directory.is_dir():
-                raise ValueError('optimized Cargo dependency directory is absent')
-            evidence['rust_dependency_directory'] = str(dependency_directory)
+            # Cargo versions can use flat or per-unit intermediate directories.
+            # Reported artifacts bind the search to this actual build's outputs.
+            dependency_directories = dependency_search_directories(messages, target)
+            evidence['rust_dependency_directories'] = [str(path) for path in dependency_directories]
             native_search_paths = sorted({path for line in stdout.splitlines()
                 for item in [json.loads(line)] if item.get('reason') == 'build-script-executed'
                 for path in item.get('linked_paths', []) if path.startswith('native=')})
@@ -200,7 +254,9 @@ def qualify(revision: str, evidence_path: Path) -> None:
             for label, path, expected in [('positive', source, positive_result), ('wrong-value-oracle', oracle, oracle_result)]:
                 binary = scratch / label
                 args = ['rustc', '--edition=2021', '--test', str(path), '-C', 'opt-level=3',
-                        '-L', 'dependency=' + str(dependency_directory), '--extern', 'glib=' + str(artifact), '-o', str(binary)]
+                        '--extern', 'glib=' + str(artifact), '-o', str(binary)]
+                for directory in dependency_directories:
+                    args.extend(['-L', 'dependency=' + str(directory)])
                 for search_path in native_search_paths:
                     args.extend(['-L', search_path])
                 code, stdout, stderr, _ = run(label + '-compile', args, COMPILE_SECONDS)
