@@ -29,8 +29,8 @@ const expectedLock = {
   ref: 'e574539d73e34847a1374c4b2e5e1a492ddf68a1',
   commit: 'e574539d73e34847a1374c4b2e5e1a492ddf68a1',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.44.2',
-  sha256: '951ca5e29a69447db36528e7b5ea9ef4208d1cae042df8b5d3099962885d0d5b',
+  version: '0.45.0',
+  sha256: 'fba52706dd1ac6804805b72950c5f3db3ea5695ce751d09a3511a964927bf9df',
 }
 
 function requireThat(condition: unknown, reason: string): asserts condition {
@@ -277,20 +277,20 @@ describe('the immutable contract consumer', () => {
 
   it('retains every operation, collection, schema, problem and protected mock byte', () => {
     const ops = operations(spec)
-    expect(ops).toHaveLength(166)
-    expect(new Set(ops.map((op) => op.operationId)).size).toBe(166)
+    expect(ops).toHaveLength(171)
+    expect(new Set(ops.map((op) => op.operationId)).size).toBe(171)
     expect(ops.filter((op) => op.isList)).toHaveLength(35)
-    expect(Object.keys(spec.components.schemas)).toHaveLength(246)
+    expect(Object.keys(spec.components.schemas)).toHaveLength(257)
     expect(problems(spec)).toHaveLength(44)
     expect(PROBLEM_TYPES).toHaveLength(44)
     const hashes = {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        '52e93bbabdceece9db7468ffb537471d622d193ee00c42b16f47336cedf2f13a',
+        'e3c15454c9fec4682160c4b4aea0d6cbef707a4cde5f92354f9e3cffd792bddd',
       'src/mocks/generated/handlers.ts':
-        '22f2c937db62ede6da3beb6581390220df77063427fcf2e4926ecc7d673799e2',
-      'src/api/schema.d.ts': '0e394faee8bfb3fe01acd37f3418c1caec0f92f5b0e9cc882e81d23ab44e226d',
+        'f1330176b9fe9d66da8c7f9dfff7a1be79877f7fa0c7c32b787546ad5e4be3d4',
+      'src/api/schema.d.ts': '2e19b2145e06ca6f5b531c88bbf88eafca80576d2dc156ab036c88980c58ccf6',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)

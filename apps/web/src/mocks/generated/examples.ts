@@ -121,6 +121,142 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: true,
   },
+  "requestPassportMagicLink": {
+    operationId: "requestPassportMagicLink",
+    method: "post",
+    path: "/auth/passport/magic-link/request",
+    status: 202,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "status": "accepted",
+      "expires_in_seconds": 600
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "verifyPassportMagicLink": {
+    operationId: "verifyPassportMagicLink",
+    method: "post",
+    path: "/auth/passport/magic-link/verify",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "user": {
+        "id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab784",
+        "email": "camille.laurent@acme.fr",
+        "display_name": "Camille Laurent"
+      },
+      "active_organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+      "active_workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+      "workspaces": [
+        {
+          "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+          "organisation_slug": "acme-org",
+          "organisation_name": "Acme SAS",
+          "realm": "acme-org",
+          "issuer": "https://id.kodera.io/realms/acme-org",
+          "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+          "role": "org_owner",
+          "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+          "default_urls": {},
+          "active": true
+        }
+      ],
+      "session_token": "kp1.eyJleHAiOjE3NjMxNDAwMDAsImlhdCI6MTc2MzEzNjQwMCwib3JnIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg1Iiwic3ViIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg0IiwidiI6MX0.synthetic_signature",
+      "expires_in_seconds": 3600
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listPassportWorkspaces": {
+    operationId: "listPassportWorkspaces",
+    method: "get",
+    path: "/auth/passport/workspaces",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "user": {
+        "id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab784",
+        "email": "camille.laurent@acme.fr",
+        "display_name": "Camille Laurent"
+      },
+      "active_organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+      "active_workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+      "workspaces": [
+        {
+          "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+          "organisation_slug": "acme-org",
+          "organisation_name": "Acme SAS",
+          "realm": "acme-org",
+          "issuer": "https://id.kodera.io/realms/acme-org",
+          "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+          "role": "org_owner",
+          "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+          "default_urls": {},
+          "active": true
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "switchPassportWorkspace": {
+    operationId: "switchPassportWorkspace",
+    method: "post",
+    path: "/auth/passport/switch-workspace",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "active_organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+      "active_workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+      "workspace": {
+        "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+        "organisation_slug": "acme-org",
+        "organisation_name": "Acme SAS",
+        "realm": "acme-org",
+        "issuer": "https://id.kodera.io/realms/acme-org",
+        "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+        "role": "org_owner",
+        "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+        "default_urls": {},
+        "active": true
+      },
+      "session_token": "kp1.eyJleHAiOjE3NjMxNDAwMDAsImlhdCI6MTc2MzEzNjQwMCwib3JnIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg1Iiwic3ViIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg0IiwidiI6MX0.synthetic_signature",
+      "expires_in_seconds": 3600
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "receiveStripeWebhook": {
+    operationId: "receiveStripeWebhook",
+    method: "post",
+    path: "/billing/webhooks/stripe",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "received": true,
+      "event_id": "evt_synthetic_0001",
+      "event_type": "checkout.session.completed",
+      "status": "applied"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
   "discoverRealm": {
     operationId: "discoverRealm",
     method: "post",

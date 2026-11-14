@@ -171,3 +171,93 @@ class StaffRole(StoredModel):
                 name="staffrole_one_current_grant",
             ),
         ]
+
+
+class PassportRateLimitEvent(models.Model):
+    """Short-lived pseudonymous rate-limit event for Kodera Passport magic-link requests."""
+
+    id = models.UUIDField(primary_key=True, default=new_uuid7, editable=False)
+    scope = models.TextField()
+    digest = models.TextField()
+    occurred_at = models.DateTimeField(db_default=ClockTimestamp())
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="passport_rl_scope_valid",
+                condition=models.Q(scope__in=("ip", "email")),
+            ),
+            models.CheckConstraint(
+                name="passport_rl_digest_valid",
+                condition=models.Q(digest__regex=r"^[0-9a-f]{64}$"),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["scope", "digest", "occurred_at"],
+                name="passport_rl_scope_digest_idx",
+            ),
+            models.Index(fields=["occurred_at"], name="passport_rl_time_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return "passport rate-limit event"
+
+
+class PassportMagicLinkToken(StoredModel):
+    """Single-use cross-workspace magic-link token, stored strictly as SHA-256 hash at rest."""
+
+    token_sha256 = models.TextField(unique=True)
+    email_normalized = models.TextField()
+    domain_normalized = models.TextField()
+    code_challenge = models.TextField()
+    code_challenge_method = models.TextField(default="S256")
+    device_challenge_sha256 = models.TextField(null=True, blank=True)  # noqa: DJ001 - optional device binding
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="passport_token_sha256_valid",
+                condition=models.Q(token_sha256__regex=r"^[0-9a-f]{64}$"),  # noqa: S106
+            ),
+            models.CheckConstraint(
+                name="passport_token_email_valid",
+                condition=~models.Q(email_normalized="") & ~models.Q(domain_normalized=""),
+            ),
+            models.CheckConstraint(
+                name="passport_token_method_valid",
+                condition=models.Q(code_challenge_method="S256"),
+            ),
+            models.CheckConstraint(
+                name="passport_token_challenge_valid",
+                condition=models.Q(code_challenge__regex=r"^[A-Za-z0-9_-]{43}$"),
+            ),
+            models.CheckConstraint(
+                name="passport_token_device_valid",
+                condition=models.Q(device_challenge_sha256__isnull=True)
+                | models.Q(device_challenge_sha256__regex=r"^[0-9a-f]{64}$"),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["email_normalized", "-created_at"],
+                name="passport_token_email_idx",
+            ),
+            models.Index(fields=["expires_at"], name="passport_token_exp_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"passport magic-link {self.id}"
+
+
+class PassportWorkspaceContext(StoredModel):
+    """Active workspace/organisation selection for a Kodera Passport person across realms."""
+
+    user_id = models.UUIDField(unique=True)
+    active_organisation_id = models.UUIDField()
+    active_workspace_id = models.UUIDField(null=True, blank=True)
+
+    def __str__(self) -> str:
+        return f"passport context {self.user_id}"

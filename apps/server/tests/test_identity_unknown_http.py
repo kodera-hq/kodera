@@ -122,6 +122,22 @@ CASES = (
         (IDENTITY + ".read_customer",),
     ),
     Case(
+        "listPassportWorkspaces",
+        "apps.identity.api.passport.passport_workspaces",
+        "get",
+        {},
+        "apps.identity.services.UnknownCustomerError",
+        ("apps.identity.api.passport.list_passport_workspaces",),
+    ),
+    Case(
+        "switchPassportWorkspace",
+        "apps.identity.api.passport.passport_switch_workspace",
+        "post",
+        {},
+        "apps.identity.services.UnknownCustomerError",
+        ("apps.identity.api.passport.switch_passport_workspace",),
+    ),
+    Case(
         "getOrganisation",
         DETAIL + ".organisation_detail",
         "get",
@@ -501,6 +517,9 @@ def test_every_customer_operation_that_resolves_a_principal_is_listed():
             declared.add(operation.operation_id)
     anonymous_or_other_lane = {
         "discoverRealm",
+        "requestPassportMagicLink",
+        "verifyPassportMagicLink",
+        "receiveStripeWebhook",
         "listPlans",
         "listPacks",
         "listCapacityTiers",

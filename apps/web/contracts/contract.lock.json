@@ -3,6 +3,6 @@
   "ref": "e574539d73e34847a1374c4b2e5e1a492ddf68a1",
   "commit": "e574539d73e34847a1374c4b2e5e1a492ddf68a1",
   "path": "packages/api-contract/core-api.openapi.yaml",
-  "version": "0.44.2",
-  "sha256": "951ca5e29a69447db36528e7b5ea9ef4208d1cae042df8b5d3099962885d0d5b"
+  "version": "0.45.0",
+  "sha256": "fba52706dd1ac6804805b72950c5f3db3ea5695ce751d09a3511a964927bf9df"
 }

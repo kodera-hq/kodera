@@ -915,3 +915,27 @@ def record_extension_event(
         retention_class="standard",
         metadata=metadata,
     )
+
+
+def record_passport_login_succeeded(
+    *,
+    identity_id: UUID,
+    organisation_id: UUID | None,
+    realm: str,
+    amr: tuple[str, ...],
+    request_id: str,
+) -> None:
+    """Record `auth.login_succeeded` for Kodera Passport verification or workspace switch."""
+    if not realm or any(not item or not isinstance(item, str) for item in amr):
+        raise ValueError("passport login audit requires realm and amr methods")
+    AuditEvent.objects.create(
+        action="auth.login_succeeded",
+        actor_type="tenant",
+        actor_id=identity_id,
+        actor_label=f"urn:kodera:identity:{identity_id}",
+        organisation_id=organisation_id,
+        target_urn=f"urn:kodera:identity:{identity_id}",
+        request_id=request_id,
+        retention_class="standard",
+        metadata={"amr": list(amr), "realm": realm},
+    )

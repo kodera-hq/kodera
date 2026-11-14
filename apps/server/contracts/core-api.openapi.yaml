@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.44.2
+  version: 0.45.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -229,6 +229,171 @@ paths:
         '412': { $ref: '#/components/responses/PreconditionFailed' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '428': { $ref: '#/components/responses/PreconditionRequired' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/passport/magic-link/request:
+    post:
+      operationId: requestPassportMagicLink
+      summary: Request a single-use Kodera Passport magic-link sign-in token
+      description: |
+        Issues a single-use, 10-minute CSPRNG magic-link token bound to the normalized email
+        address and RFC 7636 S256 PKCE challenge (plus optional device challenge). The response
+        shape (`202 Accepted`) is constant whether or not an account exists so account enumeration
+        is impossible; raw token material never appears in the HTTP response or logs.
+      tags:
+      - Identity
+      security: []
+      x-kodera-scope: identity:act
+      x-kodera-authz:
+        roles:
+        - anonymous
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PassportMagicLinkRequest'
+      responses:
+        '202':
+          description: Magic-link request accepted with constant enumerator-safe shape.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PassportMagicLinkAccepted'
+        '400': { $ref: '#/components/responses/MalformedRequest' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/passport/magic-link/verify:
+    post:
+      operationId: verifyPassportMagicLink
+      summary: Verify and burn a single-use Kodera Passport magic-link token
+      description: |
+        Atomically consumes the single-use magic-link token under row lock, verifies expiry and
+        the S256 PKCE verifier (plus optional device verifier), establishes a short-lived signed
+        Passport session token, and returns the verified person with their active workspaces across
+        organisations (one realm per organisation). Any replay or expired token returns `401`.
+      tags:
+      - Identity
+      security: []
+      x-kodera-scope: identity:act
+      x-kodera-authz:
+        roles:
+        - anonymous
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PassportMagicLinkVerifyRequest'
+      responses:
+        '200':
+          description: Verified person, Passport session token, and eligible workspaces.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PassportVerifiedSession'
+        '400': { $ref: '#/components/responses/MalformedRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/passport/workspaces:
+    get:
+      operationId: listPassportWorkspaces
+      summary: List the authenticated person's eligible workspaces across organisations
+      tags:
+      - Identity
+      x-kodera-scope: identity:read
+      x-kodera-authz:
+        roles: [org_owner, org_admin, org_billing, org_member]
+      responses:
+        '200':
+          description: Active workspace context and eligible workspaces across realms.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PassportWorkspaceDirectory' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /auth/passport/switch-workspace:
+    post:
+      operationId: switchPassportWorkspace
+      summary: Switch the caller's active workspace context across organisations
+      description: |
+        Verifies active membership in the target organisation (`403 forbidden` with `authz.denied`
+        audit event when the caller is not an active member), updates the person's active workspace
+        context, records `auth.login_succeeded`, and returns the refreshed Passport session token.
+      tags:
+      - Identity
+      x-kodera-scope: identity:act
+      x-kodera-authz:
+        roles: [org_owner, org_admin, org_billing, org_member]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PassportSwitchWorkspaceRequest' }
+      responses:
+        '200':
+          description: Updated active workspace context and refreshed Passport session token.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PassportSwitchedWorkspace' }
+        '400': { $ref: '#/components/responses/MalformedRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /billing/webhooks/stripe:
+    post:
+      operationId: receiveStripeWebhook
+      summary: Receive a signed Stripe webhook event for idempotent billing reconciliation
+      description: |
+        Public webhook endpoint exempt from OIDC bearer tokens and authenticated strictly via
+        `Stripe-Signature` HMAC-SHA256 (`t=...,v1=...`) within a 300-second replay window.
+        Deduplicates events by `stripe_event_id` so re-delivered events return `200` without
+        re-applying subscription, payment, or workspace quota changes.
+      tags: [Billing]
+      security: []
+      x-kodera-scope: 'payment:act'
+      x-kodera-authz:
+        roles: [anonymous]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StripeWebhookEvent' }
+      responses:
+        '200':
+          description: Webhook verified and processed (or acknowledged as a duplicate).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StripeWebhookReceipt' }
+        '400': { $ref: '#/components/responses/MalformedRequest' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '503': { $ref: '#/components/responses/UpstreamUnavailable' }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /auth/discover:
@@ -16582,3 +16747,361 @@ components:
         scope requires its current owner. Last-owner account deletion requires a prior ownership transfer.
         Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal
         holds reported explicitly. No active content is retained merely because accounting must be retained.'
+    PassportMagicLinkRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - email
+      - code_challenge
+      properties:
+        email:
+          type: string
+          minLength: 3
+          maxLength: 254
+        code_challenge:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        code_challenge_method:
+          type: string
+          enum: [S256]
+          default: S256
+        device_challenge:
+          type:
+          - string
+          - 'null'
+          minLength: 16
+          maxLength: 128
+      examples:
+      - email: camille.laurent@acme.fr
+        code_challenge: E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+        code_challenge_method: S256
+        device_challenge: null
+    PassportMagicLinkAccepted:
+      type: object
+      additionalProperties: false
+      required:
+      - status
+      - expires_in_seconds
+      properties:
+        status:
+          type: string
+          const: accepted
+        expires_in_seconds:
+          type: integer
+          const: 600
+      examples:
+      - status: accepted
+        expires_in_seconds: 600
+    PassportMagicLinkVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - token
+      - code_verifier
+      properties:
+        token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        code_verifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+        device_verifier:
+          type:
+          - string
+          - 'null'
+          minLength: 16
+          maxLength: 128
+      examples:
+      - token: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        code_verifier: vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+        device_verifier: null
+    PassportPerson:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - email
+      - display_name
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type:
+          - string
+          - 'null'
+      examples:
+      - id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab784
+        email: camille.laurent@acme.fr
+        display_name: Camille Laurent
+    PassportWorkspaceEntry:
+      type: object
+      additionalProperties: false
+      required:
+      - organisation_id
+      - organisation_slug
+      - organisation_name
+      - realm
+      - issuer
+      - membership_id
+      - role
+      - workspace_id
+      - default_urls
+      - active
+      properties:
+        organisation_id:
+          type: string
+          format: uuid
+        organisation_slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{3,18}[a-z0-9](?![\s\S])'
+        organisation_name:
+          type: string
+        realm:
+          type: string
+        issuer:
+          type: string
+          format: uri
+        membership_id:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/OrganisationRole'
+        workspace_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        default_urls:
+          type: object
+          additionalProperties:
+            type: string
+        active:
+          type: boolean
+      examples:
+      - organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+        organisation_slug: acme-org
+        organisation_name: Acme SAS
+        realm: acme-org
+        issuer: https://id.kodera.io/realms/acme-org
+        membership_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab786
+        role: org_owner
+        workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+        default_urls: {}
+        active: true
+    PassportWorkspaceDirectory:
+      type: object
+      additionalProperties: false
+      required:
+      - user
+      - active_organisation_id
+      - active_workspace_id
+      - workspaces
+      properties:
+        user:
+          $ref: '#/components/schemas/PassportPerson'
+        active_organisation_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        active_workspace_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/PassportWorkspaceEntry'
+      examples:
+      - user:
+          id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab784
+          email: camille.laurent@acme.fr
+          display_name: Camille Laurent
+        active_organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+        active_workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+        workspaces:
+        - organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+          organisation_slug: acme-org
+          organisation_name: Acme SAS
+          realm: acme-org
+          issuer: https://id.kodera.io/realms/acme-org
+          membership_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab786
+          role: org_owner
+          workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+          default_urls: {}
+          active: true
+    PassportVerifiedSession:
+      type: object
+      additionalProperties: false
+      required:
+      - user
+      - active_organisation_id
+      - active_workspace_id
+      - workspaces
+      - session_token
+      - expires_in_seconds
+      properties:
+        user:
+          $ref: '#/components/schemas/PassportPerson'
+        active_organisation_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        active_workspace_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/PassportWorkspaceEntry'
+        session_token:
+          type: string
+        expires_in_seconds:
+          type: integer
+          minimum: 1
+      examples:
+      - user:
+          id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab784
+          email: camille.laurent@acme.fr
+          display_name: Camille Laurent
+        active_organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+        active_workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+        workspaces:
+        - organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+          organisation_slug: acme-org
+          organisation_name: Acme SAS
+          realm: acme-org
+          issuer: https://id.kodera.io/realms/acme-org
+          membership_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab786
+          role: org_owner
+          workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+          default_urls: {}
+          active: true
+        session_token: kp1.eyJleHAiOjE3NjMxNDAwMDAsImlhdCI6MTc2MzEzNjQwMCwib3JnIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg1Iiwic3ViIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg0IiwidiI6MX0.synthetic_signature
+        expires_in_seconds: 3600
+    PassportSwitchWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - organisation_id
+      properties:
+        organisation_id:
+          type: string
+          format: uuid
+      examples:
+      - organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+    PassportSwitchedWorkspace:
+      type: object
+      additionalProperties: false
+      required:
+      - active_organisation_id
+      - active_workspace_id
+      - workspace
+      - session_token
+      - expires_in_seconds
+      properties:
+        active_organisation_id:
+          type: string
+          format: uuid
+        active_workspace_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        workspace:
+          $ref: '#/components/schemas/PassportWorkspaceEntry'
+        session_token:
+          type: string
+        expires_in_seconds:
+          type: integer
+          minimum: 1
+      examples:
+      - active_organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+        active_workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+        workspace:
+          organisation_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab785
+          organisation_slug: acme-org
+          organisation_name: Acme SAS
+          realm: acme-org
+          issuer: https://id.kodera.io/realms/acme-org
+          membership_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab786
+          role: org_owner
+          workspace_id: 019467a3-0f9d-7eb5-b9e4-3bc6a04ab787
+          default_urls: {}
+          active: true
+        session_token: kp1.eyJleHAiOjE3NjMxNDAwMDAsImlhdCI6MTc2MzEzNjQwMCwib3JnIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg1Iiwic3ViIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg0IiwidiI6MX0.synthetic_signature
+        expires_in_seconds: 3600
+    StripeWebhookEvent:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - type
+      - created
+      - data
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        created:
+          type: integer
+          minimum: 0
+        livemode:
+          type: boolean
+        data:
+          type: object
+          required:
+          - object
+          properties:
+            object:
+              type: object
+              additionalProperties: true
+      examples:
+      - id: evt_synthetic_0001
+        type: checkout.session.completed
+        created: 1763136400
+        livemode: false
+        data:
+          object:
+            id: cs_test_synthetic_0001
+            payment_status: paid
+    StripeWebhookReceipt:
+      type: object
+      additionalProperties: false
+      required:
+      - received
+      - event_id
+      - event_type
+      - status
+      properties:
+        received:
+          type: boolean
+          const: true
+        event_id:
+          type: string
+        event_type:
+          type: string
+        status:
+          type: string
+          enum:
+          - applied
+          - duplicate
+          - ignored
+          - unmatched
+          - stale
+          - deferred
+          - mismatch
+      examples:
+      - received: true
+        event_id: evt_synthetic_0001
+        event_type: checkout.session.completed
+        status: applied

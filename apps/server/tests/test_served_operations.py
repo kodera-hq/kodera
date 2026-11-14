@@ -115,6 +115,21 @@ def test_only_api_routes_are_listed_with_their_contract_path() -> None:
     ]
 
 
+def test_a_route_alias_collapses_into_its_canonical_contract_path() -> None:
+    aliased_patterns = [
+        *patterns(),
+        path("api/v1/things-alias", made),
+    ]
+    doc = served.document(
+        aliased_patterns,
+        aliases={("api/v1/things-alias", "makeThing"): "/things"},
+    )
+    assert json.loads(doc)["operations"] == [
+        {"operation_id": "makeThing", "method": "POST", "path": "/things"},
+        {"operation_id": "showThing", "method": "GET", "path": "/things/{thing_id}"},
+    ]
+
+
 def test_a_regex_route_is_refused_not_skipped() -> None:
     with pytest.raises(ValueError, match=r"\^api/v1/things\$ is a regex route"):
         served.document([re_path(r"^api/v1/things$", made)])

@@ -39,6 +39,8 @@ config/settings/deploy_worker.py
 !core/faults.py
 # A link's origin: createPaymentLink's return URL is held to the console's (core/links.py).
 !core/links.py
+!core/passport/__init__.py
+!core/passport/tokens.py
 !core/api/guarded_replay.py
 !core/api/idempotency.py
 !core/idempotency/__init__.py
@@ -66,9 +68,11 @@ config/settings/deploy_worker.py
 !apps/identity/api/views.py
 !apps/identity/api/discovery.py
 !apps/identity/api/discovery_permissions.py
+!apps/identity/api/passport.py
 !apps/identity/discovery.py
 !apps/identity/discovery_db.py
 !apps/identity/discovery_quotas.py
+!apps/identity/passport.py
 !apps/identity/staff.py
 !apps/identity/staff_roles.py
 !apps/orgs/__init__.py
@@ -204,7 +208,9 @@ config/settings/deploy_worker.py
 !apps/billing/payments/port.py
 !apps/billing/payments/fake.py
 !apps/billing/payments/stripe.py
+!apps/billing/payments/stripe_webhook.py
 !apps/billing/payments/services.py
+!apps/billing/api/webhooks.py
 # checkSlugAvailability: its view and its reads.
 !apps/billing/slug_availability.py
 !apps/billing/api/slug_availability.py
@@ -326,6 +332,7 @@ config/settings/deploy_worker.py
 !apps/docs/collections.py
 !apps/docs/api/collections.py
 !apps/workspaces/services.py
+!apps/workspaces/selectors.py
 !apps/workspaces/quotas.py
 !apps/workspaces/quota_http.py
 !apps/workspaces/api/quotas.py

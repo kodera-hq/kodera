@@ -996,3 +996,52 @@ class ProviderEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.provider} event {self.event_id} {self.kind} {self.outcome}"
+
+
+STRIPE_WEBHOOK_OUTCOMES = (
+    "received",
+    "applied",
+    "ignored",
+    "unmatched",
+    "stale",
+    "deferred",
+    "mismatch",
+)
+
+
+class StripeWebhookDelivery(models.Model):
+    """Idempotency ledger for signed Stripe webhook deliveries; never stores raw event bodies."""
+
+    id = models.UUIDField(primary_key=True, default=new_uuid7, editable=False)
+    stripe_event_id = models.TextField(unique=True)
+    event_type = models.TextField()
+    livemode = models.BooleanField(default=False)
+    occurred_at = models.DateTimeField()
+    received_at = models.DateTimeField(db_default=ClockTimestamp())
+    outcome = models.TextField(default="received")
+    organisation_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_stripewebhook_event_id_valid",
+                condition=~Q(stripe_event_id=""),
+            ),
+            models.CheckConstraint(
+                name="billing_stripewebhook_type_valid",
+                condition=~Q(event_type=""),
+            ),
+            models.CheckConstraint(
+                name="billing_stripewebhook_outcome_valid",
+                condition=_in("outcome", STRIPE_WEBHOOK_OUTCOMES),
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["event_type", "-occurred_at"],
+                name="billing_stripewebhook_type_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"stripe webhook {self.stripe_event_id} {self.event_type} {self.outcome}"
