@@ -13,12 +13,12 @@
 #
 # Usage:
 #   realm-apply.sh check   <realm-file>
-#   realm-apply.sh step N  --target staging --run-id ID --file <realm-file> [--realm SLUG] [--synthetic] [--docs] [--visio]
-#   realm-apply.sh account --target staging --run-id ID --realm REALM [--synthetic] < address
-#   realm-apply.sh resend  --target staging --run-id ID --realm REALM [--synthetic] < address
-#   realm-apply.sh reset   --target staging --run-id ID --realm REALM [--synthetic] < address
-#   realm-apply.sh holders --target staging --run-id ID --realm REALM [--synthetic]
-#   realm-apply.sh verify  --target staging --run-id ID --file <realm-file> [--realm SLUG] [--synthetic]
+#   realm-apply.sh step N  --target <staging|production> --run-id ID --file <realm-file> [--realm SLUG] [--synthetic] [--docs] [--visio]
+#   realm-apply.sh account --target <staging|production> --run-id ID --realm REALM [--synthetic] < address
+#   realm-apply.sh resend  --target <staging|production> --run-id ID --realm REALM [--synthetic] < address
+#   realm-apply.sh reset   --target <staging|production> --run-id ID --realm REALM [--synthetic] < address
+#   realm-apply.sh holders --target <staging|production> --run-id ID --realm REALM [--synthetic]
+#   realm-apply.sh verify  --target <staging|production> --run-id ID --file <realm-file> [--realm SLUG] [--synthetic]
 #
 # Steps (core JOB_CATALOGUE.md §2, `realm_create`):
 #   1 create_realm            the realm's settings, its flows, no client
@@ -184,30 +184,70 @@ jq_refuse() {  # jq_refuse <what> <cause> — refuses, exit 3
 
 # --- targets ----------------------------------------------------------------
 # One row per environment: admin URL, public identity host, mail domain and
-# the console origin (also Core's KODERA_MAIL_LINK_ORIGINS there). The
-# production row is in REALMS.md, "Production"; the tool refuses production.
-target_admin_url() { case "$1" in staging) echo "https://auth-admin.staging.kodera.io" ;; esac; }
-target_public_host() { case "$1" in staging) echo "auth.staging.kodera.io" ;; esac; }
-target_mail_domain() { case "$1" in staging) echo "auth.staging.kodera.io" ;; esac; }
-target_console_origin() { case "$1" in staging) echo "https://app.staging.kodera.io" ;; esac; }
-target_synapse_origin() { case "$1" in staging) echo "https://$2.staging.kodera.io" ;; esac; }
-target_docs_origin() { case "$1" in staging) echo "https://docs.$2.staging.kodera.io" ;; esac; }
+# the console origin (also Core's KODERA_MAIL_LINK_ORIGINS there). See
+# REALMS.md, "Production", for the production host and operator gates.
+target_admin_url() {
+  case "$1" in
+    staging) echo "https://auth-admin.staging.kodera.io" ;;
+    production) echo "https://auth-admin.kodera.io" ;;
+  esac
+}
+target_public_host() {
+  case "$1" in
+    staging) echo "auth.staging.kodera.io" ;;
+    production) echo "auth.kodera.io" ;;
+  esac
+}
+target_mail_domain() {
+  case "$1" in
+    staging) echo "auth.staging.kodera.io" ;;
+    production) echo "auth.kodera.io" ;;
+  esac
+}
+target_console_origin() {
+  case "$1" in
+    staging) echo "https://app.staging.kodera.io" ;;
+    production) echo "https://app.kodera.io" ;;
+  esac
+}
+target_synapse_origin() {
+  case "$1" in
+    staging) echo "https://$2.staging.kodera.io" ;;
+    production) echo "https://$2.kodera.io" ;;
+  esac
+}
+target_docs_origin() {
+  case "$1" in
+    staging) echo "https://docs.$2.staging.kodera.io" ;;
+    production) echo "https://docs.$2.kodera.io" ;;
+  esac
+}
 # The staff administration console (client kodera-admin of the staff realm), ${STAFF_ADMIN_ORIGIN}
 # in the staff realm file.
-target_staff_admin_origin() { case "$1" in staging) echo "https://admin.staging.kodera.io" ;; esac; }
+target_staff_admin_origin() {
+  case "$1" in
+    staging) echo "https://admin.staging.kodera.io" ;;
+    production) echo "https://admin.kodera.io" ;;
+  esac
+}
 # The Visio client is named after the tenant's Meet host, as the tenant visio
 # profile names it (OIDC_RP_CLIENT_ID is hosts.meet).
-target_visio_host() { case "$1" in staging) echo "visio.$2.staging.kodera.io" ;; esac; }
+target_visio_host() {
+  case "$1" in
+    staging) echo "visio.$2.staging.kodera.io" ;;
+    production) echo "visio.$2.kodera.io" ;;
+  esac
+}
 
 require_target() {
-  [[ -n "${1:-}" ]] || die "--target is required (staging)"
-  [[ "$1" == "staging" ]] ||
-    die "refused: target '$1'; this tool runs against staging only for now (REALMS.md, \"Production\")"
+  [[ -n "${1:-}" ]] || die "--target is required (staging or production)"
+  [[ "$1" == "staging" || "$1" == "production" ]] ||
+    die "refused: target '$1'; expected staging or production (REALMS.md, \"Production\")"
 }
 
 # Only the target's own admin URL, or a local tunnel endpoint, is accepted: a
 # deny-list of production names would pass an IP address or an alias.
-require_staging_server() {
+require_target_server() {
   [[ "$1" == "$(target_admin_url "$TARGET")" ]] && return 0
   [[ "$1" =~ ^https?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?/?$ ]] && return 0
   die "refused: KC_SERVER '$1' is neither $(target_admin_url "$TARGET") nor a local tunnel (http://localhost:<port>)"
@@ -328,9 +368,13 @@ check_rep() {
            then "the staff realm must require TLS on every request (sslRequired all)"
            elif ([.sslRequired] | inside(["external", "all"])) | not
            then "sslRequired must be external or all" else empty end),
-          # The staff security key verifies its holder too (a PIN or a biometric on the key).
+          # The staff WebAuthn policy verifies its holder (PIN or biometric) without restricting
+          # attachment to hardware-only, so hardware keys, platform biometrics and passkey vaults work.
           (if $is_staff and .webAuthnPolicyUserVerificationRequirement != "required"
            then "the staff realm'"'"'s WebAuthn policy must require user verification (webAuthnPolicyUserVerificationRequirement \"required\"), is \(.webAuthnPolicyUserVerificationRequirement | tojson)"
+           else empty end),
+          (if $is_staff and .webAuthnPolicyAuthenticatorAttachment != "not specified"
+           then "the staff realm'"'"'s WebAuthn policy must allow any authenticator attachment (webAuthnPolicyAuthenticatorAttachment \"not specified\"), is \(.webAuthnPolicyAuthenticatorAttachment | tojson)"
            else empty end),
           (if .bruteForceProtected != true then "brute-force protection must be on (bruteForceProtected)"
            else ($bf | to_entries[] | select($r[.key] != .value)
@@ -341,12 +385,10 @@ check_rep() {
            else empty end),
           (if .revokeRefreshToken != true or .refreshTokenMaxReuse != 0
            then "refresh tokens must rotate (revokeRefreshToken true, refreshTokenMaxReuse 0)" else empty end),
-          # Organisation realms speak French first, English on request: the login pages and the
+          # Every realm speaks French first, English on request: the login pages and the
           # mails follow the locale of the browser or of the account among the two, French by default.
-          # The staff realm sets none.
-          (if $is_staff then empty
-           elif .internationalizationEnabled != true or .defaultLocale != "fr"
-                or ((.supportedLocales // []) | sort) != ["en", "fr"]
+          (if .internationalizationEnabled != true or .defaultLocale != "fr"
+               or ((.supportedLocales // []) | sort) != ["en", "fr"]
            then "locales must be French by default and English on request (internationalizationEnabled true, supportedLocales [\"en\", \"fr\"], defaultLocale \"fr\"); are \({internationalizationEnabled, supportedLocales, defaultLocale} | tojson)"
            else empty end),
           # Offline sessions (I-2b): 14 days idle, 90 days at most, on
@@ -392,8 +434,9 @@ check_rep() {
            end)
         else empty end),
         (if on("flows") then
-          # The staff realm: no OTP anywhere a sign-in can reach. TOTP never replaces the security
-          # key; a lost key is an administrator reset (REALMS.md, "Resetting a second factor").
+          # The staff realm: no OTP anywhere a sign-in can reach, and an explicit requiredActions
+          # list must register every action `account`/`reset` places on a user (Keycloak ignores an
+          # unregistered requiredAction string on a user instead of failing).
           (if $is_staff then
              (reach($r.browserFlow; []) | select(.e.authenticator == "auth-otp-form")
               | "the staff browser flow must not offer OTP (auth-otp-form in \(.alias | tojson)): TOTP never replaces the security key; a lost key is an administrator'"'"'s reset"),
@@ -401,10 +444,23 @@ check_rep() {
               then empty
               else "the staff realm must disable required action CONFIGURE_TOTP (enabled false, defaultAction false)"
               end),
-             (if any(.requiredActions[]?; .alias == "webauthn-register" and .providerId == "webauthn-register" and .enabled == true)
-              then empty
-              else "the staff realm must enable required action webauthn-register"
-              end)
+             (["VERIFY_EMAIL", "webauthn-register", "UPDATE_PASSWORD", "UPDATE_PROFILE"][] as $ra
+              | if ([.requiredActions[]? | select(.alias == $ra and .providerId == $ra and .enabled == true and (.defaultAction // false) == false)] | length == 1)
+                then empty
+                else "the staff realm must register and enable required action \($ra) (enabled true, defaultAction false)"
+                end),
+             ((first(.requiredActions[]? | select(.alias == "webauthn-register") | .priority) // null) as $wp
+              | (first(.requiredActions[]? | select(.alias == "UPDATE_PASSWORD") | .priority) // null) as $pp_prio
+              | if $wp != null and $pp_prio != null and ($wp < $pp_prio)
+                then empty
+                else "the staff realm must run webauthn-register before UPDATE_PASSWORD so resend still recovers a half-finished onboarding"
+                end)
+           elif ($mode == "live" or ($r | has("requiredActions"))) then
+             (["VERIFY_EMAIL", "CONFIGURE_TOTP", "UPDATE_PASSWORD"][] as $ra
+              | if ([.requiredActions[]? | select(.alias == $ra and .providerId == $ra and .enabled == true and (.defaultAction // false) == false)] | length == 1)
+                then empty
+                else "an organisation realm must register and enable required action \($ra) (enabled true, defaultAction false)"
+                end)
            else empty end),
           (if $top == null then "browserFlow \(.browserFlow | tojson) is not a flow of the realm"
            elif $forms == null then "the browser flow has no sub-flow with \($factor)"
@@ -536,9 +592,9 @@ check_rep() {
           # The staff administration console (staff-admin): a public single-page client with PKCE,
           # the code flow only, exactly its own origin, and RP-initiated logout back to its home.
           (if $is_staff then
-             [.clients[]? | select(.clientId == $admin)] as $as
-             | if ($as | length) != 1 then "the staff realm must have exactly one client \($admin) (the staff administration console)"
-               else $as[0] as $a
+             [.clients[]? | select(.clientId == $admin)] as $admins
+             | if ($admins | length) != 1 then "the staff realm must have exactly one client \($admin) (the staff administration console)"
+               else $admins[0] as $a
                | (if ($a | {enabled, protocol, publicClient, bearerOnly, standardFlowEnabled, implicitFlowEnabled,
                             directAccessGrantsEnabled, serviceAccountsEnabled, fullScopeAllowed})
                      != {enabled: true, protocol: "openid-connect", publicClient: true, bearerOnly: false,
@@ -894,8 +950,13 @@ source_for_realm() {
 # Both step and account-family callers resolve their source and realm first. No mode is
 # inferred from an environment variable, a run id or the caller's choice of admin server.
 require_realm_mode() {
+  if [[ "$SYNTHETIC_MODE" == 1 && "$TARGET" != "staging" ]]; then
+    die "refused: --synthetic is for staging only, never $TARGET"
+  fi
   if [[ "$REALM" == synth-* ]]; then
     validate_slug "$REALM"
+    [[ "$TARGET" == "staging" ]] ||
+      die "refused: '$REALM' is reserved for synthetic realms on staging, never $TARGET"
     [[ "$SYNTHETIC_MODE" == 1 ]] ||
       die "refused: '$REALM' is reserved for synthetic realms; pass --synthetic explicitly (Path K)"
     [[ "$SOURCE" == "$TEMPLATE_FILE" ]] ||
@@ -1082,7 +1143,7 @@ require_sign_in_mode() {
 
 kc_login() {
   KC_URL="${KC_SERVER:-$(target_admin_url "$TARGET")}"
-  require_staging_server "$KC_URL"
+  require_target_server "$KC_URL"
   require_sign_in_mode
   require_target_identity
   if [[ -z "$KC_CLIENT" ]]; then
@@ -1688,13 +1749,35 @@ step_1() {
     kc remove-roles -r "$REALM" --rname "default-roles-$REALM" \
       --rolename offline_access --rolename uma_authorization >/dev/null ||
       die "could not remove offline_access from the default role of realm '$REALM'"
-    kc update authentication/required-actions/CONFIGURE_TOTP -r "$REALM" -f - \
-      <<<'{"alias":"CONFIGURE_TOTP","name":"Configure OTP","providerId":"CONFIGURE_TOTP","enabled":false,"defaultAction":false,"priority":10,"config":{}}' >/dev/null ||
-      die "could not disable required action CONFIGURE_TOTP in realm '$REALM'"
+    ensure_staff_required_actions
   fi
   read_live "$REALM" settings,flows,offline "$SOURCE after step 1"
   if [[ "$SOURCE" == "$TEMPLATE_FILE" ]]; then check_email_admin_only; fi
   step_record 1 "$(issuer "$REALM")" "$READ_AT" "$note"
+}
+
+# Staff realm: an explicit `requiredActions` array in a realm file replaces Keycloak's default
+# registrations on create, and a realm update ignores `.requiredActions`. Register any action from
+# kodera-staff.json that a pre-existing realm lacks, then write each action's enabled/priority
+# state through authentication/required-actions.
+ensure_staff_required_actions() {
+  local live entry alias provider name safe_alias
+  live="$(kc_read array "the required actions of realm '$REALM'" authentication/required-actions -r "$REALM")" || exit 1
+  while IFS= read -r entry <&3; do
+    [[ -n "$entry" ]] || continue
+    alias="$(jq_read "staff requiredAction" -r '.alias' <<<"$entry")" || exit 1
+    provider="$(jq_read "staff requiredAction" -r '.providerId' <<<"$entry")" || exit 1
+    name="$(jq_read "staff requiredAction" -r '.name' <<<"$entry")" || exit 1
+    safe_alias="$(seg "required action alias" "$alias")" || exit 1
+    seg "required action providerId" "$provider" >/dev/null || exit 1
+    if ! jq_read "the required actions of realm '$REALM'" -e --arg a "$alias" 'any(.[]; .alias == $a)' <<<"$live" >/dev/null; then
+      kc create authentication/register-required-action -r "$REALM" -f - \
+        <<<"$(jq_read "staff requiredAction registration" -cn --arg p "$provider" --arg n "$name" '{providerId: $p, name: $n}')" >/dev/null ||
+        die "could not register required action '$alias' in realm '$REALM'"
+    fi
+    kc update "authentication/required-actions/$safe_alias" -r "$REALM" -f - <<<"$entry" >/dev/null ||
+      die "could not configure required action '$alias' in realm '$REALM'"
+  done 3< <(jq_read "$SOURCE, rendered" -c '.requiredActions[]' <<<"$BODY")
 }
 
 # Organisation realms: a member cannot change their own email. Docs grants an invitation, and
@@ -1907,6 +1990,70 @@ step_4() {
   step_record 4 "$(issuer "$REALM")" "$READ_AT" "hosted accounts: no identity provider; the password-then-$factor browser flow was made with the realm at step 1"
 }
 
+# Before an operator step 5 writes smtpServer to a real realm (or when KC_SMTP_VERIFY_SERVER points
+# at a local lab relay), prove TCP, STARTTLS certificate verification for smtpServer.host and SMTP
+# AUTH with the supplied credentials, without sending a message. Core's job worker signs in with
+# KC_CLIENT_ID inside br-kc-worker, whose egress firewall drops every SMTP port on purpose, so a
+# client run probes SMTP only when KC_SMTP_VERIFY_SERVER is explicitly set.
+verify_smtp_auth() {
+  local smtp_host smtp_port connect_host connect_port
+  if [[ ( "$SYNTHETIC_MODE" == 1 || -n "$KC_CLIENT" ) && -z "${KC_SMTP_VERIFY_SERVER:-}" ]]; then
+    return 0
+  fi
+  smtp_host="$(jq_read "$SOURCE, rendered" -r '.smtpServer.host' <<<"$BODY")" || exit 1
+  smtp_port="$(jq_read "$SOURCE, rendered" -r '.smtpServer.port' <<<"$BODY")" || exit 1
+  connect_host="$smtp_host"
+  connect_port="$smtp_port"
+  if [[ -n "${KC_SMTP_VERIFY_SERVER:-}" ]]; then
+    [[ "$KC_SMTP_VERIFY_SERVER" =~ ^(localhost|127\.0\.0\.1):([0-9]{1,5})$ ]] ||
+      die "refused: KC_SMTP_VERIFY_SERVER '$KC_SMTP_VERIFY_SERVER' must be a local tunnel (127.0.0.1:<port> or localhost:<port>)"
+    connect_host="${KC_SMTP_VERIFY_SERVER%:*}"
+    connect_port="${KC_SMTP_VERIFY_SERVER##*:}"
+  fi
+  KC_SMTP_HOST="$smtp_host" KC_SMTP_PORT="$smtp_port" \
+  KC_SMTP_CONNECT_HOST="$connect_host" KC_SMTP_CONNECT_PORT="$connect_port" \
+  KC_SMTP_USER="$SMTP_USER" KC_SMTP_PASSWORD="$SMTP_PASSWORD" \
+  python3 -c '
+import os, smtplib, ssl, sys
+
+smtp_host = os.environ["KC_SMTP_HOST"]
+smtp_port = int(os.environ["KC_SMTP_PORT"])
+connect_host = os.environ["KC_SMTP_CONNECT_HOST"]
+connect_port = int(os.environ["KC_SMTP_CONNECT_PORT"])
+user = os.environ["KC_SMTP_USER"]
+password = os.environ["KC_SMTP_PASSWORD"]
+
+ctx = ssl.create_default_context()
+if (
+    not os.environ.get("SSL_CERT_FILE")
+    and not os.environ.get("SSL_CERT_DIR")
+    and not ctx.get_ca_certs()
+    and os.path.isfile("/etc/ssl/cert.pem")
+):
+    ctx.load_verify_locations(cafile="/etc/ssl/cert.pem")
+
+try:
+    with smtplib.SMTP(connect_host, connect_port, timeout=15) as client:
+        code, _ = client.ehlo()
+        if not (200 <= code < 300):
+            raise RuntimeError(f"EHLO before STARTTLS returned {code}")
+        client._host = smtp_host
+        code, _ = client.starttls(context=ctx)
+        if code != 220:
+            raise RuntimeError(f"STARTTLS returned {code}, expected 220")
+        code, _ = client.ehlo()
+        if not (200 <= code < 300):
+            raise RuntimeError(f"EHLO after STARTTLS returned {code}")
+        client.login(user, password)
+except smtplib.SMTPAuthenticationError as exc:
+    sys.stderr.write(f"SMTP AUTH rejected by {smtp_host}:{smtp_port} (SMTP {exc.smtp_code})\n")
+    sys.exit(1)
+except Exception as exc:
+    sys.stderr.write(f"SMTP STARTTLS/AUTH check against {smtp_host}:{smtp_port} failed: {type(exc).__name__}: {exc}\n")
+    sys.exit(1)
+' || die "refused: SMTP STARTTLS/AUTH verification failed for $smtp_host:$smtp_port; mail settings were not written to realm '$REALM'"
+}
+
 step_5() {
   require_marked_realm "$REALM" "$SOURCE"
   ask SMTP_USER "Transactional Email SMTP user for $(target_mail_domain "$TARGET")" 0
@@ -1916,6 +2063,7 @@ step_5() {
   else
     ask SMTP_PASSWORD "Transactional Email SMTP password" 1
   fi
+  verify_smtp_auth
   local mail
   mail="$(SMTP_USER_V="$SMTP_USER" SMTP_PASSWORD_V="$SMTP_PASSWORD" jq_read "$SOURCE, rendered" '
       {smtpServer: (.smtpServer | .user = env.SMTP_USER_V | .password = env.SMTP_PASSWORD_V)}' <<<"$BODY")" || exit 1
