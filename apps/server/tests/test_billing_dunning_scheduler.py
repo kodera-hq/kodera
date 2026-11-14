@@ -214,3 +214,34 @@ def test_confirmation_exact_replay_is_idempotent():
     assert replay.id == done.id
     with pytest.raises(DunningRefusedError, match="confirmation_reuse"):
         confirm(principal, done, now)
+
+
+def test_full_dispute_or_future_invoice_clears_case_when_no_undisputed_debt_is_overdue():
+    w, placed, principal, now = debt()
+    first = prepare(placed.subscription, now - timedelta(days=20))
+    confirm(principal, first, now - timedelta(days=19))
+    second = prepare(placed.subscription, now - timedelta(days=4))
+    episode = second.episode
+    ticket = SupportTicket.objects.create(
+        organisation=w.organisation,
+        created_by=w.owner,
+        subject="Disputed balance",
+        body="Full dispute covering overdue invoice",
+        category="billing",
+        severity="question",
+        locale="en",
+    )
+    record_dispute(
+        principal=principal,
+        invoice_id=placed.invoice.id,
+        ticket_id=ticket.id,
+        amount_minor=placed.invoice.total_incl_vat_minor,
+        hold_until=now + timedelta(days=10),
+    )
+    assert schedule_subscription(placed.subscription.id) is None
+    second.refresh_from_db()
+    assert second.state == "cancelled"
+    case = DunningCase.objects.get(subscription=placed.subscription)
+    assert case.state == "current"
+    assert case.episode != episode
+    assert Subscription.objects.get(id=placed.subscription.id).state == "active"
