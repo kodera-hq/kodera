@@ -33,6 +33,12 @@ import {
   usePlansQuery,
   usePricesQuery,
 } from './api'
+import { billingCopy, resolveBillingLocale } from '../billing/billingMessages'
+import {
+  formatByteCapacity,
+  selectCatalogueBasePack,
+  UNIFIED_WORKSPACE_PACK_CODE,
+} from '../billing/workspaceOffer'
 import type { OrderDraft } from './draft'
 import { headcountRangeFor, largestCoveredHeadcount, recommendTier } from './recommendation'
 import { headcountSchema } from './schemas'
@@ -53,7 +59,7 @@ function docsPackOf(packs: Pack[]): Pack | undefined {
 }
 
 function basePackOf(packs: Pack[]): Pack | undefined {
-  return packs.find((pack) => pack.available && !pack.apps.includes('docs')) ?? packs[0]
+  return selectCatalogueBasePack(packs)
 }
 
 const DEBOUNCE_MS = 600
@@ -80,7 +86,9 @@ export function PlanStep({
   onContinue,
   onRequestQuote,
 }: PlanStepProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const offerLocale = resolveBillingLocale(i18n.resolvedLanguage)
+  const offerCopy = billingCopy(i18n.resolvedLanguage)
   const legendId = useId()
 
   const packsQuery = usePacksQuery()
@@ -98,16 +106,17 @@ export function PlanStep({
 
   const basePack = basePackOf(packs)
   const docsPack = docsPackOf(packs)
+  const separateDocsPack = docsPack?.code === basePack?.code ? undefined : docsPack
   // Both packs' prices, both periods: a card may be drawn from either pack (a plan that
   // includes Docs is sold under the Docs pack), and ticking Docs then draws from the cache.
   const priceReads = [
     usePricesQuery(basePack?.code, 'yearly'),
     usePricesQuery(basePack?.code, 'monthly'),
-    usePricesQuery(docsPack?.code, 'yearly'),
-    usePricesQuery(docsPack?.code, 'monthly'),
+    usePricesQuery(separateDocsPack?.code, 'yearly'),
+    usePricesQuery(separateDocsPack?.code, 'monthly'),
   ]
   const prices = priceReads.flatMap((read) => read.data ?? [])
-  const packOfRead = (index: number) => (index < 2 ? basePack : docsPack)
+  const packOfRead = (index: number) => (index < 2 ? basePack : separateDocsPack)
   // Every read a pack needs has answered. Until then nothing is concluded from a missing row:
   // a row not there yet, or a read that failed, is not a tier the catalogue does not sell.
   const pricesSettled = priceReads.every(
@@ -356,6 +365,23 @@ export function PlanStep({
         <div>
           <h1 className="text-xl font-semibold text-c-ink">{t('console.order.plan.title')}</h1>
           <p className="mt-1 text-sm text-c-ink-3">{t('console.order.plan.subtitle')}</p>
+          {basePack?.code === UNIFIED_WORKSPACE_PACK_CODE ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-c-ink-3">
+                {offerCopy.includedAppsLabel}:
+              </span>
+              <ul className="flex flex-wrap gap-2" aria-label={offerCopy.includedAppsLabel}>
+                {basePack.apps.map((app) => (
+                  <li
+                    key={app}
+                    className="rounded-full border border-c-border bg-c-sunken px-3 py-1 text-xs font-medium text-c-ink"
+                  >
+                    {offerCopy.appNames[app] ?? app}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
 
         <div className="max-w-[320px]">
@@ -517,6 +543,14 @@ export function PlanStep({
                             max: range.max,
                           }),
                           capacityText,
+                          ...(basePack?.code === UNIFIED_WORKSPACE_PACK_CODE
+                            ? [
+                                offerCopy.seatsIncluded(tier.seats_included),
+                                offerCopy.storageIncluded(
+                                  formatByteCapacity(tier.storage_included_bytes, offerLocale)
+                                ),
+                              ]
+                            : []),
                         ]}
                         action={
                           <span

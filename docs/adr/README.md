@@ -59,6 +59,7 @@ as [`GOVERNANCE.md`](../../GOVERNANCE.md#3-architectural-changes-docsrfcs) descr
 | `SRV-ADR-0022` | [ADR-0022: Payment link creation asks the provider from the API, outside the replay step](../../apps/server/docs/adr/0022-payment-link-creation-asks-the-provider-from-the-api.md) |
 | `SRV-ADR-0023` | [ADR-0023: The Matrix server name is the tenant's slug](../../apps/server/docs/adr/0023-matrix-server-name-is-the-tenant-slug.md) |
 | `SRV-ADR-0024` | [Default community membership](../../apps/server/docs/adr/0024-default-community-membership.md) |
+| `SRV-ADR-0025` | [ADR-0025: Explicit, bounded partner-room federation](../../apps/server/docs/adr/0025-explicit-partner-room-federation.md) |
 
 ### Web client (`WEB-ADR-*`, in `apps/web/docs/adr/`)
 

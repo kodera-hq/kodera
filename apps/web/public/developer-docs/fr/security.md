@@ -6,7 +6,7 @@
 
 Un émetteur OIDC externe de type Keycloak peut fournir l’identité. L’assurance WebAuthn/hwk relève de la politique d’identité configurée, jamais d’un badge ou d’une assertion locale de l’interface. Community ne fournit pas de fournisseur d’identité.
 
-synapse-policy 0.1.5 applique la politique de salon configurée avec le service room-access. Les appartenances authentifiées et les droits viennent du plan de contrôle ; les aperçus locaux n’en accordent aucun.
+synapse-policy 0.1.6 applique la politique de salon configurée avec le service room-access. Les appartenances authentifiées et les droits viennent du plan de contrôle ; les aperçus locaux n’en accordent aucun.
 
 > Les clients et le SDK utilisent Apache-2.0 ; le serveur et la politique Synapse utilisent AGPL-3.0-or-later. Enterprise Edition dispose d’une licence commerciale distincte.
 

@@ -8,6 +8,7 @@ caller under that lock, compares the tag, writes the changed addresses and their
 import hashlib
 import json
 import re
+import string
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -45,10 +46,16 @@ LOCK_TIMEOUT = "SET LOCAL lock_timeout = '1s'"
 # The outbox sender's conservative address (apps/outbox/sender.py RECIPIENT, check_recipient): a
 # notice must be deliverable, so an address the sender would refuse is refused here. Kept equal to
 # the sender's by tests/test_organisation_notice_contacts.py.
+# `deliverable` below reads the same language in one pass: a patched address comes from the
+# request, and this pattern's nested quantifiers backtrack polynomially on a long near-match.
 RECIPIENT = re.compile(
     r"[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
 )
+# The three character sets RECIPIENT names, for the single pass that reads it.
+_ATEXT = frozenset(string.ascii_letters + string.digits + "_%+-")
+_ALNUM = frozenset(string.ascii_letters + string.digits)
+_LABEL = _ALNUM | {"-"}
 OWNER_PAGE = 200
 
 
@@ -123,12 +130,29 @@ def parse_patch(body: bytes) -> dict[str, str | None]:
 
 
 def deliverable(address: str) -> bool:
-    """Whether the outbox sender would accept `address` as a recipient."""
-    return (
-        len(address) <= 254
-        and len(address.partition("@")[0]) <= 64
-        and RECIPIENT.fullmatch(address) is not None
-    )
+    """Whether the outbox sender would accept `address` as a recipient.
+
+    `atom(.atom)*@label(.label)+`, the language RECIPIENT names, read in one linear pass: every
+    character is looked at a bounded number of times, so a long near-miss costs what a valid
+    address costs rather than growing with the square of its length.
+    """
+    if len(address) > 254 or address.count("@") != 1:
+        return False
+    local, _, domain = address.partition("@")
+    if not 0 < len(local) <= 64:
+        return False
+    for atom in local.split("."):
+        if not atom or not set(atom) <= _ATEXT:
+            return False
+    labels = domain.split(".")
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not 0 < len(label) <= 63 or label[0] not in _ALNUM or label[-1] not in _ALNUM:
+            return False
+        if not set(label[1:-1]) <= _LABEL:
+            return False
+    return True
 
 
 def read_notice_contacts(

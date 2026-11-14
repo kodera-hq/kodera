@@ -35,16 +35,19 @@ function inline(text: string): ReactNode[] {
           </mark>
         )
       const link = /^\[([^\]]+)\]\((.+)\)$/.exec(part)
-      if (link && safeDocumentLink(link[2] ?? ''))
+      // Render the normalized URL returned by the validator, never the raw capture,
+      // and re-assert the scheme at the sink so no other value can reach `href`.
+      const href = link ? safeDocumentLink(link[2] ?? '') : null
+      if (href !== null && (href.startsWith('https://') || href.startsWith('http://')))
         return (
           <a
             key={index}
             className={`${LINK_TEXT.inline} focus-visible:ring`}
-            href={link[2]}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
           >
-            {link[1]}
+            {link?.[1]}
           </a>
         )
       return part

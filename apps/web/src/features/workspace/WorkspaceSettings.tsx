@@ -20,6 +20,8 @@ import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { useLocalProfile, type LocalProfile } from '../profile/localProfile'
 import { HostingOfferPanel } from './HostingOfferPanel'
 import { ModerationPanel } from './moderation/ModerationPanel'
+import { WorkspacePrivacyPanel } from './WorkspacePrivacyPanel'
+import { WorkspaceQuotasPanel } from './WorkspaceQuotasPanel'
 import { useWorkspaceTenantQuery } from './queries'
 import { useActiveThemeShare } from './themeSharing'
 import { useWorkspaceSettingsRuntime, type WorkspaceSettingsRuntime } from './settingsRuntime'
@@ -27,9 +29,24 @@ import { settingsCopy } from './settingsMessages'
 import type { WorkspaceSettingsProps } from './WorkspaceSettingsHost'
 
 export type Section =
-  'profile' | 'appearance' | 'audio' | 'members' | 'moderation' | 'extensions' | 'hosting'
+  | 'profile'
+  | 'appearance'
+  | 'audio'
+  | 'members'
+  | 'moderation'
+  | 'extensions'
+  | 'quotas'
+  | 'privacy'
+  | 'hosting'
 const PERSONAL: Section[] = ['profile', 'appearance', 'audio']
-const WORKSPACE: Section[] = ['members', 'moderation', 'extensions', 'hosting']
+const WORKSPACE: Section[] = [
+  'members',
+  'moderation',
+  'extensions',
+  'quotas',
+  'privacy',
+  'hosting',
+]
 const LINK =
   'rounded-md border border-c-border px-4 py-3 text-sm font-medium text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
 
@@ -427,6 +444,21 @@ export default function WorkspaceSettings({
                     )
                   ) : null}
                   {item === 'extensions' ? <ExtensionsCatalogPanel /> : null}
+                  {item === 'quotas' ? (
+                    <WorkspaceQuotasPanel
+                      org={org}
+                      organisationId={organisationId}
+                      role={role}
+                      onNavigate={onClose}
+                    />
+                  ) : null}
+                  {item === 'privacy' ? (
+                    <WorkspacePrivacyPanel
+                      org={org}
+                      organisationId={organisationId}
+                      role={role}
+                    />
+                  ) : null}
                   {item === 'hosting' ? (
                     <>
                       <HostingOfferPanel

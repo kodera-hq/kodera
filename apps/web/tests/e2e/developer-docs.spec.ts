@@ -63,7 +63,7 @@ test('real browser HMAC verification detects tampering and serves text artifacts
   request,
 }, info) => {
   await openHub(page)
-  await page.getByRole('button', { name: 'Extension SDK & 10 connecteurs' }).click()
+  await page.getByRole('button', { name: 'Extension SDK & 22 connecteurs' }).click()
   await page.getByRole('button', { name: 'Signer l’exemple' }).click()
   const signature = page.getByRole('textbox', { name: 'En-tête de signature à vérifier' })
   await expect(signature).toHaveValue(/^v1=[a-f0-9]{64}$/)
@@ -92,7 +92,7 @@ test('community entry opens Docs and the appropriate help discussion without all
   page,
 }) => {
   await openHub(page)
-  await page.getByRole('button', { name: 'Extension SDK & 10 connecteurs' }).click()
+  await page.getByRole('button', { name: 'Extension SDK & 22 connecteurs' }).click()
   await page.getByRole('button', { name: 'Ouvrir le salon d’entraide associé' }).click()
   await expect(page.getByRole('heading', { name: 'extensions', exact: true })).toBeVisible()
   await page.keyboard.press('Escape')
@@ -119,9 +119,9 @@ test('mobile reference remains readable and scrollable with reduced motion', asy
     .evaluate((element) => element.scrollIntoView({ block: 'start' }))
   await page.screenshot({ path: info.outputPath('docs-mobile.png') })
   await page.getByRole('searchbox', { name: 'Rechercher dans la documentation' }).fill('qonto')
-  await page.getByRole('button', { name: 'Extension SDK & 10 connecteurs' }).click()
+  await page.getByRole('button', { name: 'Extension SDK & 22 connecteurs' }).click()
   await expect(
-    page.getByRole('heading', { name: 'Extension SDK & 10 connecteurs', level: 2 })
+    page.getByRole('heading', { name: 'Extension SDK & 22 connecteurs', level: 2 })
   ).toBeVisible()
 })
 test('dark reference keeps outline keyboard targets and accessible contrast', async ({

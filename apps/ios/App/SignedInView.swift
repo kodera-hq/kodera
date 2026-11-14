@@ -9,10 +9,14 @@ import KoderaDomain
 struct SignedInView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var lastAnnouncement: String? = nil
+    @StateObject private var inviteCoordinator = ChannelInviteCoordinator()
+    @State private var activeInviteScope: ChannelInviteScope?
+    @State private var activeInviteContext: ChannelInviteContext?
+    @State private var isPresentingInvite = false
     @ObservedObject var session: AppSessionModel
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
 
     var body: some View {
@@ -41,7 +45,9 @@ struct SignedInView: View {
                 .accessibilityHint(Text("session.sign_out_hint"))
                 ProximityCheckInCard(organisationId: soundScope?.organisationId)
                 workspaceSection
+                CommunityWorkspaceCard(organisationId: soundScope?.organisationId)
                 VoiceCallDockCard(scope: voiceScope)
+                PasskeyDeviceBindingCard(organisationId: soundScope?.organisationId)
                 DocsWorkspaceCard(scope: docsScope)
                 SoundPreferencesCard(scope: soundScope)
                 ChannelPollCard(scope: pollScope)
@@ -56,6 +62,16 @@ struct SignedInView: View {
         }
         .background(palette.page.ignoresSafeArea())
         .tint(palette.action)
+        .sheet(isPresented: $isPresentingInvite, onDismiss: closeInviteSheet) {
+            if let activeInviteScope {
+                ChannelInviteSheet(
+                    scope: activeInviteScope,
+                    coordinator: inviteCoordinator,
+                    context: activeInviteContext,
+                    onDismiss: { isPresentingInvite = false }
+                )
+            }
+        }
         .onAppear { announceStatus() }
         .onChange(of: announcementKey) { _ in announceStatus() }
     }
@@ -227,12 +243,37 @@ struct SignedInView: View {
                         Text("workspace.empty")
                     }
                     ForEach(snapshot.categories, id: \.id) { category in
-                        Text(verbatim: category.name).font(NativeTypography.emphasis).accessibilityAddTraits(.isHeader)
-                        ForEach(category.channels, id: \.id) { channel in channelMetadata(channel) }
+                        let matchedBlueprint = CommunityWorkspaceBlueprint.matchCategory(
+                            id: category.id,
+                            name: category.name
+                        )
+                        HStack(alignment: .firstTextBaseline, spacing: KoderaTokens.Space.s2) {
+                            Text(verbatim: category.name)
+                                .font(NativeTypography.emphasis)
+                                .accessibilityAddTraits(.isHeader)
+                            if matchedBlueprint?.showsFederatedPartnerBadge == true {
+                                Text("community.federated_badge")
+                                    .font(NativeTypography.caption)
+                                    .foregroundStyle(palette.tag1Fg)
+                                    .padding(.horizontal, KoderaTokens.Space.s2)
+                                    .padding(.vertical, KoderaTokens.Space.s1)
+                                    .background(palette.tag1Bg, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.full))
+                            }
+                        }
+                        if let matchedBlueprint {
+                            Text(LocalizedStringKey(CommunityCategoryPresentation.audienceKey(for: matchedBlueprint.audience)))
+                                .font(NativeTypography.caption)
+                                .foregroundStyle(palette.ink3)
+                        }
+                        ForEach(category.channels, id: \.id) { channel in
+                            channelMetadata(channel, organisationId: snapshot.organisationId)
+                        }
                     }
                     if !snapshot.uncategorisedChannels.isEmpty {
                         Text("workspace.uncategorised").font(NativeTypography.emphasis).accessibilityAddTraits(.isHeader)
-                        ForEach(snapshot.uncategorisedChannels, id: \.id) { channel in channelMetadata(channel) }
+                        ForEach(snapshot.uncategorisedChannels, id: \.id) { channel in
+                            channelMetadata(channel, organisationId: snapshot.organisationId)
+                        }
                     }
                 }
             }
@@ -242,22 +283,53 @@ struct SignedInView: View {
         .background(palette.surface, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.lg))
     }
 
-    private func channelMetadata(_ channel: WorkspaceChannel) -> some View {
-        VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
-            Text(verbatim: channel.name).font(NativeTypography.body)
+    private func channelMetadata(_ channel: WorkspaceChannel, organisationId: String) -> some View {
+        let inviteScope = CommunityCategoryPresentation.makeInviteScope(
+            organisationId: organisationId,
+            channelId: channel.id,
+            channelName: channel.name
+        )
+        return VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
+            HStack(alignment: .center, spacing: KoderaTokens.Space.s2) {
+                Text(verbatim: channel.name).font(NativeTypography.body)
+                Spacer(minLength: KoderaTokens.Space.s2)
+                if channel.lifecycle == .active, let inviteScope {
+                    Button {
+                        presentInviteSheet(scope: inviteScope)
+                    } label: {
+                        Text("invite.open_button")
+                            .font(NativeTypography.caption)
+                            .foregroundStyle(palette.accentInk)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
             Text(LocalizedStringKey(channel.kind == .text ? "workspace.channel_text" : "workspace.channel_audio"))
                 .font(NativeTypography.caption).foregroundStyle(palette.ink2)
             Text(LocalizedStringKey(roomKey(channel.roomState))).font(NativeTypography.caption).foregroundStyle(palette.ink2)
             if channel.lifecycle == .archived { Text("workspace.channel_archived").font(NativeTypography.caption).foregroundStyle(palette.ink3) }
         }
         .fixedSize(horizontal: false, vertical: true)
-        .accessibilityElement(children: .combine)
     }
+
     private func roomKey(_ state: WorkspaceChannelRoomState) -> String {
         switch state {
         case .pending: "workspace.room_pending"
         case .ready: "workspace.room_ready"
         case .failed: "workspace.room_failed"
         }
+    }
+
+    private func presentInviteSheet(scope: ChannelInviteScope) {
+        guard let context = try? inviteCoordinator.openSheet(scope: scope) else { return }
+        activeInviteScope = scope
+        activeInviteContext = context
+        isPresentingInvite = true
+    }
+
+    private func closeInviteSheet() {
+        inviteCoordinator.dismissSheet(context: activeInviteContext)
+        activeInviteContext = nil
+        activeInviteScope = nil
     }
 }
