@@ -23,6 +23,8 @@ export type ProximityVoluntaryErrorCode =
   | 'ExpiredToken'
   | 'AuthenticationFailed'
   | 'CallerNotCheckedIn'
+  | 'WorkspaceAccessDenied'
+  | 'BrokerRequestFailed'
 
 export class ProximityVoluntaryError extends Error {
   readonly code: ProximityVoluntaryErrorCode
@@ -576,5 +578,412 @@ export class InMemoryProximityVoluntaryBroker {
       }
     }
     return out
+  }
+}
+
+export type ProximityRadioTransport = 'ble' | 'mdns_quic' | 'hybrid'
+
+export interface ProximityHttpResult {
+  readonly status: number
+  readonly body: unknown
+}
+
+export type ProximityApiTransport = (request: {
+  readonly method: 'GET' | 'POST'
+  readonly path: string
+  readonly query?: Readonly<Record<string, string>> | undefined
+  readonly body?: Readonly<Record<string, unknown>> | undefined
+}) => Promise<ProximityHttpResult>
+
+export interface ProximityBootstrapMaterial {
+  readonly workspaceId: string
+  readonly eventScope: string
+  readonly workspaceBeaconKeyHex: string
+  readonly workspaceMasterKey: Uint8Array
+  readonly epoch: number
+  readonly epochRotationSeconds: number
+}
+
+export interface ProximityObservedTokenObservation {
+  readonly beaconTokenHex: string
+  readonly distanceBand?: ProximityDistanceBand | undefined
+  readonly transport?: ProximityRadioTransport | undefined
+}
+
+export interface HttpProximityBrokerSession extends ProximityVoluntaryBrokerAdapter {
+  bootstrap(params: {
+    readonly workspaceId: string
+    readonly eventScope?: string | undefined
+  }): Promise<ProximityBootstrapMaterial>
+  resolveObservedTokens(params: {
+    readonly workspaceId: string
+    readonly eventScope?: string | undefined
+    readonly observedTokens: readonly ProximityObservedTokenObservation[]
+  }): Promise<readonly VoluntaryProximityPeer[]>
+}
+
+function normalizeWorkspaceUuid(rawWorkspaceId: string): string {
+  const workspaceId = rawWorkspaceId.trim().toLowerCase()
+  if (
+    !CANONICAL_UUID_RE.test(workspaceId) ||
+    workspaceId === '00000000-0000-0000-0000-000000000000'
+  ) {
+    throw new ProximityVoluntaryError('InvalidOrganisation')
+  }
+  return workspaceId
+}
+
+function normalizeScope(rawScope?: string): string {
+  return (rawScope ?? 'default').trim() || 'default'
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function throwForProximityHttpFailure(result: ProximityHttpResult): never {
+  const body = isObjectRecord(result.body) ? result.body : {}
+  const problemType = typeof body['type'] === 'string' ? body['type'] : ''
+  const reason = typeof body['reason'] === 'string' ? body['reason'] : ''
+
+  if (
+    problemType.endsWith('/gps-coordinates-forbidden') ||
+    reason === 'gps_coordinates_forbidden'
+  ) {
+    throw new ProximityVoluntaryError('ForbiddenGpsCoordinates')
+  }
+  if (result.status === 401) {
+    throw new ProximityVoluntaryError('AuthenticationFailed')
+  }
+  if (
+    result.status === 403 &&
+    (problemType.endsWith('/opt-in-required') || reason === 'caller_not_checked_in')
+  ) {
+    throw new ProximityVoluntaryError('CallerNotCheckedIn')
+  }
+  if (result.status === 403 || result.status === 404) {
+    throw new ProximityVoluntaryError('WorkspaceAccessDenied')
+  }
+  if (reason === 'token_epoch_expired' || problemType.endsWith('/expired-proximity-token')) {
+    throw new ProximityVoluntaryError('ExpiredToken')
+  }
+  if (reason === 'invalid_beacon_proof' || problemType.endsWith('/invalid-proximity-proof')) {
+    throw new ProximityVoluntaryError('AuthenticationFailed')
+  }
+  if (reason === 'status_note_too_long' || reason === 'invalid_status_note') {
+    throw new ProximityVoluntaryError('InvalidStatusNote')
+  }
+  if (reason === 'ttl_out_of_bounds' || reason === 'invalid_ttl_seconds') {
+    throw new ProximityVoluntaryError('InvalidDuration')
+  }
+  throw new ProximityVoluntaryError('BrokerRequestFailed', `HTTP ${result.status}`)
+}
+
+function parseWirePeer(item: unknown): VoluntaryProximityPeer {
+  if (!isObjectRecord(item)) {
+    throw new ProximityVoluntaryError('BrokerRequestFailed', 'Malformed peer payload')
+  }
+  const handle = typeof item['handle'] === 'string' ? item['handle'] : ''
+  const pseudonym = typeof item['rolling_pseudonym'] === 'string' ? item['rolling_pseudonym'] : ''
+  const statusNote = typeof item['status_note'] === 'string' ? item['status_note'] : ''
+  const bandRaw = item['distance_band']
+  const distanceBand: ProximityDistanceBand =
+    bandRaw === 'immediate' || bandRaw === 'near' || bandRaw === 'ambient' ? bandRaw : 'near'
+  const transportRaw = item['transport']
+  const viaLanMdnsQuic = transportRaw === 'mdns_quic' || transportRaw === 'hybrid'
+  const expiresAt = typeof item['expires_at'] === 'number' ? Math.trunc(item['expires_at']) : 0
+  if (!handle || expiresAt <= 0) {
+    throw new ProximityVoluntaryError('BrokerRequestFailed', 'Incomplete peer summary')
+  }
+  return {
+    peerId: pseudonym || handle,
+    handle,
+    statusNote,
+    distanceBand,
+    viaLanMdnsQuic,
+    expiresAtUnixSeconds: expiresAt,
+  }
+}
+
+/**
+ * Obtains the scoped workspace beacon key (`POST /api/v1/proximity/bootstrap`) required to mint
+ * wire-compatible `KT\x01` 15-minute rotating HKDF-SHA256 proximity tokens.
+ */
+export async function bootstrapProximityWorkspace(params: {
+  readonly transport: ProximityApiTransport
+  readonly workspaceId: string
+  readonly eventScope?: string | undefined
+}): Promise<ProximityBootstrapMaterial> {
+  assertZeroGpsPayload({ workspaceId: params.workspaceId, eventScope: params.eventScope })
+  const workspaceId = normalizeWorkspaceUuid(params.workspaceId)
+  const eventScope = normalizeScope(params.eventScope)
+
+  const response = await params.transport({
+    method: 'POST',
+    path: '/api/v1/proximity/bootstrap',
+    body: {
+      workspace_id: workspaceId,
+      event_scope: eventScope,
+    },
+  })
+  if (response.status !== 200) {
+    throwForProximityHttpFailure(response)
+  }
+  if (!isObjectRecord(response.body)) {
+    throw new ProximityVoluntaryError('BrokerRequestFailed', 'Malformed bootstrap response')
+  }
+  const keyHex = response.body['workspace_beacon_key']
+  const epoch = response.body['epoch']
+  const rotationSeconds = response.body['epoch_rotation_seconds']
+  if (
+    typeof keyHex !== 'string' ||
+    !/^[0-9a-fA-F]{64}$/.test(keyHex) ||
+    typeof epoch !== 'number' ||
+    !Number.isInteger(epoch) ||
+    epoch < 0 ||
+    rotationSeconds !== PROXIMITY_EPOCH_ROTATION_SECS
+  ) {
+    throw new ProximityVoluntaryError('InvalidKeyMaterial', 'Invalid bootstrap key material')
+  }
+  const masterKey = hexToBytes(keyHex)
+  if (masterKey.length !== 32 || isAllZero(masterKey)) {
+    throw new ProximityVoluntaryError('InvalidKeyMaterial')
+  }
+  return {
+    workspaceId,
+    eventScope,
+    workspaceBeaconKeyHex: keyHex.toLowerCase(),
+    workspaceMasterKey: masterKey,
+    epoch,
+    epochRotationSeconds: rotationSeconds,
+  }
+}
+
+/**
+ * End-to-end client bootstrap + `KT\x01` HKDF token mint + voluntary `/api/v1/proximity/checkin`
+ * + initial `/api/v1/proximity/nearby` snapshot.
+ */
+export async function bootstrapAndCheckInProximity(params: {
+  readonly transport: ProximityApiTransport
+  readonly workspaceId: string
+  readonly deviceSeed: Uint8Array
+  readonly durationSeconds: ProximityDurationSeconds
+  readonly statusNote: string
+  readonly eventScope?: string | undefined
+  readonly handle?: string | undefined
+  readonly radioTransport?: ProximityRadioTransport | undefined
+  readonly distanceBand?: ProximityDistanceBand | undefined
+  readonly nowUnixSeconds?: number | undefined
+  readonly counter?: number | undefined
+}): Promise<{
+  readonly bootstrap: ProximityBootstrapMaterial
+  readonly record: VoluntaryCheckInRecord
+  readonly peers: readonly VoluntaryProximityPeer[]
+}> {
+  assertZeroGpsPayload({
+    workspaceId: params.workspaceId,
+    eventScope: params.eventScope,
+    durationSeconds: params.durationSeconds,
+    statusNote: params.statusNote,
+    handle: params.handle,
+  })
+  if (!PROXIMITY_DURATION_PRESETS.includes(params.durationSeconds)) {
+    throw new ProximityVoluntaryError('InvalidDuration')
+  }
+  const statusNote = validateProximityStatusNote(params.statusNote)
+  const bootstrap = await bootstrapProximityWorkspace({
+    transport: params.transport,
+    workspaceId: params.workspaceId,
+    eventScope: params.eventScope,
+  })
+  const effectiveNow =
+    params.nowUnixSeconds !== undefined
+      ? Math.trunc(params.nowUnixSeconds)
+      : bootstrap.epoch * PROXIMITY_EPOCH_ROTATION_SECS
+  const minted = mintRotatingProximityToken({
+    workspaceId: bootstrap.workspaceId,
+    eventScope: bootstrap.eventScope,
+    workspaceMasterKey: bootstrap.workspaceMasterKey,
+    deviceSeed: params.deviceSeed,
+    nowUnixSeconds: effectiveNow,
+    counter: params.counter ?? 0,
+  })
+
+  const checkInBody: Record<string, unknown> = {
+    workspace_id: bootstrap.workspaceId,
+    beacon_token: minted.tokenHex,
+    event_scope: bootstrap.eventScope,
+    ttl_seconds: params.durationSeconds,
+    status_note: statusNote,
+    transport: params.radioTransport ?? 'hybrid',
+    distance_band: params.distanceBand ?? 'near',
+  }
+  if (params.handle !== undefined && params.handle.trim() !== '') {
+    checkInBody['handle'] = params.handle.trim()
+  }
+
+  const checkInRes = await params.transport({
+    method: 'POST',
+    path: '/api/v1/proximity/checkin',
+    body: checkInBody,
+  })
+  if (checkInRes.status !== 201) {
+    throwForProximityHttpFailure(checkInRes)
+  }
+  if (!isObjectRecord(checkInRes.body) || checkInRes.body['gps_persisted'] !== false) {
+    throw new ProximityVoluntaryError('BrokerRequestFailed', 'Malformed checkin response')
+  }
+  const expiresAt =
+    typeof checkInRes.body['expires_at'] === 'number'
+      ? Math.trunc(checkInRes.body['expires_at'])
+      : effectiveNow + params.durationSeconds
+  const serverPseudonym =
+    typeof checkInRes.body['rolling_pseudonym'] === 'string'
+      ? checkInRes.body['rolling_pseudonym']
+      : minted.rollingPseudonymHex
+
+  const nearbyRes = await params.transport({
+    method: 'GET',
+    path: '/api/v1/proximity/nearby',
+    query: {
+      workspace_id: bootstrap.workspaceId,
+      event_scope: bootstrap.eventScope,
+    },
+  })
+  if (nearbyRes.status !== 200) {
+    throwForProximityHttpFailure(nearbyRes)
+  }
+  const rawPeers =
+    isObjectRecord(nearbyRes.body) && Array.isArray(nearbyRes.body['peers'])
+      ? nearbyRes.body['peers']
+      : []
+
+  return {
+    bootstrap,
+    record: {
+      workspaceId: bootstrap.workspaceId,
+      eventScope: bootstrap.eventScope,
+      rollingPseudonymHex: serverPseudonym,
+      tokenHex: minted.tokenHex,
+      statusNote,
+      checkedInAtUnixSeconds: expiresAt - params.durationSeconds,
+      expiresAtUnixSeconds: expiresAt,
+      durationSeconds: params.durationSeconds,
+    },
+    peers: rawPeers.map(parseWirePeer),
+  }
+}
+
+/**
+ * Real-service HTTP implementation of `ProximityVoluntaryBrokerAdapter` backed by
+ * `/api/v1/proximity/{bootstrap,checkin,nearby,resolve,checkout}`.
+ */
+export function createHttpProximityVoluntaryBroker(options: {
+  readonly transport: ProximityApiTransport
+  readonly deviceSeed: Uint8Array
+  readonly handle?: string | undefined
+  readonly radioTransport?: ProximityRadioTransport | undefined
+  readonly rssiDbm?: number | undefined
+}): HttpProximityBrokerSession {
+  if (options.deviceSeed.length !== 32 || isAllZero(options.deviceSeed)) {
+    throw new ProximityVoluntaryError('InvalidKeyMaterial')
+  }
+  const seedCopy = new Uint8Array(options.deviceSeed)
+  const classifier = new RssiDistanceClassifier()
+  let counter = 0
+
+  return {
+    bootstrap: (params) =>
+      bootstrapProximityWorkspace({
+        transport: options.transport,
+        workspaceId: params.workspaceId,
+        eventScope: params.eventScope,
+      }),
+
+    checkIn: async (input) => {
+      const distanceBand =
+        options.rssiDbm !== undefined ? classifier.observe(options.rssiDbm) : 'near'
+      const nextCounter = counter
+      counter = (counter + 1) >>> 0
+      const { record, peers } = await bootstrapAndCheckInProximity({
+        transport: options.transport,
+        workspaceId: input.workspaceId,
+        eventScope: input.eventScope,
+        deviceSeed: seedCopy,
+        durationSeconds: input.durationSeconds,
+        statusNote: input.statusNote,
+        handle: options.handle,
+        radioTransport: options.radioTransport,
+        distanceBand,
+        nowUnixSeconds: input.nowUnixSeconds,
+        counter: nextCounter,
+      })
+      return { record, peers }
+    },
+
+    listNearby: async (params) => {
+      assertZeroGpsPayload(params)
+      const workspaceId = normalizeWorkspaceUuid(params.workspaceId)
+      const eventScope = normalizeScope(params.eventScope)
+      const res = await options.transport({
+        method: 'GET',
+        path: '/api/v1/proximity/nearby',
+        query: {
+          workspace_id: workspaceId,
+          event_scope: eventScope,
+        },
+      })
+      if (res.status !== 200) {
+        throwForProximityHttpFailure(res)
+      }
+      const rawPeers =
+        isObjectRecord(res.body) && Array.isArray(res.body['peers']) ? res.body['peers'] : []
+      return rawPeers.map(parseWirePeer)
+    },
+
+    resolveObservedTokens: async (params) => {
+      assertZeroGpsPayload(params)
+      const workspaceId = normalizeWorkspaceUuid(params.workspaceId)
+      const eventScope = normalizeScope(params.eventScope)
+      const observedPayload = params.observedTokens.map((item) => {
+        const entry: Record<string, unknown> = { beacon_token: item.beaconTokenHex }
+        if (item.distanceBand !== undefined) entry['distance_band'] = item.distanceBand
+        if (item.transport !== undefined) entry['transport'] = item.transport
+        return entry
+      })
+      const res = await options.transport({
+        method: 'POST',
+        path: '/api/v1/proximity/resolve',
+        body: {
+          workspace_id: workspaceId,
+          event_scope: eventScope,
+          observed_tokens: observedPayload,
+        },
+      })
+      if (res.status !== 200) {
+        throwForProximityHttpFailure(res)
+      }
+      const rawPeers =
+        isObjectRecord(res.body) && Array.isArray(res.body['peers']) ? res.body['peers'] : []
+      return rawPeers.map(parseWirePeer)
+    },
+
+    leaveProximity: async (params) => {
+      assertZeroGpsPayload(params)
+      const workspaceId = normalizeWorkspaceUuid(params.workspaceId)
+      const eventScope = normalizeScope(params.eventScope)
+      const res = await options.transport({
+        method: 'POST',
+        path: '/api/v1/proximity/checkout',
+        body: {
+          workspace_id: workspaceId,
+          event_scope: eventScope,
+        },
+      })
+      if (res.status !== 200) {
+        throwForProximityHttpFailure(res)
+      }
+      classifier.reset()
+    },
   }
 }

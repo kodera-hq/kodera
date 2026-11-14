@@ -6,12 +6,16 @@ import { bytesToHex } from './codec'
 import { ProximityCheckInView } from './ProximityCheckInView'
 import {
   InMemoryProximityVoluntaryBroker,
+  PROXIMITY_EPOCH_ROTATION_SECS,
   ProximityVoluntaryError,
   RssiDistanceClassifier,
   assertZeroGpsPayload,
+  bootstrapAndCheckInProximity,
+  createHttpProximityVoluntaryBroker,
   hkdfSha256,
   mintRotatingProximityToken,
   verifyRotatingProximityToken,
+  type ProximityApiTransport,
 } from './voluntaryCheckIn'
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111'
@@ -258,5 +262,244 @@ describe('ProximityCheckInView component & voluntary flow', () => {
       unmount()
     }
     delete document.documentElement.dataset.theme
+  })
+})
+
+describe('HTTP proximity bootstrap & broker session seam', () => {
+  const OTHER_WORKSPACE_ID = '22222222-2222-4222-8222-222222222222'
+  const NOW = 1_760_000_100
+
+  function createWireServerHarness() {
+    const activeByUser = new Map<
+      string,
+      {
+        readonly handle: string
+        readonly statusNote: string
+        readonly rollingPseudonym: string
+        readonly tokenHex: string
+        readonly transport: string
+        readonly distanceBand: string
+        readonly expiresAt: number
+      }
+    >()
+
+    const transportFor = (callerId: string, allowedWorkspaceId: string): ProximityApiTransport => {
+      return async (req) => {
+        const wsId =
+          req.method === 'GET'
+            ? (req.query?.['workspace_id'] ?? '')
+            : String(req.body?.['workspace_id'] ?? '')
+        const scope =
+          req.method === 'GET'
+            ? (req.query?.['event_scope'] ?? 'default')
+            : String(req.body?.['event_scope'] ?? 'default')
+
+        if (wsId !== allowedWorkspaceId) {
+          return {
+            status: 404,
+            body: {
+              type: 'https://kodera.io/problems/not-found',
+              status: 404,
+            },
+          }
+        }
+
+        if (req.path === '/api/v1/proximity/bootstrap' && req.method === 'POST') {
+          return {
+            status: 200,
+            body: {
+              workspace_id: wsId,
+              event_scope: scope,
+              workspace_beacon_key: bytesToHex(MASTER_KEY),
+              epoch: Math.floor(NOW / PROXIMITY_EPOCH_ROTATION_SECS),
+              epoch_rotation_seconds: PROXIMITY_EPOCH_ROTATION_SECS,
+            },
+          }
+        }
+
+        if (req.path === '/api/v1/proximity/checkin' && req.method === 'POST') {
+          const verified = verifyRotatingProximityToken({
+            tokenHex: String(req.body?.['beacon_token'] ?? ''),
+            workspaceId: wsId,
+            eventScope: scope,
+            workspaceMasterKey: MASTER_KEY,
+            nowUnixSeconds: NOW,
+          })
+          const ttl = Number(req.body?.['ttl_seconds'] ?? 1800)
+          const entry = {
+            handle: String(
+              req.body?.['handle'] ?? `prox-${verified.rollingPseudonymHex.slice(0, 8)}`
+            ),
+            statusNote: String(req.body?.['status_note'] ?? ''),
+            rollingPseudonym: verified.rollingPseudonymHex,
+            tokenHex: verified.tokenHex,
+            transport: String(req.body?.['transport'] ?? 'hybrid'),
+            distanceBand: String(req.body?.['distance_band'] ?? 'near'),
+            expiresAt: NOW + ttl,
+          }
+          activeByUser.set(callerId, entry)
+          return {
+            status: 201,
+            body: {
+              workspace_id: wsId,
+              event_scope: scope,
+              handle: entry.handle,
+              status_note: entry.statusNote,
+              rolling_pseudonym: entry.rollingPseudonym,
+              epoch: verified.epoch,
+              ttl_seconds: ttl,
+              expires_at: entry.expiresAt,
+              gps_persisted: false,
+            },
+          }
+        }
+
+        if (req.path === '/api/v1/proximity/nearby' && req.method === 'GET') {
+          const caller = activeByUser.get(callerId)
+          if (!caller) {
+            return {
+              status: 403,
+              body: {
+                type: 'https://kodera.io/problems/opt-in-required',
+                reason: 'caller_not_checked_in',
+                status: 403,
+              },
+            }
+          }
+          const peers = [...activeByUser.entries()]
+            .filter(([id]) => id !== callerId)
+            .map(([, p]) => ({
+              handle: p.handle,
+              status_note: p.statusNote,
+              rolling_pseudonym: p.rollingPseudonym,
+              transport: p.transport,
+              distance_band: p.distanceBand,
+              expires_in_seconds: p.expiresAt - NOW,
+              expires_at: p.expiresAt,
+            }))
+          return {
+            status: 200,
+            body: { workspace_id: wsId, event_scope: scope, peers },
+          }
+        }
+
+        if (req.path === '/api/v1/proximity/resolve' && req.method === 'POST') {
+          const observed = Array.isArray(req.body?.['observed_tokens'])
+            ? (req.body?.['observed_tokens'] as Record<string, unknown>[])
+            : []
+          const peers = []
+          for (const item of observed) {
+            const verified = verifyRotatingProximityToken({
+              tokenHex: String(item['beacon_token'] ?? ''),
+              workspaceId: wsId,
+              eventScope: scope,
+              workspaceMasterKey: MASTER_KEY,
+              nowUnixSeconds: NOW,
+            })
+            for (const [id, p] of activeByUser.entries()) {
+              if (id !== callerId && p.rollingPseudonym === verified.rollingPseudonymHex) {
+                peers.push({
+                  handle: p.handle,
+                  status_note: p.statusNote,
+                  rolling_pseudonym: p.rollingPseudonym,
+                  transport: String(item['transport'] ?? p.transport),
+                  distance_band: String(item['distance_band'] ?? p.distanceBand),
+                  expires_in_seconds: p.expiresAt - NOW,
+                  expires_at: p.expiresAt,
+                })
+              }
+            }
+          }
+          return {
+            status: 200,
+            body: { workspace_id: wsId, event_scope: scope, peers },
+          }
+        }
+
+        if (req.path === '/api/v1/proximity/checkout' && req.method === 'POST') {
+          const existed = activeByUser.delete(callerId)
+          return {
+            status: 200,
+            body: { workspace_id: wsId, checked_out: true, purged_records: existed ? 1 : 0 },
+          }
+        }
+
+        return { status: 404, body: {} }
+      }
+    }
+
+    return { transportFor }
+  }
+
+  it('bootstraps workspace beacon key, mints valid KT\\x01 token, resolves peers, and enforces tenant isolation', async () => {
+    const harness = createWireServerHarness()
+    const aliceTransport = harness.transportFor('alice', WORKSPACE_ID)
+    const bobTransport = harness.transportFor('bob', WORKSPACE_ID)
+
+    // Cross-tenant bootstrap attempt by Alice targeting OTHER_WORKSPACE_ID is refused (WorkspaceAccessDenied).
+    await expect(
+      bootstrapAndCheckInProximity({
+        transport: aliceTransport,
+        workspaceId: OTHER_WORKSPACE_ID,
+        deviceSeed: ALICE_SEED,
+        durationSeconds: 1800,
+        statusNote: 'Cross-tenant probe',
+        nowUnixSeconds: NOW,
+      })
+    ).rejects.toMatchObject({ code: 'WorkspaceAccessDenied' })
+
+    // Bob checks in via bootstrapAndCheckInProximity, then Alice joins via createHttpProximityVoluntaryBroker.
+    const bobSession = await bootstrapAndCheckInProximity({
+      transport: bobTransport,
+      workspaceId: WORKSPACE_ID,
+      eventScope: 'floor-2',
+      deviceSeed: BOB_SEED,
+      durationSeconds: 1800,
+      statusNote: 'Salle B · café',
+      handle: 'bob-http',
+      radioTransport: 'mdns_quic',
+      distanceBand: 'immediate',
+      nowUnixSeconds: NOW,
+    })
+    expect(bobSession.bootstrap.workspaceBeaconKeyHex).toBe(bytesToHex(MASTER_KEY))
+
+    const aliceBroker = createHttpProximityVoluntaryBroker({
+      transport: aliceTransport,
+      deviceSeed: ALICE_SEED,
+      handle: 'alice-http',
+      radioTransport: 'ble',
+      rssiDbm: -49,
+    })
+
+    const aliceJoined = await aliceBroker.checkIn({
+      workspaceId: WORKSPACE_ID,
+      eventScope: 'floor-2',
+      durationSeconds: 900,
+      statusNote: 'Coin lecture',
+      nowUnixSeconds: NOW,
+    })
+    expect(aliceJoined.peers).toHaveLength(1)
+    expect(aliceJoined.peers[0]?.handle).toBe('bob-http')
+    expect(aliceJoined.peers[0]?.viaLanMdnsQuic).toBe(true)
+
+    const resolved = await aliceBroker.resolveObservedTokens({
+      workspaceId: WORKSPACE_ID,
+      eventScope: 'floor-2',
+      observedTokens: [
+        {
+          beaconTokenHex: bobSession.record.tokenHex,
+          distanceBand: 'immediate',
+          transport: 'ble',
+        },
+      ],
+    })
+    expect(resolved).toHaveLength(1)
+    expect(resolved[0]?.handle).toBe('bob-http')
+    expect(resolved[0]?.distanceBand).toBe('immediate')
+
+    await aliceBroker.leaveProximity({ workspaceId: WORKSPACE_ID, eventScope: 'floor-2' })
+    await expect(
+      aliceBroker.listNearby({ workspaceId: WORKSPACE_ID, eventScope: 'floor-2' })
+    ).rejects.toMatchObject({ code: 'CallerNotCheckedIn' })
   })
 })

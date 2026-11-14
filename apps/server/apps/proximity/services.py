@@ -27,6 +27,13 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from django.core.exceptions import ObjectDoesNotExist
+
+from apps.orgs.actor_selectors import TenantCaller
+from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authorise_workspace
+from apps.workspaces.selectors import workspace_organisation
+from services.identity.access_tokens import VerifiedAccessToken
+
 PROXIMITY_EPOCH_ROTATION_SECS = 15 * 60
 PROXIMITY_EPOCH_CLOCK_SKEW_SECS = 60
 PROXIMITY_EPHEMERAL_TOKEN_BYTES = 32
@@ -370,6 +377,20 @@ class VoluntaryCheckInRecord:
         }
 
 
+def authorise_proximity_workspace(
+    *, verified: VerifiedAccessToken, workspace_id: UUID
+) -> TenantCaller:
+    """Resolves `workspace_id` and enforces active tenant membership on every `#proximity` call."""
+    try:
+        organisation_id = workspace_organisation(workspace_id=workspace_id)
+    except ObjectDoesNotExist:
+        raise ProximityRefusalError(404, kind="not-found") from None
+    try:
+        return authorise_workspace(verified=verified, organisation_id=organisation_id)
+    except WorkspaceRefusal as error:
+        raise ProximityRefusalError(error.status, kind=error.kind) from None
+
+
 class ProximityBroker:
     """Thread-safe, zero-persistence in-memory `#proximity` voluntary check-in broker."""
 
@@ -386,6 +407,24 @@ class ProximityBroker:
         scope = validate_event_scope(event_scope)
         info = f"kodera.proximity.w9.ws-master.v1:{workspace_id}:{scope}".encode("ascii")
         return hkdf_sha256(bytes(workspace_id.bytes), self._secret, info, 32)
+
+    def bootstrap(
+        self,
+        *,
+        workspace_id: UUID,
+        event_scope: str = "default",
+        now_unix_secs: int | None = None,
+    ) -> dict[str, Any]:
+        now = int(time.time()) if now_unix_secs is None else now_unix_secs
+        scope = validate_event_scope(event_scope)
+        master = self.workspace_beacon_key(workspace_id, scope)
+        return {
+            "workspace_id": str(workspace_id),
+            "event_scope": scope,
+            "workspace_beacon_key": master.hex(),
+            "epoch": proximity_epoch(now),
+            "epoch_rotation_seconds": PROXIMITY_EPOCH_ROTATION_SECS,
+        }
 
     def mint_client_token(
         self,
