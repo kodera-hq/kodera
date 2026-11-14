@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm --prefix ../.. --workspace @kodera/web run dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm --prefix ../.. run build",
+    "beforeBuildCommand": "npm --prefix ../.. run build && node scripts/verify-frontend-assets.mjs",
     "frontendDist": "../../web/dist"
   },
   "app": {
@@ -75,6 +75,9 @@
         "type": "downloadBootstrapper",
         "silent": true
       }
+    },
+    "resources": {
+      "../../web/dist/": "web/"
     }
   }
 }

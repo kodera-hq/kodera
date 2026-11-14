@@ -138,6 +138,8 @@ function resolveTauriBinary() {
 }
 
 function runSecurityPreflight() {
+  const cssCheck = spawnSync(process.execPath, [join(__dirname, 'generate-bootstrap-css.mjs')], { stdio: 'inherit' });
+  if (cssCheck.status !== 0) throw new Error('fallback_token_validation_failed');
   const iconCheck = spawnSync(process.execPath, [join(__dirname, 'generate-icons.mjs'), '--check'], {
     cwd: desktopDir,
     stdio: 'inherit',
@@ -188,7 +190,7 @@ export function runCli(argv = process.argv.slice(2)) {
     const tauriBin = resolveTauriBinary();
     if (tauriBin && process.env.KODERA_DESKTOP_HOST_ONLY !== '1') {
       const res = spawnSync(tauriBin, ['dev'], { cwd: desktopDir, stdio: 'inherit', env: process.env });
-      return res.status ?? 0;
+      return res.status ?? 1;
     }
     runCargoCommand(cargoArgs);
     return 0;
@@ -234,11 +236,10 @@ export function runCli(argv = process.argv.slice(2)) {
         stdio: 'inherit',
         env: process.env,
       });
-      return res.status ?? 0;
+      return res.status ?? 1;
     }
-    runCargoCommand(plan.commands.hostCargoBuild.slice(1));
-    console.log(JSON.stringify({ stagedHostBinary: true, plan }, null, 2));
-    return 0;
+    console.error('Desktop installer bundler unavailable; inspect --dry-run or build the host separately.');
+    return 69;
   }
 
   console.error('Usage: desktop-cli.mjs <dev|build|package> [--target <macos|linux|windows>] [--dry-run]');

@@ -1,0 +1,19 @@
+:root { color-scheme: light; font-family: var(--font-family-sans); color: var(--semantic-text-primary); background: var(--semantic-surface-muted); }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: var(--space-8); }
+.shell-card { width: 100%; max-width: var(--space-shell-document-max-width); background: var(--semantic-surface-default); border-radius: var(--radius-lg); padding: var(--space-8); }
+.shell-header { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
+.monogram { width: var(--space-12); height: var(--space-12); border-radius: var(--radius-md); background: var(--semantic-action-primary); color: var(--semantic-action-onPrimary); font-weight: var(--font-weight-bold); font-size: var(--font-size-xl); display: flex; align-items: center; justify-content: center; }
+.eyebrow { margin: 0; font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); text-transform: uppercase; color: var(--semantic-text-accent); }
+h1 { margin: var(--space-1) 0 0; font-size: var(--font-size-2xl); line-height: var(--font-lineHeight-snug); }
+.lead { margin: 0 0 var(--space-6); color: var(--semantic-text-secondary); line-height: var(--font-lineHeight-body); font-size: var(--font-size-md); }
+.meta-grid { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0 0 var(--space-6); }
+.meta-grid > div { flex: 1; padding: var(--space-3) var(--space-4); background: var(--semantic-surface-muted); border-radius: var(--radius-md); }
+dt { font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); text-transform: uppercase; color: var(--semantic-text-tertiary); margin-bottom: var(--space-1); }
+dd { margin: 0; font-family: var(--font-family-mono); font-size: var(--font-size-sm); word-break: break-all; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.btn { appearance: none; border: 0; background: var(--semantic-surface-muted); color: var(--semantic-text-primary); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); text-decoration: none; cursor: pointer; }
+.btn:hover { background: var(--semantic-surface-accent); }
+.btn-primary { background: var(--semantic-action-primary); color: var(--semantic-action-onPrimary); }
+.btn-primary:hover { background: var(--semantic-action-primaryHover); }
+.btn-danger { color: var(--semantic-text-danger); }
