@@ -24,8 +24,10 @@ ORACLE_VALUE = 'intentional-glib-oracle-mismatch'
 BUILD_SECONDS = 240
 COMPILE_SECONDS = 60
 TEST_SECONDS = 15
-ADMISSION_BYTES = 21 * 1024**3
-STOP_BYTES = int(20.25 * 1024**3)
+# These reserves apply only after the hosted-Linux admission below. Local jobs
+# retain the workstation's separate 20 GiB minimum and heavy-slot guards.
+ADMISSION_BYTES = 4 * 1024**3
+STOP_BYTES = 2 * 1024**3
 
 
 def backport_verifier():
@@ -104,7 +106,7 @@ def qualify(revision: str, evidence_path: Path) -> None:
     paths = [WORKSPACE, target, runner_temp]
     free = lambda: min(shutil.disk_usage(existing_ancestor(path)).free for path in paths)
     if free() < ADMISSION_BYTES:
-        raise ValueError('optimized qualification requires 21 GiB available before allocation')
+        raise ValueError('optimized hosted qualification requires 4 GiB available before allocation')
     evidence = {'revision': revision, 'source_manifest_sha256': provenance['integrated_source_manifest_sha256'],
                 'status': 'running', 'vulnerable_runtime_controls': 'not executed; no kill or unreachability claim',
                 'minimum_free_bytes': free(), 'commands': [],
