@@ -343,6 +343,9 @@ def test_account_subject_finalization_across_pending_workspace_cutoff_preserves_
     from workspace_safety.test_moderation import world as make_world
 
     from apps.orgs.account_erasure_services import advance_account_erasure
+    from apps.orgs.models import Invitation
+    from apps.orgs.privacy_models import PrivacyExport
+    from apps.support.models import SupportTicket
 
     other, _, _, other_tokens = make_world.__wrapped__()
     person = world[2][0].user
@@ -362,6 +365,50 @@ def test_account_subject_finalization_across_pending_workspace_cutoff_preserves_
         accepted_at=timezone.now(),
     )
     original = Identity.objects.get(organisation=world[0], user=person)
+    export_id = uuid4()
+    created_epoch = int(database_now().timestamp())
+    export_row = PrivacyExport.objects.create(
+        id=export_id,
+        identity_id=original.id,
+        user_id=person.id,
+        organisation_id=world[0].id,
+        scope="workspace",
+        request_snapshot={
+            "id": str(export_id),
+            "identity_id": str(original.id),
+            "user_id": str(person.id),
+            "organisation_id": str(world[0].id),
+            "scope": "workspace",
+            "created_at": created_epoch,
+            "expires_at": created_epoch + 3600,
+        },
+        checkpoint={},
+        expires_at=database_now() + timedelta(hours=1),
+    )
+    ticket = SupportTicket.objects.create(
+        organisation=world[0],
+        created_by=original,
+        subject="Personal support ticket",
+        body="Body before cutoff",
+        category="billing",
+        severity="question",
+        locale="en",
+    )
+    issued_now = database_now()
+    invitation = Invitation.objects.create(
+        organisation=world[0],
+        membership=world[2][0],
+        invited_by_user=person,
+        invited_by_identity=original,
+        email=person.email.lower(),
+        role="org_admin",
+        state="accepted",
+        accepted_at=issued_now,
+        token_digest=b"\x01" * 32,
+        token_sealed=b"\x02" * 32,
+        issued_at=issued_now,
+        expires_at=issued_now + timedelta(days=7),
+    )
     pending_workspace = begin(world[0])
     assert original.subject == Identity.objects.get(pk=original.pk).subject
     row = admit(
@@ -377,6 +424,12 @@ def test_account_subject_finalization_across_pending_workspace_cutoff_preserves_
         {domain: AccountControlAdapter(domain) for domain in row.inventory["required_domains"]},
     )
     assert result["complete"]
+    export_row.refresh_from_db()
+    ticket.refresh_from_db()
+    invitation.refresh_from_db()
+    assert export_row.status == "expired"
+    assert ticket.subject == "" and ticket.content_erased_at is not None
+    assert invitation.email == f"erased+{invitation.id}@invalid.test"
     original.refresh_from_db()
     assert original.subject == f"erased:{original.id}"
     pending_workspace.refresh_from_db()

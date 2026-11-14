@@ -102,12 +102,33 @@ DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid;
 BEGIN
  IF TG_TABLE_NAME='identity_identity' AND TG_OP='UPDATE' THEN
   IF public.privacy_account_context(OLD.user_id) AND NOT NEW.enabled
-  AND ((NEW.email='erased:'||OLD.id AND (to_jsonb(NEW)-ARRAY['email','enabled','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','enabled','updated_at']))
+  AND ((to_jsonb(NEW)-ARRAY['enabled','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['enabled','updated_at'])
+   OR (NEW.email='erased:'||OLD.id AND (to_jsonb(NEW)-ARRAY['email','enabled','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','enabled','updated_at']))
    OR (NEW.subject='erased:'||OLD.id AND (to_jsonb(NEW)-ARRAY['subject','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','updated_at']))) THEN RETURN NEW; END IF;
  END IF;
  IF TG_TABLE_NAME='orgs_membership' AND TG_OP='UPDATE' THEN
   IF NEW.state='removed' AND EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=NEW.user_id)
   AND (to_jsonb(NEW)-ARRAY['state','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['state','updated_at']) THEN RETURN NEW; END IF;
+ END IF;
+ IF TG_TABLE_NAME='orgs_privacyexport' AND TG_OP='UPDATE' THEN
+  IF public.privacy_account_context(OLD.user_id) AND NEW.status='expired' AND NEW.checkpoint='{}'::jsonb AND NEW.revision=OLD.revision+1
+  AND (to_jsonb(NEW)-ARRAY['status','checkpoint','revision','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['status','checkpoint','revision','updated_at']) THEN RETURN NEW; END IF;
+ END IF;
+ IF TG_TABLE_NAME='support_supportticket' AND TG_OP='UPDATE' THEN
+  IF OLD.created_by_id IS NOT NULL
+  AND EXISTS(SELECT 1 FROM public.identity_identity i WHERE i.id=OLD.created_by_id AND public.privacy_account_context(i.user_id))
+  AND NEW.subject='' AND NEW.body='' AND NEW.reply_to_email IS NULL AND NEW.contact_email IS NULL AND NEW.content_erased_at IS NOT NULL
+  AND (OLD.content_erased_at IS NULL OR NEW.content_erased_at IS NOT DISTINCT FROM OLD.content_erased_at)
+  AND (to_jsonb(NEW)-ARRAY['subject','body','reply_to_email','contact_email','content_erased_at','updated_at'])
+   IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','body','reply_to_email','contact_email','content_erased_at','updated_at']) THEN RETURN NEW; END IF;
+ END IF;
+ IF TG_TABLE_NAME='orgs_invitation' AND TG_OP='UPDATE' THEN
+  IF OLD.membership_id IS NOT NULL
+  AND EXISTS(SELECT 1 FROM public.orgs_membership m WHERE m.id=OLD.membership_id AND public.privacy_account_context(m.user_id))
+  AND NEW.email='erased+'||OLD.id||'@invalid.test' AND NEW.display_name IS NULL
+  AND NEW.token_digest=decode('','hex') AND NEW.token_sealed=decode('','hex')
+  AND (to_jsonb(NEW)-ARRAY['email','display_name','token_digest','token_sealed','updated_at'])
+   IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['email','display_name','token_digest','token_sealed','updated_at']) THEN RETURN NEW; END IF;
  END IF;
 
  IF item ? 'organisation_id' THEN org:=(item->>'organisation_id')::uuid;
