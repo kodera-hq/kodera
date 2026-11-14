@@ -2,7 +2,7 @@
 // line reads "incident en cours" and the shell banner carries it. Compose
 // over `home.default` for everything else.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

@@ -3,7 +3,7 @@
 // The contract marks `qr_svg` required, so this is deliberately a response
 // the console must survive rather than one the API promises to send.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 export const handlers = [
   http.post('*/api/v1/organisations/:organisation_id/enrolment-tokens', async ({ request }) => {

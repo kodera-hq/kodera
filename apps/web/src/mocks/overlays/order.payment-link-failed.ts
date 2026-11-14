@@ -3,7 +3,7 @@
 // only the payment provider is unreachable, so the confirmation screen falls
 // back to bank transfer and offers a retry (`ConfirmationStep.tsx`).
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { problem } from '../problem'
 
 const BASE = '*/api/v1'

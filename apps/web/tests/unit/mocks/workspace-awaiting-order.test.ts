@@ -6,7 +6,7 @@ import { handlers } from '@/mocks/overlays/workspace.awaiting-order'
 const BASE = 'https://core.test/api/v1/organisations/org-1'
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
   server.use(...handlers)
 })
 afterAll(() => server.close())

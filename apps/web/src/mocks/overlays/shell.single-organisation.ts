@@ -6,7 +6,7 @@
 // test that means "single organisation" should not depend on that staying
 // true by accident.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES } from '../generated/examples'

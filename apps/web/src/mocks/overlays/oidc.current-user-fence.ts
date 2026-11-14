@@ -3,7 +3,8 @@
 // identity answer is deliberately late and says MFA is absent. A third token
 // and current answer must retire that late authority before it can redirect.
 
-import { delay, http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
+import { delay } from 'msw/utils/delay'
 import type { components } from '@/api/schema'
 import { keycloakUrl, oidcClientId } from '@/config'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'

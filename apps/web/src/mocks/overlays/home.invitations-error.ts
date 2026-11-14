@@ -2,7 +2,7 @@
 // other call succeeds — the state matrix's "keeps the page usable when one
 // call fails" case. Compose over `home.default`.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { problem } from '../problem'
 
 const BASE = '*/api/v1'

@@ -4,7 +4,7 @@
 // invitations'])`), since the later overlay wins on the shared invitations
 // route.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 import { problem } from '../problem'

@@ -1,7 +1,7 @@
 // docs/specs/02-status.md §7: `apps[].custom_domain: null`; both addresses
 // are the `kodera.io` ones.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import {
   fallbackOnlyApps,
   operationalComponents,

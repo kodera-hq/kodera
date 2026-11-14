@@ -1,6 +1,6 @@
 // Explicit synthetic cross-screen billing identity. Keep the production owner
 // resolver intact while exercising the distinct role refusal at Order entry.
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { ownedOrderMe } from '../orderIdentity'
 
 export const handlers = [

@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { StrictMode, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { authAdapter } from '../../auth/oidc'
@@ -21,7 +21,7 @@ import type { OrganisationRole } from './roles'
 import { onTrack, type AnalyticsEvent } from '@/analytics/track'
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 beforeEach(signInSynthetic)

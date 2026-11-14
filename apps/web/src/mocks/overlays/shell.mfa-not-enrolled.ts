@@ -3,7 +3,7 @@
 // enrolled a second factor, forced to `mfa-enrol` before any other screen
 // (acceptance test 4).
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES } from '../generated/examples'
