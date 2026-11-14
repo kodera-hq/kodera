@@ -22,6 +22,7 @@ default = ["desktop-app"]
 desktop-app = ["dep:tao", "dep:wry"]
 
 [dependencies]
+getrandom = "0.4"
 kodera-rs = { path = "../../../packages/kodera-rs" }
 tao = { version = "0.37.2", default-features = false, features = ["rwh_06"], optional = true }
 wry = { version = "0.57.2", default-features = false, features = ["os-webview"], optional = true }

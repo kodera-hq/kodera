@@ -1,14 +1,24 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 import {
   APPROVED_CAPABILITY_PERMISSIONS,
   APPROVED_CONNECT_SOURCES,
+  COMMUNITY_TLS_MODES,
   DESKTOP_APP_IDENTIFIER,
   REDACTED_NOTIFICATION_PREVIEW,
   TRAY_MENU_ITEM_IDS,
@@ -19,7 +29,11 @@ import {
   validateClientDeepLinkUri,
   validateTauriSecurityInvariants,
 } from '../src/index.mjs';
-import { buildPackagingPlan, runCli as runDesktopCli } from '../scripts/desktop-cli.mjs';
+import {
+  buildPackagingPlan,
+  runCli as runDesktopCli,
+  stagePackagedWebAssets,
+} from '../scripts/desktop-cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(__dirname, '..');
@@ -159,6 +173,8 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   const callbacks = new Map();
   let cbSeq = 10;
 
+  let updaterSupported = false;
+
   const mockTauriGlobal = {
     __TAURI_INTERNALS__: {
       transformCallback(fn) {
@@ -178,12 +194,21 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
               updateAvailable: true,
             };
           case 'check_app_updates':
-            return {
-              updateAvailable: true,
-              currentVersion: '0.1.0',
-              latestVersion: '0.1.1',
-              channel: 'stable',
-            };
+            return updaterSupported
+              ? {
+                  supported: true,
+                  updateAvailable: true,
+                  currentVersion: '0.1.0',
+                  latestVersion: '0.1.1',
+                  channel: 'stable',
+                }
+              : {
+                  supported: false,
+                  updateAvailable: false,
+                  currentVersion: '0.1.0',
+                  latestVersion: null,
+                  channel: 'stable',
+                };
           case 'plugin:event|listen':
             return 77;
           case 'plugin:event|unlisten':
@@ -220,6 +245,12 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   assert.equal(meta.isNativeDesktop, true);
   assert.equal(meta.updateAvailable, true);
 
+  const unsupportedUpdateInfo = await client.checkForAppUpdates();
+  assert.equal(unsupportedUpdateInfo.supported, false);
+  assert.equal(unsupportedUpdateInfo.updateAvailable, false);
+  assert.equal(unsupportedUpdateInfo.latestVersion, null);
+
+  updaterSupported = true;
   const updateInfo = await client.checkForAppUpdates();
   assert.equal(updateInfo.supported, true);
   assert.equal(updateInfo.latestVersion, '0.1.1');
@@ -442,6 +473,16 @@ test('compiled kodera-desktop binary passes --self-check and --ipc-stdio round-t
   const stdioInput = [
     JSON.stringify({ host_op: 'init_session', organisation_id: ORG_ID }),
     JSON.stringify({ command: 'set_unread_badge', organisation_id: ORG_ID, unread_count: 15 }),
+    JSON.stringify({
+      command: 'self_host_preflight_community',
+      organisation_id: ORG_ID,
+      stack_dir: 'relative/path',
+      domain: 'chat.example.org',
+      acme_email: 'ops@example.org',
+      tls_mode: 'acme',
+      http_port: 80,
+      https_port: 443,
+    }),
     JSON.stringify({ host_op: 'quit' }),
   ].join('\n') + '\n';
 
@@ -454,10 +495,280 @@ test('compiled kodera-desktop binary passes --self-check and --ipc-stdio round-t
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line));
-  assert.equal(replies.length, 3);
+  assert.equal(replies.length, 4);
   assert.equal(replies[0].ok, true);
   assert.equal(replies[1].badge_label, '15');
-  assert.equal(replies[2].quit, true);
+  assert.equal(replies[2].ok, false);
+  assert.equal(replies[2].error, 'community_deploy:invalid_stack_dir');
+  assert.equal(replies[3].quit, true);
+});
+
+test('Self-Host Wizard deploy/community bridge enforces injection defenses, browser fallback, and Tauri IPC handoff', async () => {
+  assert.deepEqual([...COMMUNITY_TLS_MODES], ['acme', 'internal', 'off']);
+
+  // 1. Browser fallback outside Tauri normalizes inputs and rejects every injection vector.
+  const webClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: {},
+  });
+
+  const webPreflight = await webClient.preflightCommunityDeploy({
+    stackDir: '/srv/kodera/community',
+    domain: 'Chat.Example.org',
+    acmeEmail: 'ops@Example.org',
+    tlsMode: 'acme',
+    httpPort: 80,
+    httpsPort: 443,
+  });
+  assert.equal(webPreflight.supported, false);
+  assert.equal(webPreflight.normalizedDomain, 'chat.example.org');
+  assert.equal(webPreflight.matrixBaseDomain, 'example.org');
+
+  const webPrepare = await webClient.prepareCommunityDeploy({
+    stackDir: '/srv/kodera/community',
+    domain: 'Chat.Example.org',
+    acmeEmail: 'ops@Example.org',
+    oidcProviderOrigin: 'https://id.Example.org:443',
+  });
+  assert.equal(webPrepare.supported, false);
+  assert.equal(webPrepare.envFileWritten, false);
+  assert.equal(webPrepare.oidcIssuer, 'https://id.example.org/realms/community');
+
+  const webDeploy = await webClient.deployCommunityStack({
+    stackDir: '/srv/kodera/community',
+    timeoutMs: 60_000,
+  });
+  assert.equal(webDeploy.supported, false);
+  assert.equal(webDeploy.stackHealthy, false);
+
+  // 2. Negative security tests: newline/CRLF env injection, traversal, shell metacharacters, ports, OIDC.
+  /** @type {Array<{ cmd: string, args: unknown }>} */
+  const recordedCalls = [];
+  const mockTauri = {
+    __TAURI_INTERNALS__: {
+      async invoke(cmd, args) {
+        recordedCalls.push({ cmd, args });
+        switch (cmd) {
+          case 'self_host_preflight_community':
+            return {
+              docker_version: 'Docker version 28.1.0',
+              compose_version: 'Docker Compose version v2.36.0',
+              compose_file_present: true,
+              stack_dir_writable: true,
+              normalized_domain: 'chat.example.org',
+              matrix_base_domain: 'example.org',
+            };
+          case 'self_host_prepare_community':
+            return {
+              env_file_written: true,
+              unix_file_mode: 0o600,
+              compose_config_valid: true,
+              generated_secret_keys: [
+                'POSTGRES_PASSWORD',
+                'KODERA_API_DATABASE_PASSWORD',
+                'KODERA_COLLAB_DATABASE_PASSWORD',
+                'SYNAPSE_POSTGRES_PASSWORD',
+                'DJANGO_SECRET_KEY',
+                'KODERA_CONTACT_SEAL_KEY',
+                'KODERA_OUTBOX_SEAL_KEY',
+                'KODERA_MEMBERSHIP_CURSOR_KEY',
+                'KODERA_DISCOVERY_HMAC_KEY',
+                'KODERA_COLLAB_TICKET_KEY',
+                'ROOM_ACCESS_MATRIX_TOKEN',
+                'LIVEKIT_API_KEY',
+                'LIVEKIT_API_SECRET',
+                'KODERA_SYNAPSE_OIDC_CLIENT_SECRET',
+                'KEYCLOAK_ADMIN_PASSWORD',
+                'KEYCLOAK_DB_PASSWORD',
+              ],
+              normalized_domain: 'chat.example.org',
+              matrix_base_domain: 'example.org',
+              oidc_issuer: 'https://id.example.org/realms/community',
+            };
+          case 'self_host_deploy_community':
+            return {
+              stack_healthy: true,
+              poll_attempts: 2,
+              state: 'healthy',
+              observed_memory_mib: 1280,
+              core_services: [
+                { service: 'keycloak', readiness: 'ready', external_oidc: false },
+                { service: 'server', readiness: 'ready', external_oidc: false },
+                { service: 'web', readiness: 'ready', external_oidc: false },
+                { service: 'livekit', readiness: 'ready', external_oidc: false },
+              ],
+            };
+          default:
+            return {};
+        }
+      },
+    },
+  };
+
+  const nativeClient = createDesktopClient({
+    organisationId: ORG_ID,
+    globalObject: mockTauri,
+  });
+
+  for (const badDir of [
+    'deploy/community',
+    '/srv/kodera/../escape',
+    '/srv/kodera\nEVIL=1',
+    '/srv/kodera;id',
+    '/srv/kodera$(whoami)',
+    '/srv/kodera|cat',
+  ]) {
+    await assert.rejects(
+      () =>
+        nativeClient.preflightCommunityDeploy({
+          stackDir: badDir,
+          domain: 'chat.example.org',
+          acmeEmail: 'ops@example.org',
+        }),
+      /invalid_stack_dir/u,
+    );
+  }
+
+  for (const badDomain of [
+    'chat.example.org\nEVIL=1',
+    'chat.example.org\r\nEVIL=1',
+    'localhost',
+    '127.0.0.1',
+    'chat..example.org',
+    'chat;id.example.org',
+  ]) {
+    await assert.rejects(
+      () =>
+        nativeClient.preflightCommunityDeploy({
+          stackDir: '/srv/kodera/community',
+          domain: badDomain,
+          acmeEmail: 'ops@example.org',
+        }),
+      /invalid_domain/u,
+    );
+  }
+
+  for (const badEmail of [
+    'ops@example.org\nEVIL=1',
+    'ops@@example.org',
+    'ops@localhost',
+    'ops;id@example.org',
+  ]) {
+    await assert.rejects(
+      () =>
+        nativeClient.preflightCommunityDeploy({
+          stackDir: '/srv/kodera/community',
+          domain: 'chat.example.org',
+          acmeEmail: badEmail,
+        }),
+      /invalid_acme_email/u,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      nativeClient.preflightCommunityDeploy({
+        stackDir: '/srv/kodera/community',
+        domain: 'chat.example.org',
+        acmeEmail: 'ops@example.org',
+        // @ts-expect-error negative security test for invalid TLS mode
+        tlsMode: 'self-signed',
+      }),
+    /invalid_tls_mode/u,
+  );
+
+  await assert.rejects(
+    () =>
+      nativeClient.preflightCommunityDeploy({
+        stackDir: '/srv/kodera/community',
+        domain: 'chat.example.org',
+        acmeEmail: 'ops@example.org',
+        httpPort: 443,
+        httpsPort: 443,
+      }),
+    /invalid_port/u,
+  );
+
+  for (const badOidc of [
+    'http://id.example.org',
+    'https://id.example.org/realms/community',
+    'https://user@id.example.org',
+    'https://id.example.org\nEVIL=1',
+  ]) {
+    await assert.rejects(
+      () =>
+        nativeClient.prepareCommunityDeploy({
+          stackDir: '/srv/kodera/community',
+          domain: 'chat.example.org',
+          acmeEmail: 'ops@example.org',
+          oidcProviderOrigin: badOidc,
+        }),
+      /invalid_oidc_origin/u,
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      nativeClient.deployCommunityStack({
+        stackDir: '/srv/kodera/community',
+        timeoutMs: 500,
+      }),
+    /invalid_timeout_ms/u,
+  );
+
+  // Zero native IPC calls were emitted during all negative input rejections!
+  assert.equal(recordedCalls.length, 0);
+
+  // 3. Valid end-to-end preflight -> prepare (0600 mode, 16 CSPRNG keys) -> deploy + health handoff.
+  const preflight = await nativeClient.preflightCommunityDeploy({
+    stackDir: '/srv/kodera/community',
+    domain: 'Chat.Example.org',
+    acmeEmail: 'ops@Example.org',
+    tlsMode: 'acme',
+    httpPort: 80,
+    httpsPort: 443,
+  });
+  assert.equal(preflight.supported, true);
+  assert.equal(preflight.composeFilePresent, true);
+  assert.equal(preflight.stackDirWritable, true);
+  assert.equal(preflight.dockerVersion, 'Docker version 28.1.0');
+
+  const prepared = await nativeClient.prepareCommunityDeploy({
+    stackDir: '/srv/kodera/community',
+    domain: 'Chat.Example.org',
+    acmeEmail: 'ops@Example.org',
+    oidcProviderOrigin: 'https://id.Example.org:443',
+    tlsMode: 'acme',
+    httpPort: 80,
+    httpsPort: 443,
+  });
+  assert.equal(prepared.supported, true);
+  assert.equal(prepared.envFileWritten, true);
+  assert.equal(prepared.unixFileMode, 0o600);
+  assert.equal(prepared.composeConfigValid, true);
+  assert.equal(prepared.generatedSecretKeys.length, 16);
+
+  const deployed = await nativeClient.deployCommunityStack({
+    stackDir: '/srv/kodera/community',
+    timeoutMs: 60_000,
+  });
+  assert.equal(deployed.supported, true);
+  assert.equal(deployed.stackHealthy, true);
+  assert.equal(deployed.pollAttempts, 2);
+  assert.equal(deployed.coreServices.length, 4);
+  assert.ok(deployed.coreServices.every((svc) => svc.readiness === 'ready'));
+
+  assert.equal(recordedCalls.length, 3);
+  assert.equal(recordedCalls[0].cmd, 'self_host_preflight_community');
+  assert.equal(recordedCalls[1].cmd, 'self_host_prepare_community');
+  assert.equal(recordedCalls[2].cmd, 'self_host_deploy_community');
+
+  // Clearing organisation ID blocks community deploy commands.
+  nativeClient.setOrganisationId(null);
+  await assert.rejects(
+    () => nativeClient.deployCommunityStack({ stackDir: '/srv/kodera/community' }),
+    /invalid_organisation/u,
+  );
 });
 
 test('.env.example documents code-signing variables with blank/safe values and CLI dry-runs succeed', () => {
@@ -523,5 +834,126 @@ test('.env.example documents code-signing variables with blank/safe values and C
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
+  }
+});
+
+test('IPC_INIT_SCRIPT skips OIDC /realms/ origins, cancels pending invokes on pagehide, and desktop-cli stages web assets', async () => {
+  const guiRust = readFileSync(join(tauriDir, 'src', 'gui.rs'), 'utf8');
+  const scriptMatch = /const\s+IPC_INIT_SCRIPT\s*:\s*&str\s*=\s*r#"([\s\S]*?)"#;/u.exec(guiRust);
+  assert.notEqual(scriptMatch, null, 'gui.rs must define IPC_INIT_SCRIPT');
+  const initScript = scriptMatch?.[1] ?? '';
+
+  function createVmWindow(urlString) {
+    const parsed = new URL(urlString);
+    /** @type {Map<string, Array<() => void>>} */
+    const listeners = new Map();
+    /** @type {string[]} */
+    const posted = [];
+    const win = {
+      location: {
+        protocol: parsed.protocol,
+        host: parsed.host,
+        pathname: parsed.pathname,
+      },
+      ipc: {
+        postMessage(msg) {
+          posted.push(String(msg));
+        },
+      },
+      addEventListener(type, handler) {
+        const list = listeners.get(type) ?? [];
+        list.push(handler);
+        listeners.set(type, list);
+      },
+    };
+    const context = vm.createContext({
+      window: win,
+      Object,
+      Map,
+      Promise,
+      Error,
+      TypeError,
+      Number,
+      String,
+      Boolean,
+      JSON,
+    });
+    vm.runInContext(initScript, context);
+    return {
+      win: /** @type {Record<string, any>} */ (win),
+      posted,
+      dispatchPageHide() {
+        for (const fn of listeners.get('pagehide') ?? []) {
+          fn();
+        }
+      },
+    };
+  }
+
+  // 1. Identity-provider `/realms/` documents NEVER receive `window.__TAURI_INTERNALS__` or `window.koderaDesktop`.
+  for (const untrustedOrRealmUrl of [
+    'https://auth.kodera.io/realms/kodera-staff/protocol/openid-connect/auth',
+    'https://staging-auth.kodera.io/realms/kodera-staff/protocol/openid-connect/auth',
+    'https://community.kodera.io/realms/acme/protocol/openid-connect/auth',
+    'https://evil.example/app',
+  ]) {
+    const { win } = createVmWindow(untrustedOrRealmUrl);
+    assert.equal(
+      win.__TAURI_INTERNALS__,
+      undefined,
+      `${untrustedOrRealmUrl} must not install __TAURI_INTERNALS__`,
+    );
+    assert.equal(
+      win.koderaDesktop,
+      undefined,
+      `${untrustedOrRealmUrl} must not install koderaDesktop`,
+    );
+  }
+
+  // 2. Admitted app origin installs the bridge and cancels pending invokes + clears callbacks on `pagehide`.
+  const appDoc = createVmWindow('https://app.kodera.io/channels/general');
+  assert.equal(typeof appDoc.win.__TAURI_INTERNALS__?.invoke, 'function');
+  assert.equal(typeof appDoc.win.koderaDesktop?.onEvent, 'function');
+
+  /** @type {string[]} */
+  const deliveredEvents = [];
+  appDoc.win.koderaDesktop.onEvent('kodera://deep-link', (ev) => {
+    deliveredEvents.push(String(ev.payload));
+  });
+  const pendingInvoke = appDoc.win.koderaDesktop.invoke('get_app_metadata', {});
+  assert.equal(appDoc.posted.length, 2);
+
+  appDoc.dispatchPageHide();
+  await assert.rejects(() => pendingInvoke, /navigation_cancelled/u);
+
+  // Late native event dispatch after `pagehide` is inert because callbacks were cleared.
+  appDoc.win.__KODERA_IPC_DISPATCH_EVENT__(1, 'kodera://workspace/acme/stale');
+  assert.deepEqual(deliveredEvents, []);
+
+  // 3. `stagePackagedWebAssets` stages built web bundle into exact `gui.rs` OS paths.
+  const scratch = mkdtempSync(join(tmpdir(), 'kodera-cli-web-stage-'));
+  try {
+    const fakeDist = join(scratch, 'dist');
+    mkdirSync(join(fakeDist, 'assets'), { recursive: true });
+    writeFileSync(join(fakeDist, 'index.html'), '<!doctype html><title>Kodera</title>', 'utf8');
+    writeFileSync(join(fakeDist, 'assets', 'index-hash.js'), 'export default 1;', 'utf8');
+
+    for (const [target, expectedSuffix] of /** @type {const} */ ([
+      ['macos', 'Contents/Resources/web'],
+      ['linux', 'usr/share/kodera-desktop/web'],
+      ['windows', 'web'],
+    ])) {
+      const plan = buildPackagingPlan(target, {});
+      assert.equal(plan.webResourceStage.webResourceRelPath, expectedSuffix);
+      assert.deepEqual(plan.webResourceStage.tauriBundleResources, { '../../web/dist/': 'web/' });
+
+      const outRoot = join(scratch, `stage-${target}`);
+      const staged = stagePackagedWebAssets(target, outRoot, fakeDist);
+      assert.ok(staged.stagedWebDir.endsWith(expectedSuffix));
+      assert.equal(existsSync(join(staged.stagedWebDir, 'index.html')), true);
+      assert.equal(existsSync(join(staged.stagedWebDir, 'assets', 'index-hash.js')), true);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });

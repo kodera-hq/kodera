@@ -19,13 +19,21 @@ import {
 export const MAX_UNREAD_BADGE_COUNT = 99_999;
 export const MAX_DIRECT_BADGE_COUNT = 99;
 export const REDACTED_NOTIFICATION_PREVIEW = 'New message in Kodera';
+export const COMMUNITY_TLS_MODES = /** @type {const} */ (['acme', 'internal', 'off']);
 
 const VALID_SECRET_KINDS = new Set(['matrix-session', 'oidc-refresh', 'mls-store-key']);
 const VALID_CALL_STATES = new Set(['none', 'voice', 'video']);
 const VALID_TRAY_ACTIONS = new Set(TRAY_MENU_ITEM_IDS);
+const VALID_TLS_MODES = new Set(COMMUNITY_TLS_MODES);
 
 const BIDI_OR_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const UNSAFE_INPUT_RE = /[\u0000-\u0020\u007f-\u009f;|&$`><*?()[\]{}!'"\\#~]/u;
+const UNSAFE_STACK_DIR_RE = /[\u0000-\u001f\u007f-\u009f;|&$`><*?'"\r\n]/u;
+const ABSOLUTE_PATH_RE = /^(?:\/|[A-Za-z]:[\\/])/u;
+const PARENT_SEGMENT_RE = /(?:^|[\\/])\.\.(?:[\\/]|$)/u;
+const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+const EMAIL_LOCAL_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._+-]{0,62}[A-Za-z0-9])?$/u;
 
 /**
  * Formats an unread count into the Dock/Taskbar/Tray badge string (`null` for `0`, `"99+"` above `99`).
@@ -58,6 +66,180 @@ function requireOrganisationId(organisationId) {
     throw new TypeError('invalid_organisation');
   }
   return organisationId;
+}
+
+/**
+ * @param {unknown} rawDir
+ * @returns {string}
+ */
+function validateCommunityStackDir(rawDir) {
+  if (
+    typeof rawDir !== 'string'
+    || rawDir.length === 0
+    || rawDir.length > 512
+    || UNSAFE_STACK_DIR_RE.test(rawDir)
+    || !ABSOLUTE_PATH_RE.test(rawDir)
+    || PARENT_SEGMENT_RE.test(rawDir)
+  ) {
+    throw new RangeError('invalid_stack_dir');
+  }
+  return rawDir;
+}
+
+/**
+ * @param {unknown} rawDomain
+ * @returns {string}
+ */
+function validateCommunityDomain(rawDomain) {
+  if (
+    typeof rawDomain !== 'string'
+    || rawDomain.length === 0
+    || rawDomain.length > 253
+    || UNSAFE_INPUT_RE.test(rawDomain)
+    || rawDomain.includes('..')
+  ) {
+    throw new RangeError('invalid_domain');
+  }
+  const normalized = rawDomain.toLowerCase();
+  if (normalized.startsWith('.') || normalized.endsWith('.')) {
+    throw new RangeError('invalid_domain');
+  }
+  const labels = normalized.split('.');
+  if (labels.length < 2 || !labels.every((label) => DNS_LABEL_RE.test(label))) {
+    throw new RangeError('invalid_domain');
+  }
+  const tld = labels[labels.length - 1];
+  if (tld.length < 2 || !/^[a-z]+$/u.test(tld)) {
+    throw new RangeError('invalid_domain');
+  }
+  return normalized;
+}
+
+/**
+ * @param {string} normalizedDomain
+ * @returns {string}
+ */
+function deriveMatrixBaseDomain(normalizedDomain) {
+  const labels = normalizedDomain.split('.');
+  return labels.length >= 3 ? labels.slice(1).join('.') : normalizedDomain;
+}
+
+/**
+ * @param {unknown} rawEmail
+ * @returns {string}
+ */
+function validateCommunityEmail(rawEmail) {
+  if (
+    typeof rawEmail !== 'string'
+    || rawEmail.length === 0
+    || rawEmail.length > 254
+    || UNSAFE_INPUT_RE.test(rawEmail)
+    || rawEmail.includes('..')
+  ) {
+    throw new RangeError('invalid_acme_email');
+  }
+  const parts = rawEmail.split('@');
+  if (parts.length !== 2) {
+    throw new RangeError('invalid_acme_email');
+  }
+  const [local, domain] = parts;
+  if (!EMAIL_LOCAL_RE.test(local)) {
+    throw new RangeError('invalid_acme_email');
+  }
+  let normalizedDomain;
+  try {
+    normalizedDomain = validateCommunityDomain(domain);
+  } catch {
+    throw new RangeError('invalid_acme_email');
+  }
+  return `${local}@${normalizedDomain}`;
+}
+
+/**
+ * @param {unknown} rawOrigin
+ * @returns {string}
+ */
+function validateCommunityOidcOrigin(rawOrigin) {
+  if (
+    typeof rawOrigin !== 'string'
+    || rawOrigin.length === 0
+    || rawOrigin.length > 256
+    || UNSAFE_INPUT_RE.test(rawOrigin)
+    || rawOrigin.includes('..')
+    || !rawOrigin.startsWith('https://')
+  ) {
+    throw new RangeError('invalid_oidc_origin');
+  }
+  const rest = rawOrigin.slice('https://'.length);
+  if (
+    rest.length === 0
+    || rest.includes('/')
+    || rest.includes('?')
+    || rest.includes('#')
+    || rest.includes('@')
+  ) {
+    throw new RangeError('invalid_oidc_origin');
+  }
+  const colonIdx = rest.indexOf(':');
+  let hostPart = rest;
+  let portSuffix = '';
+  if (colonIdx !== -1) {
+    hostPart = rest.slice(0, colonIdx);
+    const portStr = rest.slice(colonIdx + 1);
+    if (!/^[0-9]{1,5}$/u.test(portStr)) {
+      throw new RangeError('invalid_oidc_origin');
+    }
+    const portNum = Number(portStr);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      throw new RangeError('invalid_oidc_origin');
+    }
+    if (portNum !== 443) {
+      portSuffix = `:${portNum}`;
+    }
+  }
+  let normalizedHost;
+  try {
+    normalizedHost = validateCommunityDomain(hostPart);
+  } catch {
+    throw new RangeError('invalid_oidc_origin');
+  }
+  return `https://${normalizedHost}${portSuffix}`;
+}
+
+/**
+ * @param {unknown} httpPort
+ * @param {unknown} httpsPort
+ * @returns {{ httpPort: number, httpsPort: number }}
+ */
+function validateCommunityPorts(httpPort, httpsPort) {
+  const http = httpPort ?? 80;
+  const https = httpsPort ?? 443;
+  if (
+    typeof http !== 'number'
+    || typeof https !== 'number'
+    || !Number.isInteger(http)
+    || !Number.isInteger(https)
+    || http < 1
+    || http > 65535
+    || https < 1
+    || https > 65535
+    || http === https
+  ) {
+    throw new RangeError('invalid_port');
+  }
+  return { httpPort: http, httpsPort: https };
+}
+
+/**
+ * @param {unknown} rawMode
+ * @returns {'acme' | 'internal' | 'off'}
+ */
+function validateCommunityTlsMode(rawMode) {
+  const mode = rawMode ?? 'acme';
+  if (typeof mode !== 'string' || !VALID_TLS_MODES.has(/** @type {'acme' | 'internal' | 'off'} */ (mode))) {
+    throw new RangeError('invalid_tls_mode');
+  }
+  return /** @type {'acme' | 'internal' | 'off'} */ (mode);
 }
 
 /**
@@ -183,7 +365,7 @@ export function createDesktopClient(options = {}) {
         await internals.invoke('check_app_updates', {})
       );
       return {
-        supported: true,
+        supported: Boolean(response?.supported),
         updateAvailable: Boolean(response?.updateAvailable),
         currentVersion: typeof response?.currentVersion === 'string' ? response.currentVersion : DESKTOP_APP_VERSION,
         latestVersion: typeof response?.latestVersion === 'string' ? response.latestVersion : null,
@@ -686,6 +868,220 @@ export function createDesktopClient(options = {}) {
         width: typeof response?.width === 'number' ? response.width : 1280,
         height: typeof response?.height === 'number' ? response.height : 820,
         clamped: Boolean(response?.clamped),
+      };
+    },
+
+    /**
+     * @param {{
+     *   stackDir: string,
+     *   domain: string,
+     *   acmeEmail: string,
+     *   tlsMode?: 'acme' | 'internal' | 'off',
+     *   httpPort?: number,
+     *   httpsPort?: number,
+     * }} input
+     */
+    async preflightCommunityDeploy(input) {
+      if (!input || typeof input !== 'object') {
+        throw new TypeError('invalid_preflight_input');
+      }
+      const stackDir = validateCommunityStackDir(input.stackDir);
+      const normalizedDomain = validateCommunityDomain(input.domain);
+      const acmeEmail = validateCommunityEmail(input.acmeEmail);
+      const tlsMode = validateCommunityTlsMode(input.tlsMode);
+      const { httpPort, httpsPort } = validateCommunityPorts(input.httpPort, input.httpsPort);
+      const matrixBaseDomain = deriveMatrixBaseDomain(normalizedDomain);
+
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          dockerVersion: null,
+          composeVersion: null,
+          composeFilePresent: false,
+          stackDirWritable: false,
+          normalizedDomain,
+          matrixBaseDomain,
+          tlsMode,
+          httpPort,
+          httpsPort,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('self_host_preflight_community', {
+          organisation_id: organisationId,
+          stack_dir: stackDir,
+          domain: normalizedDomain,
+          acme_email: acmeEmail,
+          tls_mode: tlsMode,
+          http_port: httpPort,
+          https_port: httpsPort,
+        })
+      );
+      return {
+        supported: true,
+        dockerVersion: typeof response?.docker_version === 'string' ? response.docker_version : null,
+        composeVersion: typeof response?.compose_version === 'string' ? response.compose_version : null,
+        composeFilePresent: Boolean(response?.compose_file_present),
+        stackDirWritable: Boolean(response?.stack_dir_writable),
+        normalizedDomain:
+          typeof response?.normalized_domain === 'string'
+            ? response.normalized_domain
+            : normalizedDomain,
+        matrixBaseDomain:
+          typeof response?.matrix_base_domain === 'string'
+            ? response.matrix_base_domain
+            : matrixBaseDomain,
+        tlsMode,
+        httpPort,
+        httpsPort,
+      };
+    },
+
+    /**
+     * @param {{
+     *   stackDir: string,
+     *   domain: string,
+     *   acmeEmail: string,
+     *   oidcProviderOrigin: string,
+     *   tlsMode?: 'acme' | 'internal' | 'off',
+     *   httpPort?: number,
+     *   httpsPort?: number,
+     * }} input
+     */
+    async prepareCommunityDeploy(input) {
+      if (!input || typeof input !== 'object') {
+        throw new TypeError('invalid_prepare_input');
+      }
+      const stackDir = validateCommunityStackDir(input.stackDir);
+      const normalizedDomain = validateCommunityDomain(input.domain);
+      const acmeEmail = validateCommunityEmail(input.acmeEmail);
+      const oidcOrigin = validateCommunityOidcOrigin(input.oidcProviderOrigin);
+      const tlsMode = validateCommunityTlsMode(input.tlsMode);
+      const { httpPort, httpsPort } = validateCommunityPorts(input.httpPort, input.httpsPort);
+      const matrixBaseDomain = deriveMatrixBaseDomain(normalizedDomain);
+      const defaultOidcIssuer = `${oidcOrigin}/realms/community`;
+
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          envFileWritten: false,
+          unixFileMode: 0,
+          composeConfigValid: false,
+          generatedSecretKeys: /** @type {string[]} */ ([]),
+          normalizedDomain,
+          matrixBaseDomain,
+          oidcIssuer: defaultOidcIssuer,
+          tlsMode,
+          httpPort,
+          httpsPort,
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('self_host_prepare_community', {
+          organisation_id: organisationId,
+          stack_dir: stackDir,
+          domain: normalizedDomain,
+          acme_email: acmeEmail,
+          oidc_provider_origin: oidcOrigin,
+          tls_mode: tlsMode,
+          http_port: httpPort,
+          https_port: httpsPort,
+        })
+      );
+      const rawKeys = response?.generated_secret_keys;
+      const secretKeys = Array.isArray(rawKeys)
+        ? rawKeys.filter((item) => typeof item === 'string')
+        : [];
+      return {
+        supported: true,
+        envFileWritten: Boolean(response?.env_file_written),
+        unixFileMode: typeof response?.unix_file_mode === 'number' ? response.unix_file_mode : 0,
+        composeConfigValid: Boolean(response?.compose_config_valid),
+        generatedSecretKeys: secretKeys,
+        normalizedDomain:
+          typeof response?.normalized_domain === 'string'
+            ? response.normalized_domain
+            : normalizedDomain,
+        matrixBaseDomain:
+          typeof response?.matrix_base_domain === 'string'
+            ? response.matrix_base_domain
+            : matrixBaseDomain,
+        oidcIssuer:
+          typeof response?.oidc_issuer === 'string' ? response.oidc_issuer : defaultOidcIssuer,
+        tlsMode,
+        httpPort,
+        httpsPort,
+      };
+    },
+
+    /**
+     * @param {{
+     *   stackDir: string,
+     *   timeoutMs?: number,
+     * }} input
+     */
+    async deployCommunityStack(input) {
+      if (!input || typeof input !== 'object') {
+        throw new TypeError('invalid_deploy_input');
+      }
+      const stackDir = validateCommunityStackDir(input.stackDir);
+      if (input.timeoutMs !== undefined) {
+        if (
+          !Number.isInteger(input.timeoutMs)
+          || input.timeoutMs < 1_000
+          || input.timeoutMs > 300_000
+        ) {
+          throw new RangeError('invalid_timeout_ms');
+        }
+      }
+
+      const internals = getInternals();
+      if (!internals) {
+        return {
+          supported: false,
+          stackHealthy: false,
+          pollAttempts: 0,
+          state: 'unavailable',
+          observedMemoryMib: 0,
+          coreServices: /** @type {Array<{ service: string, readiness: string, externalOidc: boolean }>} */ ([]),
+        };
+      }
+      const organisationId = requireOrganisationId(activeOrganisationId);
+      /** @type {Record<string, unknown>} */
+      const args = {
+        organisation_id: organisationId,
+        stack_dir: stackDir,
+      };
+      if (input.timeoutMs !== undefined) {
+        args.timeout_ms = input.timeoutMs;
+      }
+      const response = /** @type {Record<string, unknown> | null} */ (
+        await internals.invoke('self_host_deploy_community', args)
+      );
+      const maybeServices = response?.core_services;
+      const rawServices = Array.isArray(maybeServices) ? maybeServices : [];
+      const coreServices = rawServices
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => {
+          const rec = /** @type {Record<string, unknown>} */ (item);
+          return {
+            service: typeof rec.service === 'string' ? rec.service : 'unknown',
+            readiness: typeof rec.readiness === 'string' ? rec.readiness : 'unknown',
+            externalOidc: Boolean(rec.external_oidc),
+          };
+        });
+      return {
+        supported: true,
+        stackHealthy: Boolean(response?.stack_healthy),
+        pollAttempts: typeof response?.poll_attempts === 'number' ? response.poll_attempts : 0,
+        state: typeof response?.state === 'string' ? response.state : 'unknown',
+        observedMemoryMib:
+          typeof response?.observed_memory_mib === 'number' ? response.observed_memory_mib : 0,
+        coreServices,
       };
     },
   };

@@ -26,9 +26,30 @@ fn assert_utf8_json(rel_path: &str) {
     );
 }
 
+fn assert_design_tokens_stylesheet(rel_path: &str) {
+    println!("cargo:rerun-if-changed={rel_path}");
+    let text = fs::read_to_string(rel_path)
+        .unwrap_or_else(|err| panic!("missing or unreadable `{rel_path}`: {err}"));
+    for required_token in [
+        ":root",
+        "[data-theme=\"light\"]",
+        "--font-sans:",
+        "--font-mono:",
+        "--action-primary:",
+        "--surface:",
+        "--text-primary:",
+    ] {
+        assert!(
+            text.contains(required_token),
+            "`{rel_path}` is missing required design token `{required_token}`"
+        );
+    }
+}
+
 fn main() {
     assert_utf8_json("tauri.conf.json");
     assert_utf8_json("capabilities/default.json");
+    assert_design_tokens_stylesheet("../../../packages/design-tokens/dist/tokens.css");
 
     const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
     assert_magic("icons/32x32.png", PNG_MAGIC);

@@ -298,6 +298,17 @@ export function validateTauriSecurityInvariants(config, defaultCapability) {
     throw new Error('deep-link schemes must register exactly kodera and matrix');
   }
 
+  const resources = config?.bundle?.resources;
+  if (
+    !resources
+    || typeof resources !== 'object'
+    || Array.isArray(resources)
+    || Object.keys(resources).length !== 1
+    || resources['../../web/dist/'] !== 'web/'
+  ) {
+    throw new Error('bundle resources must stage ../../web/dist/ at web/');
+  }
+
   const icons = config?.bundle?.icon;
   if (
     !Array.isArray(icons)

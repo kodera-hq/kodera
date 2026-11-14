@@ -53,6 +53,13 @@ jobs:
           python3 scripts/ci/check-native-packaging.selftest.py
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-native-packaging-workflow.py --selftest
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-native-packaging-workflow.py
+      - name: Multi-OS release binaries workflow policy gate (with self-test)
+        run: |
+          python3 scripts/ci/check-release-workflow.py --selftest
+          python3 scripts/ci/check-release-workflow.py
+          python3 scripts/ci/package-android-release.py --selftest
+          python3 scripts/ci/assemble-release-sbom.py --selftest
+          node scripts/ci/package-desktop-release.mjs --selftest
       - name: Documentation links, ADR index and retired wording (with self-test)
         run: |
           python3 scripts/ci/check-docs-truth.py --selftest

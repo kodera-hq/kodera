@@ -30,14 +30,14 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [ ] `Kodera Passport`: optional Passkey / Magic-Link sign-in across workspaces
 - [ ] Slack / Discord channel & history importer for workspace migrations
 
-## Track 3 — Native Clients (`Status: Planned`)
+## Track 3 — Native Clients (`Status: In Progress`)
 
 - [ ] Mobile v1.0 for iOS and Android: a companion app, with no in-app purchase and no pricing screen
 - [ ] Bindings connecting `packages/kodera-rs` to `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose)
 - [x] Web Push notifications that wake the web client without carrying message text
 - [ ] Native mobile push delivery and notification integration
-- [ ] Tauri v2 Desktop (`@kodera/desktop`) with a running shell and installers for macOS, Windows and Linux
-- [ ] A local self-host wizard inside Kodera Desktop
+- [x] Tauri v2 Desktop (`@kodera/desktop`) with a running shell and installers for macOS, Windows and Linux
+- [x] A local self-host wizard inside Kodera Desktop
 
 ## Track 4 — Encryption & Federation (`Status: Deferred`)
 
