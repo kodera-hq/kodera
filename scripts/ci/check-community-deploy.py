@@ -101,6 +101,7 @@ SYNAPSE_OIDC_ENV_NAME = "KODERA_SYNAPSE_OIDC_CLIENT_SECRET"
 SYNAPSE_OIDC_ISSUER_ENV_NAME = "KODERA_SYNAPSE_OIDC_ISSUER"
 SYNAPSE_DB_ENV_NAME = "SYNAPSE_POSTGRES_PASSWORD"
 FEDERATION_ENV_NAME = "KODERA_MATRIX_FEDERATION_ALLOWLIST"
+FEDERATION_MODE_ENV_NAME = "KODERA_FEDERATION_MODE"
 # `single` (the default) serves the web client and every backend on KODERA_DOMAIN. `split` serves
 # the web client from its own static origin, https://<KODERA_DOMAIN>, and the backends on
 # api.<KODERA_MATRIX_DOMAIN>, matrix.<KODERA_DOMAIN> and livekit.<KODERA_DOMAIN> (README.md,
@@ -1241,6 +1242,19 @@ def check_synapse_config(source: str) -> list[str]:
             if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), {FEDERATION_ENV_NAME: unsafe})):
                 problems.append("Synapse federation allowlist must refuse a wildcard or private server name")
                 break
+        public = configure(_generated_homeserver(), {"KODERA_FEDERATION_MODE": "open"})
+        if public.get("federation_domain_whitelist", "missing") is not None or "federation" not in listener_names(public):
+            problems.append("Synapse explicit open mode must enable federation transport")
+        if (public.get("rc_federation") != {"window_size": 1000, "sleep_limit": 10, "sleep_delay": 500, "reject_limit": 50, "concurrent": 3}
+                or public.get("federation_verify_certificates") is not True
+                or public.get("ip_range_whitelist") != []
+                or not {"127.0.0.0/8", "10.0.0.0/8", "169.254.0.0/16", "fc00::/7"} <= set(public.get("ip_range_blacklist", []))
+                or public.get("allow_profile_lookup_over_federation") is not False):
+            problems.append("Synapse open federation must retain rate, TLS and private-address abuse controls")
+        for unsafe in ({"KODERA_FEDERATION_MODE": "typo"}, {"KODERA_FEDERATION_MODE": "partner"}, {"KODERA_FEDERATION_MODE": "closed", FEDERATION_ENV_NAME: "a.example.org"}, {"KODERA_FEDERATION_MODE": "open", FEDERATION_ENV_NAME: "a.example.org"}, {"KODERA_FEDERATION_MODE": "open", "HTTPS_PROXY": "http://proxy.example.org"}):
+            if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), unsafe)):
+                problems.append("Synapse federation modes must refuse ambiguity and proxy bypass")
+                break
         return problems
 
     def policy() -> list[str]:
@@ -1248,6 +1262,7 @@ def check_synapse_config(source: str) -> list[str]:
             "agent_user_id": "@kodera-agent:chat.example.org",
             "room_access_user_id": "@kodera-rooms:chat.example.org",
             "federation_domain_allowlist": [],
+            "federation_mode": "closed",
         }}
         modules = closed.get("modules") or []
         if modules.count(wanted) != 1 or {"module": "operator.module"} not in modules:
@@ -1645,7 +1660,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME) and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME) and not actual.get(key, "").strip("'\""):
             continue  # An .env written before the topology setting existed runs the single topology.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
@@ -1689,12 +1704,19 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             for name in value.split(",")
         ):
             errors.append(f"{FEDERATION_ENV_NAME} must list public server names, comma-separated, with no wildcard")
+    federation_environment = {key: actual.get(key, "").strip("'\"") for key in (FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME)}
+    renderer = runpy.run_path(str(ROOT / "deploy/community/configure_synapse.py"))
+    try:
+        mode = renderer["federation_mode"](federation_environment, renderer["federation_allowlist"](federation_environment))
+    except (ValueError, TypeError):
+        errors.append("KODERA_FEDERATION_MODE requires closed, partner or open with an unambiguous global allowlist")
+        mode = "closed"
     partner_raw = actual.get("KODERA_MATRIX_PARTNER_CHANNELS", "").strip("'\"")
     if partner_raw:
         validation = runpy.run_path(str(ROOT / "apps/server/tenant_agent/federation.py"))
         try:
-            allowed = validation["servers"]([name.strip() for name in actual.get(FEDERATION_ENV_NAME, "").strip("'\"").split(",") if name.strip()])
-            validation["parse"](partner_raw, allowed)
+            allowed = validation["servers"]([name.strip() for name in actual.get(FEDERATION_ENV_NAME, "").strip("'\"").split(",") if name.strip()], empty=mode == "open")
+            validation["parse"](partner_raw, None if mode == "open" else allowed)
         except (ValueError, TypeError):
             errors.append("KODERA_MATRIX_PARTNER_CHANNELS requires bounded UUIDs and allowlisted public servers")
     database_passwords = [actual.get(key, "").strip().strip("'\"") for key in (
@@ -2395,7 +2417,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     filled = "\n".join(
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
-        else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
+        else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i]) * 32).decode()}" if "BASE64URL_32" in value
@@ -2492,6 +2514,14 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     generic_issuer = "https://id.example.net/realms/acme"
     signed_in = with_values(filled, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: generic_issuer, SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL})
     hardening_refusals = [
+        ("unknown federation mode", with_values(filled, **{FEDERATION_MODE_ENV_NAME: "unrecognized"}),
+         "KODERA_FEDERATION_MODE requires closed, partner or open"),
+        ("partner mode without global servers", with_values(filled, **{FEDERATION_MODE_ENV_NAME: "partner"}),
+         "KODERA_FEDERATION_MODE requires closed, partner or open"),
+        ("closed mode with global servers", with_values(filled, **{FEDERATION_MODE_ENV_NAME: "closed", FEDERATION_ENV_NAME: "partner.example.net"}),
+         "KODERA_FEDERATION_MODE requires closed, partner or open"),
+        ("open mode with ambiguous global servers", with_values(filled, **{FEDERATION_MODE_ENV_NAME: "open", FEDERATION_ENV_NAME: "partner.example.net"}),
+         "KODERA_FEDERATION_MODE requires closed, partner or open"),
         ("Synapse client secret without an issuer", with_values(filled, **{SYNAPSE_OIDC_ENV_NAME: SYNTHETIC_CREDENTIAL}),
          f"{SYNAPSE_OIDC_ENV_NAME} requires {SYNAPSE_OIDC_ISSUER_ENV_NAME}"),
         ("Synapse issuer without its client secret", with_values(filled, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: generic_issuer}),
@@ -2525,6 +2555,9 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             print(f"[FAIL] preflight hardening case '{label}' printed a value", file=sys.stderr)
             return 1
     hardening_accepted = [
+        ("legacy file without federation mode", re.sub(r"(?m)^KODERA_FEDERATION_MODE=.*\n?", "", filled)),
+        ("explicit closed federation", with_values(filled, **{FEDERATION_MODE_ENV_NAME: "closed"})),
+        ("explicit open transport with exact room admission", with_values(filled, **{FEDERATION_MODE_ENV_NAME: "open", "KODERA_MATRIX_PARTNER_CHANNELS": partner_example})),
         ("isolated self-host with Matrix sign-in", signed_in),
         ("federation opened to named servers", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net,other.example.net"})),
         ("Community naming its own issuer for Synapse", with_values(canonical, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.net/realms/community"})),
@@ -2558,6 +2591,14 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
 # Each entry breaks one hardening invariant in configure_synapse.py; the behavioural check must
 # then name that invariant. (label, text to replace, replacement, expected refusal)
 SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
+    ("open federation loses rate control", 'document["rc_federation"] = copy.deepcopy(FEDERATION_RATE_LIMITS)', 'document["rc_federation"] = {"concurrent": 10000}',
+     "Synapse open federation must retain rate, TLS and private-address abuse controls"),
+    ("open federation loses TLS verification", 'document["federation_verify_certificates"] = True', 'document["federation_verify_certificates"] = False',
+     "Synapse open federation must retain rate, TLS and private-address abuse controls"),
+    ("open federation allows private-address exception", 'document["ip_range_whitelist"] = []', 'document["ip_range_whitelist"] = ["127.0.0.1/32"]',
+     "Synapse open federation must retain rate, TLS and private-address abuse controls"),
+    ("open federation accepts proxy bypass", 'if mode == "open" and any(environment.get(name)', 'if False and any(environment.get(name)',
+     "Synapse federation modes must refuse ambiguity and proxy bypass"),
     ("Synapse stays on SQLite", 'document["database"] = {"name": "psycopg2"', 'document["database_unused"] = {"name": "psycopg2"',
      "Synapse must run on PostgreSQL, not SQLite"),
     ("the database password is written to the configuration", '"host": DATABASE_HOST,', '"host": DATABASE_HOST, "password": "synapse",',

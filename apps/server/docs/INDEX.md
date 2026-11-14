@@ -58,6 +58,7 @@ Every document under `docs/` and `contracts/` is listed here. A pull request tha
 | [`adr/0023-matrix-server-name-is-the-tenant-slug.md`](adr/0023-matrix-server-name-is-the-tenant-slug.md) | Accepted | API seat | The Matrix server name is the tenant's slug, not the organisation's; partly supersedes ADR-0018 |
 | [`adr/0024-default-community-membership.md`](adr/0024-default-community-membership.md) | Accepted | API seat | Canonical community membership, issuer isolation and explicit account binding |
 | [`adr/0025-explicit-partner-room-federation.md`](adr/0025-explicit-partner-room-federation.md) | Proposed | API seat | Explicit bounded partner federation, closed internal rooms and immutable replacement boundary |
+| [`adr/0026-immutable-confidential-room-boundaries.md`](adr/0026-immutable-confidential-room-boundaries.md) | Proposed | API seat | Immutable confidential-room algorithms, epoch media exporters and explicit federation transport boundaries |
 
 ## API specifications
 

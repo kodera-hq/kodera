@@ -71,7 +71,12 @@ class Config:
                 if name.strip()
             ]
             allowlist = federation.servers(names, empty=True)
-            partners = federation.parse(env.get("KODERA_MATRIX_PARTNER_CHANNELS", ""), allowlist)
+            mode = env.get("KODERA_FEDERATION_MODE") or ("partner" if allowlist else "closed")
+            if mode not in ("closed", "partner", "open") or (mode in ("closed", "open") and allowlist):
+                raise ValueError("invalid federation mode and allowlist combination")
+            if mode == "partner" and not allowlist:
+                raise ValueError("partner mode requires an allowlist")
+            partners = federation.parse(env.get("KODERA_MATRIX_PARTNER_CHANNELS", ""), None if mode == "open" else allowlist)
             if any(env.get("KODERA_MATRIX_SERVER_NAME", "") in names for _, names in partners):
                 raise ValueError("a partner homeserver must be external")
         except (ValueError, TypeError):

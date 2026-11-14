@@ -24,7 +24,7 @@ def servers(value: Any, *, empty: bool = False) -> tuple[str, ...]:
     return tuple(sorted(value))
 
 
-def parse(raw: str, allowlist: tuple[str, ...]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+def parse(raw: str, allowlist: tuple[str, ...] | None) -> tuple[tuple[str, tuple[str, ...]], ...]:
     if not raw:
         return ()
     if len(raw.encode()) > 32768:
@@ -46,7 +46,7 @@ def parse(raw: str, allowlist: tuple[str, ...]) -> tuple[tuple[str, tuple[str, .
         if not isinstance(key, str) or str(UUID(key)) != key:
             raise ValueError("partner channel configuration requires canonical channel UUIDs")
         names = servers(value)
-        if not set(names) <= set(allowlist):
+        if allowlist is not None and not set(names) <= set(allowlist):
             raise ValueError("partner channel servers exceed the operator federation allowlist")
         result.append((key, names))
     return tuple(sorted(result))
