@@ -65,7 +65,7 @@ fn aad(scope: &NativeRoomScope, device: &Ed25519PublicKey, epoch: u64, generatio
 
 // This buffer is never formatted or exported. Moving its allocation into the
 // existing zeroizing wrapper avoids a second plaintext allocation on cleanup.
-struct CheckpointBuffer(Vec<u8>);
+pub(super) struct CheckpointBuffer(pub(super) Vec<u8>);
 
 impl Drop for CheckpointBuffer {
     fn drop(&mut self) {
@@ -76,14 +76,18 @@ impl Drop for CheckpointBuffer {
 // A failed restore must also clear copies already admitted to provisional
 // provider storage. Active OpenMLS state and upstream internal allocations have
 // their own lifetimes; this is not a universal or forensic memory-wipe guarantee.
-struct RestoringProvider(Option<OpenMlsRustCrypto>);
+pub(super) struct RestoringProvider(Option<OpenMlsRustCrypto>);
 
 impl RestoringProvider {
-    fn provider(&self) -> &OpenMlsRustCrypto {
+    pub(super) fn new() -> Self {
+        Self(Some(OpenMlsRustCrypto::default()))
+    }
+
+    pub(super) fn provider(&self) -> &OpenMlsRustCrypto {
         self.0.as_ref().expect("provisional provider is present")
     }
 
-    fn accept(mut self) -> OpenMlsRustCrypto {
+    pub(super) fn accept(mut self) -> OpenMlsRustCrypto {
         self.0.take().expect("provisional provider is present")
     }
 }
@@ -105,10 +109,15 @@ impl Drop for RestoringProvider {
 }
 
 fn encode_store(session: &OpenMlsSession) -> Result<CheckpointBuffer, NativeCryptoError> {
+    encode_provider(&session.provider)
+}
+
+pub(super) fn encode_provider(
+    provider: &OpenMlsRustCrypto,
+) -> Result<CheckpointBuffer, NativeCryptoError> {
     // The provider is private to this session. The immutable session borrow and
     // store read guard prevent a checkpoint assembled from different mutations.
-    let values = session
-        .provider
+    let values = provider
         .storage()
         .values
         .read()
@@ -148,7 +157,7 @@ fn encode_store(session: &OpenMlsSession) -> Result<CheckpointBuffer, NativeCryp
     Ok(output)
 }
 
-fn take<'a>(input: &mut &'a [u8], length: usize) -> Result<&'a [u8], NativeCryptoError> {
+pub(super) fn take<'a>(input: &mut &'a [u8], length: usize) -> Result<&'a [u8], NativeCryptoError> {
     if input.len() < length {
         return Err(NativeCryptoError::InvalidInput);
     }
@@ -157,7 +166,7 @@ fn take<'a>(input: &mut &'a [u8], length: usize) -> Result<&'a [u8], NativeCrypt
     Ok(taken)
 }
 
-fn number(input: &mut &[u8]) -> Result<usize, NativeCryptoError> {
+pub(super) fn number(input: &mut &[u8]) -> Result<usize, NativeCryptoError> {
     let value: [u8; 4] = take(input, 4)?
         .try_into()
         .map_err(|_| NativeCryptoError::InvalidInput)?;
@@ -166,7 +175,7 @@ fn number(input: &mut &[u8]) -> Result<usize, NativeCryptoError> {
 
 type Records<'a> = Vec<(&'a [u8], &'a [u8])>;
 
-fn validate_store(mut input: &[u8]) -> Result<Records<'_>, NativeCryptoError> {
+pub(super) fn validate_store(mut input: &[u8]) -> Result<Records<'_>, NativeCryptoError> {
     if input.len() > MAX_PLAINTEXT_BYTES {
         return Err(NativeCryptoError::Capacity);
     }
@@ -203,6 +212,25 @@ fn validate_store(mut input: &[u8]) -> Result<Records<'_>, NativeCryptoError> {
         return Err(NativeCryptoError::InvalidInput);
     }
     Ok(rows)
+}
+
+pub(super) fn decode_provider(input: &[u8]) -> Result<RestoringProvider, NativeCryptoError> {
+    let records = validate_store(input)?;
+    let provisional = RestoringProvider::new();
+    {
+        let mut values = provisional
+            .provider()
+            .storage()
+            .values
+            .write()
+            .map_err(|_| NativeCryptoError::Storage)?;
+        values.extend(
+            records
+                .into_iter()
+                .map(|(key, value)| (key.to_vec(), value.to_vec())),
+        );
+    }
+    Ok(provisional)
 }
 
 impl OpenMlsSession {
@@ -282,21 +310,8 @@ impl OpenMlsSession {
                 Tag::from_slice(&sealed.0[tag_start..]),
             )
             .map_err(failed)?;
-        let records = validate_store(&plaintext.0)?;
-        let provisional = RestoringProvider(Some(OpenMlsRustCrypto::default()));
+        let provisional = decode_provider(&plaintext.0)?;
         let provider = provisional.provider();
-        {
-            let mut values = provider
-                .storage()
-                .values
-                .write()
-                .map_err(|_| NativeCryptoError::Storage)?;
-            values.extend(
-                records
-                    .into_iter()
-                    .map(|(key, value)| (key.to_vec(), value.to_vec())),
-            );
-        }
         let signer = SignatureKeyPair::read(
             provider.storage(),
             &expected_device,

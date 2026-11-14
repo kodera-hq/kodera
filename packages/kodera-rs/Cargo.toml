@@ -16,7 +16,7 @@ crate-type = ["rlib", "staticlib", "cdylib"]
 default = []
 # Optional UniFFI, OpenMLS (RFC 9420), and BLE GATT bindings enabled by mobile/desktop targets.
 uniffi-bindings = []
-openmls-engine = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_traits", "dep:tls_codec", "dep:aes-gcm"]
+openmls-engine = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_traits", "dep:tls_codec", "dep:aes-gcm", "dep:serde_json", "dep:base64"]
 megolm-engine = ["dep:vodozemac"]
 passkey-bindings = ["dep:p256", "dep:serde", "dep:serde_json", "dep:base64", "dep:getrandom"]
 native-crypto = ["openmls-engine", "megolm-engine", "passkey-bindings"]

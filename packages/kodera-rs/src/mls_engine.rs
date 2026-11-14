@@ -16,6 +16,14 @@ use crate::{
 
 mod persistence;
 pub use persistence::SealedMlsState;
+mod device;
+mod relay_statement;
+pub use device::{
+    InitialMlsRoomWrite, MlsDeviceScope, MlsDeviceStore, MlsDeviceStoreError,
+    MlsDeviceWrappingKeys, MlsDeviceWrite, OpenMlsDevice, PendingMlsPackageId, PendingMlsWelcome,
+    PreparedMlsKeyPackage, SealedMlsDeviceState, MAX_SEALED_MLS_DEVICE_BYTES,
+};
+pub use relay_statement::{RelayAlgorithm, RelayId, RelayStatement, SignedRelayRequest};
 
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 const MAX_MEMBERS: usize = 128;
