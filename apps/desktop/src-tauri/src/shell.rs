@@ -33,6 +33,11 @@ pub const DESKTOP_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DesktopShellError {
     InvalidCliArguments,
+    GuiLaunchRequired,
+    GuiRuntimeUnavailable,
+    GuiWindowInitFailed,
+    GuiWebViewInitFailed,
+    UntrustedStartupUrl,
     SelfCheckFailed(&'static str),
     DeepLinkRejected(String),
     IoFailure,
@@ -42,6 +47,11 @@ impl fmt::Display for DesktopShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidCliArguments => f.write_str("invalid_cli_arguments"),
+            Self::GuiLaunchRequired => f.write_str("gui_launch_required"),
+            Self::GuiRuntimeUnavailable => f.write_str("gui_runtime_unavailable"),
+            Self::GuiWindowInitFailed => f.write_str("gui_window_init_failed"),
+            Self::GuiWebViewInitFailed => f.write_str("gui_webview_init_failed"),
+            Self::UntrustedStartupUrl => f.write_str("untrusted_startup_url"),
             Self::SelfCheckFailed(stage) => write!(f, "self_check_failed:{stage}"),
             Self::DeepLinkRejected(code) => write!(f, "deep_link_rejected:{code}"),
             Self::IoFailure => f.write_str("io_failure"),
@@ -50,6 +60,57 @@ impl fmt::Display for DesktopShellError {
 }
 
 impl std::error::Error for DesktopShellError {}
+
+/// Startup execution mode resolved from OS process arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesktopLaunchMode {
+    /// Launch the native OS desktop window and WebView event loop (`kodera-desktop` with no CLI flags,
+    /// `--gui`, macOS LaunchServices `-psn_*`, or an OS protocol activation URI).
+    Gui {
+        initial_deep_link: Option<AdmittedDeepLink>,
+    },
+    /// Run a deterministic headless CLI / stdio RPC operation and exit.
+    Cli(Vec<String>),
+}
+
+/// Classifies raw `argv[1..]` process arguments into native GUI launch vs headless CLI execution.
+pub fn classify_launch_args<I, S>(args: I) -> Result<DesktopLaunchMode, DesktopShellError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let filtered: Vec<String> = args
+        .into_iter()
+        .map(|s| s.as_ref().to_owned())
+        .filter(|arg| !arg.starts_with("-psn_"))
+        .collect();
+
+    match filtered.as_slice() {
+        [] => Ok(DesktopLaunchMode::Gui {
+            initial_deep_link: None,
+        }),
+        [flag] if flag == "--gui" => Ok(DesktopLaunchMode::Gui {
+            initial_deep_link: None,
+        }),
+        [flag, raw_uri] if flag == "--gui" => {
+            let policy = DeepLinkAdmissionPolicy::kodera_default();
+            let admitted = route_deep_link(raw_uri, &policy)
+                .map_err(|err| DesktopShellError::DeepLinkRejected(err.to_string()))?;
+            Ok(DesktopLaunchMode::Gui {
+                initial_deep_link: Some(admitted),
+            })
+        }
+        [raw_uri] if raw_uri.starts_with("kodera:") || raw_uri.starts_with("matrix:") => {
+            let policy = DeepLinkAdmissionPolicy::kodera_default();
+            let admitted = route_deep_link(raw_uri, &policy)
+                .map_err(|err| DesktopShellError::DeepLinkRejected(err.to_string()))?;
+            Ok(DesktopLaunchMode::Gui {
+                initial_deep_link: Some(admitted),
+            })
+        }
+        _ => Ok(DesktopLaunchMode::Cli(filtered)),
+    }
+}
 
 /// Immutable build, platform, and capability metadata exposed to the web shell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +232,17 @@ impl DesktopShellHost {
 
     pub fn tray_menu(&self) -> &TrayMenuModel {
         &self.tray_menu
+    }
+
+    pub const fn has_active_session(&self) -> bool {
+        self.session.is_some()
+    }
+
+    pub fn clear_active_session(&mut self) {
+        if let Some(session) = &mut self.session {
+            session.clear_session();
+        }
+        self.session = None;
     }
 
     /// Runs deterministic startup self-checks across CSP, window bounds, tray menu, deep-link
@@ -525,7 +597,11 @@ fn json_escape(raw: &str) -> String {
     out
 }
 
-/// Executes the `kodera-desktop` CLI contract and returns a process exit code.
+/// Executes the headless `kodera-desktop` CLI contract and returns a process exit code.
+///
+/// Invoking `kodera-desktop` without CLI arguments launches the native desktop GUI window via
+/// [`crate::gui::launch_desktop_gui`]; passing empty or `--gui` arguments into `run_cli` returns
+/// [`DesktopShellError::GuiLaunchRequired`].
 pub fn run_cli<I, S, R, W, E>(
     args: I,
     stdin: R,
@@ -541,18 +617,8 @@ where
 {
     let collected: Vec<String> = args.into_iter().map(|s| s.as_ref().to_owned()).collect();
     match collected.as_slice() {
-        [] => {
-            let report = DesktopShellHost::self_check()?;
-            let host = DesktopShellHost::new();
-            writeln!(
-                stdout,
-                r#"{{"status":"ready","metadata":{},"self_check":{}}}"#,
-                host.metadata().to_json(),
-                report.to_json()
-            )
-            .map_err(|_| DesktopShellError::IoFailure)?;
-            Ok(0)
-        }
+        [] => Err(DesktopShellError::GuiLaunchRequired),
+        [flag] if flag == "--gui" => Err(DesktopShellError::GuiLaunchRequired),
         [flag] if flag == "--version" || flag == "-V" => {
             writeln!(stdout, "{DESKTOP_PRODUCT_NAME} {DESKTOP_APP_VERSION}")
                 .map_err(|_| DesktopShellError::IoFailure)?;
@@ -561,7 +627,7 @@ where
         [flag] if flag == "--help" || flag == "-h" => {
             writeln!(
                 stdout,
-                "Usage: kodera-desktop [--version | --print-runtime-metadata | --self-check | --deep-link <uri> | --ipc-stdio]"
+                "Usage: kodera-desktop [--gui | --version | --print-runtime-metadata | --self-check | --health | --deep-link <uri> | --open-url <uri> | --ipc-stdio | --stdio-rpc]"
             )
             .map_err(|_| DesktopShellError::IoFailure)?;
             Ok(0)
@@ -571,12 +637,12 @@ where
                 .map_err(|_| DesktopShellError::IoFailure)?;
             Ok(0)
         }
-        [flag] if flag == "--self-check" => {
+        [flag] if flag == "--self-check" || flag == "--health" => {
             let report = DesktopShellHost::self_check()?;
             writeln!(stdout, "{}", report.to_json()).map_err(|_| DesktopShellError::IoFailure)?;
             Ok(0)
         }
-        [flag, raw_uri] if flag == "--deep-link" => {
+        [flag, raw_uri] if flag == "--deep-link" || flag == "--open-url" => {
             let _ = DesktopShellHost::self_check()?;
             let policy = DeepLinkAdmissionPolicy::kodera_default();
             match route_deep_link(raw_uri, &policy) {
@@ -592,7 +658,7 @@ where
                 }
             }
         }
-        [flag] if flag == "--ipc-stdio" => {
+        [flag] if flag == "--ipc-stdio" || flag == "--stdio-rpc" => {
             let _ = DesktopShellHost::self_check()?;
             let mut host = DesktopShellHost::new();
             host.serve_stdio(stdin, stdout)?;
@@ -702,5 +768,87 @@ mod tests {
         assert!(lines[2].contains(r#""action":"toggle_mute","muted":true"#));
         assert!(lines[3].contains(r#""type":"notification""#));
         assert!(lines[4].contains(r#""quit":true"#));
+    }
+
+    #[test]
+    fn empty_args_and_macos_psn_route_to_gui_launch_never_silent_cli_exit() {
+        assert_eq!(
+            classify_launch_args([] as [&str; 0]).unwrap(),
+            DesktopLaunchMode::Gui {
+                initial_deep_link: None
+            }
+        );
+        assert_eq!(
+            classify_launch_args(["--gui"]).unwrap(),
+            DesktopLaunchMode::Gui {
+                initial_deep_link: None
+            }
+        );
+        assert_eq!(
+            classify_launch_args(["-psn_0_49152"]).unwrap(),
+            DesktopLaunchMode::Gui {
+                initial_deep_link: None
+            }
+        );
+        match classify_launch_args(["kodera://workspace/acme-ops/general"]).unwrap() {
+            DesktopLaunchMode::Gui {
+                initial_deep_link: Some(link),
+            } => assert_eq!(link.canonical_uri(), "kodera://workspace/acme-ops/general"),
+            other => panic!("expected GUI mode with initial deep link, got {other:?}"),
+        }
+        assert!(matches!(
+            classify_launch_args([
+                "kodera://workspace/acme-ops/general?redirect_uri=https://evil.example"
+            ]),
+            Err(DesktopShellError::DeepLinkRejected(_))
+        ));
+
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        assert_eq!(
+            run_cli([] as [&str; 0], Cursor::new(""), &mut out, &mut err),
+            Err(DesktopShellError::GuiLaunchRequired)
+        );
+    }
+
+    #[test]
+    fn cli_supports_health_open_url_and_stdio_rpc_aliases() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        assert_eq!(
+            run_cli(["--health"], Cursor::new(""), &mut out, &mut err).unwrap(),
+            0
+        );
+        assert!(String::from_utf8(out.clone())
+            .unwrap()
+            .contains(r#""csp_verified":true"#));
+
+        out.clear();
+        assert_eq!(
+            run_cli(
+                ["--open-url", "matrix:r/ops:kodera.io?action=join"],
+                Cursor::new(""),
+                &mut out,
+                &mut err
+            )
+            .unwrap(),
+            0
+        );
+        assert!(String::from_utf8(out.clone())
+            .unwrap()
+            .contains("matrix:r/ops:kodera.io"));
+
+        out.clear();
+        assert_eq!(
+            run_cli(
+                ["--stdio-rpc"],
+                Cursor::new(b"{\"host_op\":\"quit\"}\n" as &[u8]),
+                &mut out,
+                &mut err
+            )
+            .unwrap(),
+            0
+        );
+        assert!(String::from_utf8(out).unwrap().contains(r#""quit":true"#));
     }
 }

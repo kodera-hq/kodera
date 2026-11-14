@@ -17,6 +17,7 @@
 mod commands;
 pub mod csp_policy;
 pub mod deeplink;
+pub mod gui;
 pub mod keychain;
 pub mod notifications;
 pub mod oidc_loopback;
@@ -42,6 +43,13 @@ pub use deeplink::{
     route_deep_link, AdmittedDeepLink, DeepLinkAdmissionPolicy, DeepLinkError, KoderaDeepLink,
     MatrixAction, MatrixDeepLink, MatrixTarget, RedactedOidcCode, DEFAULT_ADMITTED_DOMAINS,
     MAX_ADMITTED_DEEP_LINK_DOMAINS, MAX_DEEP_LINK_BYTES, MAX_MATRIX_VIA_SERVERS,
+};
+pub use gui::{
+    build_ipc_init_script, launch_desktop_gui, resolve_asset_response, validate_navigation_url,
+    AssetHttpPayload, DesktopGuiOptions, DesktopWebViewBridge, GuiWindowAction, NavigationDecision,
+    NavigationGuardError, WebViewIpcError, WebViewIpcOutcome, APPROVED_AUTH_ORIGIN_PREFIX,
+    APPROVED_DEV_ORIGINS, APPROVED_WEB_APP_ORIGINS, CUSTOM_ASSET_SCHEME, DESKTOP_WINDOW_TITLE,
+    GUI_DEFAULT_HEIGHT, GUI_DEFAULT_WIDTH, GUI_MIN_HEIGHT, GUI_MIN_WIDTH,
 };
 pub use keychain::{
     build_keychain_slot, metadata_exposes_secret, validate_keychain_account_id,
@@ -70,8 +78,9 @@ pub use self_host_health::{
     MAX_COMPOSE_CONTAINERS, MAX_COMPOSE_PS_JSON_BYTES, MAX_PROBE_TIMEOUT_MS,
 };
 pub use shell::{
-    run_cli, DesktopRuntimeMetadata, DesktopSelfCheckReport, DesktopShellError, DesktopShellHost,
-    DESKTOP_APP_VERSION, DESKTOP_PRODUCT_NAME,
+    classify_launch_args, run_cli, DesktopLaunchMode, DesktopRuntimeMetadata,
+    DesktopSelfCheckReport, DesktopShellError, DesktopShellHost, DESKTOP_APP_VERSION,
+    DESKTOP_PRODUCT_NAME,
 };
 pub use tray_ptt::{
     PttController, PttKeyChord, PttModifier, PttStateSnapshot, PttTransmissionState, PttTriggerKey,
