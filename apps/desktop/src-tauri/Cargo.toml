@@ -2,7 +2,7 @@
 name = "kodera-desktop"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+rust-version = "1.85"
 license.workspace = true
 publish = false
 description = "Kodera Tauri v2 native desktop shell, system tray, deep-link router, keychain bridge, and local self-host inspector"
@@ -17,9 +17,11 @@ path = "src/main.rs"
 required-features = ["desktop-app"]
 
 [features]
-default = []
-# Enables native OS WebView windowing (requires system WebKitGTK on Linux; gated so headless CI runs fast).
-desktop-app = []
+default = ["desktop-app"]
+# Enables native OS WebView windowing (requires system WebKitGTK on Linux; disable with --no-default-features for headless library-only checks).
+desktop-app = ["dep:tao", "dep:wry"]
 
 [dependencies]
 kodera-rs = { path = "../../../packages/kodera-rs" }
+tao = { version = "0.37.2", default-features = false, features = ["rwh_06"], optional = true }
+wry = { version = "0.57.2", default-features = false, features = ["os-webview"], optional = true }

@@ -424,6 +424,21 @@ test('compiled kodera-desktop binary passes --self-check and --ipc-stdio round-t
   assert.equal(report.csp_verified, true);
   assert.equal(report.tray_menu_count, 4);
 
+  const healthCheck = spawnSync(binPath, ['--health'], { encoding: 'utf8' });
+  assert.equal(healthCheck.status, 0);
+  assert.equal(JSON.parse(healthCheck.stdout.trim()).ok, true);
+
+  const openUrlCheck = spawnSync(
+    binPath,
+    ['--open-url', 'kodera://workspace/acme-ops/general'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(openUrlCheck.status, 0);
+  assert.equal(
+    JSON.parse(openUrlCheck.stdout.trim()).canonical_uri,
+    'kodera://workspace/acme-ops/general',
+  );
+
   const stdioInput = [
     JSON.stringify({ host_op: 'init_session', organisation_id: ORG_ID }),
     JSON.stringify({ command: 'set_unread_badge', organisation_id: ORG_ID, unread_count: 15 }),
