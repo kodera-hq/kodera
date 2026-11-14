@@ -12,22 +12,29 @@ export interface OrganisationHeaderProps {
   slug: string
 }
 
+function identityHostname(slug: string) {
+  return slug === 'community' ? (communityHostname() ?? 'community.kodera.io') : undefined
+}
+
 function Identity({ name, slug }: OrganisationHeaderProps) {
+  const hostname = identityHostname(slug)
   return (
     <>
-      {/* The initials repeat the name beside them: hidden from the reading order. */}
+      {/* The trigger names the visible initials once; don't read their node again. */}
       <span
         aria-hidden="true"
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-c-ok-soft text-sm font-bold text-c-ink"
       >
         {initialsOf(name)}
       </span>
+      {' '}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-bold text-c-ink">{name}</span>
-        {slug === 'community' ? (
-          <span className="truncate text-xs text-c-ink-3">
-            {communityHostname() ?? 'community.kodera.io'}
-          </span>
+        {hostname !== undefined ? (
+          <>
+            {' '}
+            <span className="truncate text-xs text-c-ink-3">{hostname}</span>
+          </>
         ) : null}
       </span>
     </>
@@ -37,6 +44,9 @@ function Identity({ name, slug }: OrganisationHeaderProps) {
 export function OrganisationHeader({ name, slug }: OrganisationHeaderProps) {
   const { t } = useTranslation()
   const organisationSwitch = useOrganisationSwitch()
+  const visibleIdentity = [initialsOf(name), name, identityHostname(slug)]
+    .filter((part) => part !== undefined)
+    .join(' ')
 
   if (organisationSwitch === undefined) {
     return (
@@ -53,7 +63,9 @@ export function OrganisationHeader({ name, slug }: OrganisationHeaderProps) {
       trigger={
         <button
           type="button"
-          aria-label={t('console.workspace.sidebar.action-switch-organisation', { name })}
+          aria-label={t('console.workspace.sidebar.action-switch-organisation', {
+            name: visibleIdentity,
+          })}
           className={cx(
             FRAME,
             'transition-colors duration-fast hover:bg-c-muted',
