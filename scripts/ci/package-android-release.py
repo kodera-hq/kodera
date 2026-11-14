@@ -30,6 +30,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
@@ -173,6 +174,191 @@ def _local_tag(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
+def _classify_pom_license_name(raw_name: str) -> str | None:
+    if not raw_name:
+        return None
+    if raw_name in PERMISSIVE_SPDX or raw_name in KNOWN_NONPERMISSIVE_SPDX:
+        return raw_name
+
+    lowered = raw_name.lower()
+
+    # Check copyleft families FIRST so exceptions or dual mentions never misclassify as permissive.
+    if "affero" in lowered or re.search(r"\bagpl\b", lowered):
+        return "AGPL-3.0-or-later" if "later" in lowered else "AGPL-3.0-only"
+    if "lesser general public" in lowered or re.search(r"\blgpl\b", lowered):
+        if "2.0" in lowered:
+            return "LGPL-2.0-or-later" if "later" in lowered else "LGPL-2.0-only"
+        if "3" in lowered:
+            return "LGPL-3.0-or-later" if "later" in lowered else "LGPL-3.0-only"
+        return "LGPL-2.1-or-later" if "later" in lowered else "LGPL-2.1-only"
+    if "general public license" in lowered or re.search(r"\bgpl(?:v?[23]|-[23])?\b", lowered):
+        if "3" in lowered:
+            return "GPL-3.0-or-later" if "later" in lowered else "GPL-3.0-only"
+        return "GPL-2.0-or-later" if "later" in lowered else "GPL-2.0-only"
+
+    if (
+        "apache-2.0" in lowered
+        or ("apache" in lowered and "2.0" in lowered)
+        or lowered.startswith("asf 2.0")
+    ):
+        return "Apache-2.0"
+
+    if "0bsd" in lowered or "zero-clause bsd" in lowered or "bsd zero clause" in lowered:
+        return "0BSD"
+
+    if (
+        "bsd-2-clause" in lowered
+        or "bsd 2-clause" in lowered
+        or "2-clause bsd" in lowered
+        or "simplified bsd" in lowered
+        or "freebsd license" in lowered
+    ):
+        return "BSD-2-Clause"
+
+    if (
+        "bsd-3-clause" in lowered
+        or "bsd 3-clause" in lowered
+        or "3-clause bsd" in lowered
+        or "new bsd" in lowered
+        or "modified bsd" in lowered
+        or "revised bsd" in lowered
+        or lowered in {"bsd", "bsd license", "the bsd license"}
+    ):
+        return "BSD-3-Clause"
+
+    if (
+        re.search(r"\bmit\b", lowered)
+        or "bouncy castle licence" in lowered
+        or "bouncy castle license" in lowered
+    ):
+        return "MIT"
+
+    if re.search(r"\bisc\b", lowered):
+        return "ISC"
+
+    if "zlib" in lowered:
+        return "Zlib"
+
+    if "bsl-1.0" in lowered or "boost software license" in lowered:
+        return "BSL-1.0"
+
+    if "cc0-1.0" in lowered or "cc0 1.0" in lowered:
+        return "CC0-1.0"
+
+    if "unlicense" in lowered:
+        return "Unlicense"
+
+    return None
+
+
+_CANONICAL_SPDX_LOWER = {
+    spdx_id.lower(): spdx_id for spdx_id in (PERMISSIVE_SPDX | KNOWN_NONPERMISSIVE_SPDX)
+}
+
+
+def _classify_pom_license_url(raw_url: str) -> str | None:
+    if not raw_url:
+        return None
+    if raw_url in PERMISSIVE_SPDX or raw_url in KNOWN_NONPERMISSIVE_SPDX:
+        return raw_url
+
+    parsed = urllib.parse.urlsplit(raw_url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    host = parsed.hostname.lower()
+    path = parsed.path.lower().rstrip("/")
+
+    if host in ("gnu.org", "www.gnu.org"):
+        if path.startswith("/licenses/agpl"):
+            return "AGPL-3.0-only"
+        if path.startswith(("/licenses/lgpl-2.0", "/licenses/old-licenses/lgpl-2.0")):
+            return "LGPL-2.0-only"
+        if path.startswith("/licenses/lgpl-3"):
+            return "LGPL-3.0-only"
+        if path.startswith(("/licenses/lgpl", "/licenses/old-licenses/lgpl")):
+            return "LGPL-2.1-only"
+        if path.startswith("/licenses/gpl-3"):
+            return "GPL-3.0-only"
+        if path.startswith(("/licenses/gpl", "/licenses/old-licenses/gpl")):
+            return "GPL-2.0-only"
+        return None
+
+    if host in ("spdx.org", "www.spdx.org") and path.startswith("/licenses/"):
+        slug = path.removeprefix("/licenses/")
+        for suffix in (".html", ".json", ".txt"):
+            if slug.endswith(suffix):
+                slug = slug[: -len(suffix)]
+                break
+        return _CANONICAL_SPDX_LOWER.get(slug)
+
+    if host in ("apache.org", "www.apache.org"):
+        if path in {
+            "/licenses/license-2.0",
+            "/licenses/license-2.0.txt",
+            "/licenses/license-2.0.html",
+        }:
+            return "Apache-2.0"
+        return None
+
+    if host in ("opensource.org", "www.opensource.org"):
+        opensource_paths = {
+            "/licenses/apache-2.0": "Apache-2.0",
+            "/license/apache-2-0": "Apache-2.0",
+            "/licenses/0bsd": "0BSD",
+            "/license/0bsd": "0BSD",
+            "/licenses/bsd-2-clause": "BSD-2-Clause",
+            "/license/bsd-2-clause": "BSD-2-Clause",
+            "/licenses/bsd-3-clause": "BSD-3-Clause",
+            "/licenses/bsd-license": "BSD-3-Clause",
+            "/licenses/bsd-license.php": "BSD-3-Clause",
+            "/license/bsd-3-clause": "BSD-3-Clause",
+            "/licenses/mit": "MIT",
+            "/licenses/mit-license": "MIT",
+            "/licenses/mit-license.php": "MIT",
+            "/license/mit": "MIT",
+            "/licenses/isc": "ISC",
+            "/licenses/isc-license": "ISC",
+            "/licenses/isc-license.txt": "ISC",
+            "/license/isc": "ISC",
+            "/licenses/zlib": "Zlib",
+            "/licenses/zlib-license": "Zlib",
+            "/licenses/zlib-license.php": "Zlib",
+            "/license/zlib": "Zlib",
+            "/licenses/bsl-1.0": "BSL-1.0",
+            "/license/bsl-1-0": "BSL-1.0",
+            "/licenses/unlicense": "Unlicense",
+            "/license/unlicense": "Unlicense",
+        }
+        return opensource_paths.get(path)
+
+    if host in ("bouncycastle.org", "www.bouncycastle.org"):
+        if path in {"/licence", "/licence.html", "/license", "/license.html"}:
+            return "MIT"
+        return None
+
+    if host in ("boost.org", "www.boost.org"):
+        if path in {"/license_1_0.txt", "/users/license.html"}:
+            return "BSL-1.0"
+        return None
+
+    if host in ("creativecommons.org", "www.creativecommons.org"):
+        if path in {"/publicdomain/zero/1.0", "/publicdomain/zero/1.0/legalcode"}:
+            return "CC0-1.0"
+        return None
+
+    if host in ("unlicense.org", "www.unlicense.org"):
+        if path in {"", "/unlicense"}:
+            return "Unlicense"
+        return None
+
+    if host in ("zlib.net", "www.zlib.net"):
+        if path in {"/zlib_license.html", "/license.html"}:
+            return "Zlib"
+        return None
+
+    return None
+
+
 def normalize_pom_license_entry(name: str, url: str) -> str | None:
     """Normalize a single Maven POM `<license>` (`<name>`, `<url>`) to a canonical SPDX ID."""
     raw_name = " ".join(name.split()).strip()
@@ -180,98 +366,14 @@ def normalize_pom_license_entry(name: str, url: str) -> str | None:
     if not raw_name and not raw_url:
         return None
 
-    for exact in (raw_name, raw_url):
-        if exact in PERMISSIVE_SPDX or exact in KNOWN_NONPERMISSIVE_SPDX:
-            return exact
+    by_name = _classify_pom_license_name(raw_name)
+    by_url = _classify_pom_license_url(raw_url)
 
-    combined = f"{raw_name} | {raw_url}".lower()
-
-    # Check copyleft families FIRST so exceptions or dual mentions never misclassify as permissive.
-    if "affero" in combined or re.search(r"\bagpl\b", combined):
-        return "AGPL-3.0-or-later" if "later" in combined else "AGPL-3.0-only"
-    if "lesser general public" in combined or re.search(r"\blgpl\b", combined):
-        if "2.0" in combined:
-            return "LGPL-2.0-or-later" if "later" in combined else "LGPL-2.0-only"
-        if "3" in combined:
-            return "LGPL-3.0-or-later" if "later" in combined else "LGPL-3.0-only"
-        return "LGPL-2.1-or-later" if "later" in combined else "LGPL-2.1-only"
-    if "general public license" in combined or re.search(r"\bgpl(?:v?[23]|-[23])?\b", combined):
-        if "3" in combined:
-            return "GPL-3.0-or-later" if "later" in combined else "GPL-3.0-only"
-        return "GPL-2.0-or-later" if "later" in combined else "GPL-2.0-only"
-
-    # Standard permissive SPDX mappings for Maven Central & Google Maven POMs.
-    if (
-        "apache-2.0" in combined
-        or "license-2.0" in combined
-        or "licenses/apache-2.0" in combined
-        or ("apache" in combined and "2.0" in combined)
-        or combined.startswith("asf 2.0")
-    ):
-        return "Apache-2.0"
-
-    if (
-        "0bsd" in combined
-        or "zero-clause bsd" in combined
-        or "bsd zero clause" in combined
-    ):
-        return "0BSD"
-
-    if (
-        "bsd-2-clause" in combined
-        or "bsd 2-clause" in combined
-        or "2-clause bsd" in combined
-        or "simplified bsd" in combined
-        or "freebsd license" in combined
-    ):
-        return "BSD-2-Clause"
-
-    if (
-        "bsd-3-clause" in combined
-        or "bsd 3-clause" in combined
-        or "3-clause bsd" in combined
-        or "new bsd" in combined
-        or "modified bsd" in combined
-        or "revised bsd" in combined
-        or raw_name.lower() in {"bsd", "bsd license", "the bsd license"}
-        or "opensource.org/licenses/bsd-license" in combined
-    ):
-        return "BSD-3-Clause"
-
-    if (
-        re.search(r"\bmit\b", combined)
-        or "opensource.org/licenses/mit" in combined
-        or "bouncy castle licence" in combined
-        or "bouncy castle license" in combined
-        or "bouncycastle.org/licence" in combined
-        or "bouncycastle.org/license" in combined
-    ):
-        return "MIT"
-
-    if re.search(r"\bisc\b", combined) or "opensource.org/licenses/isc" in combined:
-        return "ISC"
-
-    if "zlib" in combined:
-        return "Zlib"
-
-    if (
-        "bsl-1.0" in combined
-        or "boost software license" in combined
-        or "boost.org/license_1_0" in combined
-    ):
-        return "BSL-1.0"
-
-    if (
-        "cc0-1.0" in combined
-        or "cc0 1.0" in combined
-        or "creativecommons.org/publicdomain/zero/1.0" in combined
-    ):
-        return "CC0-1.0"
-
-    if "unlicense" in combined or "unlicense.org" in combined:
-        return "Unlicense"
-
-    return None
+    if by_name in KNOWN_NONPERMISSIVE_SPDX:
+        return by_name
+    if by_url in KNOWN_NONPERMISSIVE_SPDX:
+        return by_url
+    return by_name or by_url
 
 
 def parse_pom_licenses_and_parent(
@@ -1099,6 +1201,23 @@ def run_selftest() -> int:
         if not missing_refused:
             print("[FAIL] expected POM without <licenses> to fail closed", file=sys.stderr)
             return 1
+
+        # 6. Hostname-strict URL parsing: spoofed hostnames/paths containing canonical domains must never match.
+        if normalize_pom_license_entry("", "https://unlicense.org/") != "Unlicense":
+            print("[FAIL] expected https://unlicense.org/ to classify as Unlicense", file=sys.stderr)
+            return 1
+        for spoof_url in (
+            "https://evil.example/unlicense.org",
+            "https://unlicense.org.evil.example/",
+            "https://evil.example/?u=https://opensource.org/licenses/MIT",
+            "javascript://unlicense.org/%0aalert(1)",
+        ):
+            if normalize_pom_license_entry("", spoof_url) is not None:
+                print(
+                    f"[FAIL] spoofed license URL {spoof_url!r} must not classify as SPDX",
+                    file=sys.stderr,
+                )
+                return 1
 
     print(
         "OK: package-android-release.py selftest passed "

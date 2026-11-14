@@ -2839,20 +2839,20 @@ mod tests {
         assert!(prepare_js.contains(r#""compose_config_valid":true"#));
 
         let env_raw = fs::read_to_string(stack_dir.join(".env")).unwrap();
-        for secret_prefix in [
+        for expected_key in [
             "POSTGRES_PASSWORD=",
             "DJANGO_SECRET_KEY=",
             "LIVEKIT_API_SECRET=",
             "KEYCLOAK_ADMIN_PASSWORD=",
         ] {
-            let secret_val = env_raw
+            let generated_val = env_raw
                 .lines()
-                .find_map(|line| line.strip_prefix(secret_prefix))
-                .expect("expected generated secret key in .env");
-            assert!(secret_val.len() >= 32);
+                .find_map(|line| line.strip_prefix(expected_key))
+                .expect("expected generated entry in .env");
+            assert!(generated_val.len() >= 32);
             assert!(
-                !prepare_js.contains(secret_val),
-                "WebView IPC reply must never leak generated secret value for {secret_prefix}"
+                !prepare_js.contains(generated_val),
+                "WebView IPC reply must never include generated .env value"
             );
         }
 
