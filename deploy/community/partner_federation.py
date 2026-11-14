@@ -18,8 +18,10 @@ PARTNER_MATRIX = MATRIX + " /_matrix/federation/* /_matrix/key/*"
 
 
 def render(
-    topology: str, domain: str, allowlist: list[str], channels: str
+    topology: str, domain: str, allowlist: list[str], channels: str, mode: str = "partner"
 ) -> dict[str, str]:
+    if mode not in {"partner", "open"}:
+        raise ValueError("an explicit partner or open federation mode is required")
     servers([domain])
     allowed = servers(allowlist)
     selected = parse(channels, allowed)
@@ -57,8 +59,10 @@ def render(
         + domain
         + "\nKODERA_TOPOLOGY="
         + topology
+        + "\nKODERA_FEDERATION_MODE="
+        + mode
         + "\nKODERA_MATRIX_FEDERATION_ALLOWLIST="
-        + ",".join(allowed)
+        + (",".join(allowed) if mode == "partner" else "")
         + "\nKODERA_MATRIX_PARTNER_CHANNELS="
         + json.dumps(dict(selected), separators=(",", ":"))
         + "\n"
@@ -74,6 +78,12 @@ def render(
         "Existing incompatible rooms require explicit replacement; no history is copied.\n"
         "Verify deployed TLS, discovery, peer allowlists and real-account acceptance separately.\n"
     )
+    if mode == "open":
+        instructions += (
+            "\nOpen mode removes the homeserver-wide partner list. Each selected room still\n"
+            "pins exact public servers and an invite-only ACL; no room or Core grant is public.\n"
+            "Review ADR-0026 and qualify real federation and abuse controls before deployment.\n"
+        )
     if topology == "split":
         instructions += (
             "\nBefore enabling federation, serve matrix-server.json as application/json at\n"
@@ -96,8 +106,9 @@ def generate(
     domain: str,
     allowlist: list[str],
     channels: str,
+    mode: str = "partner",
 ):
-    files = render(topology, domain, allowlist, channels)
+    files = render(topology, domain, allowlist, channels, mode)
     # Exclusive directory creation refuses existing outputs, including symlinks.
     output.mkdir(parents=False, exist_ok=False)
     mount = str(output.resolve() / "Caddyfile.partner")
@@ -114,8 +125,9 @@ def generate(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--enable-partner-federation", action="store_true", required=True
+        "--enable-partner-federation", "--enable-federation", action="store_true", required=True
     )
+    parser.add_argument("--mode", choices=("partner", "open"), default="partner")
     parser.add_argument("--topology", choices=("single", "split"), required=True)
     parser.add_argument("--domain", required=True)
     parser.add_argument("--allow-server", action="append", required=True)
@@ -132,7 +144,7 @@ def main():
     )
     args = parser.parse_args()
     try:
-        generate(args.out, args.topology, args.domain, args.allow_server, args.channels)
+        generate(args.out, args.topology, args.domain, args.allow_server, args.channels, args.mode)
     except (ValueError, OSError):
         parser.exit(
             2, "refused: invalid bounded partner policy or output already exists\n"

@@ -174,6 +174,29 @@ impl OpenMlsSession {
     pub fn epoch(&self) -> u64 {
         self.group.epoch().as_u64()
     }
+
+    /// Export the 32-byte LiveKit key material for this room and current MLS epoch.
+    ///
+    /// Callers must replace their media key after every accepted commit, erase old
+    /// key material, and use a frame-encryption provider with authenticated sender
+    /// identity and unique nonces. This exporter alone does not encrypt media.
+    /// No key may be exported while an admitted group leaf has been revoked.
+    pub fn export_media_key(&self) -> Result<Vec<u8>, NativeCryptoError> {
+        if !self.authorised.contains(&self.device_key()) {
+            return Err(NativeCryptoError::UnauthorisedDevice);
+        }
+        self.check_members(&self.group)?;
+        let mut context = self.scope.binding();
+        context.extend_from_slice(&self.epoch().to_be_bytes());
+        self.group
+            .export_secret(
+                self.provider.crypto(),
+                "kodera-livekit-media-v1",
+                &context,
+                32,
+            )
+            .map_err(failed)
+    }
     pub fn device_key(&self) -> Ed25519PublicKey {
         self.signer
             .public()
@@ -561,6 +584,51 @@ mod tests {
         let mut relabelled = current;
         relabelled.epoch = b.epoch();
         assert!(b.open(&relabelled).is_err());
+    }
+
+    #[test]
+    fn media_exporter_agrees_across_members_and_rotates_only_after_valid_commit() {
+        let (mut a, mut b) = pair();
+        let before = a.export_media_key().unwrap();
+        assert_eq!(before.len(), 32);
+        assert_eq!(before, b.export_media_key().unwrap());
+        assert_eq!(before, a.export_media_key().unwrap());
+        let rotated = a.rotate().unwrap();
+        let after = a.export_media_key().unwrap();
+        assert_ne!(before, after);
+        assert_eq!(before, b.export_media_key().unwrap());
+        let mut corrupt = rotated.commit.clone();
+        let end = corrupt.len() - 1;
+        corrupt[end] ^= 1;
+        assert!(b.apply_commit(&corrupt).is_err());
+        assert_eq!(before, b.export_media_key().unwrap());
+        b.apply_commit(&rotated.commit).unwrap();
+        assert_eq!(after, b.export_media_key().unwrap());
+        assert!(b.apply_commit(&rotated.commit).is_err());
+        assert_eq!(after, b.export_media_key().unwrap());
+    }
+
+    #[test]
+    fn media_exporter_refuses_stale_roster_until_removal_rekeys_the_group() {
+        let (mut a, mut b) = pair();
+        let before = b.export_media_key().unwrap();
+        a.replace_authorised_roster(HashSet::from([a.device_key()]))
+            .unwrap();
+        assert_eq!(
+            a.export_media_key(),
+            Err(NativeCryptoError::UnauthorisedDevice)
+        );
+        a.remove_member(&b.device_key()).unwrap();
+        assert_ne!(a.export_media_key().unwrap(), before);
+        assert_eq!(b.export_media_key().unwrap(), before);
+        assert_eq!(
+            b.replace_authorised_roster(HashSet::new()),
+            Err(NativeCryptoError::UnauthorisedDevice)
+        );
+        assert_eq!(
+            b.export_media_key(),
+            Err(NativeCryptoError::UnauthorisedDevice)
+        );
     }
 
     #[test]

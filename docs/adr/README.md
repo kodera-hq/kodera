@@ -60,6 +60,7 @@ as [`GOVERNANCE.md`](../../GOVERNANCE.md#3-architectural-changes-docsrfcs) descr
 | `SRV-ADR-0023` | [ADR-0023: The Matrix server name is the tenant's slug](../../apps/server/docs/adr/0023-matrix-server-name-is-the-tenant-slug.md) |
 | `SRV-ADR-0024` | [Default community membership](../../apps/server/docs/adr/0024-default-community-membership.md) |
 | `SRV-ADR-0025` | [ADR-0025: Explicit, bounded partner-room federation](../../apps/server/docs/adr/0025-explicit-partner-room-federation.md) |
+| `SRV-ADR-0026` | [ADR-0026: Explicit confidential rooms and federation boundaries](../../apps/server/docs/adr/0026-immutable-confidential-room-boundaries.md) |
 
 ### Web client (`WEB-ADR-*`, in `apps/web/docs/adr/`)
 

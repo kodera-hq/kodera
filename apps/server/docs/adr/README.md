@@ -30,6 +30,7 @@ One file per decision, numbered, never edited after acceptance except to change 
 | [0024](0024-default-community-membership.md) | Canonical community membership and explicit identity binding | Accepted |
 
 | [0025](0025-explicit-partner-room-federation.md) | Explicit, bounded partner-room federation (proposed partial supersession of ADR-0018) | Proposed |
+| [0026](0026-immutable-confidential-room-boundaries.md) | Explicit confidential rooms and federation boundaries (proposed partial supersession of ADR-0018) | Proposed |
 
 Source: `deployment operations/ARCHITECTURE_STRATEGY_2026-09-02.md` (v5), sections 3.1, 3.4, 5, 6, and Appendix A.
 

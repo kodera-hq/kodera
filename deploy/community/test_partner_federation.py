@@ -13,6 +13,16 @@ CHANNELS = '{"11111111-1111-4111-8111-111111111111":["partner.example.org"]}'
 
 
 class PartnerConfig(unittest.TestCase):
+    def test_open_mode_is_explicit_and_keeps_exact_room_policy_and_routes(self):
+        result = module.render("single", "home.example.org", ["partner.example.org"], CHANNELS, "open")
+        self.assertIn("KODERA_FEDERATION_MODE=open\n", result["partner.env"])
+        self.assertIn("KODERA_MATRIX_FEDERATION_ALLOWLIST=\n", result["partner.env"])
+        self.assertIn(CHANNELS, result["partner.env"])
+        self.assertNotIn("/_synapse/admin", result["Caddyfile.partner"])
+        self.assertEqual(result["Caddyfile.partner"].count("/_matrix/federation/* /_matrix/key/*"), 1)
+        with self.assertRaises(ValueError):
+            module.render("single", "home.example.org", ["partner.example.org"], CHANNELS, "invalid")
+
     def test_narrow_routes_and_explicit_discovery(self):
         for topology in ("single", "split"):
             with self.subTest(topology=topology):
