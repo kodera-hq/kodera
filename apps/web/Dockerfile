@@ -11,6 +11,7 @@ COPY extensions/hello-webhook/package.json ./extensions/hello-webhook/package.js
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY packages/design-tokens ./packages/design-tokens
 COPY packages/api-contract ./packages/api-contract
+COPY packages/extension-sdk ./packages/extension-sdk
 COPY apps/web ./apps/web
 ARG VITE_CORE_API_URL
 ARG VITE_KEYCLOAK_URL
