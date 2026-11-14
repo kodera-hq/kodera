@@ -136,7 +136,6 @@ def broker_env(
         },
     ]
     allowed = allowed_oidc_client_ids({"KODERA_CONSOLE_CLIENT_ID": "synthetic-console"})
-    settings.ROOT_URLCONF = "apps.proximity.urls"  # type: ignore[attr-defined]
     settings.KODERA_PROXIMITY_BROKER = broker  # type: ignore[attr-defined]
     settings.KODERA_AUTH_TRUST = trusted_issuers.load_trust(  # type: ignore[attr-defined]
         json.dumps(entries), allowed_azp=allowed

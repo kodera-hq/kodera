@@ -304,6 +304,14 @@ config/settings/deploy_worker.py
 !apps/notifications/api/responses.py
 !apps/notifications/api/urls.py
 !apps/notifications/api/views.py
+# Mounted proximity routes and their bounded ephemeral broker; no test inputs.
+!apps/proximity/__init__.py
+!apps/proximity/services.py
+!apps/proximity/api/__init__.py
+!apps/proximity/api/http.py
+!apps/proximity/api/urls.py
+!apps/proximity/api/views.py
+!apps/workspaces/selectors.py
 !apps/docs/__init__.py
 !apps/docs/apps.py
 !apps/docs/access.py
