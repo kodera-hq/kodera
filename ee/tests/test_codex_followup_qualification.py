@@ -38,8 +38,10 @@ from django.test import Client, RequestFactory, override_settings
 from psycopg import sql
 
 from ee.audit_export.crypto import canonical_json_bytes
+from ee.audit_export.exporter import export_compliance_bundle
 from ee.audit_export.ledger import default_audit_ledger
 from ee.auth import (
+    OWNER_ROLES,
     EeAuthError,
     authenticate_tenant_request,
     fence_authenticated_ee_operation,
@@ -609,6 +611,162 @@ def test_p1_2_single_snapshot_authority_and_two_connection_interleave_fence(
         assert not worker.is_alive()
 
     assert outcomes == [("tenant_cutoff_fenced", 403)]
+
+    # Interleave C: In-flight yielded `FOR SHARE` fence under restricted `kodera_api` role
+    # blocks concurrent membership demotion and user disable (`55P03` LockNotAvailable) until
+    # the privileged operation commits, after which demotion succeeds and A is rejected (`409`/`403`).
+    from core.db.api_database_boundary import assert_authority, assert_writer_grants
+    from core.db.api_writer_role import grant_statements
+
+    inflight_owner = tenant_principal_factory("yield-fence-corp", role="org_owner")
+    co_owner = tenant_principal_factory("yield-fence-corp", role="org_owner")
+    assert co_owner.organisation_id == inflight_owner.organisation_id
+
+    writer_role = f"ee_fence_writer_{uuid4().hex[:12]}"
+    with connection.cursor() as cur:
+        cur.execute(f'CREATE ROLE "{writer_role}" NOLOGIN NOINHERIT')
+        for stmt in grant_statements(writer_role):
+            cur.execute(stmt)
+        assert_authority(cur, writer_role)
+        assert_writer_grants(cur, writer_role)
+
+    try:
+        client = Client(raise_request_exception=False, HTTP_HOST="127.0.0.1")
+        with _acting_as(writer_role):
+            req_inflight = rf.get(
+                "/api/v1/ee/compliance/audit-exports",
+                {"redact_pii": "false"},
+                HTTP_AUTHORIZATION=f"Bearer {inflight_owner.token}",
+            )
+            snapshot_inflight = authenticate_tenant_request(
+                req_inflight,
+                required_roles=OWNER_ROLES,
+            )
+            assert snapshot_inflight.role == "org_owner"
+
+            with fence_authenticated_ee_operation(
+                snapshot_inflight,
+                required_roles=OWNER_ROLES,
+            ) as seed_fenced:
+                default_audit_ledger.append_event(
+                    tenant_slug=seed_fenced.tenant_slug,
+                    organisation_id=seed_fenced.organisation_id,
+                    user_id=seed_fenced.user_id,
+                    actor_type="customer_user",
+                    actor_id=f"user:{seed_fenced.user_id}",
+                    actor_label=seed_fenced.actor_email,
+                    action="sso.idp.registered",
+                    target_urn="urn:kodera:idp:okta",
+                    source_ip="198.51.100.42",
+                )
+
+            # Connection A enters `fence_authenticated_ee_operation` and pauses at the yield
+            # before `export_compliance_bundle` while holding `FOR SHARE` on user, org & membership.
+            with fence_authenticated_ee_operation(
+                snapshot_inflight,
+                required_roles=OWNER_ROLES,
+            ) as active_fenced:
+                with _open_secondary_pg_connection() as conn2:
+                    with pytest.raises(psycopg.errors.LockNotAvailable) as demote_blocked:
+                        with conn2.cursor() as cur2:
+                            cur2.execute("SET LOCAL lock_timeout = '150ms'")
+                            cur2.execute(
+                                """
+                                UPDATE public.orgs_membership
+                                SET role = 'org_member', updated_at = clock_timestamp()
+                                WHERE id = %s
+                                """,
+                                [inflight_owner.membership_id],
+                            )
+                    assert demote_blocked.value.sqlstate == "55P03"
+                    conn2.rollback()
+
+                    with pytest.raises(psycopg.errors.LockNotAvailable) as disable_blocked:
+                        with conn2.cursor() as cur2:
+                            cur2.execute("SET LOCAL lock_timeout = '150ms'")
+                            cur2.execute(
+                                """
+                                UPDATE public.identity_user
+                                SET enabled = false
+                                WHERE id = %s
+                                """,
+                                [inflight_owner.user_id],
+                            )
+                    assert disable_blocked.value.sqlstate == "55P03"
+                    conn2.rollback()
+
+                bundle = export_compliance_bundle(
+                    ledger=default_audit_ledger,
+                    tenant_slug=active_fenced.tenant_slug,
+                    organisation_id=active_fenced.organisation_id,
+                    signer=default_audit_ledger.ed25519_signer_for_tenant(
+                        active_fenced.tenant_slug
+                    ),
+                    export_format="ndjson",
+                    framework="SOC2",
+                    redact_pii=False,
+                )
+                assert inflight_owner.email in bundle.payload_text
+
+            # Once Connection A commits and releases its `FOR SHARE` fence, Connection B's
+            # membership demotion succeeds immediately and advances `authority_revision`.
+            with _open_secondary_pg_connection() as conn2:
+                with conn2.cursor() as cur2:
+                    cur2.execute("SET LOCAL lock_timeout = '150ms'")
+                    cur2.execute(
+                        """
+                        UPDATE public.orgs_membership
+                        SET role = 'org_admin', updated_at = clock_timestamp()
+                        WHERE id = %s
+                        """,
+                        [inflight_owner.membership_id],
+                    )
+                conn2.commit()
+
+            # Stale pre-demotion snapshot is rejected at the fence (`409 authority_fenced`).
+            with pytest.raises(EeAuthError) as stale_after_demote:
+                with fence_authenticated_ee_operation(
+                    snapshot_inflight,
+                    required_roles=OWNER_ROLES,
+                ):
+                    pass
+            assert stale_after_demote.value.status == 409
+            assert stale_after_demote.value.code == "authority_fenced"
+
+            # Fresh HTTP unredacted export by demoted `org_admin` fails closed (`403`).
+            admin_unredacted_resp = client.get(
+                "/api/v1/ee/compliance/audit-exports",
+                {"redact_pii": "false"},
+                headers=inflight_owner.headers,
+            )
+            assert admin_unredacted_resp.status_code == 403
+            assert admin_unredacted_resp.json()["code"] == "owner_required_for_unredacted_export"
+
+            # Further demoting to `org_member` rejects even standard redacted admin export (`403`).
+            with _open_secondary_pg_connection() as conn2:
+                with conn2.cursor() as cur2:
+                    cur2.execute("SET LOCAL lock_timeout = '150ms'")
+                    cur2.execute(
+                        """
+                        UPDATE public.orgs_membership
+                        SET role = 'org_member', updated_at = clock_timestamp()
+                        WHERE id = %s
+                        """,
+                        [inflight_owner.membership_id],
+                    )
+                conn2.commit()
+
+            member_export_resp = client.get(
+                "/api/v1/ee/compliance/audit-exports",
+                headers=inflight_owner.headers,
+            )
+            assert member_export_resp.status_code == 403
+            assert member_export_resp.json()["code"] == "insufficient_role"
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("RESET ROLE")
+            cur.execute(f'DROP OWNED BY "{writer_role}"')
+            cur.execute(f'DROP ROLE "{writer_role}"')
 
 
 def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_roundtrip(

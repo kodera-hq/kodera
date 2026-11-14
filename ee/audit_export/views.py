@@ -293,7 +293,7 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
         alg_raw = params.get("signing_algorithm", "ed25519")
         signing_alg = alg_raw if isinstance(alg_raw, str) else "ed25519"
 
-        redact_pii = _resolve_redact_pii(params.get("redact_pii"), caller_role=auth.role)
+        requested_redact_pii = _resolve_redact_pii(params.get("redact_pii"), caller_role=auth.role)
 
         raw_stream = params.get("stream", request.path_info.endswith("/stream"))
         use_stream = raw_stream is True or (
@@ -302,7 +302,13 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
 
         filters = _build_filters_from_mapping(params)
 
-        with fence_authenticated_ee_operation(auth, target_tenant_slug=auth.tenant_slug) as fenced:
+        export_required_roles = OWNER_ROLES if not requested_redact_pii else ADMIN_ROLES
+        with fence_authenticated_ee_operation(
+            auth,
+            required_roles=export_required_roles,
+            target_tenant_slug=auth.tenant_slug,
+        ) as fenced:
+            redact_pii = _resolve_redact_pii(params.get("redact_pii"), caller_role=fenced.role)
             signer = _select_signer(fenced.tenant_slug, signing_alg)
             bundle = export_compliance_bundle(
                 ledger=default_audit_ledger,

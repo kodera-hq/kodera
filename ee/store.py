@@ -163,7 +163,7 @@ def acquire_active_tenant_fence(
             SELECT u.enabled, u.deleted_at, u.email
             FROM public.identity_user u
             WHERE u.id = %s
-            FOR KEY SHARE OF u
+            FOR SHARE OF u
             """,
             [user_id],
         )
@@ -187,7 +187,7 @@ def acquire_active_tenant_fence(
         WHERE o.id = %s
           AND o.state <> 'closed'
           AND o.deleted_at IS NULL
-        FOR KEY SHARE OF o
+        FOR SHARE OF o
         """,
         [resolved_org_id],
     )
@@ -232,7 +232,7 @@ def resolve_org_member_user_id(
         SELECT u.deleted_at, u.email
         FROM public.identity_user u
         WHERE u.id = %s
-        FOR KEY SHARE OF u
+        FOR SHARE OF u
         """,
         [person_id],
     )

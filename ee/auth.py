@@ -142,13 +142,17 @@ def authenticate_tenant_request(
 def fence_authenticated_ee_operation(
     principal: AuthenticatedTenantPrincipal,
     *,
+    required_roles: frozenset[str] = ADMIN_ROLES,
     target_tenant_slug: str | None = None,
 ) -> Iterator[FencedTenantOperation]:
     """Execute a privileged EE read/export/write inside a cutoff- and revision-fenced transaction.
 
     Acquires shared privacy-erasure advisory locks (`privacy_account_cutoff` and
-    `privacy_erasure_cutoff`), locks `identity_user` before `orgs_organisation` (`FOR KEY SHARE`),
-    and verifies `authority_revision`, active membership state/role, and absence of erasure cutoffs.
+    `privacy_erasure_cutoff`), locks `identity_user` before `orgs_organisation` and
+    `orgs_membership` with `FOR SHARE` (conflicting with `FOR NO KEY UPDATE` authority mutations,
+    user disables, and membership role/state updates until commit), and re-verifies live
+    `enabled`, `authority_revision`, active `identity_identity`, qualifying `orgs_membership`
+    role, and absence of erasure cutoffs before yielding.
     """
     if target_tenant_slug is not None and target_tenant_slug != principal.tenant_slug:
         raise EeAuthError("cross_tenant_forbidden", status=403)
@@ -166,13 +170,16 @@ def fence_authenticated_ee_operation(
                 [str(principal.organisation_id)],
             )
 
-            # Global lock order (member-authority-revision.md): User first, then Organisation.
+            # Global lock order (member-authority-revision.md): User first, then Organisation,
+            # then Membership. `FOR SHARE` conflicts with `FOR NO KEY UPDATE` taken by Core's
+            # `member_authority_user_touch` / `user_authority_fanout` triggers and direct
+            # `identity_user.enabled` or `orgs_membership.role`/`state` updates.
             cur.execute(
                 """
                 SELECT u.email, u.enabled, u.deleted_at
                 FROM public.identity_user u
                 WHERE u.id = %s
-                FOR KEY SHARE OF u
+                FOR SHARE OF u
                 """,
                 [principal.user_id],
             )
@@ -188,16 +195,17 @@ def fence_authenticated_ee_operation(
                 SELECT o.slug, o.state, o.deleted_at, o.authority_revision
                 FROM public.orgs_organisation o
                 WHERE o.id = %s
-                FOR KEY SHARE OF o
+                FOR SHARE OF o
                 """,
                 [principal.organisation_id],
             )
             o_row = cur.fetchone()
             if o_row is None or str(o_row[1]) != "active" or o_row[2] is not None:
                 raise EeAuthError("tenant_cutoff_fenced", status=403)
+            live_authority_revision = int(o_row[3])
             if (
                 str(o_row[0]) != principal.tenant_slug
-                or int(o_row[3]) != principal.authority_revision
+                or live_authority_revision != principal.authority_revision
             ):
                 raise EeAuthError("authority_fenced", status=409)
 
@@ -211,12 +219,29 @@ def fence_authenticated_ee_operation(
                   AND m.state = 'active'
                   AND m.accepted_at IS NOT NULL
                   AND m.deleted_at IS NULL
-                FOR KEY SHARE OF m
+                FOR SHARE OF m
                 """,
                 [principal.membership_id, principal.organisation_id, principal.user_id],
             )
             m_row = cur.fetchone()
-            if m_row is None or str(m_row[0]) != principal.role:
+            if m_row is None:
+                raise EeAuthError("authority_fenced", status=409)
+            live_role = str(m_row[0])
+            if live_role != principal.role or live_role not in required_roles:
+                raise EeAuthError("authority_fenced", status=409)
+
+            cur.execute(
+                """
+                SELECT 1
+                FROM public.identity_identity i
+                WHERE i.id = %s
+                  AND i.organisation_id = %s
+                  AND i.user_id = %s
+                  AND i.deleted_at IS NULL
+                """,
+                [principal.identity_id, principal.organisation_id, principal.user_id],
+            )
+            if cur.fetchone() is None:
                 raise EeAuthError("authority_fenced", status=409)
 
         yield FencedTenantOperation(
@@ -225,7 +250,7 @@ def fence_authenticated_ee_operation(
             user_id=principal.user_id,
             identity_id=principal.identity_id,
             membership_id=principal.membership_id,
-            role=principal.role,
-            authority_revision=principal.authority_revision,
+            role=live_role,
+            authority_revision=live_authority_revision,
             actor_email=actor_email,
         )
