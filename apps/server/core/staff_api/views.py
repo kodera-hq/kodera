@@ -139,7 +139,9 @@ def feedback_view(request: HttpRequest) -> HttpResponse:
         kind_q = request.GET.get("kind") or None
         return staff_json_response(
             request,
-            read_feedback(caller, status_filter=status_q, kind_filter=kind_q, engineering_only=False),
+            read_feedback(
+                caller, status_filter=status_q, kind_filter=kind_q, engineering_only=False
+            ),
         )
     except StaffApiError as err:
         return error_to_response(request, err)
@@ -156,7 +158,9 @@ def engineering_view(request: HttpRequest) -> HttpResponse:
         kind_q = request.GET.get("kind") or None
         return staff_json_response(
             request,
-            read_feedback(caller, status_filter=status_q, kind_filter=kind_q, engineering_only=True),
+            read_feedback(
+                caller, status_filter=status_q, kind_filter=kind_q, engineering_only=True
+            ),
         )
     except StaffApiError as err:
         return error_to_response(request, err)
@@ -181,8 +185,8 @@ def finops_view(request: HttpRequest) -> HttpResponse:
 @permission_classes([AllowAny])
 def sre_view(request: HttpRequest) -> HttpResponse:
     try:
-        authenticate_staff_request(request, plane="read", allowed_roles=SRE_READ_ROLES)
-        return staff_json_response(request, read_sre())
+        caller = authenticate_staff_request(request, plane="read", allowed_roles=SRE_READ_ROLES)
+        return staff_json_response(request, read_sre(caller))
     except StaffApiError as err:
         return error_to_response(request, err)
 

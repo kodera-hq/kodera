@@ -167,7 +167,8 @@ def _seed_customer_org_and_tenant(
             namespace="organisation",
             slug=org_slug,
             organisation=org,
-            state="active",
+            state="permanent",
+            protected_at=now,
         )
         member_user = User.objects.create(
             email=f"owner@{org_slug}.example",
@@ -489,7 +490,7 @@ def test_db_backed_rbac_ignores_jwt_role_claims_and_enforces_c1_redaction() -> N
         organisation_id=org.id,
         organisation_slug=org.slug,
         kind="bug",
-        source="console",
+        source="console_drawer",
         severity="p1",
         status="new",
         surface="visio",
@@ -575,7 +576,7 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
         organisation_id=org.id,
         organisation_slug=org.slug,
         kind="bug",
-        source="console",
+        source="console_drawer",
         severity="p2",
         status="new",
         surface="console",
@@ -598,10 +599,10 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
                 {
                     "prospect_slug": " mairie-lyon ",
                     "stage": "qualified",
-                    "pack_code": "suite- territoriale" if False else "suite-territoriale",
+                    "pack_code": "suite-territoriale",
                     "capacity_tier_code": "L",
                     "estimated_mrr_cents": 240_000,
-                    "owner_seat": "zxxma",
+                    "owner_seat": "Product seat",
                     "next_step_code": "demo-scheduled",
                 }
             ),
@@ -649,7 +650,7 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
                 {
                     "status": "triaged",
                     "severity": "p1",
-                    "assigned_seat": "miguel",
+                    "assigned_seat": "API seat",
                     "vote_delta": 3,
                 }
             ),
@@ -658,7 +659,7 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
         )
         assert r_triage.status_code == 200
         assert r_triage.json()["vote_count"] == 3
-        assert r_triage.json()["assigned_seat"] == "miguel"
+        assert r_triage.json()["assigned_seat"] == "API seat"
 
         r_draft = client.post(
             f"/staff/v1/triage/feedback/{fb.id}/github-draft",
@@ -700,7 +701,7 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
             data=json.dumps(
                 {
                     "request_kind": "erasure",
-                    "subject_pseudonym": "subj_sha256_99ab12cd",
+                    "subject_pseudonym": f"sha256:{hashlib.sha256(b'sar-subject-0042').hexdigest()}",
                     "organisation_slug": org.slug,
                     "ticket_ref": "SAR-2026-0042",
                 }
@@ -734,7 +735,7 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
             data=json.dumps(
                 {
                     "period_month": "2026-10",
-                    "environment_code": "prod-fr-par",
+                    "environment_code": "platform-prod",
                     "mrr_cents": 100_000,
                     "total_cost_cents": 56_000,  # 44.00% == 4400 bps exact floor -> no alert
                     "active_organisations": 4,
@@ -754,7 +755,7 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
             data=json.dumps(
                 {
                     "period_month": "2026-11",
-                    "environment_code": "prod-fr-par",
+                    "environment_code": "platform-prod",
                     "mrr_cents": 100_000,
                     "infra_cost_cents": 50_000,
                     "backup_cost_cents": 4_000,
@@ -919,7 +920,7 @@ def test_sre_read_and_reconcile_job_and_outbox_delivery_against_real_postgres_tr
             organisation_id=org.id,
             tenant_id=tenant.id,
             kind="rotate_secret",
-            idempotency_key=f"staff-reconcile-{uuid.uuid4().hex}",
+            idempotency_key=hashlib.sha256(uuid.uuid4().bytes).hexdigest(),
             desired_spec_hash=hashlib.sha256(b"spec-1").hexdigest(),
             actor_type="staff",
             actor_id=operator.id,

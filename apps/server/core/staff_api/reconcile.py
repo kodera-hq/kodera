@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, NoReturn
 from uuid import UUID
 
 from django.db import connection, transaction
@@ -15,19 +15,7 @@ from core.db.ids import new_uuid7
 from .audit import append_staff_audit_entry
 from .auth import VerifiedStaffRequest
 from .errors import StaffApiError
-from .models import RECONCILE_EXITS, RECONCILE_OUTCOMES, STAFF_REALM
-
-DECIDING_ROLE = "staff_operator"
-CLOCK_TOLERANCE = timedelta(minutes=5)
-CLOSES_DISPATCH_WITH = {
-    "completed": "completed",
-    "no_effect": "no_effect",
-    "partial": "failed",
-}
-DELIVERY_EXIT_STATUS = {
-    "completed": "succeeded",
-    "no_effect": "pending",
-}
+from .models import RECONCILE_EXITS, RECONCILE_OUTCOMES
 
 
 @dataclass(frozen=True)
@@ -137,99 +125,120 @@ def _parse_decision_body(body: dict[str, Any]) -> _ParsedDecision:
     )
 
 
-def _db_clock_now(cursor: Any) -> datetime:
-    cursor.execute("SELECT clock_timestamp()")
-    row = cursor.fetchone()
-    if row is None or not isinstance(row[0], datetime):
-        raise RuntimeError("clock_timestamp() returned no datetime")
-    return row[0]
+def _decision_payload_json(
+    parsed: _ParsedDecision, *, include_step_audit: bool
+) -> tuple[UUID, str]:
+    decision_id = new_uuid7()
+    payload: dict[str, str] = {
+        "decision_id": str(decision_id),
+        "decision_audit_id": str(new_uuid7()),
+        "exit": parsed.exit_code,
+        "operation_outcome": parsed.operation_outcome,
+        "c_provider": parsed.compute_terminated.provider,
+        "c_resource_id": parsed.compute_terminated.resource_id,
+        "c_request_id": parsed.compute_terminated.request_id,
+        "c_observed_at": parsed.compute_terminated.observed_at.isoformat(timespec="microseconds"),
+        "t_provider": parsed.target_read.provider,
+        "t_resource_id": parsed.target_read.resource_id,
+        "t_request_id": parsed.target_read.request_id,
+        "t_observed_at": parsed.target_read.observed_at.isoformat(timespec="microseconds"),
+    }
+    if include_step_audit:
+        payload["step_audit_id"] = str(new_uuid7())
+    return decision_id, json.dumps(payload, separators=(",", ":"))
 
 
-def _lock_operator_grant_for_share(cursor: Any, identity_id: UUID) -> UUID:
-    cursor.execute(
-        """
-        SELECT r.id
-        FROM identity_staffrole r
-        JOIN identity_identity i ON i.id = r.identity_id
-        JOIN identity_user u ON u.id = i.user_id
-        WHERE r.identity_id = %s
-          AND r.realm = %s
-          AND r.role = %s
-          AND r.revoked_at IS NULL
-          AND i.deleted_at IS NULL
-          AND i.enabled = TRUE
-          AND u.deleted_at IS NULL
-          AND u.enabled = TRUE
-        ORDER BY r.created_at, r.id
-        LIMIT 1
-        FOR SHARE OF r, i, u
-        """,
-        [identity_id, STAFF_REALM, DECIDING_ROLE],
-    )
-    found = cursor.fetchone()
-    if found is None:
+def _decode_port_result(row: tuple[Any, ...] | None) -> dict[str, Any]:
+    if row is None or row[0] is None:
+        raise RuntimeError("Reconciliation database port returned an empty payload")
+    raw = row[0]
+    if isinstance(raw, str):
+        parsed = json.loads(raw)
+    elif isinstance(raw, dict):
+        parsed = raw
+    else:
+        raise RuntimeError("Reconciliation database port returned a non-JSON payload")
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Reconciliation database port payload must be an object")
+    return parsed
+
+
+def _raise_reconcile_port_error(error_code: str, *, entity: str) -> NoReturn:
+    if error_code == "job_not_found":
+        raise StaffApiError(404, "job_not_found", "Job not found", "Unknown job_id")
+    if error_code == "outbox_unavailable":
+        raise StaffApiError(
+            404,
+            "delivery_not_found",
+            "Outbox delivery unavailable",
+            "Outbox schema is not installed on this database",
+        )
+    if error_code == "delivery_not_found":
+        raise StaffApiError(
+            404,
+            "delivery_not_found",
+            "Outbox delivery not found",
+            "Unknown delivery_id",
+        )
+    if error_code == "not_in_reconciliation":
+        label = "Job" if entity == "job" else "Delivery"
+        plural = "jobs" if entity == "job" else "deliveries"
+        raise StaffApiError(
+            409,
+            "not_in_reconciliation",
+            f"{label} is not in needs_reconciliation",
+            f"Only {plural} currently in needs_reconciliation can be reconciled",
+        )
+    if error_code == "sub_job_not_terminal":
+        raise StaffApiError(
+            409,
+            "sub_job_not_terminal",
+            "Live sub-job blocks reconciliation",
+            "All child sub-jobs must reach a terminal state before reconciling the parent job",
+        )
+    if error_code == "role_missing":
         raise StaffApiError(
             403,
             "role_missing",
             "Active staff_operator grant required",
             "Caller holds no active unrevoked staff_operator grant in identity_staffrole",
         )
-    return found[0] if isinstance(found[0], UUID) else UUID(str(found[0]))
-
-
-def _check_evidence_order_and_partial(
-    parsed: _ParsedDecision,
-    *,
-    dispatched_at: datetime | None,
-    decided_at: datetime,
-    reject_future_start: bool,
-) -> None:
-    if reject_future_start and dispatched_at is not None and dispatched_at > decided_at:
+    if error_code == "evidence_out_of_order_start":
         raise StaffApiError(
             409,
             "evidence_out_of_order",
             "Reconciliation evidence out of order",
             "Recorded start timestamp is after decision timestamp",
         )
-    compute_at = parsed.compute_terminated.observed_at
-    target_at = parsed.target_read.observed_at
-    if dispatched_at is not None and not (dispatched_at - CLOCK_TOLERANCE < compute_at):
+    if error_code == "evidence_out_of_order_compute":
         raise StaffApiError(
             409,
             "evidence_out_of_order",
             "Reconciliation evidence out of order",
             "compute_terminated.observed_at precedes dispatch start minus 5-minute clock tolerance",
         )
-    if not (compute_at <= target_at):
+    if error_code == "evidence_out_of_order_target":
         raise StaffApiError(
             409,
             "evidence_out_of_order",
             "Reconciliation evidence out of order",
             "target_read.observed_at must be greater than or equal to compute_terminated.observed_at",
         )
-    if not (target_at <= decided_at + CLOCK_TOLERANCE):
+    if error_code == "evidence_out_of_order_future":
         raise StaffApiError(
             409,
             "evidence_out_of_order",
             "Reconciliation evidence out of order",
             "target_read.observed_at is in the future beyond 5-minute clock tolerance",
         )
-    if parsed.operation_outcome == "partial" and parsed.exit_code == "resume":
+    if error_code == "partial_resume":
         raise StaffApiError(
             409,
             "partial_resume",
             "Partial outcome cannot resume",
             "A partial external side-effect may only fail, never resume",
         )
-
-
-def _lookup_org_slug(cursor: Any, organisation_id: UUID) -> str | None:
-    cursor.execute(
-        "SELECT slug FROM orgs_organisation WHERE id = %s AND deleted_at IS NULL",
-        [organisation_id],
-    )
-    row = cursor.fetchone()
-    return str(row[0]) if row and row[0] else None
+    raise StaffApiError(500, "reconcile_failed", "Reconciliation failed")
 
 
 def reconcile_staff_job(
@@ -240,242 +249,20 @@ def reconcile_staff_job(
     request_id: str,
 ) -> dict[str, object]:
     parsed = _parse_decision_body(body)
+    decision_id, decision_json = _decision_payload_json(parsed, include_step_audit=True)
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute(
-                """
-                SELECT id, status, organisation_id, parent_job_id,
-                       unresolved_step_id, unresolved_operation_ref
-                FROM jobs_job
-                WHERE id = %s
-                FOR NO KEY UPDATE
-                """,
-                [job_id],
+                "SELECT staff_reconcile_job(%s, %s, %s::jsonb, %s)",
+                [caller.identity_id, job_id, decision_json, request_id],
             )
-            job_row = cursor.fetchone()
-            if job_row is None:
-                raise StaffApiError(404, "job_not_found", "Job not found", "Unknown job_id")
-            _, current_status, org_id_raw, parent_job_id, unresolved_step_id, unresolved_op_ref = job_row
-            if current_status != "needs_reconciliation" or unresolved_step_id is None or unresolved_op_ref is None:
-                raise StaffApiError(
-                    409,
-                    "not_in_reconciliation",
-                    "Job is not in needs_reconciliation",
-                    "Only jobs currently in needs_reconciliation can be reconciled",
-                )
-            organisation_id = org_id_raw if isinstance(org_id_raw, UUID) else UUID(str(org_id_raw))
-            decided_at = _db_clock_now(cursor)
+            port_res = _decode_port_result(cursor.fetchone())
+        if port_res.get("ok") is not True:
+            _raise_reconcile_port_error(str(port_res.get("error", "")), entity="job")
 
-            cursor.execute(
-                """
-                SELECT EXISTS (
-                  SELECT 1 FROM jobs_job
-                  WHERE parent_job_id = %s AND status NOT IN ('succeeded', 'failed', 'cancelled')
-                )
-                """,
-                [job_id],
-            )
-            live_sub = cursor.fetchone()
-            if live_sub is not None and bool(live_sub[0]):
-                raise StaffApiError(
-                    409,
-                    "sub_job_not_terminal",
-                    "Live sub-job blocks reconciliation",
-                    "All child sub-jobs must reach a terminal state before reconciling the parent job",
-                )
-
-            cursor.execute(
-                """
-                SELECT id, dispatched_at, terminal_outcome
-                FROM jobs_jobdispatch
-                WHERE job_id = %s AND step_id = %s AND operation_ref = %s
-                ORDER BY dispatched_at DESC, id DESC
-                LIMIT 1
-                """,
-                [job_id, unresolved_step_id, unresolved_op_ref],
-            )
-            dispatch_row = cursor.fetchone()
-            dispatch_id, dispatched_at, closed_outcome = dispatch_row or (None, None, None)
-
-            grant_id = _lock_operator_grant_for_share(cursor, caller.identity_id)
-            _check_evidence_order_and_partial(
-                parsed,
-                dispatched_at=dispatched_at,
-                decided_at=decided_at,
-                reject_future_start=False,
-            )
-
-            closes_with = CLOSES_DISPATCH_WITH[parsed.operation_outcome]
-            decision_id = new_uuid7()
-            cursor.execute(
-                """
-                INSERT INTO jobs_jobreconciliationdecision (
-                  id, job_id, exit, operation_outcome,
-                  compute_terminated_provider, compute_terminated_resource_id,
-                  compute_terminated_request_id, compute_terminated_observed_at,
-                  target_read_provider, target_read_resource_id,
-                  target_read_request_id, target_read_observed_at,
-                  unresolved_step_id, unresolved_operation_ref, dispatch_outcome_at_decision,
-                  decided_by_identity_id, decided_by_role, decided_at
-                )
-                VALUES (
-                  %(id)s, %(job)s, %(exit)s, %(operation_outcome)s,
-                  %(c_provider)s, %(c_resource_id)s, %(c_request_id)s, %(c_observed_at)s,
-                  %(t_provider)s, %(t_resource_id)s, %(t_request_id)s, %(t_observed_at)s,
-                  %(step)s, %(operation_ref)s, %(dispatch_outcome)s,
-                  %(identity)s, %(role)s, %(decided_at)s
-                )
-                """,
-                {
-                    "id": decision_id,
-                    "job": job_id,
-                    "exit": parsed.exit_code,
-                    "operation_outcome": parsed.operation_outcome,
-                    "c_provider": parsed.compute_terminated.provider,
-                    "c_resource_id": parsed.compute_terminated.resource_id,
-                    "c_request_id": parsed.compute_terminated.request_id,
-                    "c_observed_at": parsed.compute_terminated.observed_at,
-                    "t_provider": parsed.target_read.provider,
-                    "t_resource_id": parsed.target_read.resource_id,
-                    "t_request_id": parsed.target_read.request_id,
-                    "t_observed_at": parsed.target_read.observed_at,
-                    "step": unresolved_step_id,
-                    "operation_ref": unresolved_op_ref,
-                    "dispatch_outcome": closed_outcome,
-                    "identity": caller.identity_id,
-                    "role": DECIDING_ROLE,
-                    "decided_at": decided_at,
-                },
-            )
-
-            audit_meta = json.dumps(
-                {
-                    "exit": parsed.exit_code,
-                    "reconciliation_decision_ref": str(decision_id),
-                    "staff_role_grant_ref": str(grant_id),
-                }
-            )
-            cursor.execute(
-                """
-                INSERT INTO audit_auditevent (
-                  id, occurred_at, actor_type, actor_id, actor_label,
-                  organisation_id, action, target_urn, request_id, job_id,
-                  retention_class, metadata
-                )
-                VALUES (
-                  %s, clock_timestamp(), 'staff', %s, %s,
-                  %s, 'job.reconciliation_decided', %s, %s, %s,
-                  'standard', %s::jsonb
-                )
-                """,
-                [
-                    new_uuid7(),
-                    caller.identity_id,
-                    f"urn:kodera:identity:{caller.identity_id}",
-                    organisation_id,
-                    f"urn:kodera:job:{job_id}",
-                    request_id,
-                    job_id,
-                    audit_meta,
-                ],
-            )
-
-            if dispatch_id is not None:
-                cursor.execute(
-                    """
-                    UPDATE jobs_jobdispatch
-                    SET closed_at = clock_timestamp(),
-                        terminal_outcome = %s,
-                        terminal_evidence_ref = %s
-                    WHERE id = %s AND closed_at IS NULL
-                    """,
-                    [closes_with, parsed.target_read.request_id, dispatch_id],
-                )
-
-            if parsed.exit_code == "resume":
-                step_next_status = (
-                    "succeeded" if parsed.operation_outcome == "completed" else "pending"
-                )
-                cursor.execute(
-                    "UPDATE jobs_jobstep SET status = %s WHERE id = %s",
-                    [step_next_status, unresolved_step_id],
-                )
-                if parsed.operation_outcome == "completed":
-                    cursor.execute(
-                        "SELECT seq, output_ref FROM jobs_jobstep WHERE id = %s",
-                        [unresolved_step_id],
-                    )
-                    step_info = cursor.fetchone()
-                    seq, output_ref = step_info if step_info is not None else (None, None)
-                    step_meta = json.dumps(
-                        {
-                            "seq": seq,
-                            "step_id": str(unresolved_step_id),
-                            "output_ref": output_ref,
-                        }
-                    )
-                    cursor.execute(
-                        """
-                        INSERT INTO audit_auditevent (
-                          id, occurred_at, actor_type, actor_id, actor_label,
-                          organisation_id, action, target_urn, request_id, job_id,
-                          retention_class, metadata
-                        )
-                        VALUES (
-                          %s, clock_timestamp(), 'system', NULL, 'system',
-                          %s, 'job.step_succeeded', %s, NULL, %s,
-                          'standard', %s::jsonb
-                        )
-                        """,
-                        [
-                            new_uuid7(),
-                            organisation_id,
-                            f"urn:kodera:job:{job_id}",
-                            job_id,
-                            step_meta,
-                        ],
-                    )
-                cursor.execute(
-                    """
-                    UPDATE jobs_job
-                    SET status = 'queued', lease_expires_at = NULL, reconciliation_decision_ref = %s
-                    WHERE id = %s
-                    """,
-                    [decision_id, job_id],
-                )
-                new_status = "queued"
-            else:
-                cursor.execute(
-                    """
-                    UPDATE jobs_job
-                    SET status = 'failed', error_code = 'reconciliation_failed',
-                        lease_expires_at = NULL, reconciliation_decision_ref = %s
-                    WHERE id = %s
-                    """,
-                    [decision_id, job_id],
-                )
-                cursor.execute(
-                    """
-                    UPDATE jobs_joblockreservation
-                    SET ended_at = clock_timestamp()
-                    WHERE job_id = %s AND ended_at IS NULL
-                    """,
-                    [job_id],
-                )
-                if parent_job_id is not None:
-                    cursor.execute(
-                        """
-                        UPDATE jobs_jobdispatch
-                        SET closed_at = clock_timestamp(),
-                            terminal_outcome = 'failed',
-                            terminal_evidence_ref = operation_ref
-                        WHERE sub_job_id = %s AND closed_at IS NULL
-                        """,
-                        [job_id],
-                    )
-                new_status = "failed"
-
-            org_slug = _lookup_org_slug(cursor, organisation_id)
+        new_status = str(port_res["new_status"])
+        raw_slug = port_res.get("organisation_slug")
+        org_slug = str(raw_slug) if isinstance(raw_slug, str) and raw_slug else None
 
         append_staff_audit_entry(
             actor_identity_id=caller.identity_id,
@@ -510,136 +297,20 @@ def reconcile_staff_delivery(
     request_id: str,
 ) -> dict[str, object]:
     parsed = _parse_decision_body(body)
+    decision_id, decision_json = _decision_payload_json(parsed, include_step_audit=False)
     with transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute("SELECT to_regclass('public.outbox_outboxdelivery')")
-            reg = cursor.fetchone()
-            if reg is None or reg[0] is None:
-                raise StaffApiError(
-                    404,
-                    "delivery_not_found",
-                    "Outbox delivery unavailable",
-                    "Outbox schema is not installed on this database",
-                )
-
             cursor.execute(
-                """
-                SELECT status, started_at, organisation_id
-                FROM outbox_outboxdelivery
-                WHERE id = %s
-                FOR NO KEY UPDATE
-                """,
-                [delivery_id],
+                "SELECT staff_reconcile_delivery(%s, %s, %s::jsonb, %s)",
+                [caller.identity_id, delivery_id, decision_json, request_id],
             )
-            delivery_row = cursor.fetchone()
-            if delivery_row is None:
-                raise StaffApiError(
-                    404,
-                    "delivery_not_found",
-                    "Outbox delivery not found",
-                    "Unknown delivery_id",
-                )
-            current_status, started_at, org_id_raw = delivery_row
-            if current_status != "needs_reconciliation":
-                raise StaffApiError(
-                    409,
-                    "not_in_reconciliation",
-                    "Delivery is not in needs_reconciliation",
-                    "Only deliveries currently in needs_reconciliation can be reconciled",
-                )
-            organisation_id = org_id_raw if isinstance(org_id_raw, UUID) else UUID(str(org_id_raw))
-            decided_at = _db_clock_now(cursor)
+            port_res = _decode_port_result(cursor.fetchone())
+        if port_res.get("ok") is not True:
+            _raise_reconcile_port_error(str(port_res.get("error", "")), entity="delivery")
 
-            grant_id = _lock_operator_grant_for_share(cursor, caller.identity_id)
-            _check_evidence_order_and_partial(
-                parsed,
-                dispatched_at=started_at,
-                decided_at=decided_at,
-                reject_future_start=True,
-            )
-
-            decision_id = new_uuid7()
-            cursor.execute(
-                """
-                INSERT INTO outbox_deliverydecision (
-                  id, delivery_id, exit, operation_outcome,
-                  compute_terminated_provider, compute_terminated_resource_id,
-                  compute_terminated_request_id, compute_terminated_observed_at,
-                  target_read_provider, target_read_resource_id,
-                  target_read_request_id, target_read_observed_at,
-                  decided_by_identity_id, decided_by_role
-                )
-                VALUES (
-                  %(id)s, %(delivery)s, %(exit)s, %(operation_outcome)s,
-                  %(c_provider)s, %(c_resource_id)s, %(c_request_id)s, %(c_observed_at)s,
-                  %(t_provider)s, %(t_resource_id)s, %(t_request_id)s, %(t_observed_at)s,
-                  %(identity)s, %(role)s
-                )
-                """,
-                {
-                    "id": decision_id,
-                    "delivery": delivery_id,
-                    "exit": parsed.exit_code,
-                    "operation_outcome": parsed.operation_outcome,
-                    "c_provider": parsed.compute_terminated.provider,
-                    "c_resource_id": parsed.compute_terminated.resource_id,
-                    "c_request_id": parsed.compute_terminated.request_id,
-                    "c_observed_at": parsed.compute_terminated.observed_at,
-                    "t_provider": parsed.target_read.provider,
-                    "t_resource_id": parsed.target_read.resource_id,
-                    "t_request_id": parsed.target_read.request_id,
-                    "t_observed_at": parsed.target_read.observed_at,
-                    "identity": caller.identity_id,
-                    "role": DECIDING_ROLE,
-                },
-            )
-
-            audit_meta = json.dumps(
-                {
-                    "exit": parsed.exit_code,
-                    "reconciliation_decision_ref": str(decision_id),
-                    "staff_role_grant_ref": str(grant_id),
-                }
-            )
-            cursor.execute(
-                """
-                INSERT INTO audit_auditevent (
-                  id, occurred_at, actor_type, actor_id, actor_label,
-                  organisation_id, action, target_urn, request_id,
-                  retention_class, metadata
-                )
-                VALUES (
-                  %s, clock_timestamp(), 'staff', %s, %s,
-                  %s, 'outbox_delivery.reconciliation_decided', %s, %s,
-                  'standard', %s::jsonb
-                )
-                """,
-                [
-                    new_uuid7(),
-                    caller.identity_id,
-                    f"urn:kodera:identity:{caller.identity_id}",
-                    organisation_id,
-                    f"urn:kodera:outbox_delivery:{delivery_id}",
-                    request_id,
-                    audit_meta,
-                ],
-            )
-
-            new_status = (
-                "failed"
-                if parsed.exit_code == "fail"
-                else DELIVERY_EXIT_STATUS[parsed.operation_outcome]
-            )
-            cursor.execute(
-                """
-                UPDATE outbox_outboxdelivery
-                SET status = %s, reconciliation_decision_ref = %s
-                WHERE id = %s
-                """,
-                [new_status, decision_id, delivery_id],
-            )
-
-            org_slug = _lookup_org_slug(cursor, organisation_id)
+        new_status = str(port_res["new_status"])
+        raw_slug = port_res.get("organisation_slug")
+        org_slug = str(raw_slug) if isinstance(raw_slug, str) and raw_slug else None
 
         append_staff_audit_entry(
             actor_identity_id=caller.identity_id,

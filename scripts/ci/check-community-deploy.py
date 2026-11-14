@@ -2416,11 +2416,16 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             lambda c, e, cf: (
                 c,
                 e,
-                re.sub(
-                    r"\n\t# Exact mobile association routes.*\n\t@mobile_association[^\n]+\n\thandle @mobile_association \{\n(?:\t\t.*\n|\t\t\t.*\n)+\t\}\n",
-                    "\n",
-                    cf,
-                    count=1,
+                cf.replace(
+                    "\t# Exact mobile association routes only; /.well-known/matrix/* stays on web:8080.\n"
+                    "\t@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json\n"
+                    "\thandle @mobile_association {\n"
+                    "\t\treverse_proxy server:8000 {\n"
+                    "\t\t\timport client_address\n"
+                    "\t\t}\n"
+                    "\t}\n",
+                    "",
+                    1,
                 ),
             ),
             "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'",

@@ -100,6 +100,15 @@ SELECT = (
     # no personal data.
     "billing_pack",
     "billing_capacitytier",
+    # C1 zero-trust /staff/v1/* records and append-only SHA-256 hash-chained staff audit entries.
+    "staff_api_role_grant",
+    "staff_api_deal_card",
+    "staff_api_waitlist_cohort",
+    "staff_api_feedback_item",
+    "staff_api_sar_record",
+    "staff_api_finops_snapshot",
+    "staff_api_issuer_snapshot",
+    "staff_api_audit_entry",
 )
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
@@ -171,6 +180,15 @@ INSERT = (
     "tenancy_tenant",
     "legal_dpa",
     "legal_acceptance",
+    # C1 zero-trust /staff/v1/* records and append-only SHA-256 hash-chained staff audit entries
+    # (`staff_api_feedback_item` is triaged via UPDATE only, never inserted by `/staff/v1/*`).
+    "staff_api_role_grant",
+    "staff_api_deal_card",
+    "staff_api_waitlist_cohort",
+    "staff_api_sar_record",
+    "staff_api_finops_snapshot",
+    "staff_api_issuer_snapshot",
+    "staff_api_audit_entry",
 )
 # One column each, and why:
 # - identity_staffrole.created_at: `SELECT ... FOR SHARE` of the grant (current_staff_grant) needs
@@ -338,6 +356,37 @@ UPDATE_COLUMNS = (
     ("legal_dpa", "accepted_by_email"),
     ("legal_dpa", "accepted_by_role"),
     ("legal_dpa", "updated_at"),
+    # C1 /staff/v1/* mutable operational columns only; `staff_api_audit_entry`,
+    # `staff_api_finops_snapshot` and `staff_api_waitlist_cohort` remain strictly append-only
+    # (never UPDATE or DELETE).
+    ("staff_api_role_grant", "revoked_at"),
+    ("staff_api_role_grant", "revoked_by_identity_id"),
+    ("staff_api_role_grant", "updated_at"),
+    ("staff_api_deal_card", "stage"),
+    ("staff_api_deal_card", "pack_code"),
+    ("staff_api_deal_card", "capacity_tier_code"),
+    ("staff_api_deal_card", "estimated_mrr_cents"),
+    ("staff_api_deal_card", "owner_seat"),
+    ("staff_api_deal_card", "next_step_code"),
+    ("staff_api_deal_card", "updated_by_identity_id"),
+    ("staff_api_deal_card", "updated_at"),
+    ("staff_api_feedback_item", "status"),
+    ("staff_api_feedback_item", "severity"),
+    ("staff_api_feedback_item", "assigned_seat"),
+    ("staff_api_feedback_item", "vote_count"),
+    ("staff_api_feedback_item", "roadmap_milestone"),
+    ("staff_api_feedback_item", "external_issue_ref"),
+    ("staff_api_feedback_item", "updated_at"),
+    ("staff_api_sar_record", "status"),
+    ("staff_api_sar_record", "completed_at"),
+    ("staff_api_sar_record", "evidence_ref"),
+    ("staff_api_sar_record", "completed_by_identity_id"),
+    ("staff_api_sar_record", "updated_at"),
+    ("staff_api_issuer_snapshot", "issuer"),
+    ("staff_api_issuer_snapshot", "expires_at_epoch"),
+    ("staff_api_issuer_snapshot", "public_jwks"),
+    ("staff_api_issuer_snapshot", "registered_by_identity_id"),
+    ("staff_api_issuer_snapshot", "updated_at"),
 )
 # An expired replay entry is replaced when its key returns (IDEMPOTENCY_REPLAY.md §2.2), for the
 # intake and initialiseWorkspace alike. deleteCategory deletes an empty category, and a channel's
@@ -356,14 +405,25 @@ EXECUTE_FUNCTIONS = (
     "workspace_quota_usage(uuid)",
     "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
     "docs_document_role(uuid, uuid, uuid, uuid, text, text)",
+    "staff_read_outbox_sre_summary(uuid)",
+    "staff_sync_identity_bridge_role(uuid, uuid, text, text, uuid)",
+    "staff_reconcile_job(uuid, uuid, jsonb, text)",
+    "staff_reconcile_delivery(uuid, uuid, jsonb, text)",
 )
 
 
 # Read by column only: the guard reads which documents were accepted, for which tenant and DPA,
-# never who accepted them or from where (identity, name, role, IP, user agent).
-SELECT_COLUMNS = tuple(
-    ("legal_acceptance", column)
-    for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")
+# never who accepted them or from where (identity, name, role, IP, user agent); and C1 /staff/v1/*
+# reads only aggregate MRR columns of `billing_subscription`, never provider identifiers.
+SELECT_COLUMNS = (
+    *(
+        ("legal_acceptance", column)
+        for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")
+    ),
+    *(
+        ("billing_subscription", column)
+        for column in ("state", "billing_period", "total_excl_vat_minor")
+    ),
 )
 
 

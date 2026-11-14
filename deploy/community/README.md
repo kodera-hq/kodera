@@ -146,6 +146,17 @@ Caddy is the only service that publishes HTTP ports. In the `single` topology it
 
 It answers `404` on `/agent/*`, `/staff/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50200/udp), exactly those of `livekit.yaml`.
 
+### Mobile app association
+
+`/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` leave their runtime defaults empty in version control so an unconfigured stack answers `503` (`well_known_unconfigured`) instead of advertising placeholder mobile signing identifiers. To enable iOS Universal Links and Android App Links for official Kodera native builds in operator-owned configuration (comments/examples only — keep uncommitted runtime defaults empty on isolated deployments):
+
+```sh
+# Official Kodera production mobile association example:
+# KODERA_IOS_APP_IDS=UF5852SF57.io.kodera.app
+# KODERA_ANDROID_PACKAGE_NAME=io.kodera.app
+# KODERA_ANDROID_ASSETLINKS_SHA256=66:F3:3A:25:47:F5:4B:3E:DF:0F:BF:9A:E7:D9:C3:E7:F6:66:DB:92:FC:ED:82:F4:15:AE:CB:E1:56:4D:9E:F5
+```
+
 ## Synapse database
 
 Synapse runs on PostgreSQL, in the dedicated `synapse-db` service (collation `C`, as Synapse requires), with its own password, `SYNAPSE_POSTGRES_PASSWORD`. That password reaches Synapse as `PGPASSWORD` and is not written to `homeserver.yaml`; the server API never holds it, and Synapse never holds the server's `POSTGRES_PASSWORD`.

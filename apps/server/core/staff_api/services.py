@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -63,7 +64,9 @@ def _parse_uuid(value: object, field_name: str) -> UUID:
     if isinstance(value, UUID):
         return value
     if not isinstance(value, str):
-        raise StaffApiError(400, "invalid_uuid", "Invalid identifier", f"{field_name} must be a UUID")
+        raise StaffApiError(
+            400, "invalid_uuid", "Invalid identifier", f"{field_name} must be a UUID"
+        )
     try:
         return UUID(value.strip())
     except ValueError as exc:
@@ -331,9 +334,7 @@ def read_feedback(
             400, "invalid_status", "Invalid feedback status", "Unsupported status filter"
         )
     if kind_filter is not None and kind_filter not in FEEDBACK_KINDS:
-        raise StaffApiError(
-            400, "invalid_kind", "Invalid feedback kind", "Unsupported kind filter"
-        )
+        raise StaffApiError(400, "invalid_kind", "Invalid feedback kind", "Unsupported kind filter")
 
     full_triage_roles = {"staff_owner", "staff_operator", "staff_support"}
     redact_engineering = engineering_only or not bool(
@@ -397,9 +398,7 @@ def read_finops(*, period_month: str | None = None) -> dict[str, object]:
     total_cost = sum(int(s.total_cost_cents) for s in snapshots)
     gross_margin_cents = total_mrr - total_cost
     gross_margin_bps = (gross_margin_cents * 10000) // total_mrr if total_mrr > 0 else None
-    gross_margin_alert = (
-        gross_margin_bps is not None and gross_margin_bps < GROSS_MARGIN_FLOOR_BPS
-    )
+    gross_margin_alert = gross_margin_bps is not None and gross_margin_bps < GROSS_MARGIN_FLOOR_BPS
 
     rows = [
         {
@@ -437,7 +436,20 @@ def read_finops(*, period_month: str | None = None) -> dict[str, object]:
     }
 
 
-def read_sre() -> dict[str, object]:
+def _iso_from_json_timestamp(raw: object) -> str | None:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return _iso(raw)
+    if isinstance(raw, str) and raw.strip():
+        normalized = raw.strip()
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        return datetime.fromisoformat(normalized).astimezone(UTC).isoformat()
+    return None
+
+
+def read_sre(caller: VerifiedStaffRequest) -> dict[str, object]:
     with connection.cursor() as cursor:
         cursor.execute("SELECT status, COUNT(*) FROM jobs_job GROUP BY status")
         job_status_counts = {str(status): int(count) for status, count in cursor.fetchall()}
@@ -467,39 +479,38 @@ def read_sre() -> dict[str, object]:
             for r in cursor.fetchall()
         ]
 
-        cursor.execute("SELECT to_regclass('public.outbox_outboxdelivery')")
-        outbox_reg = cursor.fetchone()
-        outbox_status_counts: dict[str, int] = {}
-        reconciling_deliveries: list[dict[str, object]] = []
-        if outbox_reg is not None and outbox_reg[0] is not None:
-            cursor.execute("SELECT status, COUNT(*) FROM outbox_outboxdelivery GROUP BY status")
-            outbox_status_counts = {
-                str(status): int(count) for status, count in cursor.fetchall()
-            }
-            cursor.execute(
-                """
-                SELECT
-                  id, organisation_id, category, changes_realm, status,
-                  operation_ref, started_at, created_at
-                FROM outbox_outboxdelivery
-                WHERE status = 'needs_reconciliation'
-                ORDER BY created_at DESC, id DESC
-                LIMIT 200
-                """
-            )
-            reconciling_deliveries = [
-                {
-                    "id": str(r[0]),
-                    "organisation_id": str(r[1]),
-                    "category": str(r[2]),
-                    "changes_realm": bool(r[3]),
-                    "status": str(r[4]),
-                    "operation_ref": str(r[5]) if r[5] is not None else None,
-                    "started_at": _iso(r[6]),
-                    "created_at": _iso(r[7]) or "",
-                }
-                for r in cursor.fetchall()
-            ]
+        cursor.execute("SELECT staff_read_outbox_sre_summary(%s)", [caller.identity_id])
+        outbox_row = cursor.fetchone()
+
+    raw_outbox = outbox_row[0] if outbox_row else None
+    if isinstance(raw_outbox, str):
+        outbox_doc = json.loads(raw_outbox)
+    elif isinstance(raw_outbox, dict):
+        outbox_doc = raw_outbox
+    else:
+        outbox_doc = {}
+
+    raw_counts = outbox_doc.get("status_counts")
+    outbox_status_counts = (
+        {str(k): int(v) for k, v in raw_counts.items()} if isinstance(raw_counts, dict) else {}
+    )
+    raw_deliveries = outbox_doc.get("reconciling_deliveries")
+    reconciling_deliveries = [
+        {
+            "id": str(item["id"]),
+            "organisation_id": str(item["organisation_id"]),
+            "category": str(item["category"]),
+            "changes_realm": bool(item["changes_realm"]),
+            "status": str(item["status"]),
+            "operation_ref": (
+                str(item["operation_ref"]) if item.get("operation_ref") is not None else None
+            ),
+            "started_at": _iso_from_json_timestamp(item.get("started_at")),
+            "created_at": _iso_from_json_timestamp(item.get("created_at")) or "",
+        }
+        for item in (raw_deliveries if isinstance(raw_deliveries, list) else [])
+        if isinstance(item, dict)
+    ]
 
     return {
         "jobs": {
@@ -634,9 +645,16 @@ def triage_feedback_item(
             "assigned_seat must be a canonical seat or null",
         )
     vote_delta = body.get("vote_delta", 0)
-    if isinstance(vote_delta, bool) or not isinstance(vote_delta, int) or not (-100 <= vote_delta <= 100):
+    if (
+        isinstance(vote_delta, bool)
+        or not isinstance(vote_delta, int)
+        or not (-100 <= vote_delta <= 100)
+    ):
         raise StaffApiError(
-            400, "invalid_vote_delta", "Invalid vote delta", "vote_delta must be an integer in -100..100"
+            400,
+            "invalid_vote_delta",
+            "Invalid vote delta",
+            "vote_delta must be an integer in -100..100",
         )
 
     with transaction.atomic():
@@ -774,27 +792,59 @@ def upsert_deal_card(
     if not isinstance(pack_code, str) or SLUG_RE.fullmatch(pack_code.strip()) is None:
         raise StaffApiError(400, "invalid_pack_code", "Invalid pack_code")
     next_step_code = body.get("next_step_code")
-    if not isinstance(next_step_code, str) or not (1 <= len(next_step_code.strip()) <= 64) or "@" in next_step_code:
+    if (
+        not isinstance(next_step_code, str)
+        or not (1 <= len(next_step_code.strip()) <= 64)
+        or "@" in next_step_code
+    ):
         raise StaffApiError(400, "invalid_next_step_code", "Invalid next_step_code")
     mrr_cents = body.get("estimated_mrr_cents")
-    if isinstance(mrr_cents, bool) or not isinstance(mrr_cents, int) or not (0 <= mrr_cents <= 1_000_000_000):
+    if (
+        isinstance(mrr_cents, bool)
+        or not isinstance(mrr_cents, int)
+        or not (0 <= mrr_cents <= 1_000_000_000)
+    ):
         raise StaffApiError(
-            400, "invalid_estimated_mrr", "Invalid estimated_mrr_cents", "estimated_mrr_cents must be >= 0"
+            400,
+            "invalid_estimated_mrr",
+            "Invalid estimated_mrr_cents",
+            "estimated_mrr_cents must be >= 0",
         )
 
+    scrubbed_next_step = scrub_c1_text(next_step_code.strip())
     with transaction.atomic():
-        deal, _ = StaffDealCard.objects.update_or_create(
-            prospect_slug=prospect_slug,
-            defaults={
-                "stage": str(stage),
-                "pack_code": pack_code.strip(),
-                "capacity_tier_code": str(capacity_tier),
-                "estimated_mrr_cents": mrr_cents,
-                "owner_seat": str(owner_seat),
-                "next_step_code": scrub_c1_text(next_step_code.strip()),
-                "updated_by_identity_id": caller.identity_id,
-            },
-        )
+        deal = StaffDealCard.objects.select_for_update().filter(prospect_slug=prospect_slug).first()
+        if deal is None:
+            deal = StaffDealCard.objects.create(
+                prospect_slug=prospect_slug,
+                stage=str(stage),
+                pack_code=pack_code.strip(),
+                capacity_tier_code=str(capacity_tier),
+                estimated_mrr_cents=mrr_cents,
+                owner_seat=str(owner_seat),
+                next_step_code=scrubbed_next_step,
+                updated_by_identity_id=caller.identity_id,
+            )
+        else:
+            deal.stage = str(stage)
+            deal.pack_code = pack_code.strip()
+            deal.capacity_tier_code = str(capacity_tier)
+            deal.estimated_mrr_cents = mrr_cents
+            deal.owner_seat = str(owner_seat)
+            deal.next_step_code = scrubbed_next_step
+            deal.updated_by_identity_id = caller.identity_id
+            deal.save(
+                update_fields=[
+                    "stage",
+                    "pack_code",
+                    "capacity_tier_code",
+                    "estimated_mrr_cents",
+                    "owner_seat",
+                    "next_step_code",
+                    "updated_by_identity_id",
+                    "updated_at",
+                ]
+            )
         append_staff_audit_entry(
             actor_identity_id=caller.identity_id,
             actor_roles=caller.roles,
@@ -833,17 +883,32 @@ def open_waitlist_cohort(
     cohort_raw = body.get("cohort_code")
     if not isinstance(cohort_raw, str) or COHORT_CODE_RE.fullmatch(cohort_raw.strip()) is None:
         raise StaffApiError(
-            400, "invalid_cohort_code", "Invalid cohort_code", "cohort_code must match [a-z0-9][a-z0-9_-]{1,62}"
+            400,
+            "invalid_cohort_code",
+            "Invalid cohort_code",
+            "cohort_code must match [a-z0-9][a-z0-9_-]{1,62}",
         )
     cohort_code = cohort_raw.strip()
     limit_count = body.get("limit_count")
-    if isinstance(limit_count, bool) or not isinstance(limit_count, int) or not (1 <= limit_count <= 500):
+    if (
+        isinstance(limit_count, bool)
+        or not isinstance(limit_count, int)
+        or not (1 <= limit_count <= 500)
+    ):
         raise StaffApiError(
-            400, "invalid_limit_count", "Invalid limit_count", "limit_count must be an integer between 1 and 500"
+            400,
+            "invalid_limit_count",
+            "Invalid limit_count",
+            "limit_count must be an integer between 1 and 500",
         )
 
     with transaction.atomic():
-        existing = StaffWaitlistCohort.objects.select_for_update().filter(cohort_code=cohort_code).first()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                [f"staff_waitlist_cohort:{cohort_code}"],
+            )
+        existing = StaffWaitlistCohort.objects.filter(cohort_code=cohort_code).first()
         if existing is not None:
             if int(existing.limit_count) != limit_count:
                 raise StaffApiError(
@@ -901,7 +966,10 @@ def create_sar_record(
     request_kind = body.get("request_kind")
     if request_kind not in SAR_KINDS:
         raise StaffApiError(
-            400, "invalid_sar_kind", "Invalid SAR kind", "request_kind must be access, erasure, or portability"
+            400,
+            "invalid_sar_kind",
+            "Invalid SAR kind",
+            "request_kind must be access, erasure, or portability",
         )
     subject_pseudonym = validate_sar_pseudonym(body.get("subject_pseudonym"))
     ticket_ref = validate_sar_evidence_ref(body.get("ticket_ref"))
@@ -1016,7 +1084,9 @@ def complete_sar_record(
 # -------------------------------------------------------------- Ops Mutations ----
 
 
-def _count_active_enabled_holders_excluding(cursor: Any, role: str, excluded_identity_id: UUID) -> int:
+def _count_active_enabled_holders_excluding(
+    cursor: Any, role: str, excluded_identity_id: UUID
+) -> int:
     cursor.execute(
         """
         SELECT COUNT(DISTINCT g.identity_id)
@@ -1069,7 +1139,7 @@ def grant_staff_role_mutation(
                 FROM identity_identity i
                 JOIN identity_user u ON u.id = i.user_id
                 WHERE i.id = %s AND i.realm = %s AND i.deleted_at IS NULL AND u.deleted_at IS NULL
-                FOR UPDATE OF i, u
+                FOR SHARE OF u
                 """,
                 [target_identity_id, STAFF_REALM],
             )
@@ -1102,21 +1172,11 @@ def grant_staff_role_mutation(
 
             if str(role) in IDENTITY_BRIDGE_STAFF_ROLES:
                 cursor.execute(
-                    """
-                    SELECT id FROM identity_staffrole
-                    WHERE identity_id = %s AND realm = %s AND role = %s AND revoked_at IS NULL
-                    FOR UPDATE
-                    """,
-                    [target_identity_id, STAFF_REALM, str(role)],
+                    "SELECT staff_sync_identity_bridge_role(%s, %s, %s, 'grant', %s)",
+                    [caller.identity_id, target_identity_id, str(role), new_uuid7()],
                 )
-                if cursor.fetchone() is None:
-                    cursor.execute(
-                        """
-                        INSERT INTO identity_staffrole (id, created_at, updated_at, identity_id, realm, role, revoked_at)
-                        VALUES (%s, clock_timestamp(), clock_timestamp(), %s, %s, %s, NULL)
-                        """,
-                        [new_uuid7(), target_identity_id, STAFF_REALM, str(role)],
-                    )
+                bridge_row = cursor.fetchone()
+                if bridge_row is not None and bool(bridge_row[0]):
                     created_flag = True
 
         append_staff_audit_entry(
@@ -1205,14 +1265,11 @@ def revoke_staff_role_mutation(
             updated_bridge = 0
             if str(role) in IDENTITY_BRIDGE_STAFF_ROLES:
                 cursor.execute(
-                    """
-                    UPDATE identity_staffrole
-                    SET revoked_at = clock_timestamp(), updated_at = clock_timestamp()
-                    WHERE identity_id = %s AND realm = %s AND role = %s AND revoked_at IS NULL
-                    """,
-                    [target_identity_id, STAFF_REALM, str(role)],
+                    "SELECT staff_sync_identity_bridge_role(%s, %s, %s, 'revoke', NULL)",
+                    [caller.identity_id, target_identity_id, str(role)],
                 )
-                updated_bridge = cursor.rowcount
+                bridge_row = cursor.fetchone()
+                updated_bridge = 1 if bridge_row is not None and bool(bridge_row[0]) else 0
 
             if updated_grants == 0 and updated_bridge == 0:
                 raise StaffApiError(
@@ -1288,16 +1345,36 @@ def register_issuer_snapshot_mutation(
                 )
             bound_issuer = str(org_row[0])
 
-        snapshot, created = StaffIssuerSnapshot.objects.update_or_create(
-            organisation_slug=org_slug,
-            generation=generation,
-            defaults={
-                "issuer": bound_issuer,
-                "expires_at_epoch": expires_at,
-                "public_jwks": public_jwks,
-                "registered_by_identity_id": caller.identity_id,
-            },
+        snapshot = (
+            StaffIssuerSnapshot.objects.select_for_update()
+            .filter(organisation_slug=org_slug, generation=generation)
+            .first()
         )
+        if snapshot is None:
+            snapshot = StaffIssuerSnapshot.objects.create(
+                organisation_slug=org_slug,
+                generation=generation,
+                issuer=bound_issuer,
+                expires_at_epoch=expires_at,
+                public_jwks=public_jwks,
+                registered_by_identity_id=caller.identity_id,
+            )
+            created = True
+        else:
+            snapshot.issuer = bound_issuer
+            snapshot.expires_at_epoch = expires_at
+            snapshot.public_jwks = public_jwks
+            snapshot.registered_by_identity_id = caller.identity_id
+            snapshot.save(
+                update_fields=[
+                    "issuer",
+                    "expires_at_epoch",
+                    "public_jwks",
+                    "registered_by_identity_id",
+                    "updated_at",
+                ]
+            )
+            created = False
 
         append_staff_audit_entry(
             actor_identity_id=caller.identity_id,
@@ -1332,7 +1409,10 @@ def _non_negative_int(body: dict[str, Any], field: str, *, default: int | None =
     raw = body.get(field, default)
     if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0 or raw > 10_000_000_000:
         raise StaffApiError(
-            400, f"invalid_{field}", "Invalid numeric field", f"{field} must be a non-negative integer"
+            400,
+            f"invalid_{field}",
+            "Invalid numeric field",
+            f"{field} must be a non-negative integer",
         )
     return raw
 
@@ -1383,9 +1463,7 @@ def record_finops_snapshot_mutation(
 
     gross_margin_cents = mrr_cents - total_cost
     gross_margin_bps = (gross_margin_cents * 10000) // mrr_cents if mrr_cents > 0 else None
-    gross_margin_alert = (
-        gross_margin_bps is not None and gross_margin_bps < GROSS_MARGIN_FLOOR_BPS
-    )
+    gross_margin_alert = gross_margin_bps is not None and gross_margin_bps < GROSS_MARGIN_FLOOR_BPS
 
     with transaction.atomic():
         snap = StaffFinopsSnapshot.objects.create(
