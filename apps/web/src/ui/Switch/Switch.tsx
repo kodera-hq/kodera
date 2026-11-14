@@ -1,6 +1,7 @@
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 import { forwardRef, useId } from 'react'
 import { cx } from '../cx'
+import { TOUCH_TARGET_HEIGHT } from '../touchTarget'
 import { FieldError } from '../FieldError/FieldError'
 
 export interface SwitchProps {
@@ -54,7 +55,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
 
   return (
     <div className={cx('flex flex-col gap-1', className)}>
-      <div className="flex items-center gap-2">
+      <div className={cx('flex items-center gap-2', TOUCH_TARGET_HEIGHT)}>
         <SwitchPrimitive.Root
           ref={ref}
           id={switchId}
@@ -68,6 +69,7 @@ export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch
           aria-describedby={describedBy === '' ? undefined : describedBy}
           className={cx(
             'relative inline-flex h-5 w-[34px] shrink-0 items-center rounded-full border border-transparent',
+            'before:absolute before:-inset-y-[2px] before:inset-x-0 narrow:before:-inset-y-[12px] narrow:before:-inset-x-[5px]',
             'bg-c-border-strong outline-hidden transition-colors duration-fast ease-out focus-visible:ring',
             // The ring stands 2 px off the track, over the ground (`focus-offset`,
             // `src/index.css`): flush, it met the checked `action` fill at
