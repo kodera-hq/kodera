@@ -13,6 +13,17 @@ import accept_coldstart as acceptance
 
 
 class QualificationBoundaryTests(unittest.TestCase):
+    def test_build_diagnostics_publish_only_bounded_locations_and_codes(self):
+        output = (
+            "#15 4.1 src/example.test.ts(19,2): error TS2307: private diagnostic value\n"
+            "npm error code ELIFECYCLE\nprivate configuration must remain private\n"
+        )
+        self.assertEqual(acceptance.build_diagnostics(output),
+                         ["npm ELIFECYCLE", "src/example.test.ts:19:2 TS2307"])
+        self.assertEqual(acceptance.build_diagnostics("secret-only"), [])
+        many = "\n".join(f"src/file{i}.ts(1,1): error TS2307: hidden" for i in range(100))
+        self.assertEqual(len(acceptance.build_diagnostics(many)), 32)
+
     def test_only_exact_hosted_linux_context_is_admitted(self):
         environment = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "kodera-hq/kodera",
                        "RUNNER_OS": "Linux", "GITHUB_RUN_ID": "123",
