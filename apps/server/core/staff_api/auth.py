@@ -571,6 +571,28 @@ def authenticate_staff_request(
     )
 
 
+def _lock_caller_user_root(cursor: Any, user_id: UUID) -> None:
+    """Acquire root `FOR SHARE` lock on `identity_user` before nonblocking dependent row locks."""
+    cursor.execute(
+        """
+        SELECT 1
+        FROM identity_user
+        WHERE id = %s
+          AND enabled = TRUE
+          AND deleted_at IS NULL
+        FOR SHARE
+        """,
+        [user_id],
+    )
+    if cursor.fetchone() is None:
+        raise StaffApiError(
+            403,
+            "staff_identity_missing",
+            "Forbidden",
+            "Caller staff identity or user is disabled, erased, or missing in PostgreSQL",
+        )
+
+
 def fence_staff_caller(
     caller: VerifiedStaffRequest,
     *,
@@ -582,7 +604,8 @@ def fence_staff_caller(
 
     Must execute inside an active `transaction.atomic()` block so PostgreSQL holds `FOR SHARE`
     row locks on `identity_user`, `identity_identity`, `staff_api_role_grant`, and
-    `identity_staffrole` until the mutation and its `StaffAuditEntry` commit or roll back.
+    `identity_staffrole` (with `NOWAIT` on dependent rows after `identity_user`) until the
+    mutation and its `StaffAuditEntry` commit or roll back.
     """
     if not connection.in_atomic_block:
         raise RuntimeError("fence_staff_caller must run inside transaction.atomic()")
@@ -637,6 +660,7 @@ def fence_staff_caller(
         )
 
     with connection.cursor() as cursor:
+        _lock_caller_user_root(cursor, caller.user_id)
         cursor.execute(
             "SELECT staff_fence_caller(%s, %s, %s, %s, %s::text[])",
             [

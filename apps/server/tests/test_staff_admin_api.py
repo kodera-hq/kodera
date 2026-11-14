@@ -19,7 +19,7 @@ import pytest
 import yaml
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DatabaseError, connection, connections, transaction
+from django.db import DatabaseError, OperationalError, connection, connections, transaction
 from django.test import Client, RequestFactory, override_settings
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
@@ -32,11 +32,12 @@ from apps.outbox.models import OutboxDelivery
 from apps.tenancy.models import Tenant
 from config.environment import staff_oidc_issuer, staff_oidc_jwks_url, staff_ops_hosts
 from core.api.scopes import ATTRIBUTE as DECLARED_OPS_ATTR
-from core.staff_api import services as staff_services, views as staff_views
+from core.staff_api import auth as staff_auth, services as staff_services, views as staff_views
 from core.staff_api.audit import append_staff_audit_entry
 from core.staff_api.auth import (
     PIPELINE_WRITE_ROLES,
     ROLE_ADMIN_ROLES,
+    _lock_caller_user_root,
     authenticate_staff_request,
     clear_jwks_cache,
     register_test_jwks,
@@ -45,6 +46,7 @@ from core.staff_api.errors import (
     REQUEST_ID_RE,
     StaffApiError,
     request_correlation_id,
+    staff_command_transaction,
     staff_json_response,
     staff_problem_response,
 )
@@ -1683,4 +1685,224 @@ def test_admitted_mutation_for_share_caller_fence_blocks_concurrent_revocation_a
             )
         assert post_rev_exc.value.status == 403
         assert post_rev_exc.value.code == "insufficient_staff_role"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reverse_order_caller_identity_disable_contention_rolls_back_and_returns_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reverse-order User FOR SHARE vs Identity disable avoids deadlock/500, rolls back, and returns 409."""
+    owner_a = _seed_staff_member(roles=("staff_owner",))
+    candidate_c = _seed_staff_member(roles=())
+    now_epoch = int(time.time())
+    t_owner_a = _mint_staff_jwt(owner_a.subject, amr=["hwk"], auth_time=now_epoch)
+
+    user_locked = threading.Event()
+    resume_into_identity_lock = threading.Event()
+    orig_lock_user = _lock_caller_user_root
+
+    def _paused_lock_user(cursor: Any, user_id: uuid.UUID) -> None:
+        orig_lock_user(cursor, user_id)
+        user_locked.set()
+        assert resume_into_identity_lock.wait(timeout=10.0)
+
+    monkeypatch.setattr(staff_auth, "_lock_caller_user_root", _paused_lock_user)
+
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        http_state: dict[str, Any] = {}
+
+        def _run_http_role_grant() -> None:
+            try:
+                client = Client()
+                resp = client.post(
+                    "/staff/v1/ops/staff-roles/grant",
+                    data=json.dumps({"identity_id": str(candidate_c.id), "role": "staff_owner"}),
+                    content_type="application/json",
+                    **_auth_headers(t_owner_a, host=OPS_HOST, request_id="req-rev-order-0001"),
+                )
+                http_state["status"] = resp.status_code
+                http_state["content_type"] = resp["Content-Type"]
+                http_state["x_request_id"] = resp["X-Request-Id"]
+                http_state["body"] = resp.json()
+            except BaseException as exc:  # noqa: BLE001
+                http_state["error"] = exc
+            finally:
+                connections.close_all()
+
+        t_cmd = threading.Thread(target=_run_http_role_grant, daemon=True)
+        t_cmd.start()
+        assert user_locked.wait(timeout=10.0)
+        monkeypatch.setattr(staff_auth, "_lock_caller_user_root", orig_lock_user)
+
+        disabler_ready = threading.Event()
+        disabler_done = threading.Event()
+        disabler_state: dict[str, Any] = {}
+
+        def _disable_caller_identity() -> None:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET statement_timeout = '8s'")
+                    cursor.execute("SELECT pg_backend_pid()")
+                    pid_row = cursor.fetchone()
+                    assert pid_row is not None
+                    disabler_state["pid"] = int(pid_row[0])
+                disabler_ready.set()
+                disabler_state["updated"] = Identity.objects.filter(pk=owner_a.id).update(
+                    enabled=False
+                )
+            except BaseException as exc:  # noqa: BLE001
+                disabler_state["error"] = exc
+            finally:
+                disabler_done.set()
+                connections.close_all()
+
+        t_disabler = threading.Thread(target=_disable_caller_identity, daemon=True)
+        try:
+            t_disabler.start()
+            assert disabler_ready.wait(timeout=5.0)
+            waiting_on_user_lock = False
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not disabler_done.is_set():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                        [disabler_state["pid"]],
+                    )
+                    row = cursor.fetchone()
+                if row and row[0] == "Lock":
+                    waiting_on_user_lock = True
+                    break
+                time.sleep(0.02)
+            assert waiting_on_user_lock, "Identity disable did not wait on caller User FOR SHARE lock"
+            assert not disabler_done.is_set()
+        finally:
+            resume_into_identity_lock.set()
+            t_cmd.join(timeout=10.0)
+            t_disabler.join(timeout=10.0)
+
+        assert not t_cmd.is_alive()
+        assert not t_disabler.is_alive()
+        assert "error" not in http_state, http_state
+        assert "error" not in disabler_state, disabler_state
+        assert disabler_state["updated"] == 1
+
+        # 1. Typed retriable HTTP 409 JSON response (never generic 500 / http_500)
+        assert http_state["status"] == 409
+        assert http_state["content_type"] == "application/json"
+        rid = str(http_state["x_request_id"])
+        assert REQUEST_ID_RE.fullmatch(rid) is not None
+        assert rid.endswith("req-rev-order-0001")
+        assert http_state["body"] == {
+            "type": "https://kodera.io/problems/staff-authority-contention",
+            "title": "Concurrent staff authority or state contention",
+            "detail": (
+                "A concurrent authority or target update conflicted with this staff command; "
+                "retry the request"
+            ),
+            "code": "staff_authority_contention",
+            "status": 409,
+            "request_id": rid,
+        }
+
+        # 2. Zero partial target or audit writes after rollback
+        assert (
+            StaffRoleGrant.objects.filter(
+                identity_id=candidate_c.id, revoked_at__isnull=True
+            ).count()
+            == 0
+        )
+        assert StaffAuditEntry.objects.count() == 0
+
+        # 3. Retry while caller identity remains disabled cleanly refuses with 403
+        client = Client()
+        r_retry_disabled = client.post(
+            "/staff/v1/ops/staff-roles/grant",
+            data=json.dumps({"identity_id": str(candidate_c.id), "role": "staff_owner"}),
+            content_type="application/json",
+            **_auth_headers(t_owner_a, host=OPS_HOST, request_id="req-rev-order-retry-403"),
+        )
+        assert r_retry_disabled.status_code == 403
+        assert r_retry_disabled.json()["code"] == "staff_identity_missing"
+        assert StaffAuditEntry.objects.count() == 0
+
+        # 4. Re-enabling caller identity allows clean retry to succeed and append verified audit row
+        Identity.objects.filter(pk=owner_a.id).update(enabled=True)
+        r_retry_enabled = client.post(
+            "/staff/v1/ops/staff-roles/grant",
+            data=json.dumps({"identity_id": str(candidate_c.id), "role": "staff_owner"}),
+            content_type="application/json",
+            **_auth_headers(t_owner_a, host=OPS_HOST, request_id="req-rev-order-retry-200"),
+        )
+        assert r_retry_enabled.status_code == 200
+        assert r_retry_enabled.json()["status"] == "granted"
+        assert r_retry_enabled.json()["created"] is True
+        assert (
+            StaffRoleGrant.objects.filter(
+                identity_id=candidate_c.id, role="staff_owner", revoked_at__isnull=True
+            ).count()
+            == 1
+        )
+        assert StaffAuditEntry.objects.filter(action="staff.role.granted").count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("sqlstate", "expected_status", "expected_code"),
+    [
+        ("55P03", 409, "staff_authority_contention"),
+        ("40P01", 409, "staff_authority_contention"),
+        ("40001", 409, "staff_authority_contention"),
+        ("57014", 503, "staff_database_timeout"),
+    ],
+)
+def test_staff_views_and_command_transactions_translate_contention_and_timeout_sqlstates(
+    monkeypatch: pytest.MonkeyPatch,
+    sqlstate: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    """PostgreSQL 55P03/40P01/40001/57014 roll back cleanly and never leak generic http_500."""
+    owner = _seed_staff_member(roles=("staff_owner",))
+    token = _mint_staff_jwt(owner.subject, amr=["hwk"], auth_time=int(time.time()))
+
+    class _FakePgCauseError(Exception):
+        def __init__(self, code: str) -> None:
+            super().__init__(code)
+            self.sqlstate = code
+
+    def _make_db_error() -> OperationalError:
+        err = OperationalError("simulated postgres contention")
+        err.__cause__ = _FakePgCauseError(sqlstate)
+        return err
+
+    # 1. Command transaction rolls back uncommitted domain writes before raising StaffApiError
+    slug = f"rollback-{sqlstate.lower()}"
+    with pytest.raises(StaffApiError) as tx_exc, staff_command_transaction():
+        StaffDealCard.objects.create(
+            prospect_slug=slug,
+            stage="lead",
+            pack_code="suite-territoriale",
+            capacity_tier_code="S",
+            estimated_mrr_cents=10_000,
+            owner_seat="Product seat",
+            next_step_code="rollback-check",
+            updated_by_identity_id=owner.id,
+        )
+        raise _make_db_error()
+    assert tx_exc.value.status == expected_status
+    assert tx_exc.value.code == expected_code
+    assert StaffDealCard.objects.filter(prospect_slug=slug).count() == 0
+
+    # 2. View boundary catches uncaught DatabaseError and returns typed JSON problem response
+    def _failing_read_overview(_caller: Any) -> dict[str, object]:
+        raise _make_db_error()
+
+    monkeypatch.setattr(staff_views, "read_overview", _failing_read_overview)
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        client = Client()
+        resp = client.get("/staff/v1/read/overview", **_auth_headers(token, host=ADMIN_HOST))
+    assert resp.status_code == expected_status
+    assert resp["Content-Type"] == "application/json"
+    assert resp.json()["code"] == expected_code
+
 

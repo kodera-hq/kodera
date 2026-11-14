@@ -6,6 +6,7 @@ import json
 from typing import Any
 from uuid import UUID
 
+from django.db import DatabaseError, connection
 from django.http import HttpRequest, HttpResponse
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny
@@ -28,7 +29,13 @@ from .auth import (
     TRIAGE_ROLES,
     authenticate_staff_request,
 )
-from .errors import StaffApiError, error_to_response, request_correlation_id, staff_json_response
+from .errors import (
+    StaffApiError,
+    error_to_response,
+    request_correlation_id,
+    staff_json_response,
+    translate_staff_database_error,
+)
 from .models import STAFF_ROLES
 from .reconcile import reconcile_staff_delivery, reconcile_staff_job
 from .services import (
@@ -81,6 +88,19 @@ def _json_body(request: HttpRequest, *, allow_empty: bool = False) -> dict[str, 
     return parsed
 
 
+def _handle_view_database_error(request: HttpRequest, exc: DatabaseError) -> HttpResponse:
+    if (
+        not connection.in_atomic_block
+        and connection.connection is not None
+        and not connection.get_autocommit()
+    ):
+        connection.rollback()
+    mapped = translate_staff_database_error(exc)
+    if mapped is not None:
+        return error_to_response(request, mapped)
+    raise exc
+
+
 # ------------------------------------------------------------------ /read/* ----
 
 
@@ -94,6 +114,8 @@ def overview_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, read_overview(caller))
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffOrganisations", STAFF_SCOPE))
@@ -108,6 +130,8 @@ def organisations_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, read_organisations(caller))
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffPipeline", STAFF_SCOPE))
@@ -120,6 +144,8 @@ def pipeline_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, read_pipeline())
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffFeedback", STAFF_SCOPE))
@@ -139,6 +165,8 @@ def feedback_view(request: HttpRequest) -> HttpResponse:
         )
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffEngineering", STAFF_SCOPE))
@@ -158,6 +186,8 @@ def engineering_view(request: HttpRequest) -> HttpResponse:
         )
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffFinops", STAFF_SCOPE))
@@ -171,6 +201,8 @@ def finops_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, read_finops(period_month=period_q))
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffSre", STAFF_SCOPE))
@@ -183,6 +215,8 @@ def sre_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, read_sre(caller))
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("GET", "getStaffSecurity", STAFF_SCOPE))
@@ -195,6 +229,8 @@ def security_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, read_security())
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 # ---------------------------------------------------------------- /triage/* ----
@@ -216,6 +252,8 @@ def triage_feedback_view(request: HttpRequest, feedback_id: UUID) -> HttpRespons
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "createStaffFeedbackGithubDraft", STAFF_SCOPE))
@@ -234,6 +272,8 @@ def feedback_github_draft_view(request: HttpRequest, feedback_id: UUID) -> HttpR
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "upsertStaffDeal", STAFF_SCOPE))
@@ -253,6 +293,8 @@ def triage_deals_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "openStaffWaitlistCohort", STAFF_SCOPE))
@@ -272,6 +314,8 @@ def waitlist_open_cohort_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "createStaffSar", STAFF_SCOPE))
@@ -289,6 +333,8 @@ def create_sar_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload, status=201)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "completeStaffSar", STAFF_SCOPE))
@@ -307,6 +353,8 @@ def complete_sar_view(request: HttpRequest, sar_id: UUID) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 # ------------------------------------------------------------------- /ops/* ----
@@ -328,6 +376,8 @@ def reconcile_job_view(request: HttpRequest, job_id: UUID) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "reconcileStaffDelivery", STAFF_SCOPE))
@@ -346,6 +396,8 @@ def reconcile_delivery_view(request: HttpRequest, delivery_id: UUID) -> HttpResp
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "grantStaffRole", STAFF_SCOPE))
@@ -363,6 +415,8 @@ def grant_staff_role_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "revokeStaffRole", STAFF_SCOPE))
@@ -380,6 +434,8 @@ def revoke_staff_role_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "registerStaffIssuerSnapshot", STAFF_SCOPE))
@@ -399,6 +455,8 @@ def register_issuer_snapshot_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload, status=201)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "recordStaffFinopsSnapshot", STAFF_SCOPE))
@@ -416,6 +474,8 @@ def record_finops_snapshot_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload, status=201)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)
 
 
 @declares(Operation("POST", "verifyStaffAuditChain", STAFF_SCOPE))
@@ -431,3 +491,5 @@ def verify_audit_chain_view(request: HttpRequest) -> HttpResponse:
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)
+    except DatabaseError as db_err:
+        return _handle_view_database_error(request, db_err)

@@ -8,13 +8,13 @@ from datetime import UTC, datetime
 from typing import Any, NoReturn
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import connection
 
 from core.db.ids import new_uuid7
 
 from .audit import append_staff_audit_entry
 from .auth import SRE_WRITE_ROLES, VerifiedStaffRequest, fence_staff_caller
-from .errors import StaffApiError
+from .errors import StaffApiError, staff_command_transaction
 from .models import RECONCILE_EXITS, RECONCILE_OUTCOMES
 
 
@@ -250,7 +250,7 @@ def reconcile_staff_job(
 ) -> dict[str, object]:
     parsed = _parse_decision_body(body)
     decision_id, decision_json = _decision_payload_json(parsed, include_step_audit=True)
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=SRE_WRITE_ROLES, required_plane="ops")
         with connection.cursor() as cursor:
             cursor.execute(
@@ -299,7 +299,7 @@ def reconcile_staff_delivery(
 ) -> dict[str, object]:
     parsed = _parse_decision_body(body)
     decision_id, decision_json = _decision_payload_json(parsed, include_step_audit=False)
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=SRE_WRITE_ROLES, required_plane="ops")
         with connection.cursor() as cursor:
             cursor.execute(

@@ -46,7 +46,7 @@ BEGIN
       AND i.subject = p_subject
       AND i.enabled = TRUE
       AND i.deleted_at IS NULL
-    FOR SHARE OF i;
+    FOR SHARE OF i NOWAIT;
   IF NOT FOUND THEN
     RETURN jsonb_build_object('ok', false, 'error', 'staff_identity_missing');
   END IF;
@@ -58,7 +58,7 @@ BEGIN
         AND g.realm = 'kodera-staff'
         AND g.revoked_at IS NULL
       ORDER BY g.id
-      FOR SHARE OF g
+      FOR SHARE OF g NOWAIT
   LOOP
     IF NOT (v_role = ANY(v_roles)) THEN
       v_roles := array_append(v_roles, v_role);
@@ -72,7 +72,7 @@ BEGIN
         AND r.realm = 'kodera-staff'
         AND r.revoked_at IS NULL
       ORDER BY r.id
-      FOR SHARE OF r
+      FOR SHARE OF r NOWAIT
   LOOP
     IF NOT (v_role = ANY(v_roles)) THEN
       v_roles := array_append(v_roles, v_role);
@@ -192,7 +192,7 @@ BEGIN
       AND i.deleted_at IS NULL
       AND u.enabled = TRUE
       AND u.deleted_at IS NULL
-    FOR SHARE OF u, i;
+    FOR SHARE OF u, i NOWAIT;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'staff bridge actor unauthorized' USING ERRCODE = '42501';
   END IF;
@@ -205,7 +205,7 @@ BEGIN
       AND g.role IN ('staff_owner', 'staff_operator')
     ORDER BY g.id
     LIMIT 1
-    FOR SHARE OF g;
+    FOR SHARE OF g NOWAIT;
   IF FOUND THEN
     v_actor_authorized := TRUE;
   END IF;
@@ -218,7 +218,7 @@ BEGIN
       AND r.role IN ('staff_owner', 'staff_operator')
     ORDER BY r.id
     LIMIT 1
-    FOR SHARE OF r;
+    FOR SHARE OF r NOWAIT;
   IF FOUND THEN
     v_actor_authorized := TRUE;
   END IF;
@@ -241,7 +241,7 @@ BEGIN
         AND i.deleted_at IS NULL
         AND u.enabled = TRUE
         AND u.deleted_at IS NULL
-      FOR SHARE OF u, i;
+      FOR SHARE OF u, i NOWAIT;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'staff bridge target disabled or missing' USING ERRCODE = '23514';
     END IF;
@@ -253,7 +253,7 @@ BEGIN
         AND role = p_role
         AND revoked_at IS NULL
       LIMIT 1
-      FOR UPDATE;
+      FOR UPDATE NOWAIT;
     IF v_existing IS NOT NULL THEN
       RETURN FALSE;
     END IF;
@@ -405,7 +405,7 @@ BEGIN
       AND u.enabled = TRUE
     ORDER BY r.created_at, r.id
     LIMIT 1
-    FOR SHARE OF r, i, u;
+    FOR SHARE OF r, i, u NOWAIT;
   IF v_grant_id IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'role_missing');
   END IF;
@@ -619,7 +619,7 @@ BEGIN
       AND u.enabled = TRUE
     ORDER BY r.created_at, r.id
     LIMIT 1
-    FOR SHARE OF r, i, u;
+    FOR SHARE OF r, i, u NOWAIT;
   IF v_grant_id IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'role_missing');
   END IF;

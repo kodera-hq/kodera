@@ -324,6 +324,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /staff/v1/triage/feedback/{feedback_id}/github-draft:
@@ -358,6 +359,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /staff/v1/triage/deals:
@@ -386,6 +388,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /staff/v1/triage/waitlist/open-cohort:
@@ -445,6 +448,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /staff/v1/triage/sar/{sar_id}/complete:
@@ -658,6 +662,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /staff/v1/ops/audit-chain/verify:
@@ -687,6 +692,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
 components:
@@ -762,7 +768,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Problem' }
     Conflict:
-      description: State transition conflict (for example non-reconciling target, partial outcome with resume exit, or seat-floor violation).
+      description: State transition conflict or retriable concurrent authority/row contention (`staff_authority_contention`).
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:

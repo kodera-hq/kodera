@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlencode
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import connection
 
 from core.db.ids import new_uuid7
 
@@ -25,7 +25,7 @@ from .auth import (
     VerifiedStaffRequest,
     fence_staff_caller,
 )
-from .errors import StaffApiError
+from .errors import StaffApiError, staff_command_transaction
 from .models import (
     CANONICAL_SEATS,
     CAPACITY_TIERS,
@@ -667,7 +667,7 @@ def triage_feedback_item(
             "vote_delta must be an integer in -100..100",
         )
 
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=TRIAGE_ROLES, required_plane="triage")
         item = StaffFeedbackItem.objects.select_for_update().filter(id=feedback_id).first()
         if item is None:
@@ -724,7 +724,7 @@ def create_feedback_github_draft(
         )
     milestone = scrub_c1_text(milestone_raw.strip())
 
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=TRIAGE_ROLES, required_plane="triage")
         item = StaffFeedbackItem.objects.select_for_update().filter(id=feedback_id).first()
         if item is None:
@@ -824,7 +824,7 @@ def upsert_deal_card(
         )
 
     scrubbed_next_step = scrub_c1_text(next_step_code.strip())
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(
             caller, allowed_roles=PIPELINE_WRITE_ROLES, required_plane="triage"
         )
@@ -917,7 +917,7 @@ def open_waitlist_cohort(
             "limit_count must be an integer between 1 and 500",
         )
 
-    with transaction.atomic():
+    with staff_command_transaction():
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
@@ -1001,7 +1001,7 @@ def create_sar_record(
 
     now = datetime.now(UTC)
     due_at = now + timedelta(days=30)
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=SAR_ROLES, required_plane="triage")
         sar = StaffSarRecord.objects.create(
             request_kind=str(request_kind),
@@ -1055,7 +1055,7 @@ def complete_sar_record(
         )
     evidence_ref = validate_sar_evidence_ref(body.get("evidence_ref"))
 
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=SAR_ROLES, required_plane="triage")
         sar = StaffSarRecord.objects.select_for_update().filter(id=sar_id).first()
         if sar is None:
@@ -1150,7 +1150,7 @@ def grant_staff_role_mutation(
             "Staff members cannot grant roles to their own identity",
         )
 
-    with transaction.atomic():
+    with staff_command_transaction():
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtext('staff_roles_mutation'))")
             caller = fence_staff_caller(
@@ -1242,7 +1242,7 @@ def revoke_staff_role_mutation(
             "Staff members cannot revoke roles from their own identity",
         )
 
-    with transaction.atomic():
+    with staff_command_transaction():
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtext('staff_roles_mutation'))")
             caller = fence_staff_caller(
@@ -1354,7 +1354,7 @@ def register_issuer_snapshot_mutation(
 
     public_jwks = validate_public_jwks(body.get("public_jwks"))
 
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(
             caller, allowed_roles=ISSUER_SNAPSHOT_ROLES, required_plane="ops"
         )
@@ -1498,7 +1498,7 @@ def record_finops_snapshot_mutation(
     gross_margin_bps = (gross_margin_cents * 10000) // mrr_cents if mrr_cents > 0 else None
     gross_margin_alert = gross_margin_bps is not None and gross_margin_bps < GROSS_MARGIN_FLOOR_BPS
 
-    with transaction.atomic():
+    with staff_command_transaction():
         caller = fence_staff_caller(caller, allowed_roles=FINOPS_WRITE_ROLES, required_plane="ops")
         snap = StaffFinopsSnapshot.objects.create(
             period_month=period_month,
@@ -1565,6 +1565,6 @@ def verify_audit_chain_endpoint(
         if not isinstance(org_slug_raw, str) or SLUG_RE.fullmatch(org_slug_raw.strip()) is None:
             raise StaffApiError(400, "invalid_organisation_slug", "Invalid organisation_slug")
         scope_key = f"org:{org_slug_raw.strip()}"
-    with transaction.atomic():
+    with staff_command_transaction():
         fence_staff_caller(caller, allowed_roles=AUDIT_VERIFY_ROLES, required_plane="ops")
         return verify_staff_audit_chain(scope_key)
