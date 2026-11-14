@@ -63,7 +63,11 @@ def build(config: Config) -> tuple[Agent, RosterGuard, CoreApi]:
         else None
     )
     guard = RosterGuard(livekit, meet, state, synapse)
-    channels = Channels(synapse, livekit, state) if synapse is not None else None
+    channels = (
+        Channels(synapse, livekit, state, partner_channels=config.partner_channels)
+        if synapse is not None
+        else None
+    )
     handlers = Handlers(docs, meet, guard, state, synapse, channels)
     api = CoreApi(config.core_url, config.token, boot_id=secrets.token_hex(8))
     state.prune()

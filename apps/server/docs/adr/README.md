@@ -27,8 +27,9 @@ One file per decision, numbered, never edited after acceptance except to change 
 | [0021](0021-external-stop-evidence.md) | Reconciliation requires stop evidence and a fresh target read | Accepted |
 | [0022](0022-payment-link-creation-asks-the-provider-from-the-api.md) | Payment link creation asks the provider from the API, outside the replay step | Proposed |
 | [0023](0023-matrix-server-name-is-the-tenant-slug.md) | The Matrix server name is the tenant's slug (partly supersedes ADR-0018) | Accepted |
-
 | [0024](0024-default-community-membership.md) | Canonical community membership and explicit identity binding | Accepted |
+
+| [0025](0025-explicit-partner-room-federation.md) | Explicit, bounded partner-room federation (proposed partial supersession of ADR-0018) | Proposed |
 
 Source: `deployment operations/ARCHITECTURE_STRATEGY_2026-09-02.md` (v5), sections 3.1, 3.4, 5, 6, and Appendix A.
 

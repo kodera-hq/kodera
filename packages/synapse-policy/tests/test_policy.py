@@ -12,7 +12,7 @@ AGENT = f"@kodera-agent:{SERVER}"
 ALICE = f"@alice:{SERVER}"
 BOB = f"@bob:{SERVER}"
 CAROL = f"@carol:{SERVER}"
-OUTSIDER = "@eve:elsewhere.example"
+OUTSIDER = "@eve:elsewhere.example.org"
 ROOM_ACCESS = f"@kodera-rooms:{SERVER}"
 FORBIDDEN = "M_FORBIDDEN"
 ALLOWED = "NOT_SPAM"
@@ -47,7 +47,7 @@ def run(coro):
 
 
 def policy(rooms=None):
-    return KoderaPolicy({"agent_user_id": AGENT}, FakeApi(rooms))
+    return KoderaPolicy({"agent_user_id": AGENT, "federation_domain_allowlist": ["dinum.gouv.fr", "octo.com", "elsewhere.example.org"]}, FakeApi(rooms))
 
 
 def dm_request(**overrides):
@@ -99,10 +99,12 @@ def test_the_room_access_id_is_optional():
     assert KoderaPolicy.parse_config({"agent_user_id": AGENT}) == {
         "agent_user_id": AGENT,
         "room_access_user_id": None,
+        "federation_domain_allowlist": [],
     }
     assert KoderaPolicy.parse_config({"agent_user_id": AGENT, "room_access_user_id": ROOM_ACCESS}) == {
         "agent_user_id": AGENT,
         "room_access_user_id": ROOM_ACCESS,
+        "federation_domain_allowlist": [],
     }
 
 
@@ -137,12 +139,12 @@ def test_only_room_access_and_the_agent_write_occupancy():
     assert run(policy().check_event_for_spam(kodera_state("io.kodera.room.occupancy", ROOM_ACCESS, occupancy))) == FORBIDDEN
 
 
-def test_version_is_0_1_5():
-    assert __version__ == "0.1.5"
+def test_version_is_0_1_6():
+    assert __version__ == "0.1.6"
     pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
     if pyproject.exists():
         meta = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        assert meta["project"]["version"] == "0.1.5"
+        assert meta["project"]["version"] == "0.1.6"
 
 
 @pytest.mark.parametrize(
@@ -251,6 +253,11 @@ def test_agent_invites_into_any_room():
 def channel_with_policy(policy_content, memberships):
     state = {("m.room.create", ""): SimpleNamespace(sender=AGENT)}
     if policy_content is not None:
+        if policy_content.get("allow_federated_invites") is True:
+            from kodera_synapse_policy.federation import MODE, acl
+            policy_content = {"audience": "all", "read_only": False, "members": [], "exempt": [], "local_only": False, "federation_servers": ["dinum.gouv.fr", "octo.com", "elsewhere.example.org"], **policy_content}
+            state[("m.room.create", "")].content = {"m.federate": True, MODE: "partner"}
+            state[("m.room.server_acl", "")] = SimpleNamespace(sender=AGENT, content=acl(SERVER, tuple(policy_content["federation_servers"])))
         state[("io.kodera.room.policy", "")] = SimpleNamespace(sender=AGENT, content=policy_content)
     for user_id, membership in memberships.items():
         if isinstance(membership, dict):
