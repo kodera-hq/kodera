@@ -671,7 +671,7 @@ mod tests {
             Err(NativeCryptoError::Capacity)
         ));
         let mut excessive_total = 2u32.to_be_bytes().to_vec();
-        for key in [b'a', b'b'] {
+        for key in *b"ab" {
             excessive_total.extend_from_slice(&1u32.to_be_bytes());
             excessive_total.extend_from_slice(&((MAX_STORAGE_BYTES / 2) as u32).to_be_bytes());
             excessive_total.push(key);
