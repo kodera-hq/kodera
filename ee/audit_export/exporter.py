@@ -9,10 +9,10 @@ import csv
 import hashlib
 import io
 import ipaddress
-import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Final
 from uuid import uuid4
 
 from ee.audit_export.crypto import (
@@ -54,7 +54,12 @@ CSV_COLUMNS = (
     "entry_hash",
 )
 
-_EMAIL_SCAN_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}")
+_EMAIL_LOCAL_CHARS: Final[frozenset[str]] = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._%+-"
+)
+_EMAIL_DOMAIN_CHARS: Final[frozenset[str]] = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-"
+)
 _SENSITIVE_META_KEYS = frozenset(
     {"email", "mail", "full_name", "display_name", "phone", "ip", "source_ip", "user_agent"}
 )
@@ -105,12 +110,22 @@ class ExportedComplianceBundle:
         return self.payload_bytes.decode("utf-8")
 
 
-def _pseudonymize_email(match: re.Match[str], tenant_slug: str) -> str:
-    raw = match.group(0).lower().encode("utf-8")
+def _pseudonymize_email_str(raw_email: str, tenant_slug: str) -> str:
+    raw = raw_email.lower().encode("utf-8")
     digest = hashlib.sha256(
         b"kodera-pii-redact-v1\x00" + tenant_slug.encode("utf-8") + b"\x00" + raw
     ).hexdigest()[:12]
     return f"redacted-{digest}@redacted.invalid"
+
+
+def _looks_like_redactable_domain(domain: str) -> bool:
+    if not (3 <= len(domain) <= 253) or "." not in domain:
+        return False
+    parts = domain.split(".")
+    if any(not part for part in parts):
+        return False
+    tld = parts[-1]
+    return 2 <= len(tld) <= 24 and tld.isalpha()
 
 
 def _redact_ip(raw_ip: str) -> str:
@@ -131,7 +146,39 @@ def _redact_ip(raw_ip: str) -> str:
 
 
 def _redact_string(value: str, tenant_slug: str) -> str:
-    return _EMAIL_SCAN_RE.sub(lambda m: _pseudonymize_email(m, tenant_slug), value)
+    """Scan and pseudonymize email addresses in O(n) linear time without regular expressions."""
+    if "@" not in value:
+        return value
+    out: list[str] = []
+    cursor = 0
+    total = len(value)
+    at_idx = value.find("@", cursor)
+    while at_idx != -1:
+        left_limit = max(cursor, at_idx - 64)
+        l_pos = at_idx
+        while l_pos > left_limit and value[l_pos - 1] in _EMAIL_LOCAL_CHARS:
+            l_pos -= 1
+        local_part = value[l_pos:at_idx]
+
+        right_limit = min(total, at_idx + 1 + 278)
+        r_pos = at_idx + 1
+        while r_pos < right_limit and value[r_pos] in _EMAIL_DOMAIN_CHARS:
+            r_pos += 1
+        while r_pos > at_idx + 1 and value[r_pos - 1] in ".-":
+            r_pos -= 1
+        domain_part = value[at_idx + 1 : r_pos]
+
+        if local_part and _looks_like_redactable_domain(domain_part):
+            out.append(value[cursor:l_pos])
+            out.append(_pseudonymize_email_str(f"{local_part}@{domain_part}", tenant_slug))
+            cursor = r_pos
+        else:
+            out.append(value[cursor : at_idx + 1])
+            cursor = at_idx + 1
+        at_idx = value.find("@", cursor)
+
+    out.append(value[cursor:])
+    return "".join(out)
 
 
 def _redact_metadata(value: object, tenant_slug: str) -> object:

@@ -32,6 +32,23 @@ from ee.audit_export.exporter import (
     canonical_export_row_input,
 )
 
+_REQUIRED_EXPORT_ROW_FIELDS = (
+    "export_seq",
+    "ledger_seq",
+    "event_id",
+    "occurred_at",
+    "tenant_slug",
+    "framework",
+    "actor_type",
+    "actor_id",
+    "actor_label",
+    "action",
+    "target_urn",
+    "source_ip",
+    "metadata",
+    "prev_hash",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class VerificationResult:
@@ -204,7 +221,7 @@ def verify_compliance_bundle(
         exp_seq = row.get("export_seq")
         led_seq = row.get("ledger_seq")
         if exp_seq != idx:
-            errors.append(f"sequence_gap_or_reorder:row_{idx}_has_export_seq_{exp_seq}")
+            errors.append(f"sequence_gap_or_reorder:row_{idx}")
         if not isinstance(led_seq, int) or led_seq <= prev_ledger_seq:
             errors.append(f"non_monotonic_ledger_sequence:row_{idx}")
         else:
@@ -220,14 +237,15 @@ def verify_compliance_bundle(
             errors.append(f"broken_hash_chain:row_{idx}")
 
         row_entry = row.get("entry_hash")
-        try:
-            recomputed_entry = compute_domain_sha256(
-                EXPORT_ROW_HASH_DOMAIN,
-                canonical_export_row_input(row),
-            )
-        except KeyError as exc:
-            errors.append(f"missing_required_field:row_{idx}:{exc.args[0]}")
+        missing_field = next((fld for fld in _REQUIRED_EXPORT_ROW_FIELDS if fld not in row), None)
+        if missing_field is not None:
+            errors.append(f"missing_required_field:row_{idx}:{missing_field}")
             continue
+
+        recomputed_entry = compute_domain_sha256(
+            EXPORT_ROW_HASH_DOMAIN,
+            canonical_export_row_input(row),
+        )
 
         if not isinstance(row_entry, str) or not hmac.compare_digest(row_entry, recomputed_entry):
             errors.append(f"entry_hash_mismatch:row_{idx}")
@@ -297,8 +315,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         raw_bundle = args.bundle.read_bytes()
-    except OSError as exc:
-        print(json.dumps({"verified": False, "errors": [f"bundle_read_error:{exc}"]}))
+    except OSError:
+        print(json.dumps({"verified": False, "errors": ["bundle_read_error"]}))
         return 1
 
     manifest_obj: dict[str, object]
@@ -306,8 +324,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.manifest is not None:
         try:
             loaded_manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            print(json.dumps({"verified": False, "errors": [f"manifest_read_error:{exc}"]}))
+        except (OSError, ValueError):
+            print(json.dumps({"verified": False, "errors": ["manifest_read_error"]}))
             return 1
         if not isinstance(loaded_manifest, dict):
             print(json.dumps({"verified": False, "errors": ["manifest_not_json_object"]}))
@@ -317,8 +335,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         try:
             combined = json.loads(raw_bundle.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as exc:
-            print(json.dumps({"verified": False, "errors": [f"combined_json_error:{exc}"]}))
+        except (UnicodeDecodeError, ValueError):
+            print(json.dumps({"verified": False, "errors": ["combined_json_error"]}))
             return 1
         if (
             not isinstance(combined, dict)
@@ -343,8 +361,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.public_key is not None:
         try:
             trusted_pem = args.public_key.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(json.dumps({"verified": False, "errors": [f"public_key_read_error:{exc}"]}))
+        except OSError:
+            print(json.dumps({"verified": False, "errors": ["public_key_read_error"]}))
             return 1
 
     hmac_bytes: bytes | None = None

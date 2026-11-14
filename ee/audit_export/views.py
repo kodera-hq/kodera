@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Final
 
 from django.http import HttpRequest, HttpResponse, StreamingHttpResponse
 
@@ -20,6 +21,20 @@ from ee.audit_export.exporter import (
 from ee.audit_export.ledger import default_audit_ledger, parse_utc_iso
 from ee.audit_export.verify import verify_compliance_bundle
 
+_AUDIT_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
+    ("invalid_json", 400, "Malformed or oversized JSON request body"),
+    ("invalid_timestamp", 400, "Invalid ISO-8601 timestamp parameter"),
+    ("invalid_time_range", 400, "from_timestamp must not be after to_timestamp"),
+    ("unsupported_format", 400, "Unsupported compliance export format"),
+    ("unsupported_framework", 400, "Unsupported compliance framework"),
+    ("unsupported_signing_algorithm", 400, "Unsupported audit manifest signing algorithm"),
+    ("missing_fields", 400, "Required audit event fields are missing"),
+    ("invalid_metadata", 400, "Audit event metadata must be a JSON object"),
+    ("missing_tenant_slug", 400, "tenant_slug is required"),
+    ("invalid_event", 400, "Invalid compliance audit event parameters"),
+    ("invalid_export_request", 400, "Invalid compliance audit export parameters"),
+)
+
 
 def _json_response(payload: dict[str, object], *, status: int = 200) -> HttpResponse:
     resp = HttpResponse(
@@ -29,6 +44,17 @@ def _json_response(payload: dict[str, object], *, status: int = 200) -> HttpResp
     )
     resp["Cache-Control"] = "no-store"
     return resp
+
+
+def _audit_error_response(error_code: str) -> HttpResponse:
+    """Resolve compliance audit error response solely from static literals."""
+    for code_lit, status_lit, detail_lit in _AUDIT_PUBLIC_ERRORS:
+        if error_code == code_lit:
+            return _json_response({"detail": detail_lit, "code": code_lit}, status=status_lit)
+    return _json_response(
+        {"detail": "Compliance audit request rejected", "code": "invalid_export_request"},
+        status=400,
+    )
 
 
 def _parse_json_body(request: HttpRequest) -> dict[str, object]:
@@ -126,9 +152,9 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
             occurred_at=occurred_at if isinstance(occurred_at, str) else None,
         )
     except AuditExportError as exc:
-        return _json_response({"detail": str(exc), "code": exc.code}, status=exc.status)
-    except ValueError as exc:
-        return _json_response({"detail": str(exc), "code": "invalid_event"}, status=400)
+        return _audit_error_response(exc.code)
+    except ValueError:
+        return _audit_error_response("invalid_event")
 
     return _json_response(
         {
@@ -195,9 +221,9 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
             redact_pii=redact_pii,
         )
     except AuditExportError as exc:
-        return _json_response({"detail": str(exc), "code": exc.code}, status=exc.status)
-    except ValueError as exc:
-        return _json_response({"detail": str(exc), "code": "invalid_export_request"}, status=400)
+        return _audit_error_response(exc.code)
+    except ValueError:
+        return _audit_error_response("invalid_export_request")
 
     if use_stream:
         media_type = (
@@ -246,7 +272,7 @@ def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
     try:
         body = _parse_json_body(request)
     except AuditExportError as exc:
-        return _json_response({"detail": str(exc), "code": exc.code}, status=exc.status)
+        return _audit_error_response(exc.code)
 
     payload = body.get("payload")
     manifest = body.get("manifest")

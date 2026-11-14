@@ -184,4 +184,4 @@ def verify_manifest_signature(
             return False, "invalid_manifest_signature"
         return True, None
 
-    return False, f"unsupported_signing_algorithm:{alg}"
+    return False, "unsupported_signing_algorithm"

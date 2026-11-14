@@ -6,6 +6,7 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 from __future__ import annotations
 
 import json
+from typing import Final
 
 from django.http import HttpRequest, HttpResponse
 
@@ -18,6 +19,30 @@ from ee.scim.schemas import (
     build_service_provider_config,
 )
 from ee.scim.service import DEFAULT_PAGE_SIZE, ScimError, default_scim_service
+
+_SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
+    # Authentication & tenant authorization rejections
+    ("missing_token", 401, None, "Missing SCIM Bearer token"),
+    ("malformed_auth_header", 401, None, "Malformed Authorization header"),
+    ("invalid_auth_scheme", 401, None, "Authorization header must use Bearer scheme"),
+    ("invalid_token", 401, None, "Invalid SCIM Bearer token"),
+    ("token_revoked", 401, None, "SCIM Bearer token has been revoked"),
+    ("token_expired", 401, None, "SCIM Bearer token has expired"),
+    ("tenant_forbidden", 403, None, "SCIM Bearer token is not authorized for the target tenant"),
+    ("insufficient_scope", 403, None, "SCIM Bearer token lacks required scope"),
+    ("conflicting_tenant", 403, None, "Conflicting tenant path and X-Kodera-Tenant header"),
+    # RFC 7644 resource & protocol rejections
+    ("uniqueness", 409, "uniqueness", "Resource already exists in tenant"),
+    ("not_found", 404, None, "Requested SCIM resource was not found"),
+    ("forbidden", 403, None, "SCIM operation is not permitted"),
+    ("scim_invalidFilter", 400, "invalidFilter", "Invalid or unsupported SCIM filter expression"),
+    ("scim_invalidSyntax", 400, "invalidSyntax", "Invalid SCIM request syntax"),
+    ("scim_invalidValue", 400, "invalidValue", "Invalid SCIM attribute value"),
+    ("scim_invalidPath", 400, "invalidPath", "Invalid or unsupported SCIM PATCH path"),
+    ("scim_mutability", 400, "mutability", "Target SCIM attribute cannot be modified"),
+    ("scim_noTarget", 400, "noTarget", "SCIM PATCH operation requires a target path"),
+    ("invalid_request", 400, None, "Invalid SCIM request"),
+)
 
 
 def _scim_response(
@@ -62,6 +87,16 @@ def _scim_error(
     return resp
 
 
+def _scim_error_from_code(error_code: str, *, default_status: int = 400) -> HttpResponse:
+    """Resolve SCIM error response solely from static literals without exposing exception text."""
+    for code_lit, status_lit, scim_type_lit, detail_lit in _SCIM_PUBLIC_ERRORS:
+        if error_code == code_lit:
+            return _scim_error(detail_lit, status=status_lit, scim_type=scim_type_lit)
+    if default_status == 401:
+        return _scim_error("Invalid SCIM Bearer token", status=401)
+    return _scim_error("Invalid SCIM request", status=400)
+
+
 def _scim_base_url(request: HttpRequest, tenant_slug: str | None = None) -> str:
     scheme = "https" if request.is_secure() else "http"
     origin = f"{scheme}://{request.get_host()}"
@@ -81,7 +116,11 @@ def _authenticate_scim_request(
         header_tenant.strip() if isinstance(header_tenant, str) and header_tenant.strip() else None
     )
     if tenant_slug is not None and cleaned_header is not None and cleaned_header != tenant_slug:
-        raise ScimAuthError("Conflicting tenant path and X-Kodera-Tenant header", status=403)
+        raise ScimAuthError(
+            "Conflicting tenant path and X-Kodera-Tenant header",
+            code="conflicting_tenant",
+            status=403,
+        )
     expected = tenant_slug or cleaned_header
     return default_scim_service.tokens.authenticate(
         request.META.get("HTTP_AUTHORIZATION"),
@@ -143,7 +182,7 @@ def service_provider_config_view(
         if request.META.get("HTTP_AUTHORIZATION") or tenant_slug is not None:
             _authenticate_scim_request(request, required_scope="scim:read", tenant_slug=tenant_slug)
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
     return _scim_response(build_service_provider_config(_scim_base_url(request, tenant_slug)))
 
 
@@ -157,14 +196,14 @@ def schemas_view(
     try:
         _authenticate_scim_request(request, required_scope="scim:read", tenant_slug=tenant_slug)
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
 
     items = build_schemas(_scim_base_url(request, tenant_slug))
     if schema_id is not None:
         for item in items:
             if item.get("id") == schema_id:
                 return _scim_response(item)
-        return _scim_error(f"Schema {schema_id!r} not found", status=404)
+        return _scim_error("Requested SCIM Schema was not found", status=404)
     return _scim_response(
         {
             "schemas": [SCIM_LIST_RESPONSE_SCHEMA],
@@ -186,14 +225,14 @@ def resource_types_view(
     try:
         _authenticate_scim_request(request, required_scope="scim:read", tenant_slug=tenant_slug)
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
 
     items = build_resource_types(_scim_base_url(request, tenant_slug))
     if resource_type_id is not None:
         for item in items:
             if item.get("id") == resource_type_id:
                 return _scim_response(item)
-        return _scim_error(f"ResourceType {resource_type_id!r} not found", status=404)
+        return _scim_error("Requested SCIM ResourceType was not found", status=404)
     return _scim_response(
         {
             "schemas": [SCIM_LIST_RESPONSE_SCHEMA],
@@ -220,7 +259,7 @@ def users_collection_view(
             tenant_slug=tenant_slug,
         )
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -246,7 +285,7 @@ def users_collection_view(
         loc, etag = _extract_meta_headers(created)
         return _scim_response(created, status=201, location=loc, etag=etag)
     except ScimError as exc:
-        return _scim_error(exc.detail, status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code)
 
 
 def user_detail_view(
@@ -265,7 +304,7 @@ def user_detail_view(
             tenant_slug=tenant_slug,
         )
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -309,7 +348,7 @@ def user_detail_view(
         )
         return _scim_response(None, status=204)
     except ScimError as exc:
-        return _scim_error(exc.detail, status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code)
 
 
 def groups_collection_view(
@@ -327,7 +366,7 @@ def groups_collection_view(
             tenant_slug=tenant_slug,
         )
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -352,7 +391,7 @@ def groups_collection_view(
         loc, etag = _extract_meta_headers(created)
         return _scim_response(created, status=201, location=loc, etag=etag)
     except ScimError as exc:
-        return _scim_error(exc.detail, status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code)
 
 
 def group_detail_view(
@@ -371,7 +410,7 @@ def group_detail_view(
             tenant_slug=tenant_slug,
         )
     except ScimAuthError as exc:
-        return _scim_error(str(exc), status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code, default_status=401)
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -412,4 +451,4 @@ def group_detail_view(
         )
         return _scim_response(None, status=204)
     except ScimError as exc:
-        return _scim_error(exc.detail, status=exc.status, scim_type=exc.scim_type)
+        return _scim_error_from_code(exc.code)
