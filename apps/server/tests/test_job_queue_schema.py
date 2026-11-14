@@ -243,6 +243,11 @@ TRIGGERS: dict[str, set[str]] = {
     },
     "audit_auditevent": {"audit_auditevent_immutable"},
 }
+# outbox 0007 fences the delivery records of a fenced organisation, and only where the
+# retention schema (orgs 0025) is installed; the queue-only profile has no such table.
+PRIVACY_CUTOFF_TRIGGERS: dict[str, set[str]] = {
+    "outbox_outboxdelivery": {"aa_privacy_cutoff"},
+}
 
 INDEXES = {
     "jobs_job_claimable_idx",
@@ -388,7 +393,10 @@ def test_every_pinned_constraint_trigger_and_index_exists_and_none_fires_on_trun
         missing = expected - {name for name, _ in rows}
         assert not missing, f"{table} lacks constraints {sorted(missing)}"
         assert all(valid for _, valid in rows), f"{table} has an unvalidated constraint"
+    retention = fetch("SELECT to_regclass('public.orgs_privacyerasure') IS NOT NULL")[0][0]
     for table, expected in TRIGGERS.items():
+        if retention:
+            expected = expected | PRIVACY_CUTOFF_TRIGGERS.get(table, set())
         rows = fetch(
             "SELECT tgname, (tgtype & 32) <> 0 FROM pg_trigger "
             "WHERE tgrelid = %s::regclass AND NOT tgisinternal",

@@ -1,4 +1,4 @@
-"""Current leaves only move forward; reversible model DDL is separately qualified in order."""
+"""Every current leaf bounds its DDL and reverses; model DDL is qualified in order too."""
 
 from contextlib import contextmanager, nullcontext
 from functools import wraps
@@ -26,6 +26,7 @@ CURRENT_DDL_MIGRATIONS = MODEL_MIGRATIONS | {
     ("billing", "0015_dunning_checkpoints"),
     ("billing", "0016_dunning_evidence_guards"),
     ("billing", "0020_fiscal_guard_relation_binding"),
+    ("billing", "0022_privacy_cutoff_guard"),
     ("docs", "0001_initial"),
     ("docs", "0002_policy_and_scope"),
     ("engine_intents", "0001_initial"),
@@ -185,19 +186,43 @@ def test_each_model_only_migration_bounds_its_reversible_ddl_before_descendants(
         assert repr((*FAULT_MIGRATION, "reverse")) in str(failure.value)
 
 
-def test_historical_database_refuses_current_forward_only_history_before_migration(
-    transactional_db, django_db_blocker, monkeypatch
-):
-    import historical_lifecycle
+def test_current_history_of_every_retention_application_is_reversible(transactional_db):
+    """Every current leaf reverses: no application's statutory or erasure DDL is forward-only."""
     from django.db.migrations.loader import MigrationLoader
 
-    current = [node for node in MigrationLoader(None).graph.leaf_nodes() if node[0] == "orgs"]
-    assert len(current) == 1 and current[0] != ("orgs", "0022_private_export_checkpoints")
-    targets = tuple(
-        current[0] if node[0] == "orgs" else node
-        for node in historical_lifecycle.HISTORICAL_LIFECYCLE_TARGETS
+    loader = MigrationLoader(None)
+    executor_targets = [
+        node
+        for node in loader.graph.leaf_nodes()
+        if node[0] in {"identity", "orgs", "extensions", "billing", "legal", "docs", "outbox"}
+    ]
+    forward_only = sorted(
+        (migration.app_label, migration.name)
+        for node in executor_targets
+        for migration in (loader.graph.nodes[key] for key in loader.graph.forwards_plan(node))
+        if any(not operation.reversible for operation in migration.operations)
     )
-    monkeypatch.setattr(historical_lifecycle, "HISTORICAL_LIFECYCLE_TARGETS", targets)
+    assert forward_only == [], f"forward-only current history: {forward_only}"
+
+
+def test_historical_database_refuses_forward_only_history_before_migration(
+    transactional_db, django_db_blocker, monkeypatch
+):
+    """The fixture's own guard, proved on a synthetic forward-only operation added to the plan
+    it reads: nothing runs, so a future forward-only migration cannot slip into the closure."""
+    import historical_lifecycle
+    from django.db import migrations
+    from django.db.migrations.migration import Migration
+
+    forward_only = Migration("9999_synthetic_forward_only", "orgs")
+    forward_only.operations = [migrations.RunSQL("SELECT 1")]
+    assert not forward_only.operations[0].reversible
+    planned = MigrationExecutor.migration_plan
+
+    def plan_with_forward_only(self, targets, clean_start=False):
+        return [*planned(self, targets, clean_start=clean_start), (forward_only, False)]
+
+    monkeypatch.setattr(MigrationExecutor, "migration_plan", plan_with_forward_only)
     reached = []
 
     def forbidden_execution(*args, **kwargs):
@@ -210,5 +235,5 @@ def test_historical_database_refuses_current_forward_only_history_before_migrati
         match="historical lifecycle dependency closure unexpectedly includes forward-only operations",
     ):
         with historical_lifecycle.historical_lifecycle_database(django_db_blocker):
-            pytest.fail("forward-only current history was admitted")
+            pytest.fail("forward-only history was admitted")
     assert reached == []

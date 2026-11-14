@@ -292,6 +292,65 @@ REVOKE ALL ON FUNCTION billing_contract_clock_guard() FROM PUBLIC;
 
 '''
 
+REVERSE = r"""
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP FUNCTION billing_purge_due_record(text,uuid);
+DROP FUNCTION billing_qualify_legacy_accounting(text,uuid,timestamptz,text);
+DROP FUNCTION billing_close_contract(uuid,timestamptz,text,text,uuid);
+DROP FUNCTION retention_current_operator(uuid);
+
+-- The legal guards go back to the bodies of legal 0002, with that migration's SECURITY
+-- INVOKER, no search_path of their own and the execute right they were created with.
+CREATE OR REPLACE FUNCTION legal_append_only_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0],
+    MESSAGE='A legal record is never changed or deleted';
+END $$;
+GRANT EXECUTE ON FUNCTION legal_append_only_guard() TO PUBLIC;
+CREATE OR REPLACE FUNCTION legal_dpa_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  mutable text[] := ARRAY['state', 'superseded_by_id', 'updated_at'];
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='A DPA is never deleted';
+  END IF;
+  IF OLD.state = 'generated' AND (
+       NEW.organisation_id IS DISTINCT FROM OLD.organisation_id
+       OR NEW.template_id IS DISTINCT FROM OLD.template_id
+       OR NEW.pack_code IS DISTINCT FROM OLD.pack_code OR NEW.locale IS DISTINCT FROM OLD.locale
+       OR NEW.version IS DISTINCT FROM OLD.version OR NEW.sha256 IS DISTINCT FROM OLD.sha256
+       OR NEW.sub_processors IS DISTINCT FROM OLD.sub_processors) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='A DPA keeps the template it was generated from';
+  END IF;
+  IF OLD.state = 'accepted' AND (
+       (to_jsonb(OLD) - mutable) IS DISTINCT FROM (to_jsonb(NEW) - mutable)
+       OR NEW.state NOT IN ('accepted', 'superseded')
+       OR (NEW.state = 'accepted' AND NEW.superseded_by_id IS NOT NULL)) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='An accepted DPA only ever moves to superseded';
+  END IF;
+  IF OLD.state = 'superseded' AND (
+       (to_jsonb(OLD) - ARRAY['superseded_by_id', 'updated_at'])
+         IS DISTINCT FROM (to_jsonb(NEW) - ARRAY['superseded_by_id', 'updated_at'])
+       OR (OLD.superseded_by_id IS NOT NULL
+           AND NEW.superseded_by_id IS DISTINCT FROM OLD.superseded_by_id)) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='legal_dpa_immutable',
+      MESSAGE='A superseded DPA never changes';
+  END IF;
+  RETURN NEW;
+END $$;
+GRANT EXECUTE ON FUNCTION legal_dpa_guard() TO PUBLIC;
+
+DROP TRIGGER a_contract_retention ON legal_acceptance;
+DROP TRIGGER a_contract_retention ON legal_dpa;
+DROP TRIGGER a_contract_retention ON billing_subscription;
+DROP TRIGGER a_contract_retention ON billing_order;
+DROP FUNCTION billing_contract_clock_guard();
+"""
+
+
 class Migration(migrations.Migration):
     dependencies = [("billing", "0018_statutory_accounting_guards"), ("legal", "0005_acceptance_close_evidence_ref_and_more"), ("audit", "0003_workspace_resource_writer")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [migrations.RunSQL(FORWARD, REVERSE)]

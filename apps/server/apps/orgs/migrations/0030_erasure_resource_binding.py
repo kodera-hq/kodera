@@ -25,6 +25,15 @@ CREATE TRIGGER a_resource_binding BEFORE UPDATE ON public.notifications_pushsubs
 """
 
 
+REVERSE = r"""
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP TRIGGER a_resource_binding ON public.notifications_pushsubscription;
+DROP TRIGGER a_resource_binding ON public.notifications_notification;
+DROP TRIGGER a_resource_binding ON public.media_attachment;
+DROP FUNCTION public.privacy_resource_binding_guard();
+"""
+
+
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0029_account_erasure_guards")]
     operations = [
@@ -32,7 +41,7 @@ class Migration(migrations.Migration):
             "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
             reverse_sql=migrations.RunSQL.noop,
         ),
-migrations.RunSQL(FORWARD),
+        migrations.RunSQL(FORWARD, REVERSE),
         migrations.RunSQL(
             migrations.RunSQL.noop,
             reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",

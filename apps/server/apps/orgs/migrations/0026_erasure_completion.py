@@ -13,7 +13,9 @@ BEGIN
  IF TG_TABLE_NAME='engine_intents_command' THEN
   SELECT organisation_id INTO org FROM public.engine_intents_credential WHERE id=NEW.credential_id;
  ELSE org:=(to_jsonb(NEW)->>'organisation_id')::uuid; END IF;
- PERFORM 1 FROM public.orgs_organisation WHERE id=org FOR SHARE;
+ -- The cutoff's own advisory fence, never a row lock: the engine heads are taken under the
+ -- workspace row, and an extra organisation row lock here would invert that order.
+ PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:'||org::text,0));
  IF EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
  AND NOT public.privacy_erasure_context(org) THEN RAISE EXCEPTION 'durable erasure cutoff refuses engine write' USING ERRCODE='23514'; END IF;
  RETURN NEW;
@@ -107,6 +109,45 @@ REVOKE ALL ON FUNCTION customer_immutable() FROM PUBLIC;
 
 '''
 
+REVERSE = r'''
+
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP FUNCTION privacy_complete_erasure(uuid);
+
+-- Back to the binding immutability of orgs 0002, with that migration's SECURITY INVOKER
+-- and no search_path of its own.
+CREATE OR REPLACE FUNCTION public.customer_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0] || '_id_immutable', MESSAGE='Stored identifier is immutable';
+  END IF;
+  IF TG_ARGV[0]='identity' THEN
+    IF (NEW.user_id,NEW.organisation_id,NEW.issuer,NEW.realm,NEW.subject) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id,OLD.issuer,OLD.realm,OLD.subject) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='identity_immutable_binding', MESSAGE='Principal binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='membership' THEN
+    IF (NEW.user_id,NEW.organisation_id) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='membership_immutable_binding', MESSAGE='Membership binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='organisation' THEN
+    IF NEW.issuer IS DISTINCT FROM OLD.issuer THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='organisation_immutable_binding', MESSAGE='Organisation issuer is immutable';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+GRANT EXECUTE ON FUNCTION customer_immutable() TO PUBLIC;
+
+DROP TRIGGER aa_engine_erasure_cutoff ON engine_intents_known_subject;
+DROP TRIGGER aa_engine_erasure_cutoff ON engine_intents_channel_set;
+DROP TRIGGER aa_engine_erasure_cutoff ON engine_intents_member_set;
+DROP TRIGGER aa_engine_erasure_cutoff ON engine_intents_credential;
+DROP TRIGGER aa_engine_erasure_cutoff ON engine_intents_command;
+DROP FUNCTION privacy_engine_cutoff_guard();
+
+'''
+
+
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0025_durable_core_erasure"), ("engine_intents", "0012_workspace_moderation")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [migrations.RunSQL(FORWARD, REVERSE)]
