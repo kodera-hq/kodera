@@ -79,7 +79,9 @@ def check_no_expression_in_run_blocks(text: str) -> list[str]:
             inline = stripped.split("run:", 1)[1].strip()
             if inline and not inline.startswith("|") and not inline.startswith(">"):
                 if "${{" in inline:
-                    errors.append(f"line {idx + 1}: untrusted ${{{{}}}} expression inside run: command")
+                    errors.append(
+                        f"line {idx + 1}: untrusted ${{{{}}}} expression inside run: command"
+                    )
                 idx += 1
                 continue
             idx += 1
@@ -92,7 +94,9 @@ def check_no_expression_in_run_blocks(text: str) -> list[str]:
                 if sub_indent <= indent:
                     break
                 if "${{" in sub:
-                    errors.append(f"line {idx + 1}: untrusted ${{{{}}}} expression inside run: script block")
+                    errors.append(
+                        f"line {idx + 1}: untrusted ${{{{}}}} expression inside run: script block"
+                    )
                 idx += 1
             continue
         idx += 1
@@ -164,8 +168,12 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         return errors
 
     for non_publish_job in ("desktop-release", "android-release", "ios-verify"):
-        if "permissions:" in jobs[non_publish_job] or "write" in jobs[non_publish_job]:
-            errors.append(f"job '{non_publish_job}' must inherit read-only root permissions without write scope")
+        if "permissions:" in jobs[non_publish_job] or re.search(
+            r":\s*write\b|write-all", jobs[non_publish_job]
+        ):
+            errors.append(
+                f"job '{non_publish_job}' must inherit read-only root permissions without write scope"
+            )
 
     desktop_block = jobs["desktop-release"]
     for os_runner in ("macos-15", "ubuntu-latest", "windows-latest"):
@@ -186,17 +194,92 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append("android-release must configure Temurin JDK 21")
     if "./gradlew clean assembleRelease" not in android_block and "./gradlew assembleRelease" not in android_block:
         errors.append("android-release must build release APK via ./gradlew assembleRelease")
-    if "python3 scripts/ci/check-native-packaging.py" not in android_block or "--target android-apk" not in android_block:
-        errors.append("android-release must verify candidate APKs via scripts/ci/check-native-packaging.py --target android-apk")
-    if "dist-release/kodera-android.apk" not in android_block:
-        errors.append("android-release must stage dist-release/kodera-android.apk")
+    if (
+        "export-android-runtime.init.gradle.kts" not in android_block
+        or ":app:exportReleaseRuntimeArtifacts" not in android_block
+        or "--resolved-artifacts-json" not in android_block
+    ):
+        errors.append(
+            "android-release must export resolved runtime Maven artifacts and pass --resolved-artifacts-json"
+        )
+    if not (root / "scripts" / "ci" / "export-android-runtime.init.gradle.kts").is_file():
+        errors.append(
+            "helper script scripts/ci/export-android-runtime.init.gradle.kts is missing from repository"
+        )
+    if (
+        "python3 scripts/ci/check-native-packaging.py" not in android_block
+        or "--target android-apk" not in android_block
+    ):
+        errors.append(
+            "android-release must verify candidate APKs via scripts/ci/check-native-packaging.py --target android-apk"
+        )
+
+    # W2-4: Enforce zipalign + apksigner sign + apksigner verify AFTER check-native-packaging.py
+    pkg_gate_idx = android_block.find("python3 scripts/ci/check-native-packaging.py")
+    zipalign_idx = android_block.find("zipalign -p -f 4")
+    apksigner_sign_idx = android_block.find("apksigner sign")
+    apksigner_verify_idx = android_block.find("apksigner verify")
+    last_pkg_stage_idx = android_block.rfind("package-android-release.py")
+
+    if zipalign_idx == -1:
+        errors.append("android-release must align unsigned candidate APK with 'zipalign -p -f 4'")
+    if apksigner_sign_idx == -1 or (
+        "--v1-signing-enabled true" not in android_block
+        or "--v2-signing-enabled true" not in android_block
+        or "--v3-signing-enabled true" not in android_block
+        or "--out dist-release/kodera-android.apk" not in android_block
+    ):
+        errors.append(
+            "android-release must cryptographically sign dist-release/kodera-android.apk via 'apksigner sign' (v1+v2+v3)"
+        )
+    if apksigner_verify_idx == -1 or "dist-release/kodera-android.apk" not in android_block[apksigner_verify_idx:]:
+        errors.append(
+            "android-release must verify signed APK signatures via 'apksigner verify' on dist-release/kodera-android.apk"
+        )
+    if (
+        pkg_gate_idx != -1
+        and zipalign_idx != -1
+        and apksigner_sign_idx != -1
+        and apksigner_verify_idx != -1
+    ):
+        if not (pkg_gate_idx < zipalign_idx < apksigner_sign_idx < apksigner_verify_idx):
+            errors.append(
+                "android-release must run check-native-packaging.py -> zipalign -> apksigner sign -> apksigner verify in exact order"
+            )
+        if last_pkg_stage_idx > apksigner_sign_idx:
+            errors.append(
+                "package-android-release.py must never run after apksigner sign (would strip META-INF signatures)"
+            )
+
+    if (
+        "umask 077" not in android_block
+        or 'chmod 600 "$RUNNER_TEMP/kodera-release.p12"' not in android_block
+        or 'trap \'rm -f "$RUNNER_TEMP/kodera-release.p12" "$RUNNER_TEMP/aligned.apk"\' EXIT'
+        not in android_block
+    ):
+        errors.append(
+            "android-release must protect keystore material with umask 077, chmod 600, and EXIT cleanup trap"
+        )
+    if (
+        'if [ "$REF_TYPE" = "tag" ] || [ "$PUBLISH_RELEASE" = "true" ]' not in android_block
+        or "ANDROID_SIGNING_KEYSTORE_B64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_B64 }}"
+        not in android_block
+    ):
+        errors.append(
+            "android-release must bind ANDROID_SIGNING_KEYSTORE_B64 and fail closed on release tags or publish_release when missing"
+        )
+    if "name: release-android-sbom" not in android_block or "path: candidate/sbom.cdx.json" not in android_block:
+        errors.append("android-release must upload candidate/sbom.cdx.json as release-android-sbom")
     if not (root / "scripts" / "ci" / "package-android-release.py").is_file():
         errors.append("helper script scripts/ci/package-android-release.py is missing from repository")
 
     ios_block = jobs["ios-verify"]
     if "runs-on: macos-15" not in ios_block:
         errors.append("ios-verify must run on macos-15")
-    if "xcodegen generate --spec project.yml" not in ios_block or "xcodebuild -project Kodera.xcodeproj" not in ios_block:
+    if (
+        "xcodegen generate --spec project.yml" not in ios_block
+        or "xcodebuild -project Kodera.xcodeproj" not in ios_block
+    ):
         errors.append("ios-verify must validate XcodeGen spec and xcodebuild simulator readiness")
     if "CODE_SIGNING_ALLOWED=NO" not in ios_block:
         errors.append("ios-verify must run unsigned build verification (CODE_SIGNING_ALLOWED=NO)")
@@ -211,14 +294,27 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     for asset in EXPECTED_RELEASE_FILES:
         if asset not in publish_block:
             errors.append(f"publish-release must stage or generate '{asset}'")
+    if (
+        "name: release-android-sbom" not in publish_block
+        or "python3 scripts/ci/assemble-release-sbom.py" not in publish_block
+        or "--cargo-lock Cargo.lock" not in publish_block
+        or "--android-sbom release-staging/android-sbom/sbom.cdx.json" not in publish_block
+    ):
+        errors.append(
+            "publish-release must merge npm, Cargo.lock, and Android SBOMs via scripts/ci/assemble-release-sbom.py"
+        )
+    if not (root / "scripts" / "ci" / "assemble-release-sbom.py").is_file():
+        errors.append("helper script scripts/ci/assemble-release-sbom.py is missing from repository")
     if "sha256sum *" not in publish_block or "sha256sum -c SHA256SUMS.txt" not in publish_block:
-        errors.append("publish-release must compute 'sha256sum *' and verify 'sha256sum -c SHA256SUMS.txt'")
+        errors.append(
+            "publish-release must compute 'sha256sum *' and verify 'sha256sum -c SHA256SUMS.txt'"
+        )
     if "if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true" not in publish_block:
         errors.append(
             "GitHub Release publication step must be gated by \"startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true\""
         )
     if (
-        'GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}' not in publish_block
+        "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" not in publish_block
         or 'gh release view "$TAG"' not in publish_block
         or 'gh release create "$TAG"' not in publish_block
         or 'gh release upload "$TAG" release-bundle/* --clobber' not in publish_block
@@ -288,9 +384,7 @@ def run_selftest(baseline: str) -> int:
         ),
         (
             "expression injection inside run script",
-            lambda s: s.replace('echo "Kodera $TAG"', 'echo "${{ github.ref_name }}"', 1)
-            if 'echo "Kodera $TAG"' in s
-            else s.replace('cp "$first_apk"', 'echo "${{ github.ref_name }}"\n          cp "$first_apk"', 1),
+            lambda s: s.replace('cp "$first_apk"', 'echo "${{ github.ref_name }}"\n          cp "$first_apk"', 1),
             "untrusted ${{}} expression inside run: script block",
         ),
         (
@@ -307,6 +401,53 @@ def run_selftest(baseline: str) -> int:
             "removed Android native packaging check",
             lambda s: s.replace("python3 scripts/ci/check-native-packaging.py", "echo skipped", 1),
             "android-release must verify candidate APKs via scripts/ci/check-native-packaging.py",
+        ),
+        (
+            "removed Android runtime Maven artifact resolution",
+            lambda s: s.replace(":app:exportReleaseRuntimeArtifacts", "help", 1),
+            "android-release must export resolved runtime Maven artifacts",
+        ),
+        (
+            "removed Android zipalign step",
+            lambda s: s.replace("zipalign -p -f 4", "cp", 1),
+            "android-release must align unsigned candidate APK with 'zipalign -p -f 4'",
+        ),
+        (
+            "removed Android apksigner sign step",
+            lambda s: s.replace("apksigner sign", "echo unsigned", 1),
+            "android-release must cryptographically sign dist-release/kodera-android.apk via 'apksigner sign'",
+        ),
+        (
+            "removed Android apksigner verify step",
+            lambda s: s.replace("apksigner verify", "echo unverified", 1),
+            "android-release must verify signed APK signatures via 'apksigner verify'",
+        ),
+        (
+            "removed Android signing secret fail-closed tag guard",
+            lambda s: s.replace(
+                'if [ "$REF_TYPE" = "tag" ] || [ "$PUBLISH_RELEASE" = "true" ]',
+                'if [ "never" = "true" ]',
+                1,
+            ),
+            "android-release must bind ANDROID_SIGNING_KEYSTORE_B64 and fail closed",
+        ),
+        (
+            "removed keystore EXIT cleanup trap",
+            lambda s: s.replace(
+                'trap \'rm -f "$RUNNER_TEMP/kodera-release.p12" "$RUNNER_TEMP/aligned.apk"\' EXIT',
+                "true",
+                1,
+            ),
+            "android-release must protect keystore material with umask 077, chmod 600, and EXIT cleanup trap",
+        ),
+        (
+            "removed multi-ecosystem SBOM assembly in publish-release",
+            lambda s: s.replace(
+                "python3 scripts/ci/assemble-release-sbom.py \\",
+                "true \\",
+                1,
+            ),
+            "publish-release must merge npm, Cargo.lock, and Android SBOMs via scripts/ci/assemble-release-sbom.py",
         ),
         (
             "removed iOS simulator verification",

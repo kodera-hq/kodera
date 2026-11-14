@@ -130,6 +130,12 @@ Template placeholders live in [`apps/desktop/.env.example`](./.env.example). Nev
 - **Windows (`msi`, `nsis`)**: `WINDOWS_CERTIFICATE_THUMBPRINT`, `WINDOWS_TIMESTAMP_URL`.
 - **Linux & Release Update Signatures (`appimage`, `deb`)**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
+### Automated Multi-OS Release Workflow (`.github/workflows/release-binaries.yml`)
+
+- Builds and stages `@kodera/web` + `@kodera/desktop` installers across `macos-15` (universal `.dmg` + `.app.tar.gz`), `ubuntu-latest` (self-cleaning `.AppImage` + `.deb`), and `windows-latest` (WiX `.msi` + NSIS `-setup.exe` with bundled `web/` assets).
+- Verifies reproducible unsigned Android candidate APKs (`scripts/ci/package-android-release.py` + `scripts/ci/check-native-packaging.py`), then runs `zipalign` and `apksigner sign` (v1/v2/v3) + `apksigner verify` to produce an installable `kodera-android.apk` (failing closed on release tags if `ANDROID_SIGNING_KEYSTORE_B64` is absent).
+- Merges npm workspace, `Cargo.lock` + `cargo metadata`, and resolved Android Maven `.jar`/`.aar` SHA-256 digests and POM SPDX licenses into `sbom-cyclonedx.json` (`scripts/ci/assemble-release-sbom.py`) alongside `SHA256SUMS.txt`.
+
 ## Verification
 
 ```bash

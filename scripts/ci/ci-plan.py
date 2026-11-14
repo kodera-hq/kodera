@@ -26,10 +26,11 @@ AREAS: dict[str, str] = {
     "web": r"\.nvmrc$|package\.json$|package-lock\.json$|apps/web/|apps/server/|packages/design-tokens/"
     r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
-    r"|scripts/ci/(check-release-workflow\.py|package-desktop-release\.mjs)$"
+    r"|scripts/ci/(check-release-workflow\.py|assemble-release-sbom\.py|package-desktop-release\.mjs)$"
     r"|\.nvmrc$|\.github/workflows/(ci-rust-desktop|release-binaries)\.yml$",
     "mobile": r"apps/ios/|apps/android/|packages/kodera-rs/|packages/design-tokens/"
-    r"|scripts/ci/(check-native-tokens|check-release-workflow|package-android-release)\.py$"
+    r"|scripts/ci/(check-native-tokens|check-release-workflow|package-android-release|assemble-release-sbom)\.py$"
+    r"|scripts/ci/export-android-runtime\.init\.gradle\.kts$"
     r"|\.github/workflows/(ci-mobile|release-binaries)\.yml$",
 }
 
