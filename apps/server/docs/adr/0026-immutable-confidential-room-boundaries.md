@@ -1,6 +1,6 @@
 # ADR-0026: Explicit confidential rooms and federation boundaries
 
-Status: Proposed
+**Status:** Proposed
 
 ## Context
 
