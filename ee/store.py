@@ -1,10 +1,9 @@
-"""PostgreSQL persistence & deterministic HKDF key derivation for Kodera Enterprise Edition.
+"""PostgreSQL persistence helpers, privacy-cutoff fencing & HKDF key derivation for Kodera EE.
 
-Provides idempotent `ee_*` PostgreSQL table bootstrap via `django.db.connection` (keeping zero
-migrations inside open-source `apps/server/apps/*/migrations/` per `GOVERNANCE.md`) so multiple
-Gunicorn workers (`preload_app=False`) and process restarts share SAML IdP configurations,
-single-use `RelayState` nonces, SAML assertion replay protection, SCIM bearer token hashes and
-revocations, SCIM directory state, and compliance audit hash chains + tenant signing keys.
+Enterprise Edition (`ee_*`) tables are provisioned exclusively via Django migrations
+(`apps/server/apps/orgs/migrations/0032_ee_enterprise_store.py`) and operated under the narrow
+table/column grants enumerated in `apps/server/core/db/api_writer_role.py` (zero runtime DDL,
+zero `BIGSERIAL` sequences, and append-only `ee_audit_ledger` / `ee_audit_signing_key`).
 
 Falls back to process-local storage ONLY when no PostgreSQL database is configured or inside pure
 database-less unit tests where `pytest-django` blocks database connections.
@@ -15,141 +14,25 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 from __future__ import annotations
 
 import secrets
-from typing import Final
+from typing import Any, Final
+from uuid import UUID
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from django.conf import settings
 from django.db import connection, transaction
 
-from ee.edition import is_enterprise_enabled
-
 _PROCESS_FALLBACK_SEED: Final[bytes] = secrets.token_bytes(32)
 _HKDF_SALT: Final[bytes] = b"kodera-ee-hkdf-salt-v1"
 
-_EE_DDL_STATEMENTS: Final[tuple[str, ...]] = (
-    """
-    CREATE TABLE IF NOT EXISTS ee_saml_idps (
-        tenant_slug TEXT NOT NULL,
-        idp_id TEXT NOT NULL,
-        idp_entity_id TEXT NOT NULL,
-        idp_sso_url TEXT NOT NULL,
-        public_key_pem TEXT NOT NULL,
-        verified_domains_json TEXT NOT NULL,
-        group_role_mapping_json TEXT NOT NULL,
-        default_role TEXT NOT NULL,
-        want_assertions_signed BOOLEAN NOT NULL,
-        clock_skew_seconds INTEGER NOT NULL,
-        organisation_id TEXT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (tenant_slug, idp_id)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_saml_pending_requests (
-        relay_state TEXT PRIMARY KEY,
-        tenant_slug TEXT NOT NULL,
-        idp_id TEXT NOT NULL,
-        request_id TEXT NOT NULL,
-        return_path TEXT NOT NULL,
-        sp_base_url TEXT NOT NULL,
-        expires_at TIMESTAMPTZ NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_saml_replay_assertions (
-        tenant_slug TEXT NOT NULL,
-        idp_entity_id TEXT NOT NULL,
-        assertion_id TEXT NOT NULL,
-        expires_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (tenant_slug, idp_entity_id, assertion_id)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_saml_principals (
-        tenant_slug TEXT NOT NULL,
-        email_lower TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (tenant_slug, email_lower)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_scim_tokens (
-        token_id TEXT PRIMARY KEY,
-        tenant_slug TEXT NOT NULL,
-        secret_sha256 BYTEA NOT NULL,
-        scopes_json TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL,
-        expires_at TIMESTAMPTZ NULL,
-        revoked_at TIMESTAMPTZ NULL,
-        organisation_id TEXT NULL,
-        description TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_scim_users (
-        tenant_slug TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        user_name_lower TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (tenant_slug, user_id),
-        UNIQUE (tenant_slug, user_name_lower)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_scim_groups (
-        tenant_slug TEXT NOT NULL,
-        group_id TEXT NOT NULL,
-        display_name_lower TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (tenant_slug, group_id),
-        UNIQUE (tenant_slug, display_name_lower)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_scim_sessions (
-        tenant_slug TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        PRIMARY KEY (tenant_slug, user_id, session_id)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_scim_deprovision_events (
-        event_id TEXT PRIMARY KEY,
-        tenant_slug TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        user_name TEXT NOT NULL,
-        reason TEXT NOT NULL,
-        revoked_sessions_json TEXT NOT NULL,
-        occurred_at TIMESTAMPTZ NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS ee_audit_events (
-        tenant_slug TEXT NOT NULL,
-        sequence BIGINT NOT NULL,
-        event_id TEXT NOT NULL,
-        occurred_at TEXT NOT NULL,
-        actor_type TEXT NOT NULL,
-        actor_id TEXT NOT NULL,
-        actor_label TEXT NOT NULL,
-        action TEXT NOT NULL,
-        target_urn TEXT NOT NULL,
-        source_ip TEXT NOT NULL,
-        metadata_json TEXT NOT NULL,
-        prev_hash TEXT NOT NULL,
-        entry_hash TEXT NOT NULL,
-        PRIMARY KEY (tenant_slug, sequence),
-        UNIQUE (tenant_slug, event_id)
-    )
-    """,
-)
+
+class TenantCutoffError(PermissionError):
+    """Raised when an organisation or person is absent, inactive, or fenced by privacy erasure."""
+
+    def __init__(self, code: str, *, status: int = 403) -> None:
+        super().__init__(code)
+        self.code = code
+        self.status = status
 
 
 def is_postgres_configured() -> bool:
@@ -183,47 +66,213 @@ def can_use_postgres() -> bool:
     return bool(connection.vendor == "postgresql")
 
 
-def ensure_ee_tables() -> None:
-    """Idempotently create Enterprise `ee_*` tables in PostgreSQL under an advisory lock."""
-    if not is_enterprise_enabled() or not can_use_postgres():
-        return
-    with connection.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.ee_audit_events')")
-        existing = cur.fetchone()
-        if existing is not None and existing[0] is not None:
-            return
+def resolve_tenant_organisation(
+    cur: Any,
+    *,
+    tenant_slug: str,
+    organisation_id: UUID | None = None,
+    require_open: bool = True,
+) -> tuple[UUID, str] | None:
+    """Resolve `(organisation_id, effective_tenant_slug)` without executing any DDL."""
+    if organisation_id is not None:
+        if require_open:
+            cur.execute(
+                """
+                SELECT id
+                FROM public.orgs_organisation
+                WHERE id = %s AND state <> 'closed' AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                [organisation_id],
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id
+                FROM public.orgs_organisation
+                WHERE id = %s
+                LIMIT 1
+                """,
+                [organisation_id],
+            )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        raw_id = row[0]
+        resolved_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+        return resolved_id, tenant_slug
 
-    with transaction.atomic(), connection.cursor() as cur:
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext('kodera_ee_schema_bootstrap_v1'))")
-        for statement in _EE_DDL_STATEMENTS:
-            cur.execute(statement)
+    if require_open:
+        cur.execute(
+            """
+            SELECT id, slug
+            FROM public.orgs_organisation
+            WHERE slug = %s AND state <> 'closed' AND deleted_at IS NULL
+            LIMIT 1
+            """,
+            [tenant_slug],
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, slug
+            FROM public.orgs_organisation
+            WHERE slug = %s
+            ORDER BY (deleted_at IS NULL) DESC, created_at DESC
+            LIMIT 1
+            """,
+            [tenant_slug],
+        )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    raw_id = row[0]
+    resolved_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+    return resolved_id, str(row[1])
+
+
+def acquire_active_tenant_fence(
+    cur: Any,
+    *,
+    tenant_slug: str,
+    organisation_id: UUID | None = None,
+    user_id: UUID | None = None,
+) -> tuple[UUID, str]:
+    """Acquire shared erasure-cutoff locks and lock live `User` (optional) + `Organisation` rows.
+
+    Follows Core's global lock order (`identity_user` before `orgs_organisation`) and fails closed
+    when the organisation does not exist (`404`) or when privacy cutoff / closure has started (`403`).
+    """
+    found = resolve_tenant_organisation(
+        cur,
+        tenant_slug=tenant_slug,
+        organisation_id=organisation_id,
+        require_open=False,
+    )
+    if found is None:
+        raise TenantCutoffError("organisation_not_found", status=404)
+    resolved_org_id, resolved_slug = found
+
+    if user_id is not None:
+        cur.execute(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+            [str(user_id)],
+        )
+        cur.execute(
+            """
+            SELECT u.enabled, u.deleted_at, u.email
+            FROM public.identity_user u
+            WHERE u.id = %s
+            FOR KEY SHARE OF u
+            """,
+            [user_id],
+        )
+        u_row = cur.fetchone()
+        if (
+            u_row is None
+            or not bool(u_row[0])
+            or u_row[1] is not None
+            or str(u_row[2]).startswith("erased:")
+        ):
+            raise TenantCutoffError("account_cutoff_fenced", status=403)
+
+    cur.execute(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+        [str(resolved_org_id)],
+    )
+    cur.execute(
+        """
+        SELECT o.id
+        FROM public.orgs_organisation o
+        WHERE o.id = %s
+          AND o.state <> 'closed'
+          AND o.deleted_at IS NULL
+        FOR KEY SHARE OF o
+        """,
+        [resolved_org_id],
+    )
+    locked_org = cur.fetchone()
+    if locked_org is None:
+        raise TenantCutoffError("tenant_cutoff_fenced", status=403)
+    return resolved_org_id, resolved_slug
+
+
+def resolve_org_member_user_id(
+    cur: Any,
+    *,
+    organisation_id: UUID,
+    email: str,
+) -> UUID | None:
+    """Resolve an existing Core `identity_user.id` for `(organisation_id, email)` with cutoff check."""
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        return None
+    cur.execute(
+        """
+        SELECT i.user_id
+        FROM public.identity_identity i
+        WHERE i.organisation_id = %s
+          AND lower(i.email) = %s
+          AND i.deleted_at IS NULL
+        ORDER BY i.created_at ASC
+        LIMIT 1
+        """,
+        [organisation_id, normalized_email],
+    )
+    row = cur.fetchone()
+    if row is None or row[0] is None:
+        return None
+    person_id = row[0] if isinstance(row[0], UUID) else UUID(str(row[0]))
+    cur.execute(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+        [str(person_id)],
+    )
+    cur.execute(
+        """
+        SELECT u.deleted_at, u.email
+        FROM public.identity_user u
+        WHERE u.id = %s
+        FOR KEY SHARE OF u
+        """,
+        [person_id],
+    )
+    u_row = cur.fetchone()
+    if u_row is None or u_row[0] is not None or str(u_row[1]).startswith("erased:"):
+        raise TenantCutoffError("account_cutoff_fenced", status=403)
+    return person_id
 
 
 def reset_ee_tables(scope: str) -> None:
-    """Delete persisted rows for a service scope (`saml`, `scim_tokens`, `scim`, `audit`)."""
+    """Test-only helper: truncate `ee_*` rows when connected as table owner."""
     if not can_use_postgres():
         return
     with connection.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.ee_audit_events')")
-        existing = cur.fetchone()
-        if existing is None or existing[0] is None:
+        cur.execute(
+            """
+            SELECT pg_catalog.pg_get_userbyid(relowner) = current_user
+            FROM pg_catalog.pg_class
+            WHERE oid = to_regclass('public.ee_audit_ledger')
+            """
+        )
+        owner_row = cur.fetchone()
+        if owner_row is None or not bool(owner_row[0]):
             return
 
     with transaction.atomic(), connection.cursor() as cur:
         if scope == "saml":
-            cur.execute("DELETE FROM ee_saml_pending_requests")
-            cur.execute("DELETE FROM ee_saml_replay_assertions")
-            cur.execute("DELETE FROM ee_saml_principals")
-            cur.execute("DELETE FROM ee_saml_idps")
+            cur.execute(
+                "TRUNCATE TABLE public.ee_saml_pending_request, "
+                "public.ee_saml_replay_assertion, public.ee_saml_principal, public.ee_saml_idp"
+            )
         elif scope == "scim_tokens":
-            cur.execute("DELETE FROM ee_scim_tokens")
+            cur.execute("TRUNCATE TABLE public.ee_scim_token")
         elif scope == "scim":
-            cur.execute("DELETE FROM ee_scim_sessions")
-            cur.execute("DELETE FROM ee_scim_deprovision_events")
-            cur.execute("DELETE FROM ee_scim_groups")
-            cur.execute("DELETE FROM ee_scim_users")
+            cur.execute(
+                "TRUNCATE TABLE public.ee_scim_session, public.ee_scim_group_member, "
+                "public.ee_scim_deprovision, public.ee_scim_group, public.ee_scim_user"
+            )
         elif scope == "audit":
-            cur.execute("DELETE FROM ee_audit_events")
+            cur.execute("TRUNCATE TABLE public.ee_audit_signing_key, public.ee_audit_ledger")
         else:
             raise ValueError(f"Unsupported ee table reset scope: {scope}")
 

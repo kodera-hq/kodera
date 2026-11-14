@@ -29,6 +29,14 @@ _SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
     ("token_revoked", 401, None, "SCIM Bearer token has been revoked"),
     ("token_expired", 401, None, "SCIM Bearer token has expired"),
     ("tenant_forbidden", 403, None, "SCIM Bearer token is not authorized for the target tenant"),
+    ("tenant_cutoff_fenced", 403, None, "Target tenant is closed or under privacy erasure cutoff"),
+    (
+        "account_cutoff_fenced",
+        403,
+        "mutability",
+        "Target account is under privacy erasure cutoff",
+    ),
+    ("organisation_not_found", 404, None, "Target organisation was not found"),
     ("insufficient_scope", 403, None, "SCIM Bearer token lacks required scope"),
     ("conflicting_tenant", 403, None, "Conflicting tenant path and X-Kodera-Tenant header"),
     # RFC 7644 resource & protocol rejections
@@ -272,6 +280,7 @@ def users_collection_view(
                 filter_expr=filter_expr,
                 start_index=start_index,
                 count=count,
+                organisation_id=token.organisation_id,
             )
             return _scim_response(result, status=200)
 
@@ -313,6 +322,7 @@ def user_detail_view(
                 tenant_slug=token.tenant_slug,
                 user_id=user_id,
                 base_url=base_url,
+                organisation_id=token.organisation_id,
             )
             _, etag = _extract_meta_headers(found)
             return _scim_response(found, status=200, etag=etag)
@@ -379,6 +389,7 @@ def groups_collection_view(
                 filter_expr=filter_expr,
                 start_index=start_index,
                 count=count,
+                organisation_id=token.organisation_id,
             )
             return _scim_response(result, status=200)
 
@@ -387,6 +398,7 @@ def groups_collection_view(
             tenant_slug=token.tenant_slug,
             payload=payload,
             base_url=base_url,
+            organisation_id=token.organisation_id,
         )
         loc, etag = _extract_meta_headers(created)
         return _scim_response(created, status=201, location=loc, etag=etag)
@@ -419,6 +431,7 @@ def group_detail_view(
                 tenant_slug=token.tenant_slug,
                 group_id=group_id,
                 base_url=base_url,
+                organisation_id=token.organisation_id,
             )
             _, etag = _extract_meta_headers(found)
             return _scim_response(found, status=200, etag=etag)
@@ -430,6 +443,7 @@ def group_detail_view(
                 group_id=group_id,
                 payload=payload,
                 base_url=base_url,
+                organisation_id=token.organisation_id,
             )
             _, etag = _extract_meta_headers(replaced)
             return _scim_response(replaced, status=200, etag=etag)
@@ -441,6 +455,7 @@ def group_detail_view(
                 group_id=group_id,
                 payload=payload,
                 base_url=base_url,
+                organisation_id=token.organisation_id,
             )
             _, etag = _extract_meta_headers(patched)
             return _scim_response(patched, status=200, etag=etag)
@@ -448,6 +463,7 @@ def group_detail_view(
         default_scim_service.delete_group(
             tenant_slug=token.tenant_slug,
             group_id=group_id,
+            organisation_id=token.organisation_id,
         )
         return _scim_response(None, status=204)
     except ScimError as exc:

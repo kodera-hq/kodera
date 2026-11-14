@@ -21,17 +21,30 @@ from urllib.parse import parse_qs
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
-from ee.auth import ADMIN_ROLES, EeAuthError, authenticate_tenant_request
+from ee.auth import (
+    ADMIN_ROLES,
+    EeAuthError,
+    authenticate_tenant_request,
+    fence_authenticated_ee_operation,
+)
 from ee.saml.service import SamlError, SamlIdpConfig, default_saml_service
 
 _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
-    # Authentication & tenant admin authorization rejections (401 / 403)
+    # Authentication, tenant admin authorization & cutoff/revision fence rejections
     ("unauthenticated", 401, "Authentication required"),
     ("forbidden_lane", 403, "Customer authentication lane required"),
     ("identity_unknown", 403, "Authenticated identity is not provisioned"),
     ("tenant_membership_required", 403, "Active tenant membership is required"),
     ("cross_tenant_forbidden", 403, "Cross-tenant SAML administration is forbidden"),
     ("insufficient_role", 403, "Organisation owner or admin role is required"),
+    ("tenant_cutoff_fenced", 403, "Organisation is closed or under privacy erasure cutoff"),
+    ("account_cutoff_fenced", 403, "Account is under privacy erasure cutoff"),
+    (
+        "authority_fenced",
+        409,
+        "Organisation authority changed concurrently; retry with fresh credentials",
+    ),
+    ("authority_unavailable", 503, "Organisation authority revision is unavailable"),
     # XML pre-parse & structural security rejections (400)
     ("unexpected_child_element", 400, "SAML XML element contains forbidden child elements"),
     ("malformed_qname", 400, "Malformed XML qualified name"),
@@ -232,19 +245,25 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             return _saml_error_response("invalid_default_role")
 
         try:
-            cfg = default_saml_service.register_idp(
-                SamlIdpConfig(
-                    tenant_slug=auth.tenant_slug,
-                    idp_id=raw_idp_id.strip(),
-                    idp_entity_id=raw_entity_id.strip(),
-                    idp_sso_url=raw_sso_url.strip(),
-                    public_key_pem=raw_pub_pem,
-                    verified_domains=frozenset(raw_domains),
-                    group_role_mapping=raw_mapping,
-                    default_role=raw_default_role.strip(),
-                    organisation_id=auth.organisation_id,
+            with fence_authenticated_ee_operation(
+                auth,
+                target_tenant_slug=tenant_slug,
+            ) as fenced:
+                cfg = default_saml_service.register_idp(
+                    SamlIdpConfig(
+                        tenant_slug=fenced.tenant_slug,
+                        idp_id=raw_idp_id.strip(),
+                        idp_entity_id=raw_entity_id.strip(),
+                        idp_sso_url=raw_sso_url.strip(),
+                        public_key_pem=raw_pub_pem,
+                        verified_domains=frozenset(raw_domains),
+                        group_role_mapping=raw_mapping,
+                        default_role=raw_default_role.strip(),
+                        organisation_id=fenced.organisation_id,
+                    )
                 )
-            )
+        except EeAuthError as exc:
+            return _saml_error_response(exc.code)
         except SamlError as exc:
             return _saml_error_response(exc.code)
 
@@ -259,10 +278,17 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             status=201,
         )
 
-    idps = default_saml_service.list_idps(auth.tenant_slug)
+    try:
+        with fence_authenticated_ee_operation(auth, target_tenant_slug=tenant_slug) as fenced:
+            idps = default_saml_service.list_idps(fenced.tenant_slug)
+    except EeAuthError as exc:
+        return _saml_error_response(exc.code)
+    except SamlError as exc:
+        return _saml_error_response(exc.code)
+
     return _json(
         {
-            "tenant_slug": auth.tenant_slug,
+            "tenant_slug": fenced.tenant_slug,
             "providers": [
                 {
                     "idp_id": cfg.idp_id,

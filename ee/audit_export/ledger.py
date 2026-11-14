@@ -1,8 +1,13 @@
 """Append-only SHA-256 hash-chained compliance audit ledger (`ee/audit_export/ledger.py`).
 
-Persists hash-chained audit events in PostgreSQL (`ee_audit_events`) under a per-tenant transaction
-advisory lock so all Gunicorn workers share a single contiguous, tamper-evident chain, and derives
-per-tenant Ed25519 & HMAC-SHA256 signing keys deterministically via HKDF-SHA256.
+Persists hash-chained audit events in PostgreSQL (`public.ee_audit_ledger`) with `UUID` primary keys
+and sequence-free `seq` (`BIGINT`, computed inside a per-organisation transaction advisory lock) so
+all Gunicorn workers share a contiguous, tamper-evident chain under `kodera_api`'s narrow
+append-only (`SELECT`, `INSERT`) grants.
+
+Also persists server-governed Ed25519 verification public keys in `public.ee_audit_signing_key` so
+previously exported compliance bundles remain verifiable across `KODERA_EE_AUDIT_SIGNING_SEED` /
+`SECRET_KEY` rotations without ever trusting bundle-embedded attacker keys.
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -16,12 +21,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from uuid6 import uuid7
 
 from ee.audit_export.crypto import (
     GENESIS_PREV_HASH,
     LEDGER_HASH_DOMAIN,
+    AuditSigner,
     Ed25519AuditSigner,
     HmacAuditSigner,
     compute_domain_sha256,
@@ -29,7 +35,12 @@ from ee.audit_export.crypto import (
     derive_tenant_hmac_signer,
 )
 from ee.edition import require_enterprise_edition
-from ee.store import can_use_postgres, ensure_ee_tables, reset_ee_tables
+from ee.store import (
+    TenantCutoffError,
+    acquire_active_tenant_fence,
+    can_use_postgres,
+    reset_ee_tables,
+)
 
 SUPPORTED_FRAMEWORKS = frozenset({"SOC2", "ISO27001", "SECNUMCLOUD"})
 
@@ -65,6 +76,38 @@ def parse_utc_iso(raw: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _ledger_hash_fields(
+    *,
+    sequence: int,
+    event_id: str,
+    occurred_at: str,
+    tenant_slug: str,
+    actor_type: str,
+    actor_id: str,
+    action: str,
+    target_urn: str,
+    prev_hash: str,
+) -> dict[str, object]:
+    """Statutory immutable structural fields hashed into `ee_audit_ledger.entry_hash`.
+
+    Scrubbable personal-data columns (`actor_label`, `source_ip`, `metadata_json`) are excluded from
+    the persistent vault chain so statutory GDPR erasure scrubbing preserves vault hash continuity,
+    while every exported bundle (`EXPORT_ROW_HASH_DOMAIN` + `payload_sha256` + detached signature)
+    still binds all exported fields end-to-end.
+    """
+    return {
+        "sequence": sequence,
+        "event_id": event_id,
+        "occurred_at": occurred_at,
+        "tenant_slug": tenant_slug,
+        "actor_type": actor_type,
+        "actor_id": actor_id,
+        "action": action,
+        "target_urn": target_urn,
+        "prev_hash": prev_hash,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ComplianceAuditEvent:
     sequence: int
@@ -82,20 +125,24 @@ class ComplianceAuditEvent:
     entry_hash: str
 
     def ledger_payload(self) -> dict[str, object]:
-        return {
-            "sequence": self.sequence,
-            "event_id": self.event_id,
-            "occurred_at": self.occurred_at,
-            "tenant_slug": self.tenant_slug,
-            "actor_type": self.actor_type,
-            "actor_id": self.actor_id,
-            "actor_label": self.actor_label,
-            "action": self.action,
-            "target_urn": self.target_urn,
-            "source_ip": self.source_ip,
-            "metadata": dict(self.metadata),
-            "prev_hash": self.prev_hash,
-        }
+        return _ledger_hash_fields(
+            sequence=self.sequence,
+            event_id=self.event_id,
+            occurred_at=self.occurred_at,
+            tenant_slug=self.tenant_slug,
+            actor_type=self.actor_type,
+            actor_id=self.actor_id,
+            action=self.action,
+            target_urn=self.target_urn,
+            prev_hash=self.prev_hash,
+        )
+
+
+def _try_parse_uuid(raw: str) -> UUID | None:
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
 
 
 class ComplianceAuditLedger:
@@ -104,12 +151,14 @@ class ComplianceAuditLedger:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._streams: dict[str, list[ComplianceAuditEvent]] = {}
+        self._signing_keys: dict[tuple[str, str], str] = {}
         self._ed25519_overrides: dict[str, Ed25519AuditSigner] = {}
         self._hmac_overrides: dict[str, HmacAuditSigner] = {}
 
     def reset(self) -> None:
         with self._lock:
             self._streams.clear()
+            self._signing_keys.clear()
             self._ed25519_overrides.clear()
             self._hmac_overrides.clear()
         reset_ee_tables("audit")
@@ -142,6 +191,114 @@ class ComplianceAuditLedger:
             return override
         return derive_tenant_hmac_signer(tenant_slug)
 
+    def register_signing_key(
+        self,
+        *,
+        tenant_slug: str,
+        signer: AuditSigner,
+        organisation_id: UUID | None = None,
+    ) -> None:
+        """Persist a server-governed Ed25519 public verification key for historical verification."""
+        require_enterprise_edition()
+        if signer.algorithm != "ed25519":
+            return
+        pub_pem = signer.public_key_pem
+        pub_b64 = signer.public_key_b64
+        if not pub_pem or not pub_b64:
+            return
+
+        if can_use_postgres():
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                        organisation_id=organisation_id,
+                    )
+                    cur.execute(
+                        """
+                        SELECT 1
+                        FROM public.ee_audit_signing_key
+                        WHERE organisation_id = %s AND key_id = %s
+                        LIMIT 1
+                        """,
+                        [org_id, signer.key_id],
+                    )
+                    if cur.fetchone() is None:
+                        cur.execute(
+                            """
+                            INSERT INTO public.ee_audit_signing_key (
+                                id, organisation_id, tenant_slug, algorithm,
+                                key_id, public_key_b64, public_key_pem, created_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (organisation_id, key_id) DO NOTHING
+                            """,
+                            [
+                                uuid7(),
+                                org_id,
+                                resolved_slug,
+                                signer.algorithm,
+                                signer.key_id,
+                                pub_b64,
+                                pub_pem,
+                                datetime.now(UTC),
+                            ],
+                        )
+            except IntegrityError as exc:
+                raise TenantCutoffError("tenant_cutoff_fenced", status=403) from exc
+            return
+
+        with self._lock:
+            self._signing_keys[(tenant_slug, signer.key_id)] = pub_pem
+
+    def resolve_trusted_ed25519_public_key(
+        self,
+        *,
+        tenant_slug: str,
+        key_id: str | None,
+        organisation_id: UUID | None = None,
+    ) -> str | None:
+        """Resolve a server-governed Ed25519 public key by `(tenant_slug, key_id)`."""
+        require_enterprise_edition()
+        clean_kid = key_id.strip() if isinstance(key_id, str) and key_id.strip() else None
+
+        if clean_kid is not None:
+            if can_use_postgres():
+                with connection.cursor() as cur:
+                    if organisation_id is not None:
+                        cur.execute(
+                            """
+                            SELECT public_key_pem
+                            FROM public.ee_audit_signing_key
+                            WHERE organisation_id = %s AND tenant_slug = %s AND key_id = %s
+                            LIMIT 1
+                            """,
+                            [organisation_id, tenant_slug, clean_kid],
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            SELECT public_key_pem
+                            FROM public.ee_audit_signing_key
+                            WHERE tenant_slug = %s AND key_id = %s
+                            LIMIT 1
+                            """,
+                            [tenant_slug, clean_kid],
+                        )
+                    row = cur.fetchone()
+                if row is not None:
+                    return str(row[0])
+            else:
+                with self._lock:
+                    found_pem = self._signing_keys.get((tenant_slug, clean_kid))
+                if found_pem is not None:
+                    return found_pem
+
+        active_signer = self.ed25519_signer_for_tenant(tenant_slug)
+        if clean_kid is None or clean_kid == active_signer.key_id:
+            return active_signer.public_key_pem
+        return None
+
     def append_event(
         self,
         *,
@@ -155,6 +312,8 @@ class ComplianceAuditLedger:
         metadata: Mapping[str, object] | None = None,
         occurred_at: datetime | str | None = None,
         event_id: str | None = None,
+        organisation_id: UUID | None = None,
+        user_id: UUID | None = None,
     ) -> ComplianceAuditEvent:
         """Append one immutable event linked via `prev_hash -> entry_hash`."""
         require_enterprise_edition()
@@ -182,67 +341,106 @@ class ComplianceAuditLedger:
         clean_ip = source_ip.strip()
 
         if can_use_postgres():
-            ensure_ee_tables()
             meta_json = json.dumps(clean_meta, sort_keys=True, separators=(",", ":"))
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext('kodera_ee_audit:' || %s))",
-                    [tenant_slug],
-                )
-                cur.execute(
-                    "SELECT sequence, entry_hash FROM ee_audit_events "
-                    "WHERE tenant_slug = %s ORDER BY sequence DESC LIMIT 1",
-                    [tenant_slug],
-                )
-                last_row = cur.fetchone()
-                if last_row is None:
-                    seq = 1
-                    prev = GENESIS_PREV_HASH
-                else:
-                    seq = int(last_row[0]) + 1
-                    prev = str(last_row[1])
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    resolved_user_id: UUID | None = user_id
+                    if resolved_user_id is None and clean_actor_type == "customer_user":
+                        candidate_uuid = _try_parse_uuid(clean_actor_id)
+                        if candidate_uuid is not None:
+                            cur.execute(
+                                "SELECT id FROM public.identity_user WHERE id = %s LIMIT 1",
+                                [candidate_uuid],
+                            )
+                            if cur.fetchone() is not None:
+                                resolved_user_id = candidate_uuid
 
-                unsigned_fields: dict[str, object] = {
-                    "sequence": seq,
-                    "event_id": eid,
-                    "occurred_at": ts_str,
-                    "tenant_slug": tenant_slug,
-                    "actor_type": clean_actor_type,
-                    "actor_id": clean_actor_id,
-                    "actor_label": clean_actor_label,
-                    "action": clean_action,
-                    "target_urn": clean_target,
-                    "source_ip": clean_ip,
-                    "metadata": clean_meta,
-                    "prev_hash": prev,
-                }
-                digest = compute_domain_sha256(LEDGER_HASH_DOMAIN, unsigned_fields)
-                cur.execute(
-                    "INSERT INTO ee_audit_events ("
-                    "tenant_slug, sequence, event_id, occurred_at, actor_type, actor_id, "
-                    "actor_label, action, target_urn, source_ip, metadata_json, prev_hash, entry_hash"
-                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    [
-                        tenant_slug,
-                        seq,
-                        eid,
-                        ts_str,
-                        clean_actor_type,
-                        clean_actor_id,
-                        clean_actor_label,
-                        clean_action,
-                        clean_target,
-                        clean_ip,
-                        meta_json,
-                        prev,
-                        digest,
-                    ],
-                )
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                        organisation_id=organisation_id,
+                        user_id=resolved_user_id,
+                    )
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext('kodera_ee_audit:' || %s))",
+                        [str(org_id)],
+                    )
+                    cur.execute(
+                        """
+                        SELECT seq, entry_hash
+                        FROM public.ee_audit_ledger
+                        WHERE organisation_id = %s
+                        ORDER BY seq DESC
+                        LIMIT 1
+                        """,
+                        [org_id],
+                    )
+                    last_row = cur.fetchone()
+                    if last_row is None:
+                        seq = 1
+                        prev = GENESIS_PREV_HASH
+                    else:
+                        seq = int(last_row[0]) + 1
+                        prev = str(last_row[1])
+
+                    unsigned_fields = _ledger_hash_fields(
+                        sequence=seq,
+                        event_id=eid,
+                        occurred_at=ts_str,
+                        tenant_slug=resolved_slug,
+                        actor_type=clean_actor_type,
+                        actor_id=clean_actor_id,
+                        action=clean_action,
+                        target_urn=clean_target,
+                        prev_hash=prev,
+                    )
+                    digest = compute_domain_sha256(LEDGER_HASH_DOMAIN, unsigned_fields)
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_audit_ledger (
+                            id, organisation_id, user_id, tenant_slug, seq, event_id,
+                            occurred_at, actor_type, actor_id, actor_label, action,
+                            target_urn, source_ip, metadata_json, prev_hash, entry_hash,
+                            pii_scrubbed_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            NULL
+                        )
+                        """,
+                        [
+                            uuid7(),
+                            org_id,
+                            resolved_user_id,
+                            resolved_slug,
+                            seq,
+                            eid,
+                            ts_str,
+                            clean_actor_type,
+                            clean_actor_id,
+                            clean_actor_label,
+                            clean_action,
+                            clean_target,
+                            clean_ip,
+                            meta_json,
+                            prev,
+                            digest,
+                        ],
+                    )
+            except IntegrityError as exc:
+                msg = str(exc)
+                if "account cutoff refuses write" in msg:
+                    raise TenantCutoffError("account_cutoff_fenced", status=403) from exc
+                if "erasure cutoff refuses write" in msg:
+                    raise TenantCutoffError("tenant_cutoff_fenced", status=403) from exc
+                raise
+
             return ComplianceAuditEvent(
                 sequence=seq,
                 event_id=eid,
                 occurred_at=ts_str,
-                tenant_slug=tenant_slug,
+                tenant_slug=resolved_slug,
                 actor_type=clean_actor_type,
                 actor_id=clean_actor_id,
                 actor_label=clean_actor_label,
@@ -258,20 +456,17 @@ class ComplianceAuditLedger:
             chain = self._streams.setdefault(tenant_slug, [])
             seq = len(chain) + 1
             prev = GENESIS_PREV_HASH if seq == 1 else chain[-1].entry_hash
-            unsigned_fields_mem: dict[str, object] = {
-                "sequence": seq,
-                "event_id": eid,
-                "occurred_at": ts_str,
-                "tenant_slug": tenant_slug,
-                "actor_type": clean_actor_type,
-                "actor_id": clean_actor_id,
-                "actor_label": clean_actor_label,
-                "action": clean_action,
-                "target_urn": clean_target,
-                "source_ip": clean_ip,
-                "metadata": clean_meta,
-                "prev_hash": prev,
-            }
+            unsigned_fields_mem = _ledger_hash_fields(
+                sequence=seq,
+                event_id=eid,
+                occurred_at=ts_str,
+                tenant_slug=tenant_slug,
+                actor_type=clean_actor_type,
+                actor_id=clean_actor_id,
+                action=clean_action,
+                target_urn=clean_target,
+                prev_hash=prev,
+            )
             digest = compute_domain_sha256(LEDGER_HASH_DOMAIN, unsigned_fields_mem)
             event = ComplianceAuditEvent(
                 sequence=seq,
@@ -291,17 +486,39 @@ class ComplianceAuditLedger:
             chain.append(event)
             return event
 
-    def snapshot_events(self, tenant_slug: str) -> tuple[ComplianceAuditEvent, ...]:
+    def snapshot_events(
+        self,
+        tenant_slug: str,
+        *,
+        organisation_id: UUID | None = None,
+    ) -> tuple[ComplianceAuditEvent, ...]:
         require_enterprise_edition()
         if can_use_postgres():
-            ensure_ee_tables()
             with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT sequence, event_id, occurred_at, tenant_slug, actor_type, actor_id, "
-                    "actor_label, action, target_urn, source_ip, metadata_json, prev_hash, entry_hash "
-                    "FROM ee_audit_events WHERE tenant_slug = %s ORDER BY sequence ASC",
-                    [tenant_slug],
-                )
+                if organisation_id is not None:
+                    cur.execute(
+                        """
+                        SELECT seq, event_id, occurred_at, tenant_slug, actor_type, actor_id,
+                               actor_label, action, target_urn, source_ip, metadata_json,
+                               prev_hash, entry_hash
+                        FROM public.ee_audit_ledger
+                        WHERE organisation_id = %s AND tenant_slug = %s
+                        ORDER BY seq ASC
+                        """,
+                        [organisation_id, tenant_slug],
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT seq, event_id, occurred_at, tenant_slug, actor_type, actor_id,
+                               actor_label, action, target_urn, source_ip, metadata_json,
+                               prev_hash, entry_hash
+                        FROM public.ee_audit_ledger
+                        WHERE tenant_slug = %s
+                        ORDER BY seq ASC
+                        """,
+                        [tenant_slug],
+                    )
                 rows = cur.fetchall()
             out: list[ComplianceAuditEvent] = []
             for row in rows:
@@ -332,11 +549,15 @@ class ComplianceAuditLedger:
     def head_hash(self, tenant_slug: str) -> str:
         require_enterprise_edition()
         if can_use_postgres():
-            ensure_ee_tables()
             with connection.cursor() as cur:
                 cur.execute(
-                    "SELECT entry_hash FROM ee_audit_events "
-                    "WHERE tenant_slug = %s ORDER BY sequence DESC LIMIT 1",
+                    """
+                    SELECT entry_hash
+                    FROM public.ee_audit_ledger
+                    WHERE tenant_slug = %s
+                    ORDER BY seq DESC
+                    LIMIT 1
+                    """,
                     [tenant_slug],
                 )
                 row = cur.fetchone()
@@ -362,7 +583,10 @@ class ComplianceAuditLedger:
         require_enterprise_edition()
         from apps.audit.models import AuditEvent
 
-        existing_ids = {evt.event_id for evt in self.snapshot_events(tenant_slug)}
+        existing_ids = {
+            evt.event_id
+            for evt in self.snapshot_events(tenant_slug, organisation_id=organisation_id)
+        }
         rows = AuditEvent.objects.filter(organisation_id=organisation_id).order_by(
             "occurred_at", "id"
         )
@@ -373,6 +597,7 @@ class ComplianceAuditLedger:
                 continue
             self.append_event(
                 tenant_slug=tenant_slug,
+                organisation_id=organisation_id,
                 event_id=rid,
                 occurred_at=row.occurred_at,
                 actor_type=row.actor_type,

@@ -1,8 +1,9 @@
 """RFC 7643 / RFC 7644 SCIM 2.0 User & Group directory sync and instant deprovisioning.
 
-Persists SCIM directory users (`ee_scim_users`), groups (`ee_scim_groups`), active user sessions
-(`ee_scim_sessions`), and deprovisioning audit records (`ee_scim_deprovision_events`) in PostgreSQL
-under per-tenant advisory locks so all Gunicorn workers share consistent directory state.
+Persists SCIM directory users (`ee_scim_user`), groups (`ee_scim_group`), group memberships
+(`ee_scim_group_member`), active user sessions (`ee_scim_session`), and append-only deprovisioning
+records (`ee_scim_deprovision`) in PostgreSQL under per-organisation advisory locks and Core
+privacy-erasure cutoff fences.
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -15,10 +16,10 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Final
+from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 from uuid6 import uuid7
 
 from ee.edition import require_enterprise_edition
@@ -30,7 +31,13 @@ from ee.scim.schemas import (
     SCIM_PATCH_OP_SCHEMA,
     SCIM_USER_SCHEMA,
 )
-from ee.store import can_use_postgres, ensure_ee_tables, reset_ee_tables
+from ee.store import (
+    TenantCutoffError,
+    acquire_active_tenant_fence,
+    can_use_postgres,
+    reset_ee_tables,
+    resolve_tenant_organisation,
+)
 
 MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 100
@@ -204,37 +211,75 @@ class DeprovisionRecord:
     reason: str
     revoked_sessions: tuple[str, ...]
     occurred_at: datetime
+    django_user_id: str | None = None
 
 
 @dataclass(slots=True)
 class _TenantScimState:
     tenant_slug: str
+    organisation_id: UUID | None = None
     users: dict[str, ScimUser] = field(default_factory=dict)
     groups: dict[str, ScimGroup] = field(default_factory=dict)
     sessions: dict[str, set[str]] = field(default_factory=dict)
     deprovision_log: list[DeprovisionRecord] = field(default_factory=list)
     new_deprovision_events: list[DeprovisionRecord] = field(default_factory=list)
+    initial_user_snapshots: dict[str, str] = field(default_factory=dict)
+    initial_group_snapshots: dict[str, tuple[str, dict[str, int]]] = field(default_factory=dict)
+    initial_sessions: dict[str, set[str]] = field(default_factory=dict)
 
 
-def _user_to_storage_json(user: ScimUser) -> str:
+def _emails_to_json(emails: Sequence[ScimEmail]) -> str:
+    return json.dumps(
+        [{"value": e.value, "type": e.type, "primary": e.primary} for e in emails],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _emails_from_json(raw: str) -> list[ScimEmail]:
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        return []
+    return [
+        ScimEmail(
+            value=str(item["value"]),
+            type=str(item.get("type", "work")),
+            primary=bool(item.get("primary", False)),
+        )
+        for item in parsed
+        if isinstance(item, dict) and "value" in item
+    ]
+
+
+def _roles_to_json(roles: Sequence[str]) -> str:
+    return json.dumps([str(r) for r in roles], separators=(",", ":"))
+
+
+def _roles_from_json(raw: str) -> list[str]:
+    parsed = json.loads(raw)
+    return [str(r) for r in parsed] if isinstance(parsed, list) else []
+
+
+def _coerce_utc(raw: object) -> datetime:
+    if isinstance(raw, datetime):
+        return raw.astimezone(UTC)
+    return datetime.fromisoformat(str(raw)).astimezone(UTC)
+
+
+def _user_snapshot_key(user: ScimUser) -> str:
     return json.dumps(
         {
-            "id": user.id,
-            "tenant_slug": user.tenant_slug,
             "user_name": user.user_name,
             "external_id": user.external_id,
             "display_name": user.display_name,
             "given_name": user.given_name,
             "family_name": user.family_name,
-            "emails": [
-                {"value": e.value, "type": e.type, "primary": e.primary} for e in user.emails
-            ],
+            "emails": _emails_to_json(user.emails),
             "active": user.active,
-            "roles": list(user.roles),
+            "roles": _roles_to_json(user.roles),
             "department": user.department,
             "member_state": user.member_state,
             "version": user.version,
-            "created_at": user.created_at.astimezone(UTC).isoformat(),
             "updated_at": user.updated_at.astimezone(UTC).isoformat(),
             "deprovisioned_at": user.deprovisioned_at.astimezone(UTC).isoformat()
             if user.deprovisioned_at is not None
@@ -246,56 +291,12 @@ def _user_to_storage_json(user: ScimUser) -> str:
     )
 
 
-def _user_from_storage_json(raw: str) -> ScimUser:
-    obj = json.loads(raw)
-    emails_raw = obj.get("emails", [])
-    emails = [
-        ScimEmail(
-            value=str(item["value"]),
-            type=str(item.get("type", "work")),
-            primary=bool(item.get("primary", False)),
-        )
-        for item in emails_raw
-        if isinstance(item, dict) and "value" in item
-    ]
-    roles_raw = obj.get("roles", [])
-    roles = [str(r) for r in roles_raw] if isinstance(roles_raw, list) else []
-    deprov_raw = obj.get("deprovisioned_at")
-    return ScimUser(
-        id=str(obj["id"]),
-        tenant_slug=str(obj["tenant_slug"]),
-        user_name=str(obj["user_name"]),
-        external_id=str(obj["external_id"]) if obj.get("external_id") is not None else None,
-        display_name=str(obj["display_name"]),
-        given_name=str(obj["given_name"]),
-        family_name=str(obj["family_name"]),
-        emails=emails,
-        active=bool(obj["active"]),
-        roles=roles,
-        department=str(obj["department"]) if obj.get("department") is not None else None,
-        member_state=str(obj["member_state"]),
-        version=int(obj["version"]),
-        created_at=datetime.fromisoformat(str(obj["created_at"])).astimezone(UTC),
-        updated_at=datetime.fromisoformat(str(obj["updated_at"])).astimezone(UTC),
-        deprovisioned_at=datetime.fromisoformat(str(deprov_raw)).astimezone(UTC)
-        if deprov_raw is not None
-        else None,
-        django_user_id=str(obj["django_user_id"])
-        if obj.get("django_user_id") is not None
-        else None,
-    )
-
-
-def _group_to_storage_json(group: ScimGroup) -> str:
+def _group_header_snapshot_key(group: ScimGroup) -> str:
     return json.dumps(
         {
-            "id": group.id,
-            "tenant_slug": group.tenant_slug,
             "display_name": group.display_name,
             "external_id": group.external_id,
-            "member_ids": list(group.member_ids),
             "version": group.version,
-            "created_at": group.created_at.astimezone(UTC).isoformat(),
             "updated_at": group.updated_at.astimezone(UTC).isoformat(),
         },
         sort_keys=True,
@@ -303,139 +304,415 @@ def _group_to_storage_json(group: ScimGroup) -> str:
     )
 
 
-def _group_from_storage_json(raw: str) -> ScimGroup:
-    obj = json.loads(raw)
-    mids_raw = obj.get("member_ids", [])
-    mids = [str(m) for m in mids_raw] if isinstance(mids_raw, list) else []
-    return ScimGroup(
-        id=str(obj["id"]),
-        tenant_slug=str(obj["tenant_slug"]),
-        display_name=str(obj["display_name"]),
-        external_id=str(obj["external_id"]) if obj.get("external_id") is not None else None,
-        member_ids=mids,
-        version=int(obj["version"]),
-        created_at=datetime.fromisoformat(str(obj["created_at"])).astimezone(UTC),
-        updated_at=datetime.fromisoformat(str(obj["updated_at"])).astimezone(UTC),
-    )
-
-
-def _load_postgres_tenant_state(cur: object, tenant_slug: str) -> _TenantScimState:
-    from typing import Any, cast
-
+def _resolve_scim_org_id(
+    cur: object,
+    *,
+    tenant_slug: str,
+    organisation_id: UUID | None = None,
+) -> UUID | None:
     cursor = cast(Any, cur)
-    state = _TenantScimState(tenant_slug=tenant_slug)
+    if organisation_id is not None:
+        return organisation_id
+    found = resolve_tenant_organisation(
+        cursor,
+        tenant_slug=tenant_slug,
+        require_open=False,
+    )
+    if found is not None:
+        return found[0]
+    for lookup_sql in (
+        "SELECT organisation_id FROM public.ee_scim_token WHERE tenant_slug = %s ORDER BY created_at DESC LIMIT 1",
+        "SELECT organisation_id FROM public.ee_scim_user WHERE tenant_slug = %s ORDER BY created_at DESC LIMIT 1",
+        "SELECT organisation_id FROM public.ee_scim_group WHERE tenant_slug = %s ORDER BY created_at DESC LIMIT 1",
+        "SELECT organisation_id FROM public.ee_scim_deprovision WHERE tenant_slug = %s ORDER BY occurred_at DESC LIMIT 1",
+    ):
+        cursor.execute(lookup_sql, [tenant_slug])
+        row = cursor.fetchone()
+        if row is not None and row[0] is not None:
+            raw_id = row[0]
+            return raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+    return None
+
+
+def _load_postgres_tenant_state(
+    cur: object,
+    *,
+    organisation_id: UUID,
+    tenant_slug: str,
+) -> _TenantScimState:
+    cursor = cast(Any, cur)
+    state = _TenantScimState(tenant_slug=tenant_slug, organisation_id=organisation_id)
 
     cursor.execute(
-        "SELECT payload_json FROM ee_scim_users "
-        "WHERE tenant_slug = %s ORDER BY created_at ASC, user_id ASC",
-        [tenant_slug],
+        """
+        SELECT
+            id, user_id, user_name, external_id, display_name, given_name, family_name,
+            emails_json, active, roles_json, department, member_state, version,
+            created_at, updated_at, deprovisioned_at
+        FROM public.ee_scim_user
+        WHERE organisation_id = %s AND tenant_slug = %s
+        ORDER BY created_at ASC, id ASC
+        """,
+        [organisation_id, tenant_slug],
     )
-    for (u_json,) in cursor.fetchall():
-        usr = _user_from_storage_json(str(u_json))
+    for u_row in cursor.fetchall():
+        uid_str = str(u_row[0])
+        person_str = str(u_row[1]) if u_row[1] is not None else None
+        usr = ScimUser(
+            id=uid_str,
+            tenant_slug=tenant_slug,
+            user_name=str(u_row[2]),
+            external_id=str(u_row[3]) if u_row[3] is not None else None,
+            display_name=str(u_row[4]),
+            given_name=str(u_row[5]),
+            family_name=str(u_row[6]),
+            emails=_emails_from_json(str(u_row[7])),
+            active=bool(u_row[8]),
+            roles=_roles_from_json(str(u_row[9])),
+            department=str(u_row[10]) if u_row[10] is not None else None,
+            member_state=str(u_row[11]),
+            version=int(u_row[12]),
+            created_at=_coerce_utc(u_row[13]),
+            updated_at=_coerce_utc(u_row[14]),
+            deprovisioned_at=_coerce_utc(u_row[15]) if u_row[15] is not None else None,
+            django_user_id=person_str,
+        )
         state.users[usr.id] = usr
+        state.initial_user_snapshots[usr.id] = _user_snapshot_key(usr)
 
     cursor.execute(
-        "SELECT payload_json FROM ee_scim_groups "
-        "WHERE tenant_slug = %s ORDER BY created_at ASC, group_id ASC",
-        [tenant_slug],
+        """
+        SELECT id, display_name, external_id, version, created_at, updated_at
+        FROM public.ee_scim_group
+        WHERE organisation_id = %s AND tenant_slug = %s
+        ORDER BY created_at ASC, id ASC
+        """,
+        [organisation_id, tenant_slug],
     )
-    for (g_json,) in cursor.fetchall():
-        grp = _group_from_storage_json(str(g_json))
-        state.groups[grp.id] = grp
+    group_rows = cursor.fetchall()
+    members_by_group: dict[str, list[tuple[str, int]]] = {}
+    if group_rows:
+        cursor.execute(
+            """
+            SELECT group_id, scim_user_id, member_order
+            FROM public.ee_scim_group_member
+            WHERE organisation_id = %s
+            ORDER BY group_id ASC, member_order ASC, scim_user_id ASC
+            """,
+            [organisation_id],
+        )
+        for gm_gid, gm_uid, gm_ord in cursor.fetchall():
+            members_by_group.setdefault(str(gm_gid), []).append((str(gm_uid), int(gm_ord)))
+
+    for g_row in group_rows:
+        gid_str = str(g_row[0])
+        ordered_pairs = members_by_group.get(gid_str, [])
+        grp = ScimGroup(
+            id=gid_str,
+            tenant_slug=tenant_slug,
+            display_name=str(g_row[1]),
+            external_id=str(g_row[2]) if g_row[2] is not None else None,
+            member_ids=[pair[0] for pair in ordered_pairs],
+            version=int(g_row[3]),
+            created_at=_coerce_utc(g_row[4]),
+            updated_at=_coerce_utc(g_row[5]),
+        )
+        state.groups[gid_str] = grp
+        state.initial_group_snapshots[gid_str] = (
+            _group_header_snapshot_key(grp),
+            dict(ordered_pairs),
+        )
 
     cursor.execute(
-        "SELECT user_id, session_id FROM ee_scim_sessions WHERE tenant_slug = %s",
-        [tenant_slug],
+        """
+        SELECT scim_user_id, session_id
+        FROM public.ee_scim_session
+        WHERE organisation_id = %s AND tenant_slug = %s
+        """,
+        [organisation_id, tenant_slug],
     )
-    for uid, sid in cursor.fetchall():
-        state.sessions.setdefault(str(uid), set()).add(str(sid))
+    for s_uid, sid in cursor.fetchall():
+        s_uid_str = str(s_uid)
+        sid_str = str(sid)
+        state.sessions.setdefault(s_uid_str, set()).add(sid_str)
+        state.initial_sessions.setdefault(s_uid_str, set()).add(sid_str)
 
     cursor.execute(
-        "SELECT user_id, user_name, reason, revoked_sessions_json, occurred_at "
-        "FROM ee_scim_deprovision_events WHERE tenant_slug = %s "
-        "ORDER BY occurred_at ASC, event_id ASC",
-        [tenant_slug],
+        """
+        SELECT scim_user_id, user_id, user_name, reason, revoked_sessions_json, occurred_at
+        FROM public.ee_scim_deprovision
+        WHERE organisation_id = %s AND tenant_slug = %s
+        ORDER BY occurred_at ASC, id ASC
+        """,
+        [organisation_id, tenant_slug],
     )
-    for uid, uname, reason, rev_json, occ in cursor.fetchall():
+    for d_uid, d_person, uname, reason, rev_json, occ in cursor.fetchall():
         rev_list = json.loads(str(rev_json))
         rev_tuple = tuple(str(s) for s in rev_list) if isinstance(rev_list, list) else ()
-        occ_dt = (
-            occ.astimezone(UTC)
-            if isinstance(occ, datetime)
-            else datetime.fromisoformat(str(occ)).astimezone(UTC)
-        )
         state.deprovision_log.append(
             DeprovisionRecord(
                 tenant_slug=tenant_slug,
-                user_id=str(uid),
+                user_id=str(d_uid),
                 user_name=str(uname),
                 reason=str(reason),
                 revoked_sessions=rev_tuple,
-                occurred_at=occ_dt,
+                occurred_at=_coerce_utc(occ),
+                django_user_id=str(d_person) if d_person is not None else None,
             )
         )
     return state
 
 
 def _flush_postgres_tenant_state(cur: object, state: _TenantScimState) -> None:
-    from typing import Any, cast
-
     cursor = cast(Any, cur)
+    org_id = state.organisation_id
+    if org_id is None:
+        raise ValueError("Missing organisation_id on PostgreSQL SCIM tenant state")
     tenant_slug = state.tenant_slug
 
-    cursor.execute("DELETE FROM ee_scim_users WHERE tenant_slug = %s", [tenant_slug])
-    for usr in state.users.values():
-        cursor.execute(
-            "INSERT INTO ee_scim_users ("
-            "tenant_slug, user_id, user_name_lower, payload_json, created_at, updated_at"
-            ") VALUES (%s, %s, %s, %s, %s, %s)",
-            [
-                tenant_slug,
-                usr.id,
-                usr.user_name.lower(),
-                _user_to_storage_json(usr),
-                usr.created_at,
-                usr.updated_at,
-            ],
-        )
-
-    cursor.execute("DELETE FROM ee_scim_groups WHERE tenant_slug = %s", [tenant_slug])
-    for grp in state.groups.values():
-        cursor.execute(
-            "INSERT INTO ee_scim_groups ("
-            "tenant_slug, group_id, display_name_lower, payload_json, created_at, updated_at"
-            ") VALUES (%s, %s, %s, %s, %s, %s)",
-            [
-                tenant_slug,
-                grp.id,
-                grp.display_name.lower(),
-                _group_to_storage_json(grp),
-                grp.created_at,
-                grp.updated_at,
-            ],
-        )
-
-    cursor.execute("DELETE FROM ee_scim_sessions WHERE tenant_slug = %s", [tenant_slug])
-    for uid, sids in state.sessions.items():
-        for sid in sorted(sids):
+    # 1. Remove revoked sessions before deleting any SCIM user rows (`ON DELETE RESTRICT`).
+    for uid, old_sids in state.initial_sessions.items():
+        cur_sids = state.sessions.get(uid, set())
+        for rem_sid in sorted(old_sids - cur_sids):
             cursor.execute(
-                "INSERT INTO ee_scim_sessions (tenant_slug, user_id, session_id) "
-                "VALUES (%s, %s, %s)",
-                [tenant_slug, uid, sid],
+                """
+                DELETE FROM public.ee_scim_session
+                WHERE organisation_id = %s AND scim_user_id = %s AND session_id = %s
+                """,
+                [org_id, UUID(uid), rem_sid],
             )
 
-    for evt in state.new_deprovision_events:
+    # 2. Remove group memberships for deleted groups and unlinked members before user/group deletes.
+    deleted_group_ids = sorted(set(state.initial_group_snapshots) - set(state.groups))
+    for del_gid in deleted_group_ids:
         cursor.execute(
-            "INSERT INTO ee_scim_deprovision_events ("
-            "event_id, tenant_slug, user_id, user_name, reason, revoked_sessions_json, occurred_at"
-            ") VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "DELETE FROM public.ee_scim_group_member WHERE organisation_id = %s AND group_id = %s",
+            [org_id, UUID(del_gid)],
+        )
+        cursor.execute(
+            "DELETE FROM public.ee_scim_group WHERE organisation_id = %s AND id = %s",
+            [org_id, UUID(del_gid)],
+        )
+
+    for gid, grp in state.groups.items():
+        old_grp_snap = state.initial_group_snapshots.get(gid)
+        if old_grp_snap is not None:
+            _, old_mid_orders = old_grp_snap
+            removed_mids = sorted(set(old_mid_orders) - set(grp.member_ids))
+            for rem_mid in removed_mids:
+                cursor.execute(
+                    "DELETE FROM public.ee_scim_group_member WHERE group_id = %s AND scim_user_id = %s",
+                    [UUID(gid), UUID(rem_mid)],
+                )
+
+    # 3. Delete removed SCIM users.
+    deleted_user_ids = sorted(set(state.initial_user_snapshots) - set(state.users))
+    for del_uid in deleted_user_ids:
+        cursor.execute(
+            "DELETE FROM public.ee_scim_user WHERE organisation_id = %s AND id = %s",
+            [org_id, UUID(del_uid)],
+        )
+
+    # 4. Insert new SCIM users and update modified SCIM users via narrow mutable columns.
+    for uid, usr in state.users.items():
+        person_uuid = UUID(usr.django_user_id) if usr.django_user_id is not None else None
+        emails_json = _emails_to_json(usr.emails)
+        roles_json = _roles_to_json(usr.roles)
+        old_snap = state.initial_user_snapshots.get(uid)
+        if old_snap is None:
+            cursor.execute(
+                """
+                INSERT INTO public.ee_scim_user (
+                    id, organisation_id, user_id, tenant_slug, user_name, user_name_lower,
+                    external_id, display_name, given_name, family_name, emails_json, active,
+                    roles_json, department, member_state, version, created_at, updated_at,
+                    deprovisioned_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s
+                )
+                """,
+                [
+                    UUID(usr.id),
+                    org_id,
+                    person_uuid,
+                    tenant_slug,
+                    usr.user_name,
+                    usr.user_name.lower(),
+                    usr.external_id,
+                    usr.display_name,
+                    usr.given_name,
+                    usr.family_name,
+                    emails_json,
+                    usr.active,
+                    roles_json,
+                    usr.department,
+                    usr.member_state,
+                    usr.version,
+                    usr.created_at,
+                    usr.updated_at,
+                    usr.deprovisioned_at,
+                ],
+            )
+        elif old_snap != _user_snapshot_key(usr):
+            cursor.execute(
+                """
+                UPDATE public.ee_scim_user
+                SET
+                    user_id = %s,
+                    user_name = %s,
+                    user_name_lower = %s,
+                    external_id = %s,
+                    display_name = %s,
+                    given_name = %s,
+                    family_name = %s,
+                    emails_json = %s,
+                    active = %s,
+                    roles_json = %s,
+                    department = %s,
+                    member_state = %s,
+                    version = %s,
+                    updated_at = %s,
+                    deprovisioned_at = %s
+                WHERE id = %s AND organisation_id = %s
+                """,
+                [
+                    person_uuid,
+                    usr.user_name,
+                    usr.user_name.lower(),
+                    usr.external_id,
+                    usr.display_name,
+                    usr.given_name,
+                    usr.family_name,
+                    emails_json,
+                    usr.active,
+                    roles_json,
+                    usr.department,
+                    usr.member_state,
+                    usr.version,
+                    usr.updated_at,
+                    usr.deprovisioned_at,
+                    UUID(usr.id),
+                    org_id,
+                ],
+            )
+
+    # 5. Insert/update SCIM groups and synchronize group membership rows.
+    for gid, grp in state.groups.items():
+        old_grp_snap = state.initial_group_snapshots.get(gid)
+        if old_grp_snap is None:
+            cursor.execute(
+                """
+                INSERT INTO public.ee_scim_group (
+                    id, organisation_id, tenant_slug, display_name, display_name_lower,
+                    external_id, version, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    UUID(grp.id),
+                    org_id,
+                    tenant_slug,
+                    grp.display_name,
+                    grp.display_name.lower(),
+                    grp.external_id,
+                    grp.version,
+                    grp.created_at,
+                    grp.updated_at,
+                ],
+            )
+            for idx, m_uid in enumerate(grp.member_ids):
+                cursor.execute(
+                    """
+                    INSERT INTO public.ee_scim_group_member (
+                        organisation_id, group_id, scim_user_id, member_order
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    [org_id, UUID(grp.id), UUID(m_uid), idx],
+                )
+        else:
+            old_header_key, old_mid_orders = old_grp_snap
+            if old_header_key != _group_header_snapshot_key(grp):
+                cursor.execute(
+                    """
+                    UPDATE public.ee_scim_group
+                    SET
+                        display_name = %s,
+                        display_name_lower = %s,
+                        external_id = %s,
+                        version = %s,
+                        updated_at = %s
+                    WHERE id = %s AND organisation_id = %s
+                    """,
+                    [
+                        grp.display_name,
+                        grp.display_name.lower(),
+                        grp.external_id,
+                        grp.version,
+                        grp.updated_at,
+                        UUID(grp.id),
+                        org_id,
+                    ],
+                )
+            for idx, m_uid in enumerate(grp.member_ids):
+                if m_uid not in old_mid_orders:
+                    cursor.execute(
+                        """
+                        INSERT INTO public.ee_scim_group_member (
+                            organisation_id, group_id, scim_user_id, member_order
+                        ) VALUES (%s, %s, %s, %s)
+                        """,
+                        [org_id, UUID(grp.id), UUID(m_uid), idx],
+                    )
+                elif old_mid_orders[m_uid] != idx:
+                    cursor.execute(
+                        """
+                        UPDATE public.ee_scim_group_member
+                        SET member_order = %s
+                        WHERE group_id = %s AND scim_user_id = %s
+                        """,
+                        [idx, UUID(grp.id), UUID(m_uid)],
+                    )
+
+    # 6. Insert newly registered SCIM sessions.
+    for uid, cur_sids in state.sessions.items():
+        old_sids = state.initial_sessions.get(uid, set())
+        bound_usr = state.users.get(uid)
+        person_uuid = (
+            UUID(bound_usr.django_user_id)
+            if bound_usr is not None and bound_usr.django_user_id is not None
+            else None
+        )
+        for added_sid in sorted(cur_sids - old_sids):
+            cursor.execute(
+                """
+                INSERT INTO public.ee_scim_session (
+                    organisation_id, scim_user_id, user_id, tenant_slug, session_id
+                ) VALUES (%s, %s, %s, %s, %s)
+                """,
+                [org_id, UUID(uid), person_uuid, tenant_slug, added_sid],
+            )
+
+    # 7. Append immutable SCIM deprovision audit records (`INSERT` only).
+    for evt in state.new_deprovision_events:
+        evt_person_uuid = UUID(evt.django_user_id) if evt.django_user_id is not None else None
+        cursor.execute(
+            """
+            INSERT INTO public.ee_scim_deprovision (
+                id, organisation_id, scim_user_id, user_id, tenant_slug,
+                user_name, reason, revoked_sessions_json, occurred_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
             [
-                str(uuid7()),
+                uuid7(),
+                org_id,
+                UUID(evt.user_id),
+                evt_person_uuid,
                 tenant_slug,
-                evt.user_id,
                 evt.user_name,
                 evt.reason,
-                json.dumps(list(evt.revoked_sessions)),
+                json.dumps(list(evt.revoked_sessions), separators=(",", ":")),
                 evt.occurred_at,
             ],
         )
@@ -814,11 +1091,13 @@ def _deprovision_user(
         reason=reason,
         revoked_sessions=revoked,
         occurred_at=now,
+        django_user_id=user.django_user_id,
     )
     state.deprovision_log.append(evt)
     state.new_deprovision_events.append(evt)
-    if organisation_id is not None and user.django_user_id is not None:
-        _sync_django_scim_deprovision(organisation_id, UUID(user.django_user_id))
+    effective_org_id = organisation_id or state.organisation_id
+    if effective_org_id is not None and user.django_user_id is not None:
+        _sync_django_scim_deprovision(effective_org_id, UUID(user.django_user_id))
 
 
 def _extract_member_ids(state: _TenantScimState, raw_members: object) -> list[str]:
@@ -867,50 +1146,144 @@ class ScimService:
         self.tokens.reset()
 
     @contextmanager
-    def _tenant_scope(self, tenant_slug: str, *, write: bool = False) -> Iterator[_TenantScimState]:
+    def _tenant_scope(
+        self,
+        tenant_slug: str,
+        *,
+        write: bool = False,
+        organisation_id: UUID | None = None,
+    ) -> Iterator[_TenantScimState]:
         if can_use_postgres():
-            ensure_ee_tables()
             if write:
-                with transaction.atomic(), connection.cursor() as cur:
-                    cur.execute(
-                        "SELECT pg_advisory_xact_lock(hashtext('kodera_ee_scim:' || %s))",
-                        [tenant_slug],
-                    )
-                    state = _load_postgres_tenant_state(cur, tenant_slug)
-                    yield state
-                    _flush_postgres_tenant_state(cur, state)
-                return
+                try:
+                    with transaction.atomic(), connection.cursor() as cur:
+                        candidate_org_id = _resolve_scim_org_id(
+                            cur,
+                            tenant_slug=tenant_slug,
+                            organisation_id=organisation_id,
+                        )
+                        resolved_org_id, _ = acquire_active_tenant_fence(
+                            cur,
+                            tenant_slug=tenant_slug,
+                            organisation_id=candidate_org_id,
+                        )
+                        cur.execute(
+                            "SELECT pg_advisory_xact_lock(hashtext('kodera_ee_scim:' || %s))",
+                            [str(resolved_org_id)],
+                        )
+                        state = _load_postgres_tenant_state(
+                            cur,
+                            organisation_id=resolved_org_id,
+                            tenant_slug=tenant_slug,
+                        )
+                        yield state
+                        _flush_postgres_tenant_state(cur, state)
+                    return
+                except TenantCutoffError as exc:
+                    raise ScimError(
+                        "Target tenant or account is under privacy erasure cutoff",
+                        status=exc.status,
+                        scim_type="mutability" if exc.code == "account_cutoff_fenced" else None,
+                        code=exc.code,
+                    ) from exc
+                except IntegrityError as exc:
+                    if "cutoff refuses write" in str(exc):
+                        raise ScimError(
+                            "Target tenant or account is under privacy erasure cutoff",
+                            status=403,
+                            code="tenant_cutoff_fenced",
+                        ) from exc
+                    raise
 
             with connection.cursor() as cur:
-                state = _load_postgres_tenant_state(cur, tenant_slug)
+                resolved_org_id_ro = _resolve_scim_org_id(
+                    cur,
+                    tenant_slug=tenant_slug,
+                    organisation_id=organisation_id,
+                )
+                if resolved_org_id_ro is None:
+                    state = _TenantScimState(tenant_slug=tenant_slug)
+                else:
+                    cur.execute(
+                        "SELECT state, deleted_at FROM public.orgs_organisation WHERE id = %s LIMIT 1",
+                        [resolved_org_id_ro],
+                    )
+                    org_row = cur.fetchone()
+                    if org_row is None:
+                        state = _TenantScimState(tenant_slug=tenant_slug)
+                    elif str(org_row[0]) == "closed" or org_row[1] is not None:
+                        raise ScimError(
+                            "Target tenant is closed or under privacy erasure cutoff",
+                            status=403,
+                            code="tenant_cutoff_fenced",
+                        )
+                    else:
+                        state = _load_postgres_tenant_state(
+                            cur,
+                            organisation_id=resolved_org_id_ro,
+                            tenant_slug=tenant_slug,
+                        )
             yield state
             return
 
         with self._lock:
             mem_state = self._mem_tenants.get(tenant_slug)
             if mem_state is None:
-                mem_state = _TenantScimState(tenant_slug=tenant_slug)
+                mem_state = _TenantScimState(
+                    tenant_slug=tenant_slug,
+                    organisation_id=organisation_id,
+                )
                 self._mem_tenants[tenant_slug] = mem_state
             mem_state.new_deprovision_events.clear()
             yield mem_state
 
-    def register_session(self, tenant_slug: str, user_id: str, session_id: str) -> None:
+    def register_session(
+        self,
+        tenant_slug: str,
+        user_id: str,
+        session_id: str,
+        *,
+        organisation_id: UUID | None = None,
+    ) -> None:
         """Bind an active session identifier to a SCIM-managed user (revoked on deprovision)."""
         require_enterprise_edition()
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             user = state.users.get(user_id)
             if user is None or not user.active:
                 raise ScimError("Cannot create session for inactive or unknown user", status=403)
             state.sessions.setdefault(user_id, set()).add(session_id)
 
-    def active_sessions(self, tenant_slug: str, user_id: str) -> frozenset[str]:
+    def active_sessions(
+        self,
+        tenant_slug: str,
+        user_id: str,
+        *,
+        organisation_id: UUID | None = None,
+    ) -> frozenset[str]:
         require_enterprise_edition()
-        with self._tenant_scope(tenant_slug, write=False) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=False,
+            organisation_id=organisation_id,
+        ) as state:
             return frozenset(state.sessions.get(user_id, set()))
 
-    def deprovision_events(self, tenant_slug: str) -> list[DeprovisionRecord]:
+    def deprovision_events(
+        self,
+        tenant_slug: str,
+        *,
+        organisation_id: UUID | None = None,
+    ) -> list[DeprovisionRecord]:
         require_enterprise_edition()
-        with self._tenant_scope(tenant_slug, write=False) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=False,
+            organisation_id=organisation_id,
+        ) as state:
             return list(state.deprovision_log)
 
     def create_user(
@@ -958,7 +1331,11 @@ class ScimService:
 
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             for existing in state.users.values():
                 if existing.user_name.lower() == user_name.lower():
                     raise ScimError(
@@ -968,15 +1345,16 @@ class ScimService:
                     )
 
             user_id = str(uuid4())
+            effective_org_id = organisation_id or state.organisation_id
             django_uid: str | None = None
-            if organisation_id is not None:
+            if effective_org_id is not None and can_use_postgres():
                 primary_email = user_name
                 for em in emails:
                     if em.value.strip():
                         primary_email = em.value.strip()
                         break
                 django_uid = _sync_django_scim_provision(
-                    organisation_id=organisation_id,
+                    organisation_id=effective_org_id,
                     user_name=user_name,
                     email=primary_email,
                     display_name=display_name,
@@ -1008,7 +1386,7 @@ class ScimService:
                     state,
                     user,
                     reason="created_inactive",
-                    organisation_id=organisation_id,
+                    organisation_id=effective_org_id,
                     now=timestamp,
                 )
             groups = _groups_for_user(state, user_id)
@@ -1020,9 +1398,14 @@ class ScimService:
         tenant_slug: str,
         user_id: str,
         base_url: str,
+        organisation_id: UUID | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
-        with self._tenant_scope(tenant_slug, write=False) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=False,
+            organisation_id=organisation_id,
+        ) as state:
             user = state.users.get(user_id)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
@@ -1037,10 +1420,15 @@ class ScimService:
         filter_expr: str | None = None,
         start_index: int = 1,
         count: int = DEFAULT_PAGE_SIZE,
+        organisation_id: UUID | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
         clauses = _parse_filter_clauses(filter_expr) if filter_expr else []
-        with self._tenant_scope(tenant_slug, write=False) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=False,
+            organisation_id=organisation_id,
+        ) as state:
             tenant_users = sorted(state.users.values(), key=lambda usr: (usr.created_at, usr.id))
             matched: list[dict[str, object]] = []
             for usr in tenant_users:
@@ -1070,7 +1458,11 @@ class ScimService:
         new_active = _parse_bool_value(payload.get("active", True))
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             user = state.users.get(user_id)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
@@ -1120,19 +1512,24 @@ class ScimService:
             user.active = new_active
             user.version += 1
             user.updated_at = timestamp
+            effective_org_id = organisation_id or state.organisation_id
             if not new_active:
                 _deprovision_user(
                     state,
                     user,
                     reason="put_active_false",
-                    organisation_id=organisation_id,
+                    organisation_id=effective_org_id,
                     now=timestamp,
                 )
             elif not was_active and new_active:
                 user.member_state = "active"
                 user.deprovisioned_at = None
-                if organisation_id is not None and user.django_user_id is not None:
-                    _sync_django_scim_reactivate(organisation_id, UUID(user.django_user_id))
+                if (
+                    effective_org_id is not None
+                    and user.django_user_id is not None
+                    and can_use_postgres()
+                ):
+                    _sync_django_scim_reactivate(effective_org_id, UUID(user.django_user_id))
 
             groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
@@ -1162,7 +1559,11 @@ class ScimService:
             )
 
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             user = state.users.get(user_id)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
@@ -1211,19 +1612,24 @@ class ScimService:
 
             user.version += 1
             user.updated_at = timestamp
+            effective_org_id = organisation_id or state.organisation_id
             if deprovision_triggered and not user.active:
                 _deprovision_user(
                     state,
                     user,
                     reason="patch_active_false",
-                    organisation_id=organisation_id,
+                    organisation_id=effective_org_id,
                     now=timestamp,
                 )
             elif reactivate_triggered and user.active:
                 user.member_state = "active"
                 user.deprovisioned_at = None
-                if organisation_id is not None and user.django_user_id is not None:
-                    _sync_django_scim_reactivate(organisation_id, UUID(user.django_user_id))
+                if (
+                    effective_org_id is not None
+                    and user.django_user_id is not None
+                    and can_use_postgres()
+                ):
+                    _sync_django_scim_reactivate(effective_org_id, UUID(user.django_user_id))
 
             groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
@@ -1337,7 +1743,11 @@ class ScimService:
     ) -> None:
         require_enterprise_edition()
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             user = state.users.pop(user_id, None)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
@@ -1345,7 +1755,7 @@ class ScimService:
                 state,
                 user,
                 reason="delete_user",
-                organisation_id=organisation_id,
+                organisation_id=organisation_id or state.organisation_id,
                 now=timestamp,
             )
             for grp in state.groups.values():
@@ -1362,6 +1772,7 @@ class ScimService:
         tenant_slug: str,
         payload: Mapping[str, object],
         base_url: str,
+        organisation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
@@ -1373,7 +1784,11 @@ class ScimService:
         external_id = ext_raw.strip() if isinstance(ext_raw, str) and ext_raw.strip() else None
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             for existing in state.groups.values():
                 if existing.display_name.lower() == display_name.lower():
                     raise ScimError(
@@ -1402,9 +1817,14 @@ class ScimService:
         tenant_slug: str,
         group_id: str,
         base_url: str,
+        organisation_id: UUID | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
-        with self._tenant_scope(tenant_slug, write=False) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=False,
+            organisation_id=organisation_id,
+        ) as state:
             group = state.groups.get(group_id)
             if group is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
@@ -1418,10 +1838,15 @@ class ScimService:
         filter_expr: str | None = None,
         start_index: int = 1,
         count: int = DEFAULT_PAGE_SIZE,
+        organisation_id: UUID | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
         clauses = _parse_filter_clauses(filter_expr) if filter_expr else []
-        with self._tenant_scope(tenant_slug, write=False) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=False,
+            organisation_id=organisation_id,
+        ) as state:
             names = _member_names(state)
             tenant_groups = sorted(state.groups.values(), key=lambda grp: (grp.created_at, grp.id))
             matched: list[dict[str, object]] = []
@@ -1440,6 +1865,7 @@ class ScimService:
         group_id: str,
         payload: Mapping[str, object],
         base_url: str,
+        organisation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
@@ -1449,7 +1875,11 @@ class ScimService:
         new_display = display_raw.strip()
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             group = state.groups.get(group_id)
             if group is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
@@ -1475,6 +1905,7 @@ class ScimService:
         group_id: str,
         payload: Mapping[str, object],
         base_url: str,
+        organisation_id: UUID | None = None,
         now: datetime | None = None,
     ) -> dict[str, object]:
         require_enterprise_edition()
@@ -1492,7 +1923,11 @@ class ScimService:
             )
 
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             group = state.groups.get(group_id)
             if group is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
@@ -1601,9 +2036,14 @@ class ScimService:
         *,
         tenant_slug: str,
         group_id: str,
+        organisation_id: UUID | None = None,
     ) -> None:
         require_enterprise_edition()
-        with self._tenant_scope(tenant_slug, write=True) as state:
+        with self._tenant_scope(
+            tenant_slug,
+            write=True,
+            organisation_id=organisation_id,
+        ) as state:
             removed = state.groups.pop(group_id, None)
             if removed is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
@@ -1619,17 +2059,23 @@ def _sync_django_scim_provision(
 ) -> str:
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership, Organisation
+    from django.db.models import Q
     from django.utils import timezone
 
     with transaction.atomic():
-        org = Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True).first()
+        org = (
+            Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+            .exclude(state="closed")
+            .first()
+        )
         if org is None:
-            raise ScimError("Bound organisation does not exist", status=404)
+            raise TenantCutoffError("tenant_cutoff_fenced", status=403)
         subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
         identity = (
-            Identity.objects.select_for_update()
-            .select_related("user")
-            .filter(organisation=org, issuer=org.issuer, subject=subj)
+            Identity.objects.select_related("user")
+            .filter(organisation=org, issuer=org.issuer)
+            .filter(Q(subject=subj) | Q(email__iexact=email))
+            .order_by("created_at")
             .first()
         )
         if identity is None:
@@ -1649,13 +2095,24 @@ def _sync_django_scim_provision(
             )
         else:
             user = identity.user
-            user.enabled = active
-            user.save(update_fields=["enabled"])
-            identity.enabled = active
-            identity.save(update_fields=["enabled"])
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                    [str(user.id)],
+                )
+            refreshed = User.objects.filter(id=user.id).first()
+            if (
+                refreshed is None
+                or refreshed.deleted_at is not None
+                or refreshed.email.startswith("erased:")
+            ):
+                raise TenantCutoffError("account_cutoff_fenced", status=403)
+            user = refreshed
+            if user.enabled != active:
+                User.objects.filter(id=user.id).update(enabled=active)
 
         now_ts = timezone.now()
-        state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
+        target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
         membership = (
             Membership.objects.select_for_update().filter(organisation=org, user=user).first()
         )
@@ -1664,42 +2121,59 @@ def _sync_django_scim_provision(
                 organisation=org,
                 user=user,
                 role=Membership.Role.MEMBER,
-                state=state,
+                state=target_state,
                 accepted_at=now_ts,
             )
-        else:
-            membership.state = state
-            if membership.accepted_at is None:
-                membership.accepted_at = now_ts
-            membership.save(update_fields=["state", "accepted_at", "updated_at"])
+        elif not (membership.role == Membership.Role.OWNER and not active):
+            Membership.objects.filter(id=membership.id).update(
+                state=target_state,
+                accepted_at=membership.accepted_at or now_ts,
+                updated_at=now_ts,
+            )
         return str(user.id)
 
 
 def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> None:
-    from apps.identity.models import Identity, User
+    from apps.identity.models import User
     from apps.orgs.models import Membership
+    from django.utils import timezone
 
     with transaction.atomic():
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(user_uuid)],
+            )
+        user = User.objects.filter(id=user_uuid).first()
+        if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
+            raise TenantCutoffError("account_cutoff_fenced", status=403)
         User.objects.filter(id=user_uuid).update(enabled=False)
-        Identity.objects.filter(organisation_id=organisation_id, user_id=user_uuid).update(
-            enabled=False
-        )
-        Membership.objects.filter(organisation_id=organisation_id, user_id=user_uuid).update(
-            state=Membership.State.SUSPENDED
+        Membership.objects.filter(organisation_id=organisation_id, user_id=user_uuid).exclude(
+            role=Membership.Role.OWNER
+        ).update(
+            state=Membership.State.SUSPENDED,
+            updated_at=timezone.now(),
         )
 
 
 def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None:
-    from apps.identity.models import Identity, User
+    from apps.identity.models import User
     from apps.orgs.models import Membership
+    from django.utils import timezone
 
     with transaction.atomic():
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                [str(user_uuid)],
+            )
+        user = User.objects.filter(id=user_uuid).first()
+        if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
+            raise TenantCutoffError("account_cutoff_fenced", status=403)
         User.objects.filter(id=user_uuid).update(enabled=True)
-        Identity.objects.filter(organisation_id=organisation_id, user_id=user_uuid).update(
-            enabled=True
-        )
         Membership.objects.filter(organisation_id=organisation_id, user_id=user_uuid).update(
-            state=Membership.State.ACTIVE
+            state=Membership.State.ACTIVE,
+            updated_at=timezone.now(),
         )
 
 

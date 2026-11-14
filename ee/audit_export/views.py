@@ -1,14 +1,17 @@
 """HTTP views for Enterprise Signed Compliance Audit Exports (`/api/v1/ee/compliance/audit-exports/*`).
 
-Security invariants (`W2-1` & `W2-2`):
-- Every endpoint requires a verified Kodera customer Bearer token with active `Organisation` and
-  accepted `org_owner` or `org_admin` `Membership`.
+Security invariants (`W2-1`, `W2-2`, authority snapshot/fencing & historical key rotation):
+- Every endpoint requires a verified Kodera customer Bearer token resolved through a single
+  `resolve_member_authority` snapshot (`org_owner` or `org_admin`) and executes inside
+  `fence_authenticated_ee_operation` (holding shared privacy-erasure advisory locks and verifying
+  `authority_revision` + active membership/user/organisation state).
 - `tenant_slug` and `actor_id` are bound strictly to the authenticated principal; cross-tenant
   requests and spoofed `actor_id` / `actor_type` fields are rejected with `403`.
 - Compliance exports default `redact_pii=True`; unredacted exports (`redact_pii=False`) require
   `org_owner` membership.
 - Bundle verification (`POST .../verify`) ignores caller-supplied trust keys and pins strictly to
-  the server-governed deterministic tenant signing key registry.
+  the server-governed `ee_audit_signing_key` registry (preserving verification across signing-seed
+  rotations while rejecting self-signed attacker bundles with `422`).
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -30,16 +33,32 @@ from ee.audit_export.exporter import (
 )
 from ee.audit_export.ledger import default_audit_ledger, parse_utc_iso
 from ee.audit_export.verify import verify_compliance_bundle
-from ee.auth import ADMIN_ROLES, OWNER_ROLES, EeAuthError, authenticate_tenant_request
+from ee.auth import (
+    ADMIN_ROLES,
+    OWNER_ROLES,
+    EeAuthError,
+    authenticate_tenant_request,
+    fence_authenticated_ee_operation,
+)
+from ee.store import TenantCutoffError
 
 _AUDIT_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
-    # Authentication & tenant authorization rejections (401 / 403)
+    # Authentication, tenant authorization & cutoff/revision fence rejections
     ("unauthenticated", 401, "Authentication required"),
     ("forbidden_lane", 403, "Customer authentication lane required"),
     ("identity_unknown", 403, "Authenticated identity is not provisioned"),
     ("tenant_membership_required", 403, "Active tenant membership is required"),
     ("cross_tenant_forbidden", 403, "Cross-tenant compliance operation is forbidden"),
     ("insufficient_role", 403, "Organisation owner or admin role is required"),
+    ("tenant_cutoff_fenced", 403, "Organisation is closed or under privacy erasure cutoff"),
+    ("account_cutoff_fenced", 403, "Account is under privacy erasure cutoff"),
+    ("organisation_not_found", 404, "Target organisation was not found"),
+    (
+        "authority_fenced",
+        409,
+        "Organisation authority changed concurrently; retry with fresh credentials",
+    ),
+    ("authority_unavailable", 503, "Organisation authority revision is unavailable"),
     (
         "actor_spoofing_forbidden",
         403,
@@ -201,18 +220,23 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
         remote_addr = request.META.get("REMOTE_ADDR")
         client_ip = remote_addr if isinstance(remote_addr, str) else ""
 
-        evt = default_audit_ledger.append_event(
-            tenant_slug=auth.tenant_slug,
-            actor_type="customer_user",
-            actor_id=expected_actor_id,
-            actor_label=auth.email,
-            action=action,
-            target_urn=target_urn,
-            source_ip=client_ip,
-            metadata=metadata,
-            occurred_at=occurred_at if isinstance(occurred_at, str) else None,
-        )
+        with fence_authenticated_ee_operation(auth, target_tenant_slug=auth.tenant_slug) as fenced:
+            evt = default_audit_ledger.append_event(
+                tenant_slug=fenced.tenant_slug,
+                organisation_id=fenced.organisation_id,
+                user_id=fenced.user_id,
+                actor_type="customer_user",
+                actor_id=expected_actor_id,
+                actor_label=fenced.actor_email,
+                action=action,
+                target_urn=target_urn,
+                source_ip=client_ip,
+                metadata=metadata,
+                occurred_at=occurred_at if isinstance(occurred_at, str) else None,
+            )
     except EeAuthError as exc:
+        return _audit_error_response(exc.code)
+    except TenantCutoffError as exc:
         return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
@@ -260,8 +284,6 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
             if tenant_raw.strip() != auth.tenant_slug:
                 raise EeAuthError("cross_tenant_forbidden", status=403)
 
-        tenant_slug = auth.tenant_slug
-
         fmt_raw = params.get("format", "ndjson")
         export_format = fmt_raw if isinstance(fmt_raw, str) else "ndjson"
 
@@ -279,18 +301,22 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
         )
 
         filters = _build_filters_from_mapping(params)
-        signer = _select_signer(tenant_slug, signing_alg)
 
-        bundle = export_compliance_bundle(
-            ledger=default_audit_ledger,
-            tenant_slug=tenant_slug,
-            signer=signer,
-            export_format=export_format,
-            framework=framework,
-            filters=filters,
-            redact_pii=redact_pii,
-        )
+        with fence_authenticated_ee_operation(auth, target_tenant_slug=auth.tenant_slug) as fenced:
+            signer = _select_signer(fenced.tenant_slug, signing_alg)
+            bundle = export_compliance_bundle(
+                ledger=default_audit_ledger,
+                tenant_slug=fenced.tenant_slug,
+                organisation_id=fenced.organisation_id,
+                signer=signer,
+                export_format=export_format,
+                framework=framework,
+                filters=filters,
+                redact_pii=redact_pii,
+            )
     except EeAuthError as exc:
+        return _audit_error_response(exc.code)
+    except TenantCutoffError as exc:
         return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
@@ -364,15 +390,36 @@ def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
     if not isinstance(manifest_tenant, str) or manifest_tenant.strip() != auth.tenant_slug:
         return _audit_error_response("cross_tenant_forbidden")
 
-    # Security invariant (`W2-2`): ignore any caller-supplied `public_key_pem` / `hmac_key_hex` and
-    # pin strictly to the server-governed deterministic signing keys for `auth.tenant_slug`.
-    server_pub_pem = default_audit_ledger.ed25519_signer_for_tenant(auth.tenant_slug).public_key_pem
-    server_hmac_secret = default_audit_ledger.hmac_signer_for_tenant(auth.tenant_slug).secret_key
+    raw_kid = manifest.get("key_id")
+    manifest_kid = raw_kid if isinstance(raw_kid, str) else None
 
-    result = verify_compliance_bundle(
-        payload,
-        manifest,
-        trusted_public_key_pem=server_pub_pem,
-        hmac_secret=server_hmac_secret,
-    )
+    try:
+        with fence_authenticated_ee_operation(auth, target_tenant_slug=auth.tenant_slug) as fenced:
+            # Security invariant (`W2-2` + historical rotation): ignore caller-supplied trust keys,
+            # resolve registered historical Ed25519 keys from `ee_audit_signing_key` by `(org, key_id)`,
+            # and fall back solely to the current server-derived key (never `manifest["public_key_pem"]`).
+            registered_pem = default_audit_ledger.resolve_trusted_ed25519_public_key(
+                tenant_slug=fenced.tenant_slug,
+                key_id=manifest_kid,
+                organisation_id=fenced.organisation_id,
+            )
+            server_pub_pem = (
+                registered_pem
+                or default_audit_ledger.ed25519_signer_for_tenant(fenced.tenant_slug).public_key_pem
+            )
+            server_hmac_secret = default_audit_ledger.hmac_signer_for_tenant(
+                fenced.tenant_slug
+            ).secret_key
+
+            result = verify_compliance_bundle(
+                payload,
+                manifest,
+                trusted_public_key_pem=server_pub_pem,
+                hmac_secret=server_hmac_secret,
+            )
+    except EeAuthError as exc:
+        return _audit_error_response(exc.code)
+    except TenantCutoffError as exc:
+        return _audit_error_response(exc.code)
+
     return _json_response(result.to_dict(), status=200 if result.verified else 422)

@@ -62,6 +62,9 @@ class AuditSigner(Protocol):
     @property
     def public_key_pem(self) -> str | None: ...
 
+    @property
+    def public_key_b64(self) -> str | None: ...
+
     def sign_manifest(self, unsigned_manifest: dict[str, object]) -> str: ...
 
 
@@ -86,6 +89,7 @@ class Ed25519AuditSigner:
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
+        self._pub_b64 = base64.b64encode(pub_raw).decode("ascii")
         self._key_id = key_id or ("ed25519-" + hashlib.sha256(pub_raw).hexdigest()[:16])
 
     @property
@@ -99,6 +103,10 @@ class Ed25519AuditSigner:
     @property
     def public_key_pem(self) -> str:
         return self._pub_pem
+
+    @property
+    def public_key_b64(self) -> str:
+        return self._pub_b64
 
     def sign_manifest(self, unsigned_manifest: dict[str, object]) -> str:
         sig = self._signer.sign(MANIFEST_SIG_DOMAIN + canonical_json_bytes(unsigned_manifest))
@@ -131,6 +139,10 @@ class HmacAuditSigner:
 
     @property
     def public_key_pem(self) -> None:
+        return None
+
+    @property
+    def public_key_b64(self) -> None:
         return None
 
     @property

@@ -41,10 +41,10 @@ from ee.scim.auth import ScimAuthError
 from ee.scim.schemas import SCIM_PATCH_OP_SCHEMA
 from ee.scim.service import ScimService
 from ee.store import can_use_postgres
-from ee.tests.conftest import ProvisionedTestPrincipal
+from ee.tests.conftest import ProvisionedTestPrincipal, ensure_test_organisation
 from ee.tests.test_saml_security import _build_saml_response_xml
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
@@ -528,6 +528,7 @@ def test_w2_2_attacker_self_signed_bundle_rejected_by_http_api_library_and_cli(
 
 def test_w2_3_scim_multi_worker_postgresql_persistence_and_revocation() -> None:
     assert can_use_postgres() is True, "Wave 2 multi-worker suite requires active PostgreSQL"
+    ensure_test_organisation("acme-corp")
 
     with override_settings(KODERA_EDITION="enterprise"):
         worker_a = ScimService()
@@ -610,6 +611,7 @@ def test_w2_3_saml_multi_worker_postgresql_relay_state_and_replay_protection(
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
 ) -> None:
     assert can_use_postgres() is True
+    ensure_test_organisation("acme-corp")
     idp_signing_key, _, cert_pem = rsa_idp_keypair
     sp_base = "http://127.0.0.1"
 
@@ -694,6 +696,7 @@ def test_w2_3_saml_multi_worker_postgresql_relay_state_and_replay_protection(
 
 def test_w2_3_audit_ledger_multi_worker_hash_chain_and_hkdf_signing_keys() -> None:
     assert can_use_postgres() is True
+    ensure_test_organisation("audit-victim")
 
     with override_settings(
         KODERA_EDITION="enterprise",

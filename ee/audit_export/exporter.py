@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from ee.audit_export.crypto import (
     EXPORT_ROW_HASH_DOMAIN,
@@ -371,6 +371,7 @@ def export_compliance_bundle(
     filters: AuditExportFilters | None = None,
     redact_pii: bool = False,
     exported_at: datetime | None = None,
+    organisation_id: UUID | None = None,
 ) -> ExportedComplianceBundle:
     """Export and cryptographically sign a tamper-evident NDJSON or CSV compliance bundle."""
     require_enterprise_edition()
@@ -387,7 +388,7 @@ def export_compliance_bundle(
         )
 
     effective_filters = filters or AuditExportFilters()
-    vault_events = ledger.snapshot_events(tenant_slug)
+    vault_events = ledger.snapshot_events(tenant_slug, organisation_id=organisation_id)
     ledger_head = vault_events[-1].entry_hash if vault_events else GENESIS_PREV_HASH
     filtered = _filter_events(vault_events, effective_filters)
     rows = _build_chained_export_rows(
@@ -430,6 +431,20 @@ def export_compliance_bundle(
     }
     signature = signer.sign_manifest(unsigned_manifest)
     manifest: dict[str, object] = {**unsigned_manifest, "signature": signature}
+
+    # Record server-governed Ed25519 verification keys in `ee_audit_signing_key` so historical
+    # bundles continue verifying after `KODERA_EE_AUDIT_SIGNING_SEED` / `SECRET_KEY` rotation,
+    # while never registering arbitrary caller/offline keys.
+    if (
+        signer.algorithm == "ed25519"
+        and signer.public_key_pem is not None
+        and signer.public_key_pem == ledger.ed25519_signer_for_tenant(tenant_slug).public_key_pem
+    ):
+        ledger.register_signing_key(
+            tenant_slug=tenant_slug,
+            signer=signer,
+            organisation_id=organisation_id,
+        )
 
     return ExportedComplianceBundle(
         bundle_id=bundle_id,

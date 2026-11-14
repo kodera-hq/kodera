@@ -33,9 +33,9 @@ from ee.saml.xml_security import (
     parse_hardened_xml,
     sign_enveloped_xml,
 )
-from ee.tests.conftest import ProvisionedTestPrincipal
+from ee.tests.conftest import ProvisionedTestPrincipal, ensure_test_organisation
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def _fmt_ts(dt: datetime) -> str:
@@ -190,6 +190,7 @@ def test_valid_signed_assertion_flow_rsa_and_ecdsa_multi_idp(
 ) -> None:
     rsa_priv, _, rsa_cert_pem = rsa_idp_keypair
     ec_priv, ec_pub_pem = ecdsa_idp_keypair
+    ensure_test_organisation("acme-corp")
 
     with override_settings(KODERA_EDITION="enterprise"):
         default_saml_service.register_idp(
@@ -380,6 +381,7 @@ def test_hardened_xml_rejects_xxe_dtd_xinclude_and_comments_before_parse(
     expected_code: str,
 ) -> None:
     _, _, cert_pem = rsa_idp_keypair
+    ensure_test_organisation("acme-corp")
     with override_settings(KODERA_EDITION="enterprise"):
         default_saml_service.register_idp(
             SamlIdpConfig(
@@ -424,6 +426,7 @@ def test_xml_signature_wrapping_xsw_variants_rejected(
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
 ) -> None:
     rsa_priv, _, cert_pem = rsa_idp_keypair
+    ensure_test_organisation("acme-corp")
     with override_settings(KODERA_EDITION="enterprise"):
         default_saml_service.register_idp(
             SamlIdpConfig(
@@ -544,6 +547,7 @@ def test_saml_protocol_constraints_audience_recipient_expiry_replay_and_domain_s
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
 ) -> None:
     rsa_priv, _, cert_pem = rsa_idp_keypair
+    ensure_test_organisation("acme-corp")
     with override_settings(KODERA_EDITION="enterprise"):
         default_saml_service.register_idp(
             SamlIdpConfig(
@@ -745,6 +749,7 @@ def test_saml_xml_prolog_linear_time_no_redos_and_sanitized_errors(
 ) -> None:
     """Adversarial whitespace XML prologs must fail in O(n) time without ReDoS or traceback leaks."""
     _, _, cert_pem = rsa_idp_keypair
+    ensure_test_organisation("acme-corp")
     adversarial_cases = [
         ("<?xml " + (" " * 50_000) + 'version="1.0" encoding="UTF-8"', "malformed_xml"),
         (

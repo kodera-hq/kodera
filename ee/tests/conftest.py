@@ -55,6 +55,58 @@ def _reset_ee_singletons() -> Iterator[None]:
     default_audit_ledger.reset()
 
 
+def ensure_test_organisation(tenant_slug: str = "acme-corp") -> UUID:
+    """Create or reuse an active PostgreSQL `Organisation` + bootstrap owner for `tenant_slug`."""
+    from apps.identity.models import Identity, User
+    from apps.orgs.models import Membership, Organisation, SlugReservation
+    from django.db import transaction
+    from django.utils import timezone
+
+    with transaction.atomic():
+        org = Organisation.objects.filter(slug=tenant_slug, deleted_at__isnull=True).first()
+        if org is not None:
+            return org.id
+
+        org = Organisation.objects.create(
+            slug=tenant_slug,
+            name=f"{tenant_slug} SAS",
+            realm=tenant_slug,
+            issuer=f"https://sso.kodera.test/realms/{tenant_slug}",
+            state=Organisation.State.ACTIVE,
+        )
+        SlugReservation.objects.create(
+            organisation=org,
+            slug=org.slug,
+            namespace="organisation",
+            state="permanent",
+            protected_at=timezone.now(),
+        )
+        boot_sub = f"boot-owner-{uuid4().hex[:12]}"
+        boot_email = f"{boot_sub}@{tenant_slug}.test"
+        boot_user = User.objects.create(
+            email=boot_email,
+            display_name="Bootstrap Owner",
+            enabled=True,
+        )
+        Identity.objects.create(
+            user=boot_user,
+            organisation=org,
+            realm=org.realm,
+            issuer=org.issuer,
+            subject=boot_sub,
+            email=boot_email,
+            enabled=True,
+        )
+        Membership.objects.create(
+            organisation=org,
+            user=boot_user,
+            role=Membership.Role.OWNER,
+            state=Membership.State.ACTIVE,
+            accepted_at=timezone.now(),
+        )
+        return org.id
+
+
 @pytest.fixture(scope="session")
 def rsa_idp_keypair() -> tuple[rsa.RSAPrivateKey, str, str]:
     """Generate an ephemeral 2048-bit RSA IdP keypair, SPKI PEM, and self-signed X.509 cert PEM."""

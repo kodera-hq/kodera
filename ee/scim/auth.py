@@ -2,10 +2,10 @@
 
 Security invariants:
 - Raw SCIM bearer tokens (`scim_<token_id>.<secret>`) are returned ONCE at issuance; only the
-  domain-separated SHA-256 digest of the secret is persisted in PostgreSQL (`ee_scim_tokens`).
+  domain-separated SHA-256 digest of the secret is persisted in PostgreSQL (`ee_scim_token`).
 - Token lookup + verification runs constant-time `hmac.compare_digest` over fixed-length 32-byte
-  SHA-256 digests, enforces token expiry, instant cross-worker revocation, required scopes, and
-  strict tenant binding.
+  SHA-256 digests, enforces token expiry, instant cross-worker revocation, organisation privacy
+  cutoff refusal, required scopes, and strict tenant binding.
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -22,10 +22,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 
 from ee.edition import require_enterprise_edition
-from ee.store import can_use_postgres, ensure_ee_tables, reset_ee_tables
+from ee.store import (
+    TenantCutoffError,
+    acquire_active_tenant_fence,
+    can_use_postgres,
+    reset_ee_tables,
+)
 
 ALL_SCIM_SCOPES = frozenset(
     {
@@ -96,7 +101,7 @@ def _coerce_utc(value: object) -> datetime | None:
     return datetime.fromisoformat(str(value)).astimezone(UTC)
 
 
-def _token_from_row(row: tuple[object, ...]) -> ScimTokenRecord:
+def _token_from_row(row: tuple[object, ...]) -> tuple[ScimTokenRecord, bool]:
     raw_sha = row[2]
     if isinstance(raw_sha, memoryview):
         sha_bytes = raw_sha.tobytes()
@@ -113,16 +118,20 @@ def _token_from_row(row: tuple[object, ...]) -> ScimTokenRecord:
     if created_dt is None:
         raise ValueError("Missing created_at on SCIM token row")
     org_str = str(row[7]) if row[7] is not None else None
-    return ScimTokenRecord(
-        token_id=str(row[0]),
-        tenant_slug=str(row[1]),
-        secret_sha256=sha_bytes,
-        scopes=scopes_set,
-        created_at=created_dt,
-        expires_at=_coerce_utc(row[5]),
-        revoked_at=_coerce_utc(row[6]),
-        organisation_id=UUID(org_str) if org_str else None,
-        description=str(row[8]),
+    org_cutoff = bool(row[9]) if len(row) > 9 else False
+    return (
+        ScimTokenRecord(
+            token_id=str(row[0]),
+            tenant_slug=str(row[1]),
+            secret_sha256=sha_bytes,
+            scopes=scopes_set,
+            created_at=created_dt,
+            expires_at=_coerce_utc(row[5]),
+            revoked_at=_coerce_utc(row[6]),
+            organisation_id=UUID(org_str) if org_str else None,
+            description=str(row[8]),
+        ),
+        org_cutoff,
     )
 
 
@@ -193,27 +202,46 @@ class ScimTokenManager:
         )
 
         if can_use_postgres():
-            ensure_ee_tables()
             scopes_json = json.dumps(sorted(resolved_scopes))
-            org_str = str(organisation_id) if organisation_id is not None else None
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ee_scim_tokens ("
-                    "token_id, tenant_slug, secret_sha256, scopes_json, created_at, "
-                    "expires_at, revoked_at, organisation_id, description"
-                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    [
-                        token_id,
-                        tenant_slug,
-                        digest,
-                        scopes_json,
-                        created,
-                        exp_utc,
-                        None,
-                        org_str,
-                        desc_clean,
-                    ],
-                )
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    resolved_org_id, _ = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                        organisation_id=organisation_id,
+                    )
+                    cur.execute(
+                        "INSERT INTO public.ee_scim_token ("
+                        "token_id, organisation_id, tenant_slug, secret_sha256, scopes_json, "
+                        "description, created_at, expires_at, revoked_at"
+                        ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        [
+                            token_id,
+                            resolved_org_id,
+                            tenant_slug,
+                            digest,
+                            scopes_json,
+                            desc_clean,
+                            created,
+                            exp_utc,
+                            None,
+                        ],
+                    )
+                record.organisation_id = resolved_org_id
+            except TenantCutoffError as exc:
+                raise ScimAuthError(
+                    "Target tenant is unavailable or under privacy erasure cutoff",
+                    code=exc.code,
+                    status=exc.status,
+                ) from exc
+            except IntegrityError as exc:
+                if "cutoff refuses write" in str(exc):
+                    raise ScimAuthError(
+                        "Target tenant is under privacy erasure cutoff",
+                        code="tenant_cutoff_fenced",
+                        status=403,
+                    ) from exc
+                raise
         else:
             with self._lock:
                 self._tokens[token_id] = record
@@ -226,15 +254,23 @@ class ScimTokenManager:
         require_enterprise_edition()
         revoked_time = (now or datetime.now(UTC)).astimezone(UTC)
         if can_use_postgres():
-            ensure_ee_tables()
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "UPDATE ee_scim_tokens SET revoked_at = COALESCE(revoked_at, %s) "
-                    "WHERE token_id = %s RETURNING token_id",
-                    [revoked_time, token_id],
-                )
-                updated = cur.fetchone()
-            return updated is not None
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    cur.execute(
+                        "UPDATE public.ee_scim_token SET revoked_at = COALESCE(revoked_at, %s) "
+                        "WHERE token_id = %s RETURNING token_id",
+                        [revoked_time, token_id],
+                    )
+                    updated = cur.fetchone()
+                return updated is not None
+            except IntegrityError as exc:
+                if "cutoff refuses write" in str(exc):
+                    raise ScimAuthError(
+                        "Target tenant is under privacy erasure cutoff",
+                        code="tenant_cutoff_fenced",
+                        status=403,
+                    ) from exc
+                raise
 
         with self._lock:
             rec = self._tokens.get(token_id)
@@ -244,21 +280,33 @@ class ScimTokenManager:
                 rec.revoked_at = revoked_time
             return True
 
-    def _lookup_token(self, token_id: str) -> ScimTokenRecord | None:
+    def _lookup_token(self, token_id: str) -> tuple[ScimTokenRecord | None, bool]:
         if can_use_postgres():
-            ensure_ee_tables()
             with connection.cursor() as cur:
                 cur.execute(
-                    "SELECT token_id, tenant_slug, secret_sha256, scopes_json, created_at, "
-                    "expires_at, revoked_at, organisation_id, description "
-                    "FROM ee_scim_tokens WHERE token_id = %s",
+                    """
+                    SELECT
+                        t.token_id,
+                        t.tenant_slug,
+                        t.secret_sha256,
+                        t.scopes_json,
+                        t.created_at,
+                        t.expires_at,
+                        t.revoked_at,
+                        t.organisation_id,
+                        t.description,
+                        (o.state = 'closed' OR o.deleted_at IS NOT NULL) AS org_cutoff
+                    FROM public.ee_scim_token t
+                    JOIN public.orgs_organisation o ON o.id = t.organisation_id
+                    WHERE t.token_id = %s
+                    """,
                     [token_id],
                 )
                 row = cur.fetchone()
-            return _token_from_row(row) if row is not None else None
+            return _token_from_row(row) if row is not None else (None, False)
 
         with self._lock:
-            return self._tokens.get(token_id)
+            return self._tokens.get(token_id), False
 
     def authenticate(
         self,
@@ -297,7 +345,7 @@ class ScimTokenManager:
             raise ScimAuthError("Invalid SCIM Bearer token", code="invalid_token", status=401)
 
         candidate_digest = _hash_secret(token_id, raw_secret)
-        record = self._lookup_token(token_id)
+        record, org_cutoff = self._lookup_token(token_id)
 
         if record is None:
             hmac.compare_digest(candidate_digest, _DUMMY_DIGEST)
@@ -314,6 +362,13 @@ class ScimTokenManager:
             )
         if record.expires_at is not None and current_time >= record.expires_at:
             raise ScimAuthError("SCIM Bearer token has expired", code="token_expired", status=401)
+
+        if org_cutoff:
+            raise ScimAuthError(
+                "Target tenant is closed or under privacy erasure cutoff",
+                code="tenant_cutoff_fenced",
+                status=403,
+            )
 
         if expected_tenant_slug is not None and record.tenant_slug != expected_tenant_slug:
             raise ScimAuthError(

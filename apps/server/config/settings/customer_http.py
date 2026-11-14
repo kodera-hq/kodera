@@ -26,6 +26,7 @@ from config.environment import (
     billing_enabled,
     console_client_id,
     edition,
+    ee_audit_signing_seed,
     intake_admitted,
     ios_app_ids,
     legal_text_origin,
@@ -110,6 +111,8 @@ KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
 # Product edition: KODERA_EDITION (GOVERNANCE.md §1); `community` when unset.
 KODERA_EDITION = edition(os.environ)
+# Optional Enterprise audit-export signing seed; validated at startup when set.
+KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
 
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)

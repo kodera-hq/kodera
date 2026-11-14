@@ -109,6 +109,20 @@ SELECT = (
     "staff_api_finops_snapshot",
     "staff_api_issuer_snapshot",
     "staff_api_audit_entry",
+    # Enterprise Edition (`ee/`, KODERA_EDITION=enterprise): SAML 2.0 federation, SCIM 2.0
+    # directory provisioning, append-only compliance audit ledger and verification public keys.
+    "ee_saml_idp",
+    "ee_saml_pending_request",
+    "ee_saml_replay_assertion",
+    "ee_saml_principal",
+    "ee_scim_token",
+    "ee_scim_user",
+    "ee_scim_group",
+    "ee_scim_group_member",
+    "ee_scim_session",
+    "ee_scim_deprovision",
+    "ee_audit_ledger",
+    "ee_audit_signing_key",
 )
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
@@ -189,6 +203,20 @@ INSERT = (
     "staff_api_finops_snapshot",
     "staff_api_issuer_snapshot",
     "staff_api_audit_entry",
+    # Enterprise Edition (`ee/`): SAML IdP config/requests/replays/principals, SCIM tokens/users/
+    # groups/memberships/sessions/deprovision records, and append-only audit ledger + signing keys.
+    "ee_saml_idp",
+    "ee_saml_pending_request",
+    "ee_saml_replay_assertion",
+    "ee_saml_principal",
+    "ee_scim_token",
+    "ee_scim_user",
+    "ee_scim_group",
+    "ee_scim_group_member",
+    "ee_scim_session",
+    "ee_scim_deprovision",
+    "ee_audit_ledger",
+    "ee_audit_signing_key",
 )
 # One column each, and why:
 # - identity_staffrole.created_at: `SELECT ... FOR SHARE` of the grant (current_staff_grant) needs
@@ -387,12 +415,81 @@ UPDATE_COLUMNS = (
     ("staff_api_issuer_snapshot", "public_jwks"),
     ("staff_api_issuer_snapshot", "registered_by_identity_id"),
     ("staff_api_issuer_snapshot", "updated_at"),
+    # Enterprise Edition (`ee/`): mutable IdP/principal/SCIM fields only; `ee_audit_ledger` and
+    # `ee_audit_signing_key` receive zero UPDATE grants (strictly append-only for `kodera_api`).
+    *(
+        ("ee_saml_idp", c)
+        for c in (
+            "idp_entity_id",
+            "idp_sso_url",
+            "public_key_pem",
+            "verified_domains_json",
+            "group_role_mapping_json",
+            "default_role",
+            "want_assertions_signed",
+            "clock_skew_seconds",
+            "updated_at",
+        )
+    ),
+    *(
+        ("ee_saml_principal", c)
+        for c in (
+            "user_id",
+            "principal_ref",
+            "idp_id",
+            "idp_entity_id",
+            "assertion_id",
+            "subject_name_id",
+            "email",
+            "display_name",
+            "groups_json",
+            "role",
+            "return_path",
+            "authenticated_at",
+            "updated_at",
+        )
+    ),
+    ("ee_scim_token", "revoked_at"),
+    *(
+        ("ee_scim_user", c)
+        for c in (
+            "user_id",
+            "user_name",
+            "user_name_lower",
+            "external_id",
+            "display_name",
+            "given_name",
+            "family_name",
+            "emails_json",
+            "active",
+            "roles_json",
+            "department",
+            "member_state",
+            "version",
+            "updated_at",
+            "deprovisioned_at",
+        )
+    ),
+    *(
+        ("ee_scim_group", c)
+        for c in (
+            "display_name",
+            "display_name_lower",
+            "external_id",
+            "version",
+            "updated_at",
+        )
+    ),
+    ("ee_scim_group_member", "member_order"),
 )
 # An expired replay entry is replaced when its key returns (IDEMPOTENCY_REPLAY.md §2.2), for the
 # intake and initialiseWorkspace alike. deleteCategory deletes an empty category, and a channel's
 # access change deletes the rules it drops; a policy itself is never deleted. Native document
 # Markdown replacement refreshes outgoing wikilinks and prunes snapshot-covered journal updates
-# (trigger `docs_journal_guard` refuses deleting any uncovered update).
+# (trigger `docs_journal_guard` refuses deleting any uncovered update). Enterprise Edition operational
+# deletes cover single-use SAML RelayState consumption, expired SAML replay pruning, SCIM RFC 7644 §3.6
+# user/group deletion, group-membership unlinking, and active session revocation — never `ee_audit_ledger`
+# or `ee_audit_signing_key`.
 DELETE = (
     "docs_collectionrow",
     "idempotency_record",
@@ -400,6 +497,12 @@ DELETE = (
     "workspaces_resourcepolicyrule",
     "docs_documentlink",
     "docs_documentupdate",
+    "ee_saml_pending_request",
+    "ee_saml_replay_assertion",
+    "ee_scim_user",
+    "ee_scim_group",
+    "ee_scim_group_member",
+    "ee_scim_session",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_quota_usage(uuid)",

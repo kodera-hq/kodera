@@ -35,7 +35,7 @@ from ee.audit_export.ledger import default_audit_ledger
 from ee.audit_export.verify import verify_compliance_bundle
 from ee.tests.conftest import ProvisionedTestPrincipal
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 
 MONOREPO_ROOT = Path(__file__).resolve().parents[2]
 

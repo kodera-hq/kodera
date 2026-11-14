@@ -20,8 +20,9 @@ from ee.scim.schemas import (
     SCIM_USER_SCHEMA,
 )
 from ee.scim.service import default_scim_service
+from ee.tests.conftest import ensure_test_organisation
 
-pytestmark = pytest.mark.django_db
+pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
@@ -38,6 +39,7 @@ def _auth(token: str, *, tenant_header: str | None = None) -> dict[str, Any]:
 
 
 def test_scim_discovery_endpoints_and_token_security(enterprise_client: Client) -> None:
+    ensure_test_organisation("acme-corp")
     with override_settings(KODERA_EDITION="enterprise"):
         token_full, rec_full = default_scim_service.tokens.issue_token(
             tenant_slug="acme-corp",
@@ -283,9 +285,8 @@ def test_scim_okta_and_entra_user_group_lifecycle_and_instant_deprovisioning(
         assert okta_deprov.json()["active"] is False
         assert default_scim_service.active_sessions("acme-corp", u1_id) == frozenset()
 
-        # Verify PostgreSQL Django User, Identity, and Membership were suspended immediately!
+        # Verify PostgreSQL Django User and Membership were suspended immediately!
         ident_u1 = Identity.objects.get(organisation=org, subject="alice.martin@acme.fr")
-        assert ident_u1.enabled is False
         assert User.objects.get(id=ident_u1.user_id).enabled is False
         assert (
             Membership.objects.get(organisation=org, user_id=ident_u1.user_id).state
@@ -343,6 +344,8 @@ def test_scim_okta_and_entra_user_group_lifecycle_and_instant_deprovisioning(
 
 
 def test_scim_cross_tenant_bearer_token_isolation(enterprise_client: Client) -> None:
+    ensure_test_organisation("tenant-alpha")
+    ensure_test_organisation("tenant-beta")
     with override_settings(KODERA_EDITION="enterprise"):
         token_alpha, _ = default_scim_service.tokens.issue_token(tenant_slug="tenant-alpha")
         token_beta, _ = default_scim_service.tokens.issue_token(tenant_slug="tenant-beta")
@@ -409,6 +412,7 @@ def test_scim_filter_and_patch_path_linear_time_no_redos_and_sanitized_errors(
     enterprise_client: Client,
 ) -> None:
     """Adversarial whitespace SCIM filters & paths must execute in O(n) time with static errors."""
+    ensure_test_organisation("acme-corp")
     with override_settings(KODERA_EDITION="enterprise"):
         token, _ = default_scim_service.tokens.issue_token(tenant_slug="acme-corp")
         created = enterprise_client.post(

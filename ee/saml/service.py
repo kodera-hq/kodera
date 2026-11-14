@@ -1,8 +1,8 @@
 """SAML 2.0 Service Provider metadata, `AuthnRequest`, ACS verification, and JIT provisioning.
 
-Persists tenant IdP configurations (`ee_saml_idps`), single-use `AuthnRequest` / `RelayState`
-bindings (`ee_saml_pending_requests`), assertion replay nonces (`ee_saml_replay_assertions`), and
-federated principal projections (`ee_saml_principals`) in PostgreSQL across Gunicorn workers.
+Persists tenant IdP configurations (`ee_saml_idp`), single-use `AuthnRequest` / `RelayState`
+bindings (`ee_saml_pending_request`), assertion replay nonces (`ee_saml_replay_assertion`), and
+federated principal projections (`ee_saml_principal`) in PostgreSQL across Gunicorn workers.
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
+from uuid6 import uuid7
 
 from ee.edition import require_enterprise_edition
 from ee.saml.xml_security import (
@@ -39,7 +40,14 @@ from ee.saml.xml_security import (
     parse_hardened_xml,
     verify_saml_response_tree,
 )
-from ee.store import can_use_postgres, derive_ee_hkdf_bytes, ensure_ee_tables, reset_ee_tables
+from ee.store import (
+    TenantCutoffError,
+    acquire_active_tenant_fence,
+    can_use_postgres,
+    derive_ee_hkdf_bytes,
+    reset_ee_tables,
+    resolve_tenant_organisation,
+)
 
 SAML_BINDING_HTTP_POST = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 SAML_BINDING_HTTP_REDIRECT = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
@@ -229,44 +237,27 @@ def _idp_from_row(row: tuple[object, ...]) -> SamlIdpConfig:
     )
 
 
-def _principal_to_json(record: ProvisionedSamlPrincipal) -> str:
-    return json.dumps(
-        {
-            "user_id": record.user_id,
-            "tenant_slug": record.tenant_slug,
-            "idp_id": record.idp_id,
-            "idp_entity_id": record.idp_entity_id,
-            "assertion_id": record.assertion_id,
-            "subject_name_id": record.subject_name_id,
-            "email": record.email,
-            "display_name": record.display_name,
-            "groups": list(record.groups),
-            "role": record.role,
-            "return_path": record.return_path,
-            "authenticated_at": record.authenticated_at.astimezone(UTC).isoformat(),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _principal_from_json(raw_json: str) -> ProvisionedSamlPrincipal:
-    data = json.loads(raw_json)
-    auth_dt = datetime.fromisoformat(str(data["authenticated_at"])).astimezone(UTC)
-    groups_raw = data.get("groups", [])
+def _principal_from_row(row: tuple[object, ...]) -> ProvisionedSamlPrincipal:
+    groups_raw = json.loads(str(row[8]))
     groups_tuple = tuple(str(g) for g in groups_raw) if isinstance(groups_raw, list) else ()
+    auth_val = row[11]
+    auth_dt = (
+        auth_val.astimezone(UTC)
+        if isinstance(auth_val, datetime)
+        else datetime.fromisoformat(str(auth_val)).astimezone(UTC)
+    )
     return ProvisionedSamlPrincipal(
-        user_id=str(data["user_id"]),
-        tenant_slug=str(data["tenant_slug"]),
-        idp_id=str(data["idp_id"]),
-        idp_entity_id=str(data["idp_entity_id"]),
-        assertion_id=str(data["assertion_id"]),
-        subject_name_id=str(data["subject_name_id"]),
-        email=str(data["email"]),
-        display_name=str(data["display_name"]),
+        user_id=str(row[0]),
+        tenant_slug=str(row[1]),
+        idp_id=str(row[2]),
+        idp_entity_id=str(row[3]),
+        assertion_id=str(row[4]),
+        subject_name_id=str(row[5]),
+        email=str(row[6]),
+        display_name=str(row[7]),
         groups=groups_tuple,
-        role=str(data["role"]),
-        return_path=str(data["return_path"]),
+        role=str(row[9]),
+        return_path=str(row[10]),
         authenticated_at=auth_dt,
     )
 
@@ -408,45 +399,83 @@ class SamlService:
     def register_idp(self, config: SamlIdpConfig) -> SamlIdpConfig:
         require_enterprise_edition()
         if can_use_postgres():
-            ensure_ee_tables()
             domains_json = json.dumps(sorted(config.verified_domains))
             mapping_json = json.dumps(dict(config.group_role_mapping), sort_keys=True)
-            org_id_str = str(config.organisation_id) if config.organisation_id is not None else None
             now_ts = datetime.now(UTC)
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ee_saml_idps ("
-                    "tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem, "
-                    "verified_domains_json, group_role_mapping_json, default_role, "
-                    "want_assertions_signed, clock_skew_seconds, organisation_id, updated_at"
-                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                    "ON CONFLICT (tenant_slug, idp_id) DO UPDATE SET "
-                    "idp_entity_id = EXCLUDED.idp_entity_id, "
-                    "idp_sso_url = EXCLUDED.idp_sso_url, "
-                    "public_key_pem = EXCLUDED.public_key_pem, "
-                    "verified_domains_json = EXCLUDED.verified_domains_json, "
-                    "group_role_mapping_json = EXCLUDED.group_role_mapping_json, "
-                    "default_role = EXCLUDED.default_role, "
-                    "want_assertions_signed = EXCLUDED.want_assertions_signed, "
-                    "clock_skew_seconds = EXCLUDED.clock_skew_seconds, "
-                    "organisation_id = EXCLUDED.organisation_id, "
-                    "updated_at = EXCLUDED.updated_at",
-                    [
-                        config.tenant_slug,
-                        config.idp_id,
-                        config.idp_entity_id,
-                        config.idp_sso_url,
-                        config.public_key_pem,
-                        domains_json,
-                        mapping_json,
-                        config.default_role,
-                        config.want_assertions_signed,
-                        config.clock_skew_seconds,
-                        org_id_str,
-                        now_ts,
-                    ],
-                )
-            return config
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=config.tenant_slug,
+                        organisation_id=config.organisation_id,
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_saml_idp (
+                            id, organisation_id, tenant_slug, idp_id, idp_entity_id,
+                            idp_sso_url, public_key_pem, verified_domains_json,
+                            group_role_mapping_json, default_role, want_assertions_signed,
+                            clock_skew_seconds, created_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s,
+                            %s, %s, %s
+                        )
+                        ON CONFLICT (tenant_slug, idp_id) DO UPDATE SET
+                            idp_entity_id = EXCLUDED.idp_entity_id,
+                            idp_sso_url = EXCLUDED.idp_sso_url,
+                            public_key_pem = EXCLUDED.public_key_pem,
+                            verified_domains_json = EXCLUDED.verified_domains_json,
+                            group_role_mapping_json = EXCLUDED.group_role_mapping_json,
+                            default_role = EXCLUDED.default_role,
+                            want_assertions_signed = EXCLUDED.want_assertions_signed,
+                            clock_skew_seconds = EXCLUDED.clock_skew_seconds,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        [
+                            uuid7(),
+                            org_id,
+                            resolved_slug,
+                            config.idp_id,
+                            config.idp_entity_id,
+                            config.idp_sso_url,
+                            config.public_key_pem,
+                            domains_json,
+                            mapping_json,
+                            config.default_role,
+                            config.want_assertions_signed,
+                            config.clock_skew_seconds,
+                            now_ts,
+                            now_ts,
+                        ],
+                    )
+            except TenantCutoffError as exc:
+                raise SamlError(
+                    exc.code,
+                    "Organisation is unavailable for SAML writes",
+                    status=exc.status,
+                ) from exc
+            except IntegrityError as exc:
+                raise SamlError(
+                    "tenant_cutoff_fenced",
+                    "SAML write refused by privacy cutoff",
+                    status=403,
+                ) from exc
+
+            return SamlIdpConfig(
+                tenant_slug=resolved_slug,
+                idp_id=config.idp_id,
+                idp_entity_id=config.idp_entity_id,
+                idp_sso_url=config.idp_sso_url,
+                public_key_pem=config.public_key_pem,
+                verified_domains=config.verified_domains,
+                group_role_mapping=config.group_role_mapping,
+                default_role=config.default_role,
+                want_assertions_signed=config.want_assertions_signed,
+                clock_skew_seconds=config.clock_skew_seconds,
+                organisation_id=org_id,
+            )
 
         with self._lock:
             self._idps[(config.tenant_slug, config.idp_id)] = config
@@ -455,13 +484,16 @@ class SamlService:
     def list_idps(self, tenant_slug: str) -> list[SamlIdpConfig]:
         require_enterprise_edition()
         if can_use_postgres():
-            ensure_ee_tables()
             with connection.cursor() as cur:
                 cur.execute(
-                    "SELECT tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem, "
-                    "verified_domains_json, group_role_mapping_json, default_role, "
-                    "want_assertions_signed, clock_skew_seconds, organisation_id "
-                    "FROM ee_saml_idps WHERE tenant_slug = %s ORDER BY idp_id ASC",
+                    """
+                    SELECT tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem,
+                           verified_domains_json, group_role_mapping_json, default_role,
+                           want_assertions_signed, clock_skew_seconds, organisation_id
+                    FROM public.ee_saml_idp
+                    WHERE tenant_slug = %s
+                    ORDER BY idp_id ASC
+                    """,
                     [tenant_slug],
                 )
                 rows = cur.fetchall()
@@ -473,13 +505,15 @@ class SamlService:
     def get_idp(self, tenant_slug: str, idp_id: str) -> SamlIdpConfig:
         require_enterprise_edition()
         if can_use_postgres():
-            ensure_ee_tables()
             with connection.cursor() as cur:
                 cur.execute(
-                    "SELECT tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem, "
-                    "verified_domains_json, group_role_mapping_json, default_role, "
-                    "want_assertions_signed, clock_skew_seconds, organisation_id "
-                    "FROM ee_saml_idps WHERE tenant_slug = %s AND idp_id = %s",
+                    """
+                    SELECT tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem,
+                           verified_domains_json, group_role_mapping_json, default_role,
+                           want_assertions_signed, clock_skew_seconds, organisation_id
+                    FROM public.ee_saml_idp
+                    WHERE tenant_slug = %s AND idp_id = %s
+                    """,
                     [tenant_slug, idp_id],
                 )
                 row = cur.fetchone()
@@ -593,26 +627,43 @@ class SamlService:
             expires_at=expires_at,
         )
         if can_use_postgres():
-            ensure_ee_tables()
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM ee_saml_pending_requests WHERE expires_at <= %s",
-                    [issued_at],
-                )
-                cur.execute(
-                    "INSERT INTO ee_saml_pending_requests ("
-                    "relay_state, tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at"
-                    ") VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    [
-                        relay_state,
-                        tenant_slug,
-                        idp.idp_id,
-                        request_id,
-                        clean_return,
-                        norm_base,
-                        expires_at,
-                    ],
-                )
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                        organisation_id=idp.organisation_id,
+                    )
+                    cur.execute(
+                        "DELETE FROM public.ee_saml_pending_request WHERE expires_at <= %s",
+                        [issued_at],
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_saml_pending_request (
+                            relay_state, organisation_id, tenant_slug, idp_id,
+                            request_id, return_path, sp_base_url, expires_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        [
+                            relay_state,
+                            org_id,
+                            resolved_slug,
+                            idp.idp_id,
+                            request_id,
+                            clean_return,
+                            norm_base,
+                            expires_at,
+                        ],
+                    )
+            except TenantCutoffError as exc:
+                raise SamlError(
+                    exc.code, "Organisation is unavailable for SAML login", status=exc.status
+                ) from exc
+            except IntegrityError as exc:
+                raise SamlError(
+                    "tenant_cutoff_fenced", "SAML login refused by privacy cutoff", status=403
+                ) from exc
         else:
             with self._lock:
                 self._prune_pending_locked(issued_at)
@@ -661,16 +712,17 @@ class SamlService:
 
         pending: _PendingRequest | None = None
         if can_use_postgres():
-            ensure_ee_tables()
             with transaction.atomic(), connection.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM ee_saml_pending_requests WHERE expires_at <= %s",
+                    "DELETE FROM public.ee_saml_pending_request WHERE expires_at <= %s",
                     [now],
                 )
                 cur.execute(
-                    "DELETE FROM ee_saml_pending_requests "
-                    "WHERE relay_state = %s AND expires_at > %s "
-                    "RETURNING tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at",
+                    """
+                    DELETE FROM public.ee_saml_pending_request
+                    WHERE relay_state = %s AND expires_at > %s
+                    RETURNING tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at
+                    """,
                     [relay_state, now],
                 )
                 row = cur.fetchone()
@@ -737,23 +789,40 @@ class SamlService:
         assertion_id: str,
         expires_at: datetime,
         now: datetime,
+        organisation_id: UUID | None = None,
     ) -> None:
         if can_use_postgres():
-            ensure_ee_tables()
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM ee_saml_replay_assertions WHERE expires_at <= %s",
-                    [now],
-                )
-                cur.execute(
-                    "INSERT INTO ee_saml_replay_assertions ("
-                    "tenant_slug, idp_entity_id, assertion_id, expires_at"
-                    ") VALUES (%s, %s, %s, %s) "
-                    "ON CONFLICT (tenant_slug, idp_entity_id, assertion_id) DO NOTHING "
-                    "RETURNING assertion_id",
-                    [tenant_slug, idp_entity_id, assertion_id, expires_at],
-                )
-                inserted = cur.fetchone()
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=tenant_slug,
+                        organisation_id=organisation_id,
+                    )
+                    cur.execute(
+                        "DELETE FROM public.ee_saml_replay_assertion WHERE expires_at <= %s",
+                        [now],
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_saml_replay_assertion (
+                            id, organisation_id, tenant_slug, idp_entity_id, assertion_id, expires_at
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (tenant_slug, idp_entity_id, assertion_id) DO NOTHING
+                        RETURNING assertion_id
+                        """,
+                        [uuid7(), org_id, resolved_slug, idp_entity_id, assertion_id, expires_at],
+                    )
+                    inserted = cur.fetchone()
+            except TenantCutoffError as exc:
+                raise SamlError(
+                    exc.code, "Organisation is unavailable for SAML ACS", status=exc.status
+                ) from exc
+            except IntegrityError as exc:
+                raise SamlError(
+                    "tenant_cutoff_fenced", "SAML ACS refused by privacy cutoff", status=403
+                ) from exc
+
             if inserted is None:
                 raise SamlError(
                     "replayed_assertion_id",
@@ -998,6 +1067,7 @@ class SamlService:
             assertion_id=assertion_id,
             expires_at=replay_expiry,
             now=current_time,
+            organisation_id=idp.organisation_id,
         )
 
         return self._jit_upsert_principal(
@@ -1027,9 +1097,11 @@ class SamlService:
     ) -> ProvisionedSamlPrincipal:
         email_low = email.lower()
         existing = self.get_provisioned_principal(idp.tenant_slug, email_low)
-        user_id = existing.user_id if existing is not None else str(uuid4())
+        principal_ref = existing.user_id if existing is not None else str(uuid4())
+        linked_person_id: UUID | None = None
+
         if idp.organisation_id is not None:
-            user_id = _sync_django_organisation_member(
+            linked_person_id = _sync_django_organisation_member(
                 organisation_id=idp.organisation_id,
                 idp_id=idp.idp_id,
                 subject=subject_name_id,
@@ -1037,8 +1109,10 @@ class SamlService:
                 display_name=display_name,
                 role=role,
             )
+            principal_ref = str(linked_person_id)
+
         record = ProvisionedSamlPrincipal(
-            user_id=user_id,
+            user_id=principal_ref,
             tenant_slug=idp.tenant_slug,
             idp_id=idp.idp_id,
             idp_entity_id=idp.idp_entity_id,
@@ -1052,18 +1126,106 @@ class SamlService:
             authenticated_at=authenticated_at,
         )
         if can_use_postgres():
-            ensure_ee_tables()
-            payload_json = _principal_to_json(record)
-            with transaction.atomic(), connection.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO ee_saml_principals ("
-                    "tenant_slug, email_lower, payload_json, updated_at"
-                    ") VALUES (%s, %s, %s, %s) "
-                    "ON CONFLICT (tenant_slug, email_lower) DO UPDATE SET "
-                    "payload_json = EXCLUDED.payload_json, "
-                    "updated_at = EXCLUDED.updated_at",
-                    [idp.tenant_slug, email_low, payload_json, authenticated_at],
-                )
+            groups_json = json.dumps(list(record.groups), separators=(",", ":"))
+            try:
+                with transaction.atomic(), connection.cursor() as cur:
+                    if linked_person_id is None:
+                        org_lookup = resolve_tenant_organisation(
+                            cur,
+                            tenant_slug=idp.tenant_slug,
+                            organisation_id=idp.organisation_id,
+                            require_open=False,
+                        )
+                        if org_lookup is not None:
+                            cur.execute(
+                                """
+                                SELECT i.user_id
+                                FROM public.identity_identity i
+                                WHERE i.organisation_id = %s
+                                  AND lower(i.email) = %s
+                                  AND i.deleted_at IS NULL
+                                ORDER BY i.created_at ASC
+                                LIMIT 1
+                                """,
+                                [org_lookup[0], email_low],
+                            )
+                            ident_row = cur.fetchone()
+                            if ident_row is not None and ident_row[0] is not None:
+                                raw_uid = ident_row[0]
+                                linked_person_id = (
+                                    raw_uid if isinstance(raw_uid, UUID) else UUID(str(raw_uid))
+                                )
+                    org_id, resolved_slug = acquire_active_tenant_fence(
+                        cur,
+                        tenant_slug=idp.tenant_slug,
+                        organisation_id=idp.organisation_id,
+                        user_id=linked_person_id,
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO public.ee_saml_principal (
+                            id, organisation_id, user_id, principal_ref, tenant_slug,
+                            email_lower, idp_id, idp_entity_id, assertion_id,
+                            subject_name_id, email, display_name, groups_json,
+                            role, return_path, authenticated_at, updated_at
+                        ) VALUES (
+                            %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s,
+                            %s, %s, %s, %s,
+                            %s, %s, %s, %s
+                        )
+                        ON CONFLICT (tenant_slug, email_lower) DO UPDATE SET
+                            user_id = EXCLUDED.user_id,
+                            principal_ref = EXCLUDED.principal_ref,
+                            idp_id = EXCLUDED.idp_id,
+                            idp_entity_id = EXCLUDED.idp_entity_id,
+                            assertion_id = EXCLUDED.assertion_id,
+                            subject_name_id = EXCLUDED.subject_name_id,
+                            email = EXCLUDED.email,
+                            display_name = EXCLUDED.display_name,
+                            groups_json = EXCLUDED.groups_json,
+                            role = EXCLUDED.role,
+                            return_path = EXCLUDED.return_path,
+                            authenticated_at = EXCLUDED.authenticated_at,
+                            updated_at = EXCLUDED.updated_at
+                        """,
+                        [
+                            uuid7(),
+                            org_id,
+                            linked_person_id,
+                            record.user_id,
+                            resolved_slug,
+                            email_low,
+                            record.idp_id,
+                            record.idp_entity_id,
+                            record.assertion_id,
+                            record.subject_name_id,
+                            record.email,
+                            record.display_name,
+                            groups_json,
+                            record.role,
+                            record.return_path,
+                            authenticated_at,
+                            authenticated_at,
+                        ],
+                    )
+            except TenantCutoffError as exc:
+                raise SamlError(
+                    exc.code, "SAML principal write refused by privacy cutoff", status=exc.status
+                ) from exc
+            except IntegrityError as exc:
+                msg = str(exc)
+                if "account cutoff refuses write" in msg:
+                    raise SamlError(
+                        "account_cutoff_fenced",
+                        "Account is under privacy erasure cutoff",
+                        status=403,
+                    ) from exc
+                raise SamlError(
+                    "tenant_cutoff_fenced",
+                    "SAML principal write refused by privacy cutoff",
+                    status=403,
+                ) from exc
             return record
 
         with self._lock:
@@ -1078,15 +1240,19 @@ class SamlService:
         require_enterprise_edition()
         email_low = email.strip().lower()
         if can_use_postgres():
-            ensure_ee_tables()
             with connection.cursor() as cur:
                 cur.execute(
-                    "SELECT payload_json FROM ee_saml_principals "
-                    "WHERE tenant_slug = %s AND email_lower = %s",
+                    """
+                    SELECT principal_ref, tenant_slug, idp_id, idp_entity_id, assertion_id,
+                           subject_name_id, email, display_name, groups_json, role,
+                           return_path, authenticated_at
+                    FROM public.ee_saml_principal
+                    WHERE tenant_slug = %s AND email_lower = %s
+                    """,
                     [tenant_slug, email_low],
                 )
                 row = cur.fetchone()
-            return _principal_from_json(str(row[0])) if row is not None else None
+            return _principal_from_row(row) if row is not None else None
 
         with self._lock:
             return self._provisioned_users.get((tenant_slug, email_low))
@@ -1216,69 +1382,115 @@ def _sync_django_organisation_member(
     email: str,
     display_name: str,
     role: str,
-) -> str:
-    """Sync federated SAML login into Django `Identity`/`User`/`Membership` when bound to an org."""
+) -> UUID:
+    """Sync federated SAML login into Core `User`/`Identity`/`Membership` under `kodera_api` grants.
+
+    Never locks or updates `identity_identity` (`kodera_api` holds `SELECT` + `INSERT` only on
+    `identity_identity`), and fences against organisation/account erasure cutoffs.
+    """
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership, Organisation
     from django.utils import timezone
 
-    with transaction.atomic():
-        org = Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True).first()
-        if org is None:
-            raise SamlError(
-                "organisation_not_found", "Bound organisation does not exist", status=404
+    try:
+        with transaction.atomic():
+            org = (
+                Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+                .exclude(state=Organisation.State.CLOSED)
+                .first()
             )
-        raw_subject_key = f"saml:{idp_id}:{subject}"
-        subject_key = "".join(ch if "!" <= ch <= "~" else "_" for ch in raw_subject_key)[:255]
-        identity = (
-            Identity.objects.select_for_update()
-            .select_related("user")
-            .filter(organisation=org, issuer=org.issuer, subject=subject_key)
-            .first()
-        )
-        if identity is None:
-            user = User.objects.create(
-                email=email,
-                display_name=display_name[:200] if display_name else None,
-                enabled=True,
+            if org is None:
+                raise SamlError(
+                    "tenant_cutoff_fenced",
+                    "Organisation is closed or does not exist",
+                    status=403,
+                )
+            raw_subject_key = f"saml:{idp_id}:{subject}"
+            subject_key = "".join(ch if "!" <= ch <= "~" else "_" for ch in raw_subject_key)[:255]
+            identity = (
+                Identity.objects.select_related("user")
+                .filter(
+                    organisation=org,
+                    issuer=org.issuer,
+                    subject=subject_key,
+                    deleted_at__isnull=True,
+                )
+                .first()
             )
-            identity = Identity.objects.create(
-                user=user,
-                organisation=org,
-                realm=org.realm,
-                issuer=org.issuer,
-                subject=subject_key,
-                email=email,
-                enabled=True,
-            )
-        else:
-            user = identity.user
-            if not user.enabled:
-                user.enabled = True
-                user.save(update_fields=["enabled"])
-            if not identity.enabled:
-                identity.enabled = True
-                identity.save(update_fields=["enabled"])
+            if identity is None:
+                identity = (
+                    Identity.objects.select_related("user")
+                    .filter(
+                        organisation=org,
+                        issuer=org.issuer,
+                        email__iexact=email,
+                        deleted_at__isnull=True,
+                    )
+                    .first()
+                )
 
-        now_ts = timezone.now()
-        membership = (
-            Membership.objects.select_for_update().filter(organisation=org, user=user).first()
-        )
-        if membership is None:
-            Membership.objects.create(
-                organisation=org,
-                user=user,
-                role=role,
-                state=Membership.State.ACTIVE,
-                accepted_at=now_ts,
+            if identity is None:
+                user = User.objects.create(
+                    email=email,
+                    display_name=display_name[:200] if display_name else None,
+                    enabled=True,
+                )
+                Identity.objects.create(
+                    user=user,
+                    organisation=org,
+                    realm=org.realm,
+                    issuer=org.issuer,
+                    subject=subject_key,
+                    email=email,
+                    enabled=True,
+                )
+            else:
+                user = identity.user
+                if user.deleted_at is not None or user.email.startswith("erased:"):
+                    raise SamlError(
+                        "account_cutoff_fenced",
+                        "Account is under privacy erasure cutoff",
+                        status=403,
+                    )
+                if not user.enabled:
+                    User.objects.filter(id=user.id).update(enabled=True)
+
+            now_ts = timezone.now()
+            membership = (
+                Membership.objects.select_for_update().filter(organisation=org, user=user).first()
             )
-        else:
-            membership.role = role
-            membership.state = Membership.State.ACTIVE
-            if membership.accepted_at is None:
-                membership.accepted_at = now_ts
-            membership.save(update_fields=["role", "state", "accepted_at", "updated_at"])
-        return str(user.id)
+            if membership is None:
+                Membership.objects.create(
+                    organisation=org,
+                    user=user,
+                    role=role,
+                    state=Membership.State.ACTIVE,
+                    accepted_at=now_ts,
+                )
+            else:
+                effective_role = (
+                    membership.role if membership.role == Membership.Role.OWNER else role
+                )
+                Membership.objects.filter(id=membership.id).update(
+                    role=effective_role,
+                    state=Membership.State.ACTIVE,
+                    accepted_at=membership.accepted_at or now_ts,
+                    updated_at=now_ts,
+                )
+            return user.id
+    except IntegrityError as exc:
+        msg = str(exc)
+        if "account cutoff refuses write" in msg:
+            raise SamlError(
+                "account_cutoff_fenced",
+                "Account is under privacy erasure cutoff",
+                status=403,
+            ) from exc
+        raise SamlError(
+            "tenant_cutoff_fenced",
+            "SAML provisioning refused by privacy cutoff",
+            status=403,
+        ) from exc
 
 
 default_saml_service = SamlService()
