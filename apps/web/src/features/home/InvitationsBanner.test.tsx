@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { setupServer } from 'msw/node'
 import type { ReactNode } from 'react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -37,7 +37,7 @@ describe('InvitationsBanner', () => {
   const server = setupServer()
   beforeAll(() => {
     vi.stubEnv('VITE_CORE_API_URL', BASE)
-    server.listen({ onUnhandledRequest: 'error' })
+    server.listen({ onUnhandledFrame: 'error' })
   })
   afterEach(() => server.resetHandlers())
   afterAll(() => {

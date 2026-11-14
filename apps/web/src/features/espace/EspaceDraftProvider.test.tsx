@@ -1232,7 +1232,7 @@ async function composedHarness(
       await close()
     } catch (cleanup) {
       throw new AggregateError([error, cleanup], 'Composed setup failure; cleanup also failed', {
-        cause: error,
+        cause: cleanup,
       })
     }
     throw error

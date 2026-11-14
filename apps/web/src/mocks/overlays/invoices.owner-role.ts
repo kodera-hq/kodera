@@ -1,6 +1,6 @@
 // Explicit synthetic owner authority for payment-capable invoice journeys.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES } from '../generated/examples'

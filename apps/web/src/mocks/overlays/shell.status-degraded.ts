@@ -7,7 +7,7 @@
 // depend on that staying true by accident (the same reasoning
 // `shell.single-organisation` gives for itself).
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

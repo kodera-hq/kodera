@@ -1,7 +1,7 @@
 // docs/specs/11-workspace.md §7: `setup` `pending` / `awaiting_owner_confirmation`: the claim is
 // consumed and the owner's contact is not yet confirmed.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { WORKSPACE_PATH, notInitialisedWorkspace } from '../fixtures/workspaceFixtures'
 
 export const handlers = [

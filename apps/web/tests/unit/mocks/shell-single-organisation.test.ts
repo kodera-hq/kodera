@@ -5,7 +5,7 @@ import { resolveOverlays } from '@/mocks/overlays/index-glob'
 
 describe('shell.single-organisation overlay', () => {
   const server = setupServer()
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   afterEach(() => server.resetHandlers())
   afterAll(() => server.close())
 

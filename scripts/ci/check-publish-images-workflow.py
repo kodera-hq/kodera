@@ -14,8 +14,8 @@ DEFAULT_WORKFLOW = ROOT / ".github" / "workflows" / "publish-images.yml"
 
 EXPECTED_PINNED_ACTIONS = {
     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-    "docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226",
-    "docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567",
+    "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
+    "docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550",
     "docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83",
 }
 

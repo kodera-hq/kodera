@@ -8,8 +8,9 @@
 // of this, the worker script and `./auth`'s handlers included, ships in a
 // build that never boots MSW (`scripts/check-production-bundle.sh`).
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import { setupWorker } from 'msw/browser'
+import { HttpNetworkFrame } from 'msw/experimental'
 import { authMode } from '../config'
 import { authHandlers } from './auth'
 import { DEMO_SCENARIO, DEMO_SLUG } from './demo/seed'
@@ -224,9 +225,13 @@ export async function startMockWorker(): Promise<void> {
     // from what the console actually calls — silently falling through to the
     // network would either hang (no such host reachable) or, worse, reach a
     // real one (docs/dev/TESTING.md).
-    onUnhandledRequest(request, print) {
-      if (isDevelopmentAsset(request, window.location.origin, true)) return
-      print.error()
+    onUnhandledFrame({ frame, defaults }) {
+      if (
+        frame instanceof HttpNetworkFrame &&
+        isDevelopmentAsset(frame.data.request, window.location.origin, true)
+      )
+        return
+      defaults.error()
     },
     quiet: true,
   })

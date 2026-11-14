@@ -5,7 +5,7 @@
 // (§7's own note), but self-contained today since that overlay does not
 // exist yet — the status area unit had not landed when this one needed it.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

@@ -12,7 +12,7 @@
 // overlay both answer differently — `status-summary`'s `overall`, `degraded`
 // in the generated example, `operational` in `home.default`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { components } from '@/api/schema'
@@ -23,7 +23,7 @@ type OrganisationStatusSummary = components['schemas']['OrganisationStatusSummar
 
 describe('worker composition order', () => {
   const server = setupServer()
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   afterEach(() => server.resetHandlers())
   afterAll(() => server.close())
 
@@ -53,7 +53,7 @@ describe('worker composition order', () => {
 // for the wrong reason.
 describe('composition order, isolated from any real overlay', () => {
   const server = setupServer()
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   afterEach(() => server.resetHandlers())
   afterAll(() => server.close())
 

@@ -6,13 +6,13 @@
 // dropped, or a slug longer than the pattern now allows, keeps every screen and every
 // end-to-end spec green against a response the Core API can no longer send.
 //
-// Each handler is run once, directly (`RequestHandler.run`), with no server, on a request
+// Each handler is run once, directly (`getResponse`), with no server, on a request
 // for the route it declares, and its answer is judged by `contract-conformance.ts`: the
 // route, the status, the media type and the body. Response headers are not judged. A
 // handler that answers differently on a later call is judged on its first answer.
 
-import type { HttpHandler } from 'msw'
-import { http, HttpResponse } from 'msw'
+import type { HttpHandler } from 'msw/http'
+import { http, HttpResponse } from 'msw/http'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EXAMPLES } from '@/mocks/generated/examples'
 import { problem } from '@/mocks/problem'

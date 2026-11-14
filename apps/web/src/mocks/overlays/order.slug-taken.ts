@@ -9,7 +9,7 @@
 // on `reason: invalid_format` says — and a suggestion, being a slug too, has
 // to fit the same 32 characters.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { isTenantSlug } from '@/api/tenantSlug'
 import { problem } from '../problem'

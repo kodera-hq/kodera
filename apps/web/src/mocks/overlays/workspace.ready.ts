@@ -2,7 +2,7 @@
 // the contract's example, named so a spec that means "the workspace exists" does not lean on the
 // generated base answer staying that shape.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { WORKSPACE_PATH, readyWorkspace } from '../fixtures/workspaceFixtures'
 
 export const handlers = [

@@ -3,7 +3,7 @@
 // for "sans règlement avant le {date}" — the `formal_notice`/
 // `suspension_notice`/`suspended` steps below give it one to read.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { baseInvoice, INVOICE_ID, invoicesPage, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 
 const BASE = '*/api/v1'

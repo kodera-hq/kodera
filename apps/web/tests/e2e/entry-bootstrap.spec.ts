@@ -602,7 +602,7 @@ test.describe('Protected entry bootstrap foundation, real emitted build', () => 
       try {
         await stop()
       } catch (cleanup) {
-        throw new AggregateError([error, cleanup], 'CLI_SETUP_AND_CLEANUP')
+        throw new AggregateError([error, cleanup], 'CLI_SETUP_AND_CLEANUP', { cause: cleanup })
       }
       throw error
     }

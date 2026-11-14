@@ -8,7 +8,8 @@ import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { SUPPORT_EMAIL } from '../../app/supportContact'
-import { ApiProblem, NetworkError } from '../../api/client'
+import { ApiProblem, NetworkError, coreApi } from '../../api/client'
+import type { Middleware } from 'openapi-fetch'
 import {
   CALLER_MEMBERSHIP_ID,
   defaultMembers,
@@ -21,7 +22,7 @@ import { handlers as seatLimit } from '../../mocks/overlays/people.seat-limit'
 import { InviteDrawer, type InviteDrawerProps } from './InviteDrawer'
 import type { OrganisationRole } from './roles'
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { StrictMode, Suspense, useState } from 'react'
 import * as peopleQueries from './queries'
 import { authAdapter } from '../../auth/oidc'
@@ -33,7 +34,7 @@ import {
   type InvitationOwner,
 } from './invitationRecovery'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 beforeEach(signInSynthetic)
@@ -742,43 +743,76 @@ describe('invitation outcome uncertainty', () => {
   })
 })
 
+// MSW can clone/pull a stream before fetch resolves. A queued error in start() can therefore
+// become a pre-header transport failure. Release this error only after the actual fetch has
+// returned 201 headers; the production client still consumes the real response's JSON body.
+function postHeaderInvitationReaderLoss(name: 'TypeError' | 'AbortError', message: string) {
+  let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined
+  let observedHeaders = 0
+  const client = coreApi()
+  const observer: Middleware = {
+    onResponse({ request, response }) {
+      if (
+        bodyController &&
+        response.status === 201 &&
+        new URL(request.url).pathname.endsWith('/invitations')
+      ) {
+        observedHeaders++
+        const controller = bodyController
+        bodyController = undefined
+        controller.error(
+          name === 'AbortError' ? new DOMException(message, name) : new TypeError(message)
+        )
+      }
+      return undefined
+    },
+  }
+  client.use(observer)
+  return {
+    response: () =>
+      new HttpResponse(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodyController = controller
+            controller.enqueue(new TextEncoder().encode('{"created":'))
+          },
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } }
+      ),
+    observedHeaders: () => observedHeaders,
+    restore: () => client.eject(observer),
+  }
+}
+
 // Response-reader feasibility: these exercise the actual MSW/fetch/json path,
 // not a throwing mutation stub or a claim about physical browser cancellation.
 describe('actual invitation response reader', () => {
   it.each(['TypeError', 'AbortError'] as const)(
-    'propagates a modeled body-reader %s after successful headers without NetworkError wrapping',
+    'reports the truncated body after a post-header %s stream fault without NetworkError wrapping',
     async (name) => {
-      const fixture = invitationReplyLoss(() => {
-        const stream = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('{"created":'))
-            queueMicrotask(() =>
-              controller.error(
-                name === 'AbortError'
-                  ? new DOMException('Synthetic response reader interruption', 'AbortError')
-                  : new TypeError('Synthetic response reader interruption')
-              )
-            )
-          },
-        })
-        return new HttpResponse(stream, {
-          status: 201,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      })
-      for (const handlers of fixture.overlays) server.use(...handlers)
-      const failure = await peopleQueries
-        .inviteBatch(
-          ORG_ID,
-          [{ email: 'reader@example.test', role: 'org_member' }],
-          crypto.randomUUID()
-        )
-        .catch((error: unknown) => error)
-      expect(failure).not.toBeInstanceOf(NetworkError)
-      expect(failure).toMatchObject({ name, message: 'Synthetic response reader interruption' })
-      await fixture.committed
-      await expectCommittedInvitation('reader@example.test')
-      expect(fixture.requests).toHaveLength(1)
+      const reader = postHeaderInvitationReaderLoss(name, 'Synthetic response reader interruption')
+      const fixture = invitationReplyLoss(reader.response)
+      try {
+        for (const handlers of fixture.overlays) server.use(...handlers)
+        const failure = await peopleQueries
+          .inviteBatch(
+            ORG_ID,
+            [{ email: 'reader@example.test', role: 'org_member' }],
+            crypto.randomUUID()
+          )
+          .catch((error: unknown) => error)
+        expect(failure).not.toBeInstanceOf(NetworkError)
+        // MSW's current response bridge closes its cloned body on the source fault, so the
+        // real JSON reader sees truncation. This proves a post-header parse failure, not
+        // propagation of the original browser stream exception through this test bridge.
+        expect(failure).toBeInstanceOf(SyntaxError)
+        await fixture.committed
+        await expectCommittedInvitation('reader@example.test')
+        expect(fixture.requests).toHaveLength(1)
+        expect(reader.observedHeaders()).toBe(1)
+      } finally {
+        reader.restore()
+      }
     }
   )
 })
@@ -976,38 +1010,26 @@ describe('invitation stage and receipt contract', () => {
   it.each(['TypeError', 'AbortError'] as const)(
     'retains the key after actual response body-reader %s',
     async (name) => {
-      const fixture = invitationReplyLoss((reply, n) =>
-        n !== 1
-          ? reply
-          : new HttpResponse(
-              new ReadableStream<Uint8Array>({
-                start(c) {
-                  c.enqueue(new TextEncoder().encode('{"created":'))
-                  queueMicrotask(() =>
-                    c.error(
-                      name === 'AbortError'
-                        ? new DOMException('Synthetic reader interruption', 'AbortError')
-                        : new TypeError('Synthetic reader interruption')
-                    )
-                  )
-                },
-              }),
-              { status: 201 }
-            )
-      )
-      const { onSent } = renderDrawer(fixture.overlays)
-      paste('body@example.test')
-      await userEvent.click(inviteSubmit())
-      const feedback = await invitationFeedback()
-      await expectCommittedInvitation('body@example.test')
-      expect(onSent).not.toHaveBeenCalled()
-      expect(feedback, 'BODY_READER_FAILURE_IS_NOT_ZERO_EFFECT').not.toHaveTextContent(
-        "Aucune invitation n'a été envoyée."
-      )
-      await userEvent.click(inviteSubmit())
-      await waitFor(() => expect(onSent).toHaveBeenCalledWith(1))
-      expect(fixture.requests[1]!.key).toBe(fixture.requests[0]!.key)
-      expect(fixture.effectCalls()).toBe(1)
+      const reader = postHeaderInvitationReaderLoss(name, 'Synthetic reader interruption')
+      const fixture = invitationReplyLoss((reply, n) => (n === 1 ? reader.response() : reply))
+      try {
+        const { onSent } = renderDrawer(fixture.overlays)
+        paste('body@example.test')
+        await userEvent.click(inviteSubmit())
+        const feedback = await invitationFeedback()
+        await expectCommittedInvitation('body@example.test')
+        expect(onSent).not.toHaveBeenCalled()
+        expect(feedback, 'BODY_READER_FAILURE_IS_NOT_ZERO_EFFECT').not.toHaveTextContent(
+          "Aucune invitation n'a été envoyée."
+        )
+        await userEvent.click(inviteSubmit())
+        await waitFor(() => expect(onSent).toHaveBeenCalledWith(1))
+        expect(fixture.requests[1]!.key).toBe(fixture.requests[0]!.key)
+        expect(fixture.effectCalls()).toBe(1)
+        expect(reader.observedHeaders()).toBe(1)
+      } finally {
+        reader.restore()
+      }
     }
   )
   it.each([

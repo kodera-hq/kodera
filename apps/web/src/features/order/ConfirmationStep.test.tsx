@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { ReactNode } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -28,7 +28,7 @@ vi.mock('../support/HelpLink', async () => {
 const BASE = 'https://core.test/api/v1'
 const ORDER_ID = 'a1b2c3d4-e5f6-4718-8293-0a1b2c3d4e5f'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(() => vi.stubEnv('VITE_CORE_API_URL', BASE))
 afterEach(() => {
   server.resetHandlers()

@@ -1,6 +1,6 @@
 // docs/specs/11-workspace.md §7: `setup` `running`, no reason: the realm job is under way.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { WORKSPACE_PATH, notInitialisedWorkspace } from '../fixtures/workspaceFixtures'
 
 export const handlers = [

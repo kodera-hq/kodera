@@ -10,7 +10,7 @@
 // instead. The body is the contract's single-match branch: top-level metadata
 // set, `candidates` empty.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 const BASE = '*/api/v1'
 

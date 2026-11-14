@@ -2,7 +2,7 @@
 // only `tenant.default_urls` exists". The instance itself stays the base
 // example, which carries the provided addresses.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 
 const BASE = '*/api/v1'

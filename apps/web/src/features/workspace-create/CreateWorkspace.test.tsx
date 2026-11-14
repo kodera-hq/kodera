@@ -5,7 +5,8 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import * as axe from 'axe-core'
-import { http, HttpResponse, delay } from 'msw'
+import { http, HttpResponse } from 'msw/http'
+import { delay } from 'msw/utils/delay'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MockInstance } from 'vitest'
 import type * as RouterModule from '@tanstack/react-router'
@@ -145,7 +146,7 @@ const createButton = () =>
 const nameField = () => screen.getByRole('textbox', { name: 'Nom de l’espace' })
 const failed = () => screen.findByText(/L’espace n’a pas pu être créé/)
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(() => {
   vi.stubEnv('VITE_CORE_API_URL', BASE)
   setTokenProvider(() => undefined)

@@ -56,7 +56,7 @@ const UNSERVED_PATHS = [
 ]
 let requested: string[] = []
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'bypass' }))
 beforeEach(() => {
   signInSynthetic()
   // The pilot: no mock override, whatever the suite's default.

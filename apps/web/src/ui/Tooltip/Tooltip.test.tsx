@@ -67,6 +67,23 @@ describe('Tooltip', () => {
     expect(await screen.findByRole('tooltip')).toBe(ref.current)
   })
 
+  it('keeps both the child hint and additional tooltip detail for ordinary tooltips', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <p id="own-hint">Own hint</p>
+        <Tooltip content="Additional detail">
+          <button aria-label="Control" aria-describedby="own-hint" />
+        </Tooltip>
+      </>
+    )
+    await user.tab()
+    await screen.findByRole('tooltip')
+    expect(screen.getByRole('button', { name: 'Control' })).toHaveAccessibleDescription(
+      'Own hint Additional detail'
+    )
+  })
+
   describe('names: the tooltip of an icon-only control', () => {
     it('shows the name on focus for the eye only, never as a second description', async () => {
       const user = userEvent.setup()
@@ -102,6 +119,36 @@ describe('Tooltip', () => {
       expect(screen.getByRole('button', { name: 'Micro' })).toHaveAccessibleDescription(
         'Raccourci : Ctrl M'
       )
+    })
+
+    it('preserves child hints, ref and focus handler through a naming tooltip', async () => {
+      const user = userEvent.setup()
+      const trigger = createRef<HTMLButtonElement>()
+      const onFocus = vi.fn()
+      render(
+        <>
+          <p id="shortcut">Keyboard shortcut</p>
+          <p id="availability">Available now</p>
+          <Tooltip content="Microphone" names>
+            <button
+              ref={trigger}
+              onFocus={onFocus}
+              aria-label="Microphone"
+              aria-describedby="shortcut availability"
+            />
+          </Tooltip>
+        </>
+      )
+      const button = screen.getByRole('button', { name: 'Microphone' })
+      expect(trigger.current).toBe(button)
+      expect(button).toHaveAttribute('aria-describedby', 'shortcut availability')
+      await user.tab()
+      expect(onFocus).toHaveBeenCalledTimes(1)
+      expect(button).toHaveAttribute('aria-describedby', 'shortcut availability')
+      expect(button).toHaveAccessibleDescription('Keyboard shortcut Available now')
+      await user.keyboard('{Escape}')
+      expect(button).toHaveFocus()
+      expect(button).toHaveAttribute('aria-describedby', 'shortcut availability')
     })
 
     it('hides on Escape and keeps the focus where it was (WCAG 1.4.13)', async () => {

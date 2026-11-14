@@ -4,7 +4,7 @@
 // this overlay directly, but a caller trying to order anyway is refused the
 // same way.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { ownedOrderMe } from '../orderIdentity'
 import { problem } from '../problem'
 

@@ -1,7 +1,7 @@
 // docs/specs/02-status.md §7: `status/components` returns `503` while
 // `tenants/{id}/status` succeeds. §12 acceptance test 7.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { problem } from '../problem'
 import { operationalComponents, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 

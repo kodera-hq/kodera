@@ -5,8 +5,8 @@
 // passing against a shape the Core API stopped returning. Scenario overlays go in
 // `tests/e2e/scenarios/` and override these.
 
-import { http, HttpResponse } from 'msw'
-import type { HttpHandler } from 'msw'
+import { http, HttpResponse } from 'msw/http'
+import type { HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES, type OperationExample } from './examples'

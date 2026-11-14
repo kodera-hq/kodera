@@ -1,5 +1,5 @@
 // Controlled interoperability only: the explicit driver below is not a mounted claim flow.
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiProblem, NetworkError, coreApi, setTokenProvider } from '@/api/client'
 import { mutate } from '@/api/mutations'
@@ -59,7 +59,7 @@ const auditUnhandled = () => {
 }
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
   server.events.on('request:start', auditRequest)
   server.events.on('request:unhandled', auditUnhandled)
 })

@@ -2,7 +2,7 @@
 // `status: provisioning`, `provisioning_steps` with `apps` running and the
 // two before it `succeeded`. §12 acceptance test 1.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { sixStepsAt, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 
 const BASE = '*/api/v1'

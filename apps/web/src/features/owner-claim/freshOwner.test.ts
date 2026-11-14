@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import * as compiler from 'typescript'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { ApiProblem, coreApi, setTokenProvider } from '../../api/client'
@@ -36,7 +36,7 @@ const SOURCE = readFileSync(join(import.meta.dirname, 'freshOwner.ts'), 'utf8')
 const UUID_GUARD = 'if (fresh.owner.organisationId !== expected.organisationId) return undefined'
 const ROLE_GUARD = "if (fresh.membership.role !== 'org_owner') return undefined"
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterAll(() => server.close())
 
 function latch() {
