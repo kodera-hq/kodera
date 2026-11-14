@@ -370,6 +370,13 @@ def assert_image_boundary(ignore):
         "!apps/notifications/api/responses.py",
         "!apps/notifications/api/urls.py",
         "!apps/notifications/api/views.py",
+        "!apps/proximity/__init__.py",
+        "!apps/proximity/services.py",
+        "!apps/proximity/api/__init__.py",
+        "!apps/proximity/api/http.py",
+        "!apps/proximity/api/urls.py",
+        "!apps/proximity/api/views.py",
+        "!apps/workspaces/selectors.py",
         "!apps/extensions/__init__.py",
         "!apps/extensions/apps.py",
         "!apps/extensions/models.py",
@@ -657,6 +664,18 @@ def test_the_image_carries_what_the_settings_it_starts_need(tmp_path):
     assert image_start_refusals(tmp_path) == [], (
         "a settings module the image starts needs a file the image does not carry"
     )
+
+
+def test_proximity_routes_start_from_effective_image_sources(tmp_path):
+    files = image_tree(ROOT, tmp_path)
+    assert "apps/proximity/api/views.py" in files
+    assert "apps/proximity/services.py" in files
+    assert image_start_refusals(tmp_path, modules=("config.settings.deploy",)) == []
+    (tmp_path / "apps/proximity/services.py").unlink()
+    assert image_start_refusals(tmp_path, modules=("config.settings.deploy",)) == [
+        "config.settings.deploy does not start from the files the image carries: "
+        "ModuleNotFoundError: No module named 'apps.proximity.services'"
+    ], "the image-start guard admitted an incomplete mounted proximity package"
 
 
 def test_the_image_start_check_fails_a_profile_that_installs_an_app_the_image_lacks(tmp_path):
