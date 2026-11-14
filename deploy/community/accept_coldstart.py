@@ -39,6 +39,21 @@ class Refused(RuntimeError):
     """A bounded acceptance predicate refused; captured configuration stays private."""
 
 
+def build_diagnostics(output):
+    """Expose compiler locations and error codes without publishing captured output."""
+    found = set()
+    for match in re.finditer(
+        r"(?m)(?:^|\s)((?:src|tests|scripts|\.storybook)/[A-Za-z0-9_./-]+)"
+        r"\((\d+),(\d+)\): error (TS\d+):", output
+    ):
+        found.add(f"{match[1]}:{match[2]}:{match[3]} {match[4]}")
+    for match in re.finditer(r"(?m)^npm (?:ERR!|error) code (E[A-Z0-9_]+)\s*$", output):
+        found.add("npm " + match[1])
+    if "Documentation artifact differs:" in output:
+        found.add("documentation artifact drift")
+    return sorted(found)[:32]
+
+
 def hosted(environment):
     return (
         environment.get("GITHUB_ACTIONS") == "true"
@@ -184,6 +199,8 @@ class Qualification:
             captured = output.read().decode(errors="replace")
         record = {"phase": phase, "seconds": round(time.monotonic() - started, 3),
                   "exit_code": process.returncode}
+        if process.returncode and phase.startswith("build-"):
+            record["diagnostics"] = build_diagnostics(captured)
         self.evidence["phases"].append(record)
         print(json.dumps(record), flush=True)
         if process.returncode:
