@@ -87,3 +87,11 @@ da7ee4a7a75a0028c7345ab52de0f52232adc09f:Cargo.lock:generic-api-key:1261
 
 # Reviewed public synthetic HMAC signing fixture; no provider or runtime credential binding.
 7032033ca3069e33b35086579ae3e5f0074b5e74:extensions/billing-webhooks/test/billing-webhooks.test.mjs:generic-api-key:20
+
+# Reviewed deterministic public Passport token examples and synthetic form props; no runtime credential binding.
+76667946baff3db29e0e4a409ee1cf9ef94fe31b:packages/api-contract/core-api.openapi.yaml:generic-api-key:16816
+76667946baff3db29e0e4a409ee1cf9ef94fe31b:apps/server/contracts/core-api.openapi.yaml:generic-api-key:16816
+76667946baff3db29e0e4a409ee1cf9ef94fe31b:apps/web/contracts/core-api.openapi.yaml:generic-api-key:16816
+76667946baff3db29e0e4a409ee1cf9ef94fe31b:apps/web/src/api/schema.d.ts:generic-api-key:10702
+76667946baff3db29e0e4a409ee1cf9ef94fe31b:apps/web/src/features/passport/passport.test.tsx:generic-api-key:160
+
