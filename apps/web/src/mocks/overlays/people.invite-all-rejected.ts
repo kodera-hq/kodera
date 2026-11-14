@@ -1,7 +1,7 @@
 // docs/specs/03-people.md §7 `people.invite-all-rejected`: every
 // `results[].outcome` is `invalid_email`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 
 type InvitationBatchResult = components['schemas']['InvitationBatchResult']

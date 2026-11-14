@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { server } from '../../mocks/server'
@@ -16,7 +16,7 @@ import { memberImportHandlers, type MemberImport } from '../../mocks/overlays/su
 import { ImportScreen, type ImportScreenProps } from './ImportScreen'
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 beforeEach(signInSynthetic)
@@ -122,7 +122,7 @@ describe('Import a list (03-people.md §4.3)', () => {
     expect(screen.getByText('CSV · 5 000 lignes maximum · 2 Mo')).toBeVisible()
     expect(screen.getByText(/Le fichier est supprimé par le serveur/)).toBeVisible()
 
-    // `onUnhandledRequest: 'error'`: a request for the template would fail the test.
+    // `onUnhandledFrame: 'error'`: a request for the template would fail the test.
     await userEvent.click(screen.getByRole('button', { name: 'Télécharger un modèle' }))
     expect(blobs).toHaveLength(1)
     expect(await readBlob(blobs[0]!)).toContain('E-mail;Prénom;Nom;Rôle')

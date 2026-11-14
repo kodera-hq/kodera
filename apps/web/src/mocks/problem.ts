@@ -6,7 +6,7 @@
 // `ProblemType` and not `string`: an overlay cannot invent an error the API never
 // emits and the message catalogue has no key for.
 
-import { HttpResponse } from 'msw'
+import { HttpResponse } from 'msw/http'
 import { PROBLEM_STATUS, PROBLEM_TITLES, type ProblemType } from './generated/problems'
 
 export interface ProblemFieldError {

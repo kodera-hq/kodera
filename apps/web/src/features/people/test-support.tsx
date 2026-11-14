@@ -4,7 +4,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render } from '@testing-library/react'
-import type { HttpHandler } from 'msw'
+import type { HttpHandler } from 'msw/http'
 import type { ReactElement } from 'react'
 import { vi } from 'vitest'
 import { authAdapter } from '../../auth/oidc'

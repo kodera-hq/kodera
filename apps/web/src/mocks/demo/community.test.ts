@@ -22,7 +22,7 @@ import {
 const server = setupServer(...handlers)
 beforeAll(() => {
   vi.stubEnv('VITE_KEYCLOAK_URL', 'https://id.example.test')
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
 })
 afterAll(() => {
   server.close()

@@ -8,7 +8,7 @@
 // the string the prose happens to use, since only the former is a value the
 // generated types (and a real Core API) would ever actually send.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES } from '../generated/examples'

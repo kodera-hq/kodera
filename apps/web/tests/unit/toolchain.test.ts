@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 // Not a new package in the tree: eslint already installs js-yaml, so this
 // declares what is here rather than adding to it. Only its type stubs are
@@ -231,7 +232,7 @@ describe('installs', () => {
     // Without the install script, nothing rewrites `msw/mockServiceWorker.js` when msw is bumped;
     // a stale worker only warns at runtime, so the bump has to fail here instead.
     expect(read('msw/mockServiceWorker.js')).toBe(
-      readWorkspaceRoot('node_modules/msw/lib/mockServiceWorker.js')
+      readFileSync(createRequire(import.meta.url).resolve('msw/mockServiceWorker.js'), 'utf8')
     )
   })
 

@@ -1,7 +1,7 @@
 // docs/specs/00-shell-and-login.md §7: `status-summary` returns
 // `capacity.participants.pct: 92` and `upgrade_prompt: true`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

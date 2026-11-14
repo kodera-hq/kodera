@@ -3,7 +3,7 @@
 // the address that carries its calls, one waiting for its proof, one proven
 // and being finished, one that failed, and one with a very long name.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { mixedAddresses, pageOf, pageRequest } from '../fixtures/domainFixtures'
 import { EXAMPLES } from '../generated/examples'
 

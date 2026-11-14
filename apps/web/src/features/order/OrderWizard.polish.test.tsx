@@ -10,7 +10,7 @@ import {
   useNavigate,
 } from '@tanstack/react-router'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { SUPPORT_EMAIL } from '../../app/supportContact'
@@ -63,7 +63,7 @@ function sessionFor(scope: OrderOwner) {
   vi.spyOn(authAdapter, 'getUser').mockReturnValue(user)
   vi.spyOn(authAdapter, 'getAccessToken').mockReturnValue('synthetic')
 }
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   localStorage.clear()

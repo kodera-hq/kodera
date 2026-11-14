@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import i18n from '../../i18n'
 import { problem } from '../../mocks/problem'
@@ -15,7 +15,7 @@ import {
 import { PeopleScreen, type PeopleTab } from './PeopleScreen'
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(signInSynthetic)
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())

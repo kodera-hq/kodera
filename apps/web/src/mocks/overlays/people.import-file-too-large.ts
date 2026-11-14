@@ -1,7 +1,7 @@
 // docs/specs/03-people.md §7 `people.import-file-too-large`: the upload is
 // refused with `413 payload-too-large`, the limit named in `detail`.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { problem } from '../problem'
 
 export const handlers = [

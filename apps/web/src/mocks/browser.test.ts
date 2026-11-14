@@ -94,7 +94,7 @@ describe('buildHandlers', () => {
     // `authHandlers()`'s own required Keycloak env reads.
     ;(import.meta.env as Record<string, unknown>)['VITE_AUTH_MODE'] = 'oidc'
     ;(import.meta.env as Record<string, unknown>)['VITE_KEYCLOAK_URL'] = 'https://id.example.test'
-    server.listen({ onUnhandledRequest: 'error' })
+    server.listen({ onUnhandledFrame: 'error' })
   })
   afterEach(() => server.resetHandlers())
   afterAll(() => {
@@ -213,7 +213,7 @@ describe('the demo scenario', () => {
   beforeAll(() => {
     env['VITE_AUTH_MODE'] = 'oidc'
     env['VITE_KEYCLOAK_URL'] = 'https://id.example.test'
-    server.listen({ onUnhandledRequest: 'error' })
+    server.listen({ onUnhandledFrame: 'error' })
   })
   afterEach(() => server.resetHandlers())
   afterAll(() => {

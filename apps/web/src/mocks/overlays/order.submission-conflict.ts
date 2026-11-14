@@ -6,7 +6,7 @@
 // layer, the shape a genuine timeout takes, so the retry is the interesting
 // part under test rather than a second ordinary success.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 
 const BASE = '*/api/v1'

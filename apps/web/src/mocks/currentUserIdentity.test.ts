@@ -18,7 +18,7 @@ function decodeClaims(token: string): { iss: string; sub: string } {
 
 describe('mock current-user identity contract', () => {
   const server = setupServer(...authHandlers(), ...handlers)
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   afterEach(() => server.resetHandlers())
   afterAll(() => server.close())
 

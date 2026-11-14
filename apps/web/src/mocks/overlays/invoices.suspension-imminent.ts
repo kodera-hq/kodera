@@ -2,7 +2,7 @@
 // seven days." Dates are computed from "now" so "seven days" stays true
 // whenever the suite runs, rather than a date that quietly goes stale.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { baseInvoice, INVOICE_ID, invoicesPage, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 
 const BASE = '*/api/v1'

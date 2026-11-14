@@ -100,7 +100,7 @@ const ARMED: Mutant | null = (() => {
   throw new Error(`VITE_PEOPLE_PRIVACY_MUTANT names no mutant: ${String(named)}`)
 })()
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => {
   server.resetHandlers()
   probe.mutant = null

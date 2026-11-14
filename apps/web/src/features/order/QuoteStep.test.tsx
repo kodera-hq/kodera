@@ -4,7 +4,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { server } from '@/mocks/server'
@@ -14,7 +14,7 @@ import { QuoteStep } from './QuoteStep'
 
 const BASE = 'https://core.test/api/v1'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(() => {
   vi.stubEnv('VITE_CORE_API_URL', BASE)
   server.use(...catalogueHandlers)

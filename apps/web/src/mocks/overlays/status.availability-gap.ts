@@ -1,7 +1,7 @@
 // docs/specs/02-status.md §7: `availability` returns one day with
 // `state: no_data`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { operationalComponents, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 
 const BASE = '*/api/v1'

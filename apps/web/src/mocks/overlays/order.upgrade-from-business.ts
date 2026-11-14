@@ -4,7 +4,7 @@
 // this shape by accident): an active `visio-docs` subscription at tier `M`,
 // the upgrade entry point's `from={currentPlan}` reads back.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 
 const BASE = '*/api/v1'

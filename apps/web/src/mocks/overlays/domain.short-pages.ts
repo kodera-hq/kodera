@@ -4,7 +4,7 @@
 // contract's own sentence about `limit`. Three pages, so a list that stopped
 // at the first would show a third of the addresses and say nothing.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { mixedAddresses, pageOf, pageRequest } from '../fixtures/domainFixtures'
 import { EXAMPLES } from '../generated/examples'
 

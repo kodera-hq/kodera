@@ -1,7 +1,7 @@
 // docs/specs/11-workspace.md §7: `setup` `failed` / `realm_job_failed`: an operator acts, the
 // console offers no retry.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { WORKSPACE_PATH, notInitialisedWorkspace } from '../fixtures/workspaceFixtures'
 
 export const handlers = [

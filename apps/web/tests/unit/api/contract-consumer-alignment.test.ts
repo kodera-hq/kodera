@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { http } from 'msw'
+import { http } from 'msw/http'
 import ts from 'typescript'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parse } from 'yaml'
@@ -448,7 +448,7 @@ function sameIntent(first: CapturedIntent, second: CapturedIntent) {
 
 describe('the unchanged client under a bounded consume503', () => {
   const base = 'https://core.test/api/v1'
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   beforeEach(() => {
     vi.stubEnv('VITE_CORE_API_URL', base)
     setTokenProvider(() => undefined)

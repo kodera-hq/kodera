@@ -6,7 +6,7 @@
 // would otherwise leak an overdue banner onto a screen with no invoice to
 // name in it.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 const BASE = '*/api/v1'
 const ORG = '6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f'

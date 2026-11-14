@@ -22,7 +22,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 
 describe('mock identity provider handlers', () => {
   const server = setupServer()
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   afterEach(() => {
     server.resetHandlers()
     history.replaceState(null, '', '/')

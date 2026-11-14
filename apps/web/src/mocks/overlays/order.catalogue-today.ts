@@ -3,7 +3,7 @@
 // catalogue lists none of its prices, and Business Plus is sold Visio-only at 690 €. Listed after
 // `order.catalogue-default`, whose tiers, plans and legal documents it keeps.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 
 type Pack = components['schemas']['Pack']

@@ -2,7 +2,7 @@
 // `pending`, and the organisation's tenant is `ordered` — created in one step, its homeserver not
 // prepared yet.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 import { WORKSPACE_PATH, readyWorkspace } from '../fixtures/workspaceFixtures'
 

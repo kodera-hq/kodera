@@ -5,7 +5,7 @@
 // `ordered` across repeated reads, since the base example is free to change
 // under a future regeneration.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 
 const BASE = '*/api/v1'

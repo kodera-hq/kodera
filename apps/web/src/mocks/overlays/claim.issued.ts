@@ -3,7 +3,7 @@
 // mock identity the organisation's `org_owner` in every later `/me`, as Core would; before it,
 // that identity belongs to no organisation. The flag lives as long as the page.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 import { ownedOrderMe } from '../orderIdentity'

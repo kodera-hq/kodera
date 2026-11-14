@@ -3,7 +3,7 @@
 // `capacity-exceeded`; the contract registry (v0.11.0) spells it
 // `quota-exceeded`, which is what the API emits.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { problem } from '../problem'
 
 export const handlers = [

@@ -11,7 +11,7 @@ import {
   peopleHandlers,
 } from '@/mocks/overlays/support/people'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(() => {
   vi.stubEnv('VITE_CORE_API_URL', 'https://core.example.test/api/v1')
   vi.spyOn(authAdapter, 'getSnapshot').mockReturnValue({

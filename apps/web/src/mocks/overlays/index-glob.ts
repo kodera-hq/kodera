@@ -10,7 +10,7 @@
 // scans, so it excludes itself by name instead of by a segment that would
 // otherwise double (`overlays/overlays/*.ts`, which resolves to nothing).
 
-import type { HttpHandler } from 'msw'
+import type { HttpHandler } from 'msw/http'
 
 interface OverlayModule {
   readonly handlers: HttpHandler[]

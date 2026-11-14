@@ -1,5 +1,5 @@
 // Session-scoped People state for interactive local workspaces only.
-import { HttpResponse } from 'msw'
+import { HttpResponse } from 'msw/http'
 import type { components } from '../../api/schema'
 import { problem } from '../problem'
 

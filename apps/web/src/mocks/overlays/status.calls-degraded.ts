@@ -2,7 +2,7 @@
 // `status/incidents` returns one open incident with two updates. §12
 // acceptance test 4.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { degradedComponents, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 import type { components } from '@/api/schema'
 

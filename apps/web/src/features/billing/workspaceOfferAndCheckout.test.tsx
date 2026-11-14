@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { useState, type ReactNode } from 'react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
@@ -32,7 +32,7 @@ const ORDER_ID = 'a1b2c3d4-e5f6-4718-8293-0a1b2c3d4e5f'
 const INVOICE_ID = 'd4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70'
 const ownerRole = 'org_owner' as const
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(async () => {
   vi.stubEnv('VITE_CORE_API_URL', BASE)
   await i18n.changeLanguage('fr')

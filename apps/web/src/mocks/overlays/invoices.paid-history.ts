@@ -4,7 +4,7 @@
 // answer the two cursors that pager can actually produce: none, and
 // `"page-2"`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { baseInvoice, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 
 const BASE = '*/api/v1'

@@ -5,7 +5,7 @@
 // Paired with test-fixture.second.ts: both answer the same path with a
 // different body, so a test naming both scenarios can assert which one wins.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 export const handlers = [
   http.get('*/api/v1/__scenario-composition-fixture', () =>

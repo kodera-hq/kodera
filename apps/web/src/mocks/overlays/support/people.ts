@@ -13,7 +13,7 @@
 // Resend keys replay the first response, and a stale PATCH tag refuses the
 // write before either resource data or its version changes.
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../../currentUserIdentity'
 import { EXAMPLES } from '../../generated/examples'

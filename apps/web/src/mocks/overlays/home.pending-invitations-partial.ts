@@ -5,7 +5,7 @@
 // (the last one already carries the four invitations, so `home.pending-
 // invitations` itself is not needed in the list).
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 import { problem } from '../problem'
 import { pendingInvitationId, pendingInvitations, recordResend } from './home.pending-invitations'

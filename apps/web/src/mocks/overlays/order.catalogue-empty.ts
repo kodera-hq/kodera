@@ -1,5 +1,5 @@
 // A successful empty collection is distinct from a failed catalogue read.
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 export const handlers = [
   http.get('*/api/v1/catalog/capacity-tiers', () =>

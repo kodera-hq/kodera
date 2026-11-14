@@ -21,7 +21,7 @@ import { handlers as seatLimit } from '../../mocks/overlays/people.seat-limit'
 import { InviteDrawer, type InviteDrawerProps } from './InviteDrawer'
 import type { OrganisationRole } from './roles'
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { StrictMode, Suspense, useState } from 'react'
 import * as peopleQueries from './queries'
 import { authAdapter } from '../../auth/oidc'
@@ -33,7 +33,7 @@ import {
   type InvitationOwner,
 } from './invitationRecovery'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 beforeEach(signInSynthetic)

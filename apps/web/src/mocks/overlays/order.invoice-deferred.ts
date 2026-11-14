@@ -4,7 +4,7 @@
 // deferral there: `invoice_id` absent is what `billing_pending` becomes once
 // an order already exists (`ConfirmationStep.tsx`).
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 
 const BASE = '*/api/v1'

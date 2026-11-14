@@ -3,7 +3,7 @@
 // Read-only demo observations answer deterministic Groupe Vercelli figures, while
 // archive builds and destructive erasures answer truthful demo refusals (`503` / `403`).
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { problem } from '../problem'
 import * as seed from './seed'

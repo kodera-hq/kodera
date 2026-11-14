@@ -1,7 +1,7 @@
 // docs/specs/02-status.md §7: one step in `status: failed` with a `job_id`,
 // tenant `status: failed`. §12 acceptance test 6.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 import type { components } from '@/api/schema'
 

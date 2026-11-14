@@ -1,7 +1,7 @@
 // docs/specs/08-home.md §7: capacity at 100 % — the red, "Limite atteinte"
 // state, both offer links. Compose over `home.default`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 
