@@ -31,9 +31,11 @@ from typing import Any
 from collections.abc import Mapping
 
 from synapse.module_api import NOT_SPAM, ModuleApi
-from synapse.module_api.errors import Codes, ConfigError
+from synapse.module_api.errors import Codes, ConfigError, SynapseError
 
-__version__ = "0.1.5"
+from .federation import MODE, acl, acl_matches, creation_mode, server_list
+
+__version__ = "0.1.6"
 
 DM_INVITEES = "io.kodera.dm.invitees"
 MAX_DM_INVITEES = 8
@@ -66,6 +68,8 @@ class KoderaPolicy:
         self._agent = config["agent_user_id"]
         self._room_access = config.get("room_access_user_id")
         self._api = api
+        self._server = self._agent.partition(":")[2]
+        self._federation_servers = frozenset(config.get("federation_domain_allowlist", ()))
         api.register_spam_checker_callbacks(
             user_may_create_room=self.user_may_create_room,
             user_may_invite=self.user_may_invite,
@@ -90,7 +94,10 @@ class KoderaPolicy:
             not isinstance(room_access, str) or not room_access.startswith("@") or ":" not in room_access
         ):
             raise ConfigError("room_access_user_id must be a full Matrix user ID, such as @rooms:example.org")
-        return {"agent_user_id": agent, "room_access_user_id": room_access}
+        servers = server_list(config.get("federation_domain_allowlist", []), empty=True)
+        if servers is None or agent.partition(":")[2] in (servers or ()):
+            raise ConfigError("federation_domain_allowlist must list at most 32 distinct public homeserver names without ports or wildcards")
+        return {"agent_user_id": agent, "room_access_user_id": room_access, "federation_domain_allowlist": list(servers)}
 
     async def user_may_create_room(
         self, user_id: str, room_config: dict[str, Any] | None = None
@@ -101,6 +108,14 @@ class KoderaPolicy:
             return Codes.FORBIDDEN
         if user_id == self._agent:
             return NOT_SPAM
+        # on_create_room runs before this callback in the pinned Synapse. It validates the raw
+        # member request before injecting the local ACL. Project only that exact injected state
+        # for the second DM check; a client-supplied ACL is refused by the raw creation hook.
+        if isinstance(room_config, dict):
+            creation = room_config.get("creation_content")
+            injected = [{"type": "m.room.server_acl", "state_key": "", "content": acl(self._server)}]
+            if isinstance(creation, dict) and creation_mode(creation) == "internal" and creation.get(DM_INVITEES) == room_config.get("invite") and room_config.get("initial_state") == injected:
+                room_config = {**room_config, "initial_state": []}
         # Synapse before 1.132 passes no room_config: nothing tells a direct message apart.
         if room_config is None or not self._is_direct_message(user_id, room_config):
             return Codes.FORBIDDEN
@@ -130,6 +145,7 @@ class KoderaPolicy:
             and config.get("preset") == "private_chat"
             and isinstance(creation, dict)
             and creation.get("type") is None
+            and creation.get(MODE) in (None, "internal")
         )
 
     async def _active_dm_users(self, *users: str) -> bool:
@@ -148,7 +164,36 @@ class KoderaPolicy:
 
     async def on_create_room(self, requester: Any, request_content: dict[str, Any], is_requester_admin: bool) -> None:
         creator = requester.user.to_string()
-        if creator != self._agent and self._is_direct_message(creator, request_content):
+        direct = creator != self._agent and self._is_direct_message(creator, request_content)
+        if creator != self._agent and not direct:
+            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)
+        creation = request_content.get("creation_content") or {}
+        if not isinstance(creation, dict):
+            raise SynapseError(403, "Room creation content must be an object", errcode=Codes.FORBIDDEN)
+        partner = creation.get(MODE) == "partner"
+        initial = request_content.get("initial_state") or []
+        if not isinstance(initial, list):
+            raise SynapseError(403, "Room initial state must be a list", errcode=Codes.FORBIDDEN)
+        policies = [item for item in initial if isinstance(item, dict) and item.get("type") == "io.kodera.room.policy" and item.get("state_key", "") == ""]
+        partners: tuple[str, ...] = ()
+        if partner:
+            content = policies[0].get("content") if len(policies) == 1 else None
+            partners = self._partner_content(content) or ()
+            if creator != self._agent or not partners or creation.get("m.federate") is not True or request_content.get("preset") != "private_chat" or request_content.get("visibility", "private") != "private":
+                raise SynapseError(403, "Partner federation requires an explicit trusted bounded room policy", errcode=Codes.FORBIDDEN)
+        else:
+            if creation.get(MODE) not in (None, "internal") or any(isinstance(item.get("content"), Mapping) and item["content"].get("allow_federated_invites") is True for item in policies):
+                raise SynapseError(403, "Internal rooms cannot enable partner federation", errcode=Codes.FORBIDDEN)
+        creation = dict(creation, **{"m.federate": partner, MODE: "partner" if partner else "internal"})
+        creation["io.kodera.room.initial_partner_servers"] = list(partners)
+        request_content["creation_content"] = creation
+        expected = acl(self._server, partners)
+        acls = [item for item in initial if isinstance(item, dict) and item.get("type") == "m.room.server_acl" and item.get("state_key", "") == ""]
+        if len(acls) > 1 or (acls and acls[0].get("content") != expected):
+            raise SynapseError(403, "Room server ACL must match its immutable federation mode", errcode=Codes.FORBIDDEN)
+        if not acls:
+            request_content["initial_state"] = [*initial, {"type": "m.room.server_acl", "state_key": "", "content": expected}]
+        if direct:
             # Room creation state is immutable. Bind every sequential initial invite to
             # the validated request rather than a racy current membership count.
             creation = dict(request_content.get("creation_content") or {})
@@ -160,9 +205,13 @@ class KoderaPolicy:
             return Codes.FORBIDDEN
         if not _is_valid_user_id(invitee):
             return Codes.FORBIDDEN
-        if inviter == self._agent:
+        if inviter == self._agent and self._api.is_mine(invitee):
             return NOT_SPAM
         state = await self._api.get_room_state(room_id)
+        if not self._api.is_mine(invitee) and not self._partner_federation_allowed(state, invitee):
+            return Codes.FORBIDDEN
+        if inviter == self._agent:
+            return NOT_SPAM
         policy_event = state.get(("io.kodera.room.policy", ""))
         policy_content = getattr(policy_event, "content", None)
         if _has_governance(policy_content):
@@ -205,6 +254,8 @@ class KoderaPolicy:
         state = await self._api.get_room_state(room)
         policy_event = state.get(("io.kodera.room.policy", ""))
         content = getattr(policy_event, "content", None)
+        if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):
+            return Codes.FORBIDDEN
         if not _has_governance(content):
             return NOT_SPAM
         if not self._governance_valid(policy_event):
@@ -212,8 +263,6 @@ class KoderaPolicy:
         if user in content.get('banned', ()):
             return Codes.FORBIDDEN
         if content.get("archived", False) is not False:
-            return Codes.FORBIDDEN
-        if content.get("local_only") is True and not self._api.is_mine(user):
             return Codes.FORBIDDEN
         if content["audience"] == "listed" and user not in content["members"]:
             return Codes.FORBIDDEN
@@ -283,7 +332,79 @@ class KoderaPolicy:
             return False
         return content["audience"] != "listed" or set(content["exempt"]) <= set(content["members"])
 
+    def _partner_content(self, content: Any, *, allow_archived: bool = False) -> tuple[str, ...] | None:
+        if not isinstance(content, Mapping):
+            return None
+        servers = server_list(content.get("federation_servers"))
+        if not servers or self._server in servers or not set(servers) <= self._federation_servers:
+            return None
+        if not (
+            type(content.get("version")) is int and content["version"] == 1
+            and content.get("kind") == "text"
+            and content.get("allow_member_invites") is True
+            and content.get("allow_federated_invites") is True
+            and content.get("local_only") is False
+            and content.get("audience") == "all"
+            and content.get("read_only") is False
+            and (content.get("archived", False) is False or (allow_archived and content.get("archived") is True))
+        ):
+            return None
+        return servers
+
+    def _partner_federation_allowed(self, state: Any, user: str | None = None) -> bool:
+        """A room cannot acquire federation by changing a mutable policy on a legacy room."""
+        policy = state.get(("io.kodera.room.policy", ""))
+        create = state.get(("m.room.create", ""))
+        partners = self._partner_content(getattr(policy, "content", None))
+        expected = acl(self._server, partners or ())
+        return (
+            getattr(policy, "sender", None) == self._agent
+            and getattr(create, "sender", None) == self._agent
+            and creation_mode(getattr(create, "content", None)) == "partner"
+            and partners is not None and self._governance_valid(policy)
+            and getattr(state.get(("m.room.server_acl", "")), "sender", None) == self._agent
+            and acl_matches(getattr(state.get(("m.room.server_acl", "")), "content", None), expected)
+            and (user is None or (_is_valid_user_id(user) and user.partition(":")[2] in partners))
+        )
+
+    def _federation_boundary_allows(self, event: Any, state: Any) -> bool:
+        # This runs before the administrative account's governance exemption. A local
+        # service may reconcile local users and remove remote users, never bypass a room's
+        # remote admission boundary. Matrix's native event authorization still applies.
+        create = state.get(("m.room.create", ""))
+        creation = getattr(create, "content", None)
+        if event.type == "io.kodera.room.policy" and event.content.get("allow_federated_invites") is True:
+            if creation_mode(creation) != "partner" or self._partner_content(event.content, allow_archived=True) is None:
+                return False
+        if creation_mode(creation) == "partner" and event.type == "m.room.join_rules" and event.content.get('join_rule') != "invite":
+            return False
+        if event.type == "m.room.server_acl":
+            policy = state.get(("io.kodera.room.policy", ""))
+            partners = self._partner_content(getattr(policy, "content", None)) if creation_mode(creation) == "partner" else ()
+            # Synapse checks the initial ACL before the initial policy is visible. The creation
+            # hook binds its exact approved servers immutably. This bootstrap admits no remote
+            # membership: admission still requires the complete trusted policy and ACL state.
+            if policy is None and creation_mode(creation) == "partner":
+                partners = server_list(creation.get("io.kodera.room.initial_partner_servers"))
+                if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not set(partners) <= self._federation_servers:
+                    return False
+            if not acl_matches(event.content, acl(self._server, partners or ())):
+                return False
+        membership = event.content.get("membership") if event.type == "m.room.member" else None
+        target = getattr(event, "state_key", None)
+        if membership in {"join", "invite", "knock"}:
+            if not _is_valid_user_id(target) or not self._api.is_mine(target):
+                if not self._partner_federation_allowed(state, target):
+                    return False
+        if not self._api.is_mine(event.sender):
+            if membership == "leave" and target == event.sender:
+                return True
+            return self._partner_federation_allowed(state, event.sender)
+        return True
+
     def _governance_allows(self, event: Any, state: Any) -> bool:
+        if not self._federation_boundary_allows(event, state):
+            return False
         if event.sender == self._agent:
             return True
         policy_event = state.get(("io.kodera.room.policy", ""))
@@ -307,9 +428,6 @@ class KoderaPolicy:
         if event.type == "m.room.member":
             membership = event.content.get("membership")
             target = getattr(event, "state_key", None)
-            if membership in {"join", "invite", "knock"} and content.get("local_only") is True:
-                if not _is_valid_user_id(target) or not self._api.is_mine(target):
-                    return False
             if membership in {"join", "invite", "knock"} and content["audience"] == "listed":
                 if target not in content["members"]:
                     return False

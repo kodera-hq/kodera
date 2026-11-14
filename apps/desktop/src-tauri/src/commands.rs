@@ -1,8 +1,10 @@
 //! Typed local backend operations. This is not registered Tauri IPC or an authentication layer.
 
 use super::{
-    CloudProvider, DeployValidationError, DesktopWorkspaceSession, SelfHostDeploymentPlan,
-    SelfHostDeploymentSpec,
+    AdmittedDeepLink, CloudProvider, DeepLinkError, DeployValidationError, DesktopWorkspaceSession,
+    KeychainError, KeychainSecretKind, KeychainSessionMetadata, PttStateSnapshot,
+    SelfHostDeploymentPlan, SelfHostDeploymentSpec, SelfHostHealthError, SelfHostHealthReport,
+    TrayCallKind, TrayPttError, TrayStateSnapshot,
 };
 use kodera_rs::{
     encode_hex, ChannelAccessDecision, ChannelPermissionPolicy, ChannelPollSnapshot, CoreError,
@@ -14,6 +16,38 @@ use std::{collections::BTreeMap, fmt};
 
 /// Bound raw UTF-8 requests before parsing or allocating decoded fields.
 pub const MAX_IPC_COMMAND_BYTES: usize = 16_384;
+
+/// Canonical desktop command names admitted by the dispatcher.
+pub const REGISTERED_DESKTOP_COMMANDS: [&str; 28] = [
+    "plan_self_host",
+    "validate_docs_pad_url",
+    "proximity_current_beacon",
+    "proximity_member_statuses",
+    "proximity_next_relay_batch",
+    "clear_workspace_session",
+    "set_sound_pack",
+    "get_sound_pack",
+    "create_channel_poll",
+    "vote_channel_poll",
+    "get_channel_poll",
+    "close_channel_poll",
+    "redact_iban",
+    "validate_connector_post_url",
+    "set_theme_mode",
+    "import_shareable_theme",
+    "export_shareable_theme",
+    "update_user_profile",
+    "evaluate_channel_iam",
+    "save_docs_pad",
+    "route_deep_link",
+    "update_tray_state",
+    "get_tray_state",
+    "configure_ptt",
+    "set_ptt_pressed",
+    "get_ptt_state",
+    "validate_keychain_metadata",
+    "inspect_self_host_health",
+];
 
 /// The proximity routes answer under two names, permanently. The channel was first called
 /// `#urgence` and its routes `emergency_*`; a caller written then keeps working. Each legacy name
@@ -130,6 +164,46 @@ pub enum DesktopCommandRequest {
         title: String,
         markdown_body: String,
         editor_handle: String,
+    },
+    RouteDeepLink {
+        organisation_id: String,
+        raw_uri: String,
+    },
+    UpdateTrayState {
+        organisation_id: String,
+        unread_count: u64,
+        call_state: String,
+        muted: bool,
+        self_host_degraded: bool,
+    },
+    GetTrayState {
+        organisation_id: String,
+    },
+    ConfigurePtt {
+        organisation_id: String,
+        opt_in: bool,
+        raw_chord: Option<String>,
+    },
+    SetPttPressed {
+        organisation_id: String,
+        pressed: bool,
+        now_ms: u64,
+    },
+    GetPttState {
+        organisation_id: String,
+    },
+    ValidateKeychainMetadata {
+        organisation_id: String,
+        secret_kind: String,
+        matrix_user_id: String,
+        device_id: String,
+        issued_at_unix_secs: u64,
+        expires_at_unix_secs: Option<u64>,
+        raw_secret: Option<String>,
+    },
+    InspectSelfHostHealth {
+        organisation_id: String,
+        compose_ps_json: String,
     },
 }
 
@@ -302,6 +376,42 @@ impl DesktopCommandRequest {
                 markdown_body: take_string(&mut fields, "markdown_body")?,
                 editor_handle: take_string(&mut fields, "actor")?,
             },
+            "route_deep_link" => Self::RouteDeepLink {
+                organisation_id,
+                raw_uri: take_string(&mut fields, "raw_uri")?,
+            },
+            "update_tray_state" => Self::UpdateTrayState {
+                organisation_id,
+                unread_count: take_integer(&mut fields, "unread_count")?,
+                call_state: take_string(&mut fields, "call_state")?,
+                muted: take_bool(&mut fields, "muted")?,
+                self_host_degraded: take_bool(&mut fields, "self_host_degraded")?,
+            },
+            "get_tray_state" => Self::GetTrayState { organisation_id },
+            "configure_ptt" => Self::ConfigurePtt {
+                organisation_id,
+                opt_in: take_bool(&mut fields, "opt_in")?,
+                raw_chord: take_optional_string(&mut fields, "chord")?,
+            },
+            "set_ptt_pressed" => Self::SetPttPressed {
+                organisation_id,
+                pressed: take_bool(&mut fields, "pressed")?,
+                now_ms: take_integer(&mut fields, "now_ms")?,
+            },
+            "get_ptt_state" => Self::GetPttState { organisation_id },
+            "validate_keychain_metadata" => Self::ValidateKeychainMetadata {
+                organisation_id,
+                secret_kind: take_string(&mut fields, "secret_kind")?,
+                matrix_user_id: take_string(&mut fields, "matrix_user_id")?,
+                device_id: take_string(&mut fields, "device_id")?,
+                issued_at_unix_secs: take_integer(&mut fields, "issued_at_unix_secs")?,
+                expires_at_unix_secs: take_optional_integer(&mut fields, "expires_at_unix_secs")?,
+                raw_secret: take_optional_string(&mut fields, "raw_secret")?,
+            },
+            "inspect_self_host_health" => Self::InspectSelfHostHealth {
+                organisation_id,
+                compose_ps_json: take_string(&mut fields, "compose_ps_json")?,
+            },
             _ => return Err(DesktopCommandError::InvalidRequest),
         };
         if !fields.is_empty() {
@@ -363,6 +473,26 @@ impl DesktopCommandRequest {
             }
             | Self::SaveDocsPad {
                 organisation_id, ..
+            }
+            | Self::RouteDeepLink {
+                organisation_id, ..
+            }
+            | Self::UpdateTrayState {
+                organisation_id, ..
+            }
+            | Self::GetTrayState { organisation_id }
+            | Self::ConfigurePtt {
+                organisation_id, ..
+            }
+            | Self::SetPttPressed {
+                organisation_id, ..
+            }
+            | Self::GetPttState { organisation_id }
+            | Self::ValidateKeychainMetadata {
+                organisation_id, ..
+            }
+            | Self::InspectSelfHostHealth {
+                organisation_id, ..
             } => organisation_id,
         }
     }
@@ -409,6 +539,17 @@ fn take_integer(
     match fields.remove(key) {
         Some(CommandField::Integer(value)) => Ok(value),
         _ => Err(DesktopCommandError::InvalidRequest),
+    }
+}
+
+fn take_optional_integer(
+    fields: &mut BTreeMap<String, CommandField>,
+    key: &str,
+) -> Result<Option<u64>, DesktopCommandError> {
+    match fields.remove(key) {
+        None => Ok(None),
+        Some(CommandField::Integer(value)) => Ok(Some(value)),
+        Some(_) => Err(DesktopCommandError::InvalidRequest),
     }
 }
 
@@ -665,6 +806,10 @@ pub enum DesktopCommandError {
     Core(CoreError),
     Deployment(DeployValidationError),
     SecretInPublicPlan,
+    DeepLink(DeepLinkError),
+    TrayPtt(TrayPttError),
+    Keychain(KeychainError),
+    SelfHostHealth(SelfHostHealthError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -690,6 +835,11 @@ pub enum DesktopCommandResponse {
     UserProfile(UserProfile),
     ChannelAccess(ChannelAccessDecision),
     DocsPad(DocsPadDocument),
+    DeepLink(AdmittedDeepLink),
+    TrayState(TrayStateSnapshot),
+    PttState(PttStateSnapshot),
+    KeychainMetadata(KeychainSessionMetadata),
+    SelfHostHealth(SelfHostHealthReport),
     WorkspaceSessionCleared,
     Error(DesktopCommandError),
 }
@@ -947,9 +1097,178 @@ impl DesktopWorkspaceSession {
                 )
                 .map(DesktopCommandResponse::DocsPad)
                 .map_err(DesktopCommandError::Core),
+            DesktopCommandRequest::RouteDeepLink {
+                organisation_id,
+                raw_uri,
+            } => self
+                .route_deep_link(&organisation_id, &raw_uri)
+                .map(DesktopCommandResponse::DeepLink),
+            DesktopCommandRequest::UpdateTrayState {
+                organisation_id,
+                unread_count,
+                call_state,
+                muted,
+                self_host_degraded,
+            } => (|| {
+                let count = u32::try_from(unread_count).map_err(|_| {
+                    DesktopCommandError::TrayPtt(TrayPttError::UnreadCountOutOfRange)
+                })?;
+                let active_call = TrayCallKind::parse_optional(&call_state)
+                    .map_err(DesktopCommandError::TrayPtt)?;
+                self.update_tray_state(
+                    &organisation_id,
+                    count,
+                    active_call,
+                    muted,
+                    self_host_degraded,
+                )
+                .map(DesktopCommandResponse::TrayState)
+            })(),
+            DesktopCommandRequest::GetTrayState { organisation_id } => self
+                .tray_state(&organisation_id)
+                .map(DesktopCommandResponse::TrayState)
+                .map_err(DesktopCommandError::Core),
+            DesktopCommandRequest::ConfigurePtt {
+                organisation_id,
+                opt_in,
+                raw_chord,
+            } => self
+                .configure_ptt(&organisation_id, opt_in, raw_chord.as_deref())
+                .map(DesktopCommandResponse::PttState),
+            DesktopCommandRequest::SetPttPressed {
+                organisation_id,
+                pressed,
+                now_ms,
+            } => self
+                .set_ptt_pressed(&organisation_id, pressed, now_ms)
+                .map(DesktopCommandResponse::PttState),
+            DesktopCommandRequest::GetPttState { organisation_id } => self
+                .ptt_state(&organisation_id)
+                .map(DesktopCommandResponse::PttState)
+                .map_err(DesktopCommandError::Core),
+            DesktopCommandRequest::ValidateKeychainMetadata {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+                device_id,
+                issued_at_unix_secs,
+                expires_at_unix_secs,
+                raw_secret,
+            } => (|| {
+                let kind = KeychainSecretKind::parse(&secret_kind)
+                    .map_err(DesktopCommandError::Keychain)?;
+                self.validate_keychain_metadata(
+                    &organisation_id,
+                    kind,
+                    &matrix_user_id,
+                    &device_id,
+                    issued_at_unix_secs,
+                    expires_at_unix_secs,
+                    raw_secret.as_deref(),
+                )
+                .map(DesktopCommandResponse::KeychainMetadata)
+            })(),
+            DesktopCommandRequest::InspectSelfHostHealth {
+                organisation_id,
+                compose_ps_json,
+            } => self
+                .inspect_self_host_health(&organisation_id, &compose_ps_json)
+                .map(DesktopCommandResponse::SelfHostHealth),
         };
         result.unwrap_or_else(DesktopCommandResponse::Error)
     }
+}
+
+/// Rust-callable Tauri command seams bound to the active [`DesktopWorkspaceSession`].
+pub fn route_desktop_deep_link(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+    raw_uri: &str,
+) -> Result<AdmittedDeepLink, DesktopCommandError> {
+    session.route_deep_link(organisation_id, raw_uri)
+}
+
+pub fn update_desktop_tray_state(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    unread_count: u32,
+    active_call: Option<TrayCallKind>,
+    muted: bool,
+    self_host_degraded: bool,
+) -> Result<TrayStateSnapshot, DesktopCommandError> {
+    session.update_tray_state(
+        organisation_id,
+        unread_count,
+        active_call,
+        muted,
+        self_host_degraded,
+    )
+}
+
+pub fn get_desktop_tray_state(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+) -> Result<TrayStateSnapshot, DesktopCommandError> {
+    session
+        .tray_state(organisation_id)
+        .map_err(DesktopCommandError::Core)
+}
+
+pub fn configure_desktop_ptt(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    opt_in: bool,
+    raw_chord: Option<&str>,
+) -> Result<PttStateSnapshot, DesktopCommandError> {
+    session.configure_ptt(organisation_id, opt_in, raw_chord)
+}
+
+pub fn set_desktop_ptt_pressed(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    pressed: bool,
+    now_ms: u64,
+) -> Result<PttStateSnapshot, DesktopCommandError> {
+    session.set_ptt_pressed(organisation_id, pressed, now_ms)
+}
+
+pub fn get_desktop_ptt_state(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+) -> Result<PttStateSnapshot, DesktopCommandError> {
+    session
+        .ptt_state(organisation_id)
+        .map_err(DesktopCommandError::Core)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn validate_desktop_keychain_metadata(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+    secret_kind: KeychainSecretKind,
+    matrix_user_id: &str,
+    device_id: &str,
+    issued_at_unix_secs: u64,
+    expires_at_unix_secs: Option<u64>,
+    raw_secret: Option<&str>,
+) -> Result<KeychainSessionMetadata, DesktopCommandError> {
+    session.validate_keychain_metadata(
+        organisation_id,
+        secret_kind,
+        matrix_user_id,
+        device_id,
+        issued_at_unix_secs,
+        expires_at_unix_secs,
+        raw_secret,
+    )
+}
+
+pub fn inspect_desktop_self_host_health(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    compose_ps_json: &str,
+) -> Result<SelfHostHealthReport, DesktopCommandError> {
+    session.inspect_self_host_health(organisation_id, compose_ps_json)
 }
 
 #[cfg(test)]
@@ -2018,6 +2337,9 @@ mod tests {
             .save_docs_pad(ORG, "pad", "text", "Title", "body", "local-author")
             .unwrap();
         state
+            .configure_ptt(ORG, true, Some("Ctrl+Shift+Space"))
+            .unwrap();
+        state
     }
 
     /// The complete current JSON surface, including routes added after the original shell.
@@ -2110,20 +2432,67 @@ mod tests {
                 ),
             ),
             ("save_docs_pad", save_json("pad", "text", "updated")),
+            (
+                "route_deep_link",
+                json(
+                    "route_deep_link",
+                    r#","raw_uri":"matrix:r/partner-ops:community.kodera.io?action=join""#,
+                ),
+            ),
+            (
+                "update_tray_state",
+                json(
+                    "update_tray_state",
+                    r#","unread_count":3,"call_state":"voice","muted":true,"self_host_degraded":false"#,
+                ),
+            ),
+            ("get_tray_state", json("get_tray_state", "")),
+            (
+                "configure_ptt",
+                json(
+                    "configure_ptt",
+                    r#","opt_in":true,"chord":"Alt+Shift+Space""#,
+                ),
+            ),
+            (
+                "set_ptt_pressed",
+                json("set_ptt_pressed", r#","pressed":true,"now_ms":2500"#),
+            ),
+            ("get_ptt_state", json("get_ptt_state", "")),
+            (
+                "validate_keychain_metadata",
+                json(
+                    "validate_keychain_metadata",
+                    &format!(
+                        r#","secret_kind":"matrix-session","matrix_user_id":"@member:community.kodera.io","device_id":"DEV_01","issued_at_unix_secs":1762520000,"expires_at_unix_secs":1762523600,"raw_secret":"{TOKEN}""#
+                    ),
+                ),
+            ),
+            (
+                "inspect_self_host_health",
+                json(
+                    "inspect_self_host_health",
+                    r#","compose_ps_json":"[{\"Service\":\"postgres\",\"State\":\"running\",\"Health\":\"healthy\",\"MemoryMiB\":256},{\"Service\":\"synapse\",\"State\":\"running\",\"Health\":\"healthy\",\"KoderaPolicy\":\"0.1.4\",\"MemoryMiB\":640},{\"Service\":\"coturn\",\"State\":\"running\",\"Health\":\"\",\"MemoryMiB\":96}]""#,
+                ),
+            ),
         ]
     }
 
     #[test]
     fn complete_twenty_route_json_flow_reaches_each_typed_result() {
         let cases = audit_command_cases();
-        assert_eq!(cases.len(), 20);
+        assert_eq!(cases.len(), REGISTERED_DESKTOP_COMMANDS.len());
+        assert_eq!(
+            cases.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            REGISTERED_DESKTOP_COMMANDS
+        );
         assert_eq!(
             cases
                 .iter()
                 .map(|(name, _)| *name)
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
-            20
+            REGISTERED_DESKTOP_COMMANDS.len()
         );
         for (name, request) in cases {
             let mut state = audit_workspace();
@@ -2212,6 +2581,52 @@ mod tests {
                         .export_markdown_with_frontmatter()
                         .ends_with("updated"));
                 }
+                ("route_deep_link", DesktopCommandResponse::DeepLink(admitted)) => {
+                    assert_eq!(
+                        admitted.canonical_uri(),
+                        "matrix:r/partner-ops:community.kodera.io?action=join"
+                    );
+                }
+                ("update_tray_state", DesktopCommandResponse::TrayState(tray)) => {
+                    assert_eq!(tray.unread_count, 3);
+                    assert_eq!(tray.active_call, Some(TrayCallKind::Voice));
+                    assert!(tray.muted);
+                }
+                ("get_tray_state", DesktopCommandResponse::TrayState(tray)) => {
+                    assert_eq!(tray.unread_count, 0);
+                    assert_eq!(tray.active_call, None);
+                }
+                ("configure_ptt", DesktopCommandResponse::PttState(ptt)) => {
+                    assert!(ptt.opt_in_enabled);
+                    assert_eq!(ptt.binding.as_deref(), Some("Alt+Shift+Space"));
+                }
+                ("set_ptt_pressed", DesktopCommandResponse::PttState(ptt)) => {
+                    assert_eq!(
+                        ptt.transmission,
+                        crate::PttTransmissionState::Transmitting { since_ms: 2500 }
+                    );
+                }
+                ("get_ptt_state", DesktopCommandResponse::PttState(ptt)) => {
+                    assert!(ptt.opt_in_enabled);
+                    assert_eq!(ptt.binding.as_deref(), Some("Ctrl+Shift+Space"));
+                }
+                (
+                    "validate_keychain_metadata",
+                    DesktopCommandResponse::KeychainMetadata(metadata),
+                ) => {
+                    assert_eq!(
+                        metadata.slot.service_name,
+                        "io.kodera.desktop.matrix-session"
+                    );
+                    assert_eq!(
+                        metadata.slot.account_name,
+                        format!("org:{ORG}:user:@member:community.kodera.io")
+                    );
+                }
+                ("inspect_self_host_health", DesktopCommandResponse::SelfHostHealth(report)) => {
+                    assert!(report.is_healthy());
+                    assert_eq!(report.observed_memory_mib, 992);
+                }
                 (route, unexpected) => {
                     panic!("{route} produced unexpected response: {unexpected:?}")
                 }
@@ -2230,6 +2645,9 @@ mod tests {
                 state.channel_poll(ORG, "text", "poll").unwrap(),
                 state.member_statuses(ORG).unwrap(),
                 state.allowed_docs_host.clone(),
+                state.tray_state(ORG).unwrap(),
+                state.ptt_state(ORG).unwrap(),
+                state.deep_link_policy.clone(),
             )
         };
         for (name, request) in audit_command_cases()
@@ -2598,5 +3016,113 @@ mod tests {
             LEGACY_ROUTE_ALIASES[2],
         ];
         assert!(legacy_routes_answer_like_proximity_routes(&crossed).is_err());
+    }
+
+    #[test]
+    fn w5_d1_commands_synchronize_tray_ptt_health_and_redact_keychain_secrets() {
+        let mut state = session();
+        // Default session starts with PTT disabled and tray idle.
+        assert!(!get_desktop_ptt_state(&state, ORG).unwrap().opt_in_enabled);
+        assert_eq!(
+            get_desktop_tray_state(&state, ORG).unwrap().indicator,
+            crate::TrayIndicator::Idle
+        );
+        assert_eq!(
+            set_desktop_ptt_pressed(&mut state, ORG, true, 100),
+            Err(DesktopCommandError::TrayPtt(TrayPttError::PttNotOptedIn))
+        );
+
+        // Configure PTT, join muted voice call, press PTT -> tray reflects active PTT, hang up -> PTT auto-releases.
+        configure_desktop_ptt(&mut state, ORG, true, Some("Ctrl+Shift+Space")).unwrap();
+        update_desktop_tray_state(&mut state, ORG, 2, Some(TrayCallKind::Voice), true, false)
+            .unwrap();
+        set_desktop_ptt_pressed(&mut state, ORG, true, 500).unwrap();
+        let live_tray = get_desktop_tray_state(&state, ORG).unwrap();
+        assert!(live_tray.ptt_transmitting);
+        assert_eq!(
+            live_tray.indicator,
+            crate::TrayIndicator::ActiveCall {
+                kind: TrayCallKind::Voice,
+                muted: false,
+            }
+        );
+
+        // Ending the call automatically releases PTT transmission.
+        let ended_tray = update_desktop_tray_state(&mut state, ORG, 2, None, false, false).unwrap();
+        assert!(!ended_tray.ptt_transmitting);
+        assert_eq!(
+            get_desktop_ptt_state(&state, ORG).unwrap().transmission,
+            crate::PttTransmissionState::Inactive
+        );
+
+        // Degraded local self-host inspection marks tray as SelfHostDegraded.
+        let report = inspect_desktop_self_host_health(
+            &mut state,
+            ORG,
+            r#"[{"Service":"postgres","State":"running","Health":"healthy"},{"Service":"synapse","State":"restarting","Health":""}]"#,
+        )
+        .unwrap();
+        assert!(!report.is_healthy());
+        assert_eq!(
+            get_desktop_tray_state(&state, ORG).unwrap().indicator,
+            crate::TrayIndicator::SelfHostDegraded
+        );
+
+        // Keychain metadata leak check via JSON command never echoes token.
+        let leaked_json = json(
+            "validate_keychain_metadata",
+            &format!(
+                r#","secret_kind":"matrix-session","matrix_user_id":"@member:community.kodera.io","device_id":"DEV_01","issued_at_unix_secs":1762520000,"raw_secret":"{TOKEN}""#
+            ),
+        )
+        .replace("DEV_01", "fixture_token_never_reflect");
+        let response = state.dispatch_command(&leaked_json.replace(
+            &format!(r#""raw_secret":"{TOKEN}""#),
+            r#""raw_secret":"fixture_token_never_reflect""#,
+        ));
+        assert_eq!(
+            response,
+            DesktopCommandResponse::Error(DesktopCommandError::Keychain(
+                KeychainError::SecretLeakedInMetadata
+            ))
+        );
+        assert!(!format!("{response:?}").contains("fixture_token_never_reflect"));
+
+        // Deep-link wrapper enforces custom tenant domain configuration and resets on switch.
+        assert_eq!(
+            route_desktop_deep_link(&state, ORG, "matrix:r/team:chat.tenant.eu?action=join"),
+            Err(DesktopCommandError::DeepLink(
+                DeepLinkError::UntrustedOrigin
+            ))
+        );
+        state
+            .configure_deep_link_domains(ORG, &["chat.tenant.eu"])
+            .unwrap();
+        assert!(
+            route_desktop_deep_link(&state, ORG, "matrix:r/team:chat.tenant.eu?action=join")
+                .is_ok()
+        );
+        state
+            .switch_organisation(OTHER_ORG, [0x43; 32], HashSet::from([[1; 32]]), 4)
+            .unwrap();
+        assert_eq!(
+            route_desktop_deep_link(
+                &state,
+                OTHER_ORG,
+                "matrix:r/team:chat.tenant.eu?action=join"
+            ),
+            Err(DesktopCommandError::DeepLink(
+                DeepLinkError::UntrustedOrigin
+            ))
+        );
+        assert!(
+            !get_desktop_ptt_state(&state, OTHER_ORG)
+                .unwrap()
+                .opt_in_enabled
+        );
+        assert_eq!(
+            get_desktop_tray_state(&state, OTHER_ORG).unwrap().indicator,
+            crate::TrayIndicator::Idle
+        );
     }
 }

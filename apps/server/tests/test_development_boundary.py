@@ -256,6 +256,7 @@ def assert_image_boundary(ignore):
         "!tenant_agent/core_api.py",
         "!tenant_agent/docker_exec.py",
         "!tenant_agent/engines.py",
+        "!tenant_agent/federation.py",
         "!tenant_agent/guard.py",
         "!tenant_agent/handlers.py",
         "!tenant_agent/state.py",
@@ -487,7 +488,9 @@ def test_api_image_excludes_deployed_operator_profile_and_detects_restoration():
         assert_image_boundary(rules)
 
 
-@pytest.mark.parametrize("path", ["services/identity/access_tokens.py", "apps/extensions/expiry.py"])
+@pytest.mark.parametrize(
+    "path", ["services/identity/access_tokens.py", "apps/extensions/expiry.py"]
+)
 def test_image_guard_refuses_missing_customer_runtime_source(path):
     ignore = (ROOT / ".dockerignore").read_text().splitlines()
     ignore.remove("!" + path)
@@ -538,6 +541,9 @@ else:
 OPERATOR_MODULES = (
     "apps/audit/privacy_events.py",
     "apps/identity/privacy_selectors.py",
+    "apps/docs/privacy_selectors.py",
+    "apps/billing/privacy_selectors.py",
+    "apps/workspaces/privacy_selectors.py",
     "apps/workspaces/quota_policy.py",
     "apps/workspaces/management/commands/configure_workspace_quotas.py",
     "apps/identity/command_principal.py",

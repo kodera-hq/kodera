@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from . import federation
 from .engines import EngineError
 
 log = logging.getLogger("tenant_agent.synapse")
@@ -123,12 +124,32 @@ class Synapse:
         topic: str,
         initial_state: list[dict[str, Any]],
         power_levels: dict[str, Any],
+        *,
+        federation_servers: tuple[str, ...] = (),
     ) -> str:
+        try:
+            federation_servers = federation.servers(federation_servers, empty=True)
+        except ValueError:
+            raise EngineError("invalid partner homeserver names") from None
+        if self.server_name in federation_servers:
+            raise EngineError("a partner homeserver must be external")
+        expected_acl = federation.acl(self.server_name, federation_servers)
+        supplied_acl = [item for item in initial_state if item.get("type") == "m.room.server_acl"]
+        if len(supplied_acl) > 1 or any(
+            item.get("state_key", "") != "" or item.get("content") != expected_acl
+            for item in supplied_acl
+        ):
+            raise EngineError("initial server ACL must exactly match the room federation mode")
+        initial_state = [item for item in initial_state if item.get("type") != "m.room.server_acl"]
         _, answer = self._call(
             "POST",
             "/_matrix/client/v3/createRoom",
             {
                 "room_alias_name": f"kodera-ch-{channel_id}",
+                "creation_content": {
+                    "m.federate": bool(federation_servers),
+                    federation.MODE: "partner" if federation_servers else "internal",
+                },
                 # Pinned: power_levels() relies on version 12's creator rule.
                 "room_version": "12",
                 "preset": "private_chat",
@@ -137,6 +158,11 @@ class Synapse:
                 "topic": topic,
                 "initial_state": [
                     *initial_state,
+                    {
+                        "type": "m.room.server_acl",
+                        "state_key": "",
+                        "content": expected_acl,
+                    },
                     {
                         "type": "m.room.guest_access",
                         "state_key": "",
@@ -153,6 +179,18 @@ class Synapse:
             },
         )
         return str(answer["room_id"])
+
+    def require_federation_mode(self, room_id: str, partners: tuple[str, ...]) -> None:
+        content = self.state(room_id, "m.room.create")
+        expected = "partner" if partners else "internal"
+        if (
+            not isinstance(content, dict)
+            or content.get(federation.MODE) != expected
+            or content.get("m.federate") is not bool(partners)
+        ):
+            raise EngineError(
+                "room federation mode differs; explicit replacement/migration is required"
+            )
 
     def creator(self, room_id: str) -> str | None:
         """Who created the room (admin API): a room under a channel's alias is the channel's only

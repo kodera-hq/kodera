@@ -151,23 +151,64 @@ A stack started from an earlier revision of this profile meets four changes. Non
 
 ## Federation
 
-Status: closed by default. Matrix federation is not part of the product yet; opening it is an operator's own decision and is not tested here.
+Status: closed by default. Explicit partner federation is experimental under proposed
+SRV-ADR-0025 and requires operator review before deployment.
 
-By default the homeserver talks to no other server:
+The ordinary Compose profiles expose client APIs only. Synapse's federation allowlist is empty,
+no key server is trusted, and Caddy refuses federation/key/admin routes. Internal rooms are
+created with immutable `m.federate: false` and a local-server ACL. The tenant agent does not
+select any partner channel by default.
 
-- `federation_domain_whitelist` is empty, no key server is trusted, and Synapse's listener serves the client API only;
-- Caddy routes no `/_matrix/federation/*` or `/_matrix/key/*` path, and the federation port 8448 is not published.
+From a full source checkout, generate a separate opt-in overlay (generation changes no service):
 
-To open federation to servers you name, and only those:
+```sh
+python3 deploy/community/partner_federation.py --enable-partner-federation \
+  --topology single --domain home.example.org --allow-server partner.example.org \
+  --channels '{"11111111-1111-4111-8111-111111111111":["partner.example.org"]}' \
+  --out /tmp/partner-config
+```
 
-1. Set `KODERA_MATRIX_FEDERATION_ALLOWLIST` to their server names, comma-separated (`partner.example.org,other.example.org`). A wildcard or a private name is refused. Synapse then admits those servers only and serves the federation API on its listener.
-2. Route the federation paths yourself, in your own copy of the `Caddyfile`: add `/_matrix/federation/*` and `/_matrix/key/*` to the `@matrix` matcher, and publish server discovery (`/.well-known/matrix/server` naming `<KODERA_DOMAIN>:443`).
+Use actual Core channel UUIDs and reviewed public homeserver names. The map is bounded to
+32 channels and 32 distinct servers per channel; every server must also appear in the global
+`KODERA_MATRIX_FEDERATION_ALLOWLIST`. Ports, IPs, wildcards and private names are refused.
+`KODERA_MATRIX_PARTNER_CHANNELS` and the global allowlist are public configuration, delivered to
+the tenant agent and Synapse renderer with the same values. The source generator is intentionally
+not added to the minimal `create-kodera` asset bundle; this experimental mode requires a full
+checkout. The normal scaffolder remains closed and its existing asset parity gate still applies.
 
-The room policy still applies: a member may invite a user of another server only in a room whose `io.kodera.room.policy` allows it (see `packages/synapse-policy`).
+Review the generated README and files. Add `--env-file .env --env-file /tmp/partner-config/partner.env`
+to Compose and apply `/tmp/partner-config/docker-compose.partner.yml` after the base profile
+(and after the split profile when selected). It overrides only Caddy's reviewed configuration
+mount. The generated routing opens exactly `/_matrix/federation/*` and `/_matrix/key/*`; admin
+and internal agent routes remain closed. The single topology adds exact server discovery.
+For `--topology split`, the separate web host must serve generated `matrix-server.json` at
+`https://<KODERA_DOMAIN>/.well-known/matrix/server`; the generator does not configure that host.
+Existing output directories and symlinks are refused rather than overwritten.
+
+Only active text channels with Core audience `all`, no denied override and `read_only: false`
+qualify. The agent creates a private invite-only room with both invitation flags true, explicit
+immutable partner mode and an exact server ACL. Ordinary joined users may invite approved
+partners through standard Matrix clients. Native room authorization, bans and encryption
+restrictions remain in force; a partner identity receives no Core membership or document grant.
+Foreign joined/invited users survive convergence only for that exact eligible channel and server.
+An ineligible selection fails closed. Existing rooms without the matching immutable mode require
+explicit replacement/migration; no creation flag is rewritten or history copied automatically.
+Removing opt-in removes foreign membership and holds the old room for replacement.
+
+Partner rooms use Matrix shared history. Removing an invitation or membership cannot retract
+history already delivered; ACLs cannot establish retroactive outbound isolation for a formerly
+federated room. Keep internal conversations in separate rooms. Verify deployed TLS, discovery,
+peer policy and real-account acceptance before enabling this mode. The isolated two-homeserver
+harness in `packages/synapse-policy/tests/integration/federation.py` exercises standard Matrix
+protocol; it does not claim device testing of Element, Tchap or Cinny builds.
+
+Validation: `python3 deploy/community/test_partner_federation.py` checks narrow routes,
+discovery and 12 named refusal cases. The default community gate and its mutation self-tests
+continue to reject open-by-default profiles.
 
 ## Images and limits
 
-- Synapse installs `kodera-synapse-policy` 0.1.5 from the local read-only package mount on every start, with `--no-index --no-deps --no-build-isolation`. No package download occurs. Keep the repository's `packages/synapse-policy` directory beside this deployment tree.
+- Synapse installs `kodera-synapse-policy` 0.1.6 from the local read-only package mount on every start, with `--no-index --no-deps --no-build-isolation`. No package download occurs. Keep the repository's `packages/synapse-policy` directory beside this deployment tree.
 - Fresh and existing Synapse configurations enable `kodera_synapse_policy.KoderaPolicy`. The tenant agent is `@kodera-agent:<domain>` and the occupancy writer is `@kodera-rooms:<domain>`; provision `ROOM_ACCESS_MATRIX_TOKEN` for that room-access account. The generated configuration preserves other operator modules and replaces the policy entry idempotently.
 - Every pulled image is pinned by tag and digest (`name:tag@sha256:…`), matching the versions the CI runs where the CI runs them (Postgres 17.6, Synapse v1.163.0, LiveKit v1.13.10). The `server`, `migrate`, `room-access` and `web` images are built from this repository.
 - Every service sets `mem_limit`.

@@ -9,6 +9,7 @@ Nothing here mails: the operator's run does (apps/support/ticket_mail.py).
 import json
 import math
 import re
+import string
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -61,10 +62,18 @@ MEMBERS = frozenset(
 REQUIRED = ("subject", "body", "category")
 # The outbox sender's own conservative address (apps/outbox/sender.py RECIPIENT, which the API
 # image does not carry): letters, digits and `_ % + -` atoms before the `@`, host labels after it.
+# The grammar, kept character-for-character equal to the sender's and checked by
+# tests/test_outbox_mail_text_params.py. `is_address` below reads the same language in one pass:
+# an untrusted address is never handed to this pattern, whose nested quantifiers backtrack
+# polynomially on a long near-match.
 ADDRESS = re.compile(
     r"[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
     r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
 )
+# The three character sets ADDRESS names, for the single pass that reads it.
+_ATEXT = frozenset(string.ascii_letters + string.digits + "_%+-")
+_ALNUM = frozenset(string.ascii_letters + string.digits)
+_LABEL = _ALNUM | {"-"}
 # The only control characters a ticket's message keeps.
 BODY_CONTROLS = frozenset("\n\t")
 
@@ -136,9 +145,28 @@ def support_mailbox() -> str | None:
 
 
 def is_address(value: str) -> bool:
-    return (
-        len(value) <= 254 and len(value.partition("@")[0]) <= 64 and bool(ADDRESS.fullmatch(value))
-    )
+    """`atom(.atom)*@label(.label)+`, the language ADDRESS names, read in one linear pass.
+
+    Every character is looked at a bounded number of times, so a long near-miss costs what a
+    valid address costs rather than growing with the square of its length.
+    """
+    if len(value) > 254 or value.count("@") != 1:
+        return False
+    local, _, domain = value.partition("@")
+    if not 0 < len(local) <= 64:
+        return False
+    for atom in local.split("."):
+        if not atom or not set(atom) <= _ATEXT:
+            return False
+    labels = domain.split(".")
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not 0 < len(label) <= 63 or label[0] not in _ALNUM or label[-1] not in _ALNUM:
+            return False
+        if not set(label[1:-1]) <= _LABEL:
+            return False
+    return True
 
 
 # ----------------------------------------------------------------------------- authority ----
