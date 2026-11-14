@@ -146,7 +146,7 @@ pub struct ProximityBeaconV2Receiver {
     organisation: OrganisationId,
     discovery_key: [u8; 32],
     capacity: usize,
-    latest_clock_window: Option<u32>,
+    latest_clock_seconds: Option<u64>,
     seen: BTreeMap<(u32, [u8; 8]), u32>,
 }
 
@@ -175,7 +175,7 @@ impl ProximityBeaconV2Receiver {
             organisation,
             discovery_key,
             capacity,
-            latest_clock_window: None,
+            latest_clock_seconds: None,
             seen: BTreeMap::new(),
         })
     }
@@ -187,7 +187,10 @@ impl ProximityBeaconV2Receiver {
     ) -> Result<BeaconObservationV2, NativeCryptoError> {
         let packet = ProximityBeaconV2::from_bytes(bytes)?;
         let current = window(now_unix_seconds)?;
-        if self.latest_clock_window.is_some_and(|last| current < last) {
+        if self
+            .latest_clock_seconds
+            .is_some_and(|last| now_unix_seconds < last)
+        {
             return Err(NativeCryptoError::EpochMismatch);
         }
         let previous_admitted = current.checked_sub(1) == Some(packet.window())
@@ -227,7 +230,7 @@ impl ProximityBeaconV2Receiver {
         }
         self.seen.retain(|(epoch, _), _| *epoch >= oldest);
         self.seen.insert(identity, packet.sequence());
-        self.latest_clock_window = Some(current);
+        self.latest_clock_seconds = Some(now_unix_seconds);
         Ok(BeaconObservationV2 {
             window: packet.window(),
             pseudonym: packet.pseudonym(),
@@ -329,6 +332,33 @@ mod tests {
         assert_eq!(
             receiver.accept_at(first.as_bytes(), 1231),
             Err(NativeCryptoError::EpochMismatch)
+        );
+    }
+
+    #[test]
+    fn intra_window_clock_rollback_cannot_readmit_an_evicted_previous_window_packet() {
+        let mut sender = ProximityBeaconV2Sender::new(organisation(), [1; 32], [2; 32]).unwrap();
+        let mut receiver = ProximityBeaconV2Receiver::new(organisation(), [1; 32], 2).unwrap();
+        let previous = sender.emit_at(900).unwrap();
+        let previous_identity = (previous.window(), previous.pseudonym());
+        receiver.accept_at(previous.as_bytes(), 1225).unwrap();
+        assert!(receiver.seen.contains_key(&previous_identity));
+
+        let current = sender.emit_at(1235).unwrap();
+        receiver.accept_at(current.as_bytes(), 1235).unwrap();
+        assert!(!receiver.seen.contains_key(&previous_identity));
+        assert_eq!(
+            receiver.accept_at(previous.as_bytes(), 1225),
+            Err(NativeCryptoError::EpochMismatch)
+        );
+        assert!(!receiver.seen.contains_key(&previous_identity));
+        assert_eq!(
+            receiver.accept_at(previous.as_bytes(), 1235),
+            Err(NativeCryptoError::EpochMismatch)
+        );
+        assert_eq!(
+            receiver.accept_at(current.as_bytes(), 1235),
+            Err(NativeCryptoError::Replay)
         );
     }
 

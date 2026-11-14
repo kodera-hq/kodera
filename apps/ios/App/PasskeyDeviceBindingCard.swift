@@ -2,8 +2,9 @@ import SwiftUI
 import KoderaAuth
 import KoderaDomain
 
-/// Surfaces Passkey (`ASAuthorizationPlatformPublicKeyCredential`) ES256 UP+UV (`0x05`, `0x0D`, `0x1D`)
-/// assertion policy status aligned with `kodera-rs` `passkey_binding`.
+/// Surfaces the unprovisioned Passkey ES256 UP+UV (`0x05`, `0x0D`, `0x1D`) policy preview card
+/// aligned with `kodera-rs` `passkey_binding`, before `AuthenticationServices` / `webcredentials:`
+/// Associated Domains entitlement provisioning at Gate G6.
 @MainActor
 struct PasskeyDeviceBindingCard: View {
     let organisationId: String?

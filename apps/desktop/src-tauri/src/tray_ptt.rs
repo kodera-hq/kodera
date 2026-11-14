@@ -531,6 +531,7 @@ impl PttController {
     ///
     /// - Supplying a chord while `opt_in == false` is refused (`PttNotOptedIn`) without mutating state.
     /// - Setting `opt_in == false` with `raw_chord == None` releases active transmission and clears the binding.
+    /// - Setting `opt_in == true` with `raw_chord == None` clears the binding and releases active transmission while keeping opt-in enabled.
     /// - Setting `opt_in == true` with `Some(chord)` validates the chord first; invalid chords leave existing state intact.
     pub fn configure(
         &mut self,
@@ -551,6 +552,8 @@ impl PttController {
             self.transmission = PttTransmissionState::Inactive;
         } else {
             self.opt_in_enabled = true;
+            self.binding = None;
+            self.transmission = PttTransmissionState::Inactive;
         }
         Ok(self.snapshot())
     }
@@ -731,6 +734,31 @@ mod tests {
             PttKeyChord::parse("Ctrl+A+B"),
             Err(TrayPttError::MultipleTriggerKeys)
         );
+    }
+
+    #[test]
+    fn ptt_unbinding_while_opted_in_releases_active_transmission() {
+        let mut ptt = PttController::new();
+        ptt.configure(true, Some("Ctrl+Space")).unwrap();
+        ptt.press(1_000).unwrap();
+        assert!(ptt.is_transmitting());
+
+        let unbound = ptt.configure(true, None).unwrap();
+        assert!(unbound.opt_in_enabled);
+        assert!(unbound.binding.is_none());
+        assert_eq!(unbound.transmission, PttTransmissionState::Inactive);
+        assert!(ptt.is_opted_in());
+        assert!(ptt.binding().is_none());
+        assert!(!ptt.is_transmitting());
+        assert_eq!(ptt.press(2_000), Err(TrayPttError::PttBindingNotConfigured));
+        assert_eq!(ptt.release(), Err(TrayPttError::PttBindingNotConfigured));
+        assert_eq!(ptt.snapshot(), unbound);
+
+        ptt.register_binding("Ctrl+Space").unwrap();
+        ptt.press(3_000).unwrap();
+        assert!(ptt.is_transmitting());
+        ptt.release().unwrap();
+        assert!(!ptt.is_transmitting());
     }
 
     #[test]

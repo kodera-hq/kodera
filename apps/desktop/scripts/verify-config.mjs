@@ -76,7 +76,8 @@ function verifyConfiguration(config, availableFiles, defaultCapability) {
     ['img-src', ["'self'", 'data:', 'blob:']],
     ['media-src', ["'self'", 'blob:']],
     ['worker-src', ["'self'", 'blob:']],
-    ['style-src', ["'self'", "'unsafe-inline'"]],
+    ['style-src', ["'self'"]],
+    ['style-src-attr', ["'unsafe-inline'"]],
     ['font-src', ["'self'", 'data:']],
     ['object-src', ["'none'"]],
     ['base-uri', ["'none'"]],
@@ -185,6 +186,15 @@ function selftest() {
     ['external fonts', /font-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("font-src 'self' data:", "font-src 'self' data: https:");
     }],
+    ['inline style elements', /style-src must use only approved sources/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("style-src 'self'", "style-src 'self' 'unsafe-inline'");
+    }],
+    ['missing style attribute directive', /style-src-attr must be present exactly once/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("style-src-attr 'unsafe-inline';", '');
+    }],
+    ['blocked inline style attributes', /style-src-attr must use only approved sources/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace("style-src-attr 'unsafe-inline'", "style-src-attr 'none'");
+    }],
     ['disabled CSP asset modification', /CSP asset modification must not be disabled/u, (config) => {
       config.app.security.dangerousDisableAssetCspModification = true;
     }],
@@ -241,7 +251,7 @@ function selftest() {
       config.plugins['deep-link'].desktop.schemes = ['Kodera', 'matrix'];
     }],
   ];
-  for (const directive of ['connect-src', 'img-src', 'object-src', 'base-uri', 'form-action', 'frame-ancestors']) {
+  for (const directive of ['connect-src', 'img-src', 'style-src', 'style-src-attr', 'object-src', 'base-uri', 'form-action', 'frame-ancestors']) {
     mutations.push([`expanded ${directive}`, new RegExp(`${directive} must use only approved sources`, 'u'), (config) => {
       config.app.security.csp = config.app.security.csp.replace(`${directive} `, `${directive} https: wss: `);
     }]);

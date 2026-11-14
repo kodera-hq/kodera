@@ -96,9 +96,9 @@ export const RadioGroup = forwardRef<HTMLDivElement, RadioGroupProps>(function R
                 disabled={option.disabled ?? false}
                 className={cx(
                   'group flex h-4 w-4 shrink-0 items-center justify-center rounded-full border bg-c-surface',
-                  // In the narrow layout the dot answers a 44 px touch around it (14 px
-                  // on each side of 16); its label toggles it too.
-                  'narrow:relative narrow:before:absolute narrow:before:-inset-[14px]',
+                  // Expand the 16 px dot to a 24 px hit target, or 44 px in the
+                  // narrow layout; its label also toggles it.
+                  'relative before:absolute before:-inset-1 narrow:before:-inset-[14px]',
                   'outline-hidden transition-colors duration-fast ease-out focus-visible:ring',
                   'disabled:cursor-not-allowed disabled:opacity-50',
                   error === undefined ? 'border-c-border-input' : 'border-c-bad-ink',

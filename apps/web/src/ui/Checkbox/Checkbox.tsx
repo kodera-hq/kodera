@@ -105,9 +105,9 @@ export const Checkbox = forwardRef<HTMLButtonElement, CheckboxProps>(function Ch
             // in JS on the `checked` prop, which does not exist when the
             // caller uses `defaultChecked` instead.
             'group flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] border bg-c-surface',
-            // In the narrow layout the box answers a 44 px touch around it (13 px on
-            // each side of 18); the label beside it already toggles it too.
-            'narrow:relative narrow:before:absolute narrow:before:-inset-[13px]',
+            // Expand the 18 px box to a 24 px hit target, or 44 px in the narrow
+            // layout; the label beside it also toggles it.
+            'relative before:absolute before:-inset-[3px] narrow:before:-inset-[13px]',
             'outline-hidden transition-colors duration-fast ease-out focus-visible:ring',
             // The ring stands 2 px off the box, over the ground (`focus-offset`,
             // `src/index.css`): flush, it met the `ink-4` edge at 2.23 : 1 and
