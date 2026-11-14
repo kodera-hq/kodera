@@ -788,7 +788,7 @@ function postHeaderInvitationReaderLoss(name: 'TypeError' | 'AbortError', messag
 // not a throwing mutation stub or a claim about physical browser cancellation.
 describe('actual invitation response reader', () => {
   it.each(['TypeError', 'AbortError'] as const)(
-    'propagates a modeled body-reader %s after successful headers without NetworkError wrapping',
+    'reports the truncated body after a post-header %s stream fault without NetworkError wrapping',
     async (name) => {
       const reader = postHeaderInvitationReaderLoss(name, 'Synthetic response reader interruption')
       const fixture = invitationReplyLoss(reader.response)
@@ -802,7 +802,10 @@ describe('actual invitation response reader', () => {
           )
           .catch((error: unknown) => error)
         expect(failure).not.toBeInstanceOf(NetworkError)
-        expect(failure).toMatchObject({ name, message: 'Synthetic response reader interruption' })
+        // MSW's current response bridge closes its cloned body on the source fault, so the
+        // real JSON reader sees truncation. This proves a post-header parse failure, not
+        // propagation of the original browser stream exception through this test bridge.
+        expect(failure).toBeInstanceOf(SyntaxError)
         await fixture.committed
         await expectCommittedInvitation('reader@example.test')
         expect(fixture.requests).toHaveLength(1)
