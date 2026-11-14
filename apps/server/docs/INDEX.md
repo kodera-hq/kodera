@@ -57,6 +57,7 @@ Every document under `docs/` and `contracts/` is listed here. A pull request tha
 | [`adr/0022-payment-link-creation-asks-the-provider-from-the-api.md`](adr/0022-payment-link-creation-asks-the-provider-from-the-api.md) | Proposed | API seat | Payment link creation asks the provider from the API, outside the replay step |
 | [`adr/0023-matrix-server-name-is-the-tenant-slug.md`](adr/0023-matrix-server-name-is-the-tenant-slug.md) | Accepted | API seat | The Matrix server name is the tenant's slug, not the organisation's; partly supersedes ADR-0018 |
 | [`adr/0024-default-community-membership.md`](adr/0024-default-community-membership.md) | Accepted | API seat | Canonical community membership, issuer isolation and explicit account binding |
+| [`adr/0025-explicit-partner-room-federation.md`](adr/0025-explicit-partner-room-federation.md) | Proposed | API seat | Explicit bounded partner federation, closed internal rooms and immutable replacement boundary |
 
 ## API specifications
 
@@ -110,6 +111,7 @@ Every document under `docs/` and `contracts/` is listed here. A pull request tha
 | [`specs/PILOT_WORKSPACE_ONBOARDING.md`](specs/PILOT_WORKSPACE_ONBOARDING.md) | Proposed | API seat | The text-first starter workspace, the setup state Core derives from the realm job, trust and owner confirmation, what the console shows per state, `getWorkspace` and `initialiseWorkspace`, and their acceptance |
 | [`specs/QUICK_WORKSPACE.md`](specs/QUICK_WORKSPACE.md) | Proposed | API seat | One-step workspace creation on a deployment that does not bill: the billing switch, and what it refuses |
 | [`specs/DEFAULT_COMMUNITY.md`](specs/DEFAULT_COMMUNITY.md) | Implemented | API seat | Community bootstrap, support intake and real-room readiness |
+| [`specs/CORE_ERASURE_AND_RETENTION.md`](specs/CORE_ERASURE_AND_RETENTION.md) | Proposed | Worker seat | Workspace/account cutoffs, scoped external absence receipts and exact statutory clocks; provider and deployment qualification remain held |
 | [`specs/ESPACE_STRUCTURE.md`](specs/ESPACE_STRUCTURE.md) | Proposed | API seat | Owners and admins administer Espace: category and channel create, rename, move, archive; a channel's access (visibility, members, read-only, listen-only) read and replaced whole; the audio `lounge` template; reserved slugs; app code `messaging`; acceptance |
 | [`specs/OUTBOX_MAIL_SENDER.md`](specs/OUTBOX_MAIL_SENDER.md) | Proposed | Worker seat | Core's own mail: `message` outbox deliveries, the sealed recipient and link secret, the template catalogue with the approved copy, the SMTP transport, `run_deliveries --once`, and the outcome each SMTP reply maps to |
 | [`specs/ORGANISATION_INTAKE.md`](specs/ORGANISATION_INTAKE.md) | Proposed | API seat | The staff intake `createOrganisation` as built against the pilot amendment of FIRST_OWNER_BOOTSTRAP ratified on Core #154: the staff principal, the intake gate, the one-transaction effect, the sealed intake record, and where it departs from the amendment and the contract |

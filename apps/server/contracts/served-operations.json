@@ -92,6 +92,11 @@
       "path": "/organisations/{organisation_id}/tenants"
     },
     {
+      "operation_id": "createWorkspaceCollection",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/collections"
+    },
+    {
       "operation_id": "createWorkspaceDocument",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/documents"
@@ -110,6 +115,16 @@
       "operation_id": "deletePushSubscription",
       "method": "DELETE",
       "path": "/push/subscriptions/{device_id}"
+    },
+    {
+      "operation_id": "deleteWorkspaceCollection",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}"
+    },
+    {
+      "operation_id": "deleteWorkspaceCollectionRow",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}"
     },
     {
       "operation_id": "deleteWorkspaceDocument",
@@ -132,6 +147,11 @@
       "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}"
     },
     {
+      "operation_id": "getBillingVatStatus",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/billing/vat-status"
+    },
+    {
       "operation_id": "getChannelAccess",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/access"
@@ -140,6 +160,11 @@
       "operation_id": "getCreditNote",
       "method": "GET",
       "path": "/credit-notes/{credit_note_id}"
+    },
+    {
+      "operation_id": "getCreditNoteDownloadLink",
+      "method": "GET",
+      "path": "/credit-notes/{credit_note_id}/download"
     },
     {
       "operation_id": "getDpa",
@@ -242,9 +267,29 @@
       "path": "/organisations/{organisation_id}/workspace/administration"
     },
     {
+      "operation_id": "getWorkspaceCollection",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}"
+    },
+    {
+      "operation_id": "getWorkspaceCollectionRow",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}"
+    },
+    {
       "operation_id": "getWorkspaceDocument",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
+      "operation_id": "getWorkspaceQuotaLimits",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/quotas/limits"
+    },
+    {
+      "operation_id": "getWorkspaceQuotaUsage",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/quotas/usage"
     },
     {
       "operation_id": "initialiseWorkspace",
@@ -337,6 +382,11 @@
       "path": "/organisations/{organisation_id}/tenants"
     },
     {
+      "operation_id": "listWorkspaceCollections",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/collections"
+    },
+    {
       "operation_id": "listWorkspaceDocuments",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/documents"
@@ -397,6 +447,16 @@
       "path": "/push/subscriptions/{device_id}"
     },
     {
+      "operation_id": "putWorkspaceCollectionRow",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}"
+    },
+    {
+      "operation_id": "queryWorkspaceCollection",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/query"
+    },
+    {
       "operation_id": "redeemWorkspaceInvite",
       "method": "POST",
       "path": "/workspace-invites/redeem"
@@ -442,9 +502,19 @@
       "path": "/organisations/{organisation_id}/workspace/unfurl"
     },
     {
+      "operation_id": "updateWorkspaceCollection",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}"
+    },
+    {
       "operation_id": "updateWorkspaceDocument",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
+      "operation_id": "validateBillingVat",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/billing/vat-status"
     }
   ]
 }

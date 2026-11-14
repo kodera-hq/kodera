@@ -143,6 +143,21 @@ records the authenticated actor identity; a `system` event records its authentic
 The writer locks all three legal rows, requires exact authority/scope equality and refuses the event
 unless all three rows receive the identical contract end and derived deadlines atomically.
 
+### Workspace erasure
+
+| Action | Actor | Target | Retention |
+| --- | --- | --- | --- |
+| `privacy.erasure_cutoff` | staff | `organisation` | standard |
+| `privacy.account_cutoff` | staff admission, person-bound intent | `person` | standard |
+| `privacy.account_core_erased`, `privacy.account_erasure_completed` | system | `person` | standard |
+| `privacy.core_erased`, `privacy.erasure_completed` | system | `organisation` | standard |
+
+These events commit with the durable erasure journal transition. Metadata contains the
+request UUID, validated instruction reference/digest or aggregate row/domain counts. It
+contains no document text, contact, external endpoint, subject or provider credential. The
+system actor is the durable erasure request UUID. See
+[`CORE_ERASURE_AND_RETENTION.md`](../specs/CORE_ERASURE_AND_RETENTION.md).
+
 ### Tenancy
 
 | Action | Actor | Target | Retention |
@@ -210,11 +225,14 @@ that job and action do not exist yet.
 | `order.terminated` | system | `order` | standard |
 | `order.complimentary` | staff | `order` | standard |
 | `invoice.issued`, `invoice.sent`, `invoice.paid`, `invoice.overdue`, `invoice.voided` | staff, system | `invoice` | standard |
+| `invoice.download_requested` | tenant | `invoice`, `credit_note` | standard |
 | `credit_note.issued` | staff, system | `credit_note` | standard |
 | `credit_note.notice_enqueued` | system | `credit_note` | standard |
 | `payment.received`, `payment.failed`, `payment.refunded`, `payment.reconciled`, `payment.reconciliation_mismatch` | system | `payment` | standard |
 | `payment.placed_on_account`, `payment.allocated` | staff, system | `payment` | standard |
-| `dunning.reminder_sent`, `dunning.formal_notice_sent`, `dunning.suspension_notice_sent`, `dunning.suspended`, `dunning.terminated`, `dunning.cleared` | system | `organisation` | standard |
+| `dunning.reminder_sent`, `dunning.formal_notice_sent`, `dunning.suspension_notice_sent`, `dunning.suspended`, `dunning.terminated` | staff | `organisation` | standard |
+| `dunning.proposal_prepared`, `dunning.cleared` | system | `organisation` | standard |
+| `dunning.dispute_recorded` | staff | `invoice` | standard |
 | `vat.vies_checked`, `vat.regime_changed` | system, staff | `organisation` | standard |
 
 `payment.placed_on_account` and `payment.allocated` are the only allocation-decision actions. Each
@@ -466,3 +484,21 @@ Rules:
 - Adds `order.complimentary` (staff, target `order`): a staff operator settled an order in flight with no charge, its invoice credited in full; `metadata` carries the `reason`, the `invoice_id` and the `credit_note_id` (`BILLING_MODEL.md` §4.2).
 - `agent.enrolled` is written by a staff operator's command, so its actor is `staff`, and adds `agent.revoked` (staff, target `agent`): a staff operator revoked a tenant agent's credential (`enrol_tenant_agent`, `revoke_tenant_agent`, ADR-0016).
 - Adds `tenant.failed` (`provisioning → failed`, TENANT_STATE_MACHINE.md T4). The pilot's operator override (`manage.py tenant_status`, QUICK_WORKSPACE.md §5) writes it, and the `tenant.provision_requested`, `tenant.ready`, `tenant.activated` and `tenant.deleted` rows, as `staff`, with metadata `{from, to, override: true, reason}`; the `provision` job will write it as `system`.
+
+## Local extension writer pending central registry integration
+
+Status: Implemented local writer; central registry/contract cutover remains Proposed.
+
+| Action | Actor | Target kind | Retention |
+|---|---|---|---|
+| `extension.installed`, `extension.rotated`, `extension.revoked` | tenant | `extension` | standard |
+| `extension.delivery_queued`, `extension.delivery_reconciled` | tenant | `extension` | standard |
+| `extension.import_started`, `extension.object_imported` | tenant | `extension` | standard |
+| `extension.digest_consent_changed` | tenant | `extension` | standard |
+
+The local extension writer closes both action names and exact metadata keys. Metadata contains
+only scoped ids, generation references, digests, closed outcomes, consent flags and evidence URNs;
+it never copies event bodies, receiver URLs, signing keys or recipient contacts. Reconciliation
+records an explicit owner/admin attestation, not an independently observed provider receipt.
+The current worker/CLI operations add no public HTTP endpoint. The Proposed central registry and
+future contract audit declarations must include these actions before that cutover is released.

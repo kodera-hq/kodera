@@ -220,3 +220,43 @@ def current_staff_grant(
         cursor.execute(statement, parameters)
         found = cursor.fetchone()
     return None if found is None else UUID(str(found[0]))
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class DeliveryIdentity:
+    id: UUID
+    user_id: UUID
+    organisation_id: UUID | None
+    email: str
+    issuer: str
+    subject: str
+
+
+def delivery_identity(*, identity_id: UUID) -> DeliveryIdentity | None:
+    """An enabled identity; the calling delivery policy binds its person and organisation."""
+    row = Identity.objects.filter(id=identity_id, enabled=True, deleted_at__isnull=True).first()
+    if row is None:
+        return None
+    return DeliveryIdentity(
+        row.id, row.user_id, row.organisation_id, row.email, row.issuer, row.subject
+    )
+
+
+def delivery_identity_exists(*, user_id: UUID, organisation_id: UUID) -> bool:
+    return Identity.objects.filter(
+        user_id=user_id, organisation_id=organisation_id, enabled=True, deleted_at__isnull=True
+    ).exists()
+
+
+def lock_delivery_identity(*, identity_id: UUID) -> None:
+    """Hold the named identity lock in the caller's transaction."""
+    Identity.objects.select_for_update().get(id=identity_id)
+
+
+def lock_delivery_identities(*, user_id: UUID, organisation_id: UUID) -> None:
+    """Evaluate all current rows before returning; no lazy query escapes the lock port."""
+    list(
+        Identity.objects.select_for_update().filter(
+            user_id=user_id, organisation_id=organisation_id
+        )
+    )

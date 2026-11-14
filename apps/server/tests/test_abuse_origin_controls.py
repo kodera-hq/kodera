@@ -17,6 +17,7 @@ tokens on the disposable PostgreSQL, and the proof that taking the limiter out o
 chain is caught by name.
 """
 
+import ast
 import ipaddress
 import json
 import os
@@ -632,15 +633,52 @@ print(json.dumps({
     assert probe(KODERA_MUTATION_RATE_PER_MINUTE="0").returncode != 0
 
 
+def _only_appends_quota_middleware(source):
+    """The HTTP profile must inherit every base control in its original order."""
+    tree = ast.parse(source)
+    references = [
+        node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "MIDDLEWARE"
+    ]
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "MIDDLEWARE" for target in node.targets
+        )
+    ]
+    expected = ast.parse(
+        'MIDDLEWARE = [*MIDDLEWARE, "apps.workspaces.quota_http.QuotaRefusalMiddleware"]'
+    ).body[0]
+    return (
+        len(references) == 2
+        and len(assignments) == 1
+        and ast.dump(assignments[0]) == ast.dump(expected)
+    )
+
+
 def test_no_settings_module_removes_a_control_from_a_serving_profile():
-    """Only the two profiles that serve no HTTP empty the middleware list; no other settings
-    module names MIDDLEWARE at all, so every serving profile runs the three edge controls."""
+    """Only non-HTTP profiles empty the list; customer HTTP only appends quota handling."""
     naming = sorted(
         path.name
         for path in (ROOT / "config/settings").glob("*.py")
         if "MIDDLEWARE" in path.read_text()
     )
-    assert naming == ["base.py", "deploy_operator.py", "deploy_worker.py"]
+    assert naming == ["base.py", "customer_http.py", "deploy_operator.py", "deploy_worker.py"]
+    assert _only_appends_quota_middleware((ROOT / "config/settings/customer_http.py").read_text())
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'MIDDLEWARE = ["apps.workspaces.quota_http.QuotaRefusalMiddleware"]',
+        'MIDDLEWARE = [*MIDDLEWARE[1:], "apps.workspaces.quota_http.QuotaRefusalMiddleware"]',
+        'MIDDLEWARE = ["apps.workspaces.quota_http.QuotaRefusalMiddleware", *MIDDLEWARE]',
+        'MIDDLEWARE = [*MIDDLEWARE, "apps.workspaces.quota_http.QuotaRefusalMiddleware"]\nMIDDLEWARE.clear()',
+    ],
+)
+def test_serving_profile_cannot_remove_reorder_or_clear_inherited_controls(source):
+    assert not _only_appends_quota_middleware(source)
 
 
 # --- through the routed views --------------------------------------------------------------------

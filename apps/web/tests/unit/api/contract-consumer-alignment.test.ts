@@ -26,11 +26,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'e27efd630ab6edfffb6e8a5c28a0cb9d96c443c0',
-  commit: 'e27efd630ab6edfffb6e8a5c28a0cb9d96c443c0',
+  ref: 'e574539d73e34847a1374c4b2e5e1a492ddf68a1',
+  commit: 'e574539d73e34847a1374c4b2e5e1a492ddf68a1',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.44.0',
-  sha256: 'be235a9b870d251fd4114c464d8a10580b34d11f4390903cacac7cea82128cda',
+  version: '0.44.2',
+  sha256: '951ca5e29a69447db36528e7b5ea9ef4208d1cae042df8b5d3099962885d0d5b',
 }
 
 function requireThat(condition: unknown, reason: string): asserts condition {

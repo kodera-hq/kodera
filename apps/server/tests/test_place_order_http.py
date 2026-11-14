@@ -61,6 +61,9 @@ def problem(response, status, kind):
 
 @pytest.fixture
 def ready(w):
+    from billing_fiscal_fixtures import register_test_fiscal_periods
+
+    register_test_fiscal_periods()
     catalogue.load(catalogue.read(catalogue.PLACEHOLDER), allow_placeholder=True)
     legal.load_documents(legal.read_documents(legal.PLACEHOLDER), allow_placeholder=True)
     for organisation in (w.alpha, w.bravo):

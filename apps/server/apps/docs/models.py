@@ -121,3 +121,38 @@ class CollaborationTicket(models.Model):
 
     def __str__(self) -> str:
         return "Redeemed collaboration ticket"
+
+
+class Collection(RetainedModel):
+    workspace = models.ForeignKey("workspaces.Workspace", on_delete=models.RESTRICT)
+    creator = models.ForeignKey("orgs.Membership", on_delete=models.RESTRICT)
+    title = models.TextField()
+    properties = models.JSONField(default=list)
+    views = models.JSONField(default=list)
+    revision = models.BigIntegerField(default=1)
+
+    class Meta(RetainedModel.Meta):
+        abstract = False
+        constraints = [
+            *RetainedModel.Meta.constraints,
+            models.CheckConstraint(
+                condition=models.Q(revision__gte=1), name="docs_collection_revision"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(title__length__range=(1, 255)), name="docs_collection_title"
+            ),
+        ]
+        indexes = [models.Index(fields=["workspace", "-id"], name="docs_collection_workspace")]
+
+
+class CollectionRow(StoredModel):
+    collection = models.ForeignKey(Collection, on_delete=models.RESTRICT)
+    document = models.ForeignKey(Document, on_delete=models.RESTRICT)
+    values = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["collection", "document"], name="docs_collection_document_unique"
+            )
+        ]

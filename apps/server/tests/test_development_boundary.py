@@ -124,6 +124,7 @@ def assert_image_boundary(ignore):
         "!core/logs.py",
         "!core/faults.py",
         "!core/links.py",
+        "!core/api/guarded_replay.py",
         "!core/api/idempotency.py",
         "!core/idempotency/__init__.py",
         "!core/idempotency/apps.py",
@@ -165,6 +166,7 @@ def assert_image_boundary(ignore):
         "!apps/orgs/__init__.py",
         "!apps/orgs/apps.py",
         "!apps/orgs/models.py",
+        "!apps/orgs/privacy_models.py",
         "!apps/orgs/selectors.py",
         "!apps/orgs/detail_selectors.py",
         "!apps/orgs/detail_services.py",
@@ -226,6 +228,10 @@ def assert_image_boundary(ignore):
         "!apps/workspaces/__init__.py",
         "!apps/workspaces/apps.py",
         "!apps/workspaces/models.py",
+        "!apps/workspaces/services.py",
+        "!apps/workspaces/quotas.py",
+        "!apps/workspaces/quota_http.py",
+        "!apps/workspaces/api/quotas.py",
         "!apps/workspaces/setup.py",
         "!apps/workspaces/structure.py",
         "!apps/workspaces/initialise.py",
@@ -250,6 +256,7 @@ def assert_image_boundary(ignore):
         "!tenant_agent/core_api.py",
         "!tenant_agent/docker_exec.py",
         "!tenant_agent/engines.py",
+        "!tenant_agent/federation.py",
         "!tenant_agent/guard.py",
         "!tenant_agent/handlers.py",
         "!tenant_agent/state.py",
@@ -269,6 +276,13 @@ def assert_image_boundary(ignore):
         "!apps/billing/configuration.py",
         "!apps/billing/events.py",
         "!apps/billing/models.py",
+        "!apps/billing/api/downloads.py",
+        "!apps/billing/api/vat_status.py",
+        "!apps/billing/artifacts.py",
+        "!apps/billing/documents.py",
+        "!apps/billing/downloads.py",
+        "!apps/billing/integrity.py",
+        "!apps/billing/vies.py",
         "!apps/billing/money.py",
         "!apps/billing/states.py",
         "!apps/billing/vat.py",
@@ -356,6 +370,10 @@ def assert_image_boundary(ignore):
         "!apps/notifications/api/responses.py",
         "!apps/notifications/api/urls.py",
         "!apps/notifications/api/views.py",
+        "!apps/extensions/__init__.py",
+        "!apps/extensions/apps.py",
+        "!apps/extensions/models.py",
+        "!apps/extensions/expiry.py",
         "!apps/docs/__init__.py",
         "!apps/docs/apps.py",
         "!apps/docs/access.py",
@@ -363,6 +381,9 @@ def assert_image_boundary(ignore):
         "!apps/docs/engine.py",
         "!apps/docs/errors.py",
         "!apps/docs/models.py",
+        "!apps/docs/collection_schema.py",
+        "!apps/docs/collections.py",
+        "!apps/docs/api/collections.py",
         "!apps/docs/services.py",
         "!apps/docs/templates.py",
         "!apps/docs/tickets.py",
@@ -474,9 +495,12 @@ def test_api_image_excludes_deployed_operator_profile_and_detects_restoration():
         assert_image_boundary(rules)
 
 
-def test_image_guard_refuses_missing_customer_runtime_source():
+@pytest.mark.parametrize(
+    "path", ["services/identity/access_tokens.py", "apps/extensions/expiry.py"]
+)
+def test_image_guard_refuses_missing_customer_runtime_source(path):
     ignore = (ROOT / ".dockerignore").read_text().splitlines()
-    ignore.remove("!services/identity/access_tokens.py")
+    ignore.remove("!" + path)
     with pytest.raises(
         AssertionError, match="build inputs differ from the exact runtime allowlist"
     ):
@@ -522,6 +546,25 @@ else:
 
 
 OPERATOR_MODULES = (
+    "apps/audit/privacy_events.py",
+    "apps/identity/privacy_selectors.py",
+    "apps/docs/privacy_selectors.py",
+    "apps/billing/privacy_selectors.py",
+    "apps/workspaces/privacy_selectors.py",
+    "apps/billing/statutory.py",
+    "apps/billing/management/commands/manage_statutory_retention.py",
+    "apps/orgs/account_erasure_services.py",
+    "apps/orgs/erasure_services.py",
+    "apps/orgs/private_export_erasure.py",
+    "apps/orgs/privacy_archives.py",
+    "apps/orgs/privacy_core_sources.py",
+    "apps/orgs/privacy_runtime.py",
+    "apps/orgs/privacy_services.py",
+    "apps/orgs/privacy_sources.py",
+    "apps/orgs/privacy_storage.py",
+    "apps/orgs/management/commands/erase_core_workspace.py",
+    "apps/workspaces/quota_policy.py",
+    "apps/workspaces/management/commands/configure_workspace_quotas.py",
     "apps/identity/command_principal.py",
     "apps/orgs/realm_bootstrap.py",
     "apps/orgs/realm_readiness.py",
@@ -935,3 +978,34 @@ def test_every_dev_controller_source_pin_matches_the_pinned_file():
         if hashlib.sha256((ROOT / path).read_bytes()).hexdigest() != digest
     ]
     assert stale == [], f"a dev controller pin is stale: {stale}"
+
+
+EXTENSION_PRIVATE_SOURCES = (
+    "apps/extensions/dispatcher.py",
+    "apps/extensions/services.py",
+    "apps/extensions/digest.py",
+    "apps/extensions/imports.py",
+    "apps/extensions/import_parsers.py",
+    "apps/extensions/retention.py",
+    "apps/extensions/wire.py",
+    "apps/extensions/management/caller.py",
+    "apps/extensions/management/commands/dispatch_extensions.py",
+)
+
+
+def test_extension_image_carries_only_inert_registration():
+    files = set(image_files(ROOT))
+    assert {
+        "apps/extensions/__init__.py",
+        "apps/extensions/apps.py",
+        "apps/extensions/models.py",
+    } <= files
+    assert files.isdisjoint(EXTENSION_PRIVATE_SOURCES)
+
+
+def test_extension_parent_directory_exception_is_not_an_inert_allowlist():
+    ignore = (ROOT / ".dockerignore").read_text().splitlines()
+    assert_image_boundary(ignore)
+    ignore = [*ignore, "!apps/extensions/"]
+    with pytest.raises(AssertionError, match="exact runtime allowlist"):
+        assert_image_boundary(ignore)

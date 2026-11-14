@@ -80,3 +80,10 @@ def slug_availability(slug: str) -> dict[str, Any]:
     held = set(Tenant.objects.filter(slug__in=candidates).values_list("slug", flat=True))
     free = [candidate for candidate in candidates if candidate not in held]
     return {"slug": slug, "available": False, "reason": reason, "suggestions": free[:SUGGESTIONS]}
+
+
+def tenant_status_matches(*, tenant_id: UUID, organisation_id: UUID, status: str) -> bool:
+    """The scoped tenant's persisted transition state, without exposing its row."""
+    return Tenant.objects.filter(
+        id=tenant_id, organisation_id=organisation_id, status=status
+    ).exists()

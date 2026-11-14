@@ -6,9 +6,11 @@ existing diagnostics."""
 from django.urls import include, path
 
 from apps.billing.api import tenants as tenancy, views as billing
+from apps.billing.api.downloads import credit_note_download, invoice_download
 from apps.billing.api.help_context import help_context
 from apps.billing.api.membership_count import membership_count
 from apps.billing.api.slug_availability import slug_availability
+from apps.billing.api.vat_status import billing_vat
 from apps.engine_intents.api.views import ack, commands, result
 from apps.identity.api.discovery import discovery
 from apps.identity.api.views import me
@@ -29,7 +31,7 @@ from apps.orgs.api.notice_contacts import notice_contacts
 from apps.orgs.api.owner_claims import consume_owner_claim
 from apps.support.api.community import community_support_tickets
 from apps.support.api.views import support_tickets
-from apps.workspaces.api import administration as structure
+from apps.workspaces.api import administration as structure, quotas
 from apps.workspaces.api.instant_claim import instant_claim
 from apps.workspaces.api.views import initialise, workspace
 
@@ -37,6 +39,8 @@ from .urls import urlpatterns as diagnostics
 
 urlpatterns = [
     *diagnostics,
+    path("api/v1/organisations/<uuid:organisation_id>/workspace/quotas/usage", quotas.usage),
+    path("api/v1/organisations/<uuid:organisation_id>/workspace/quotas/limits", quotas.limits),
     path("", include("apps.workspaces.api.moderation_urls")),
     path("", include("apps.media.api.urls")),
     path("", include("apps.notifications.api.urls")),
@@ -48,6 +52,7 @@ urlpatterns = [
     path("api/v1/organisations/<uuid:organisation_id>", organisation_detail),
     path("api/v1/organisations/<uuid:organisation_id>/bootstrap", organisation_bootstrap),
     path("api/v1/organisations/<uuid:organisation_id>/notice-contacts", notice_contacts),
+    path("api/v1/organisations/<uuid:organisation_id>/billing/vat-status", billing_vat),
     path("api/v1/organisations/<str:organisation_id>/memberships", membership_directory),
     path(
         "api/v1/organisations/<uuid:organisation_id>/memberships/count",
@@ -124,7 +129,8 @@ urlpatterns = [
     path("api/v1/organisations/<uuid:organisation_id>/credit-notes", billing.credit_notes),
     path("api/v1/credit-notes/<uuid:credit_note_id>", billing.credit_note),
     path("api/v1/invoices/<uuid:invoice_id>/payment-link", billing.payment_link),
-    path("api/v1/invoices/<uuid:invoice_id>/download", billing.invoice_download),
+    path("api/v1/invoices/<uuid:invoice_id>/download", invoice_download),
+    path("api/v1/credit-notes/<uuid:credit_note_id>/download", credit_note_download),
     path("api/v1/organisations/<uuid:organisation_id>/dunning", billing.dunning),
     path("api/v1/legal-documents", legal.legal_documents),
     path(

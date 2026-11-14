@@ -1425,3 +1425,5 @@ export function createExtensionTestHarness(options) {
     deliver: sendWebhook,
   });
 }
+
+export { verifyRotatingWebhookRequest, createRotatingWebhookVerifier } from './rotation.mjs';

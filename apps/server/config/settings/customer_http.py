@@ -35,6 +35,7 @@ from core.sealing import key_from_environment
 from .persistence import *
 
 ROOT_URLCONF = "config.customer_urls"
+MIDDLEWARE = [*MIDDLEWARE, "apps.workspaces.quota_http.QuotaRefusalMiddleware"]
 CUSTOMER_HTTP_APPS = (
     "apps.jobs",
     "apps.audit",
@@ -48,6 +49,7 @@ CUSTOMER_HTTP_APPS = (
     "apps.media",
     "apps.notifications",
     "apps.docs",
+    "apps.extensions",
 )
 INSTALLED_APPS = [*INSTALLED_APPS, *CUSTOMER_HTTP_APPS]
 # The deployable API profile: KODERA_LOOPBACK_ISSUERS, from config.settings.persistence, is False

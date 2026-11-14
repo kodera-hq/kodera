@@ -112,6 +112,15 @@ def test_the_database_holds_a_credit_note_whole_and_unchanged():
     # A second note for the invoice, written past the service.
     copy = CreditNote.objects.get(id=note.id)
     copy.pk, copy.number = None, copy.number[:-5] + "99999"
+    # This insertion must reach the duplicate-invoice guard with freshly derived clocks.
+    for field in (
+        "accounting_event_at",
+        "financial_year_closed_at",
+        "purge_after",
+        "retention_authority_ref",
+        "document_number_snapshot",
+    ):
+        setattr(copy, field, None)
     with refused("billing_creditnote_one_per_invoice"), transaction.atomic():
         copy.issued_at = _database_now()
         copy.save(force_insert=True)
@@ -138,7 +147,7 @@ def test_a_credit_note_without_its_lines_is_refused_at_commit():
                 vat_regime=invoice.vat_regime,
                 issuer_legal_name="x",
                 issuer_address="x",
-                issuer_siren="x",
+                issuer_siren=invoice.issuer_siren,
                 issuer_vat_number="x",
                 customer_legal_name="x",
                 customer_address_line1="x",
@@ -163,7 +172,7 @@ def _bare_note(invoice, **changes):
         "vat_regime": invoice.vat_regime,
         "issuer_legal_name": "x",
         "issuer_address": "x",
-        "issuer_siren": "x",
+        "issuer_siren": invoice.issuer_siren,
         "issuer_vat_number": "x",
         "customer_legal_name": "x",
         "customer_address_line1": "x",
@@ -364,10 +373,11 @@ def test_the_credit_note_migration_reverses_while_empty_and_refuses_with_a_note(
     from test_customer_persistence_migrations import empty_database
 
     with django_db_blocker.unblock(), empty_database() as target:
-        executor = MigrationExecutor(target)
-        executor.migrate(executor.loader.graph.leaf_nodes())
         before = [("billing", "0007_order_confirmation")]
         after = [("billing", "0009_validate_invoice_credited_unpaid")]
+        # Qualify this historical reversal at its own revision. Later statutory/erasure
+        # migrations are intentionally forward-only and must not be undone by this test.
+        MigrationExecutor(target).migrate(after)
         MigrationExecutor(target).migrate(before)
         with target.cursor() as cursor:
             cursor.execute("SELECT to_regclass('billing_creditnote')")

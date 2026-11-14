@@ -105,6 +105,7 @@ def test_workspace_registration_is_explicit_per_profile(profile, has_workspace):
             "WorkspaceInviteRedemption",
             "WorkspaceMemberRestriction",
             "WorkspaceModerator",
+            "WorkspaceQuota",
         ]
         if has_workspace
         else []

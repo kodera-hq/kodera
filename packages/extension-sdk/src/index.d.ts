@@ -294,3 +294,25 @@ export interface ExtensionTestHarnessOptions {
 export function createExtensionTestHarness(
   options: ExtensionTestHarnessOptions
 ): ExtensionTestHarness;
+
+/** Additive v2 body bindings with the unchanged v1 HMAC transcript. */
+export interface RotationConfiguration {
+  organisationId: string;
+  installationId: string;
+  current: { generation: string; secret?: string };
+  previous?: { generation: string; secret: string; expiresAt: number };
+  nowUnixSeconds?: number;
+  maxSkewSeconds?: number;
+}
+export interface RotatingWebhookRequest extends RotationConfiguration {
+  rawBody: string | Uint8Array;
+  signatureHeader?: string;
+  previousSignatureHeader?: string;
+  timestampHeader?: string;
+  eventHeader?: string;
+  deliveryIdHeader?: string;
+}
+export function verifyRotatingWebhookRequest(options: RotatingWebhookRequest): Record<string, unknown>;
+export function createRotatingWebhookVerifier(configuration: RotationConfiguration): (
+  options: Omit<RotatingWebhookRequest, keyof RotationConfiguration> & Partial<RotationConfiguration>
+) => Record<string, unknown>;

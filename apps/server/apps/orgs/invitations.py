@@ -942,3 +942,10 @@ def preview(*, verified: VerifiedAccessToken, lane: str, token: str) -> Invitati
             role=invitation.role,
             expires_at=invitation.expires_at,
         )
+
+
+def quota_replay_policy():
+    """Supply the workspace effect policy through the invitation service boundary."""
+    from apps.workspaces.services import quota_replay_policy as workspace_policy
+
+    return workspace_policy()

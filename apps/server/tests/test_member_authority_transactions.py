@@ -595,15 +595,48 @@ BEFORE_ROW_TRIGGER_ORDER = {
         "b_customer_activate_owner_guard",
     ],
 }
+# The cutoff guards of orgs 0025/0029/0031, mandatory only where the retention schema is
+# installed (the same condition as the workspace trigger inventory). Each one reads the
+# erasure journals under an advisory key of its own, so it adds no row lock to the order
+# above: it fires after the organisation pre-lock and before the owner guard.
+PRIVACY_CUTOFF_TRIGGER_ORDER = {
+    ("identity_user", "UPDATE"): ["ab_account_cutoff"],
+    ("identity_identity", "INSERT"): [
+        "aa_privacy_cutoff",
+        "ab_account_cutoff",
+        "ac_erased_subject_rebind",
+    ],
+    ("identity_identity", "UPDATE"): ["aa_privacy_cutoff", "ab_account_cutoff"],
+    ("orgs_membership", "INSERT"): ["aa_privacy_cutoff", "ab_account_cutoff"],
+    ("orgs_membership", "UPDATE"): ["aa_privacy_cutoff", "ab_account_cutoff"],
+    ("orgs_organisation", "INSERT"): ["aa_privacy_cutoff"],
+    ("orgs_organisation", "UPDATE"): ["aa_privacy_cutoff"],
+}
 EVENT_BITS = {"INSERT": 4, "DELETE": 8, "UPDATE": 16}
+
+
+def retention_schema_installed():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT to_regclass('public.orgs_privacyerasure') IS NOT NULL")
+        return cursor.fetchone()[0]
+
+
+def expected_before_row_triggers(retention):
+    if not retention:
+        return BEFORE_ROW_TRIGGER_ORDER
+    return {
+        key: sorted(expected + PRIVACY_CUTOFF_TRIGGER_ORDER.get(key, []))
+        for key, expected in BEFORE_ROW_TRIGGER_ORDER.items()
+    }
 
 
 def test_before_row_triggers_fire_in_the_declared_order(models):
     # Binding immutability refuses before the parent user is touched, and the user
     # touch (with its organisation pre-lock) runs before the owner guard locks the
     # target: read from pg_trigger, not from the names this test was written with.
+    expected_order = expected_before_row_triggers(retention_schema_installed())
     with connection.cursor() as cursor:
-        for (table, event), expected in BEFORE_ROW_TRIGGER_ORDER.items():
+        for (table, event), expected in expected_order.items():
             cursor.execute(
                 "SELECT t.tgname FROM pg_trigger t WHERE t.tgrelid=%s::regclass "
                 "AND NOT t.tgisinternal AND t.tgtype & 3 = 3 AND t.tgtype & 64 = 0 "
@@ -611,6 +644,36 @@ def test_before_row_triggers_fire_in_the_declared_order(models):
                 [table, EVENT_BITS[event]],
             )
             assert [row[0] for row in cursor.fetchall()] == expected, (table, event)
+
+
+def observed_before_row_triggers(table, event):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT t.tgname FROM pg_trigger t WHERE t.tgrelid=%s::regclass "
+            "AND NOT t.tgisinternal AND t.tgtype & 3 = 3 AND t.tgtype & 64 = 0 "
+            'AND t.tgtype & %s <> 0 ORDER BY t.tgname COLLATE "C"',
+            [table, EVENT_BITS[event]],
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+@pytest.mark.parametrize(
+    ("table", "event", "guard"),
+    [
+        (table, event, guard)
+        for (table, event), guards in sorted(PRIVACY_CUTOFF_TRIGGER_ORDER.items())
+        for guard in guards
+    ],
+)
+def test_each_cutoff_guard_is_mandatory_where_retention_is_installed(models, table, event, guard):
+    """Each declared cutoff guard is required, not merely tolerated: an expectation without
+    it no longer matches what pg_trigger reports."""
+    assert retention_schema_installed(), "the normal suite installs the retention schema"
+    expected = expected_before_row_triggers(True)[(table, event)]
+    assert observed_before_row_triggers(table, event) == expected
+    assert observed_before_row_triggers(table, event) != [
+        name for name in expected if name != guard
+    ], (table, event, guard)
 
 
 def link(models, user, organisation):

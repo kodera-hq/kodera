@@ -39,6 +39,7 @@ config/settings/deploy_worker.py
 !core/faults.py
 # A link's origin: createPaymentLink's return URL is held to the console's (core/links.py).
 !core/links.py
+!core/api/guarded_replay.py
 !core/api/idempotency.py
 !core/idempotency/__init__.py
 !core/idempotency/apps.py
@@ -73,6 +74,7 @@ config/settings/deploy_worker.py
 !apps/orgs/__init__.py
 !apps/orgs/apps.py
 !apps/orgs/models.py
+!apps/orgs/privacy_models.py
 !apps/orgs/selectors.py
 !apps/orgs/detail_selectors.py
 !apps/orgs/detail_services.py
@@ -174,6 +176,13 @@ config/settings/deploy_worker.py
 !apps/billing/api/__init__.py
 !apps/billing/api/permissions.py
 !apps/billing/api/views.py
+!apps/billing/api/downloads.py
+!apps/billing/api/vat_status.py
+!apps/billing/downloads.py
+!apps/billing/documents.py
+!apps/billing/artifacts.py
+!apps/billing/integrity.py
+!apps/billing/vies.py
 !apps/billing/api/tenants.py
 !apps/billing/api/create_tenant.py
 !apps/legal/__init__.py
@@ -236,6 +245,7 @@ config/settings/deploy_worker.py
 !tenant_agent/agent.py
 !tenant_agent/channels.py
 !tenant_agent/config.py
+!tenant_agent/federation.py
 !tenant_agent/core_api.py
 !tenant_agent/docker_exec.py
 !tenant_agent/engines.py
@@ -310,3 +320,18 @@ config/settings/deploy_worker.py
 !apps/docs/api/responses.py
 !apps/docs/api/urls.py
 !apps/docs/api/views.py
+
+# Collections and quota admission, excluding the supervised operator writer.
+!apps/docs/collection_schema.py
+!apps/docs/collections.py
+!apps/docs/api/collections.py
+!apps/workspaces/services.py
+!apps/workspaces/quotas.py
+!apps/workspaces/quota_http.py
+!apps/workspaces/api/quotas.py
+
+# Inert extension persistence only; dispatch/import/mail/operator code is excluded.
+!apps/extensions/__init__.py
+!apps/extensions/apps.py
+!apps/extensions/models.py
+!apps/extensions/expiry.py

@@ -178,6 +178,11 @@ def test_an_invoice_that_is_not_owed_has_no_link(w, placed, fake):
 
 
 def test_a_debit_still_settling_gets_no_second_link(w, placed, fake):
+    from billing_fiscal_fixtures import register_test_fiscal_year
+
+    # Processing-age refusal and its synthetic fiscal authority use this scenario's clock.
+    event_at = timezone.now()
+    register_test_fiscal_year(event_at.year)
     Payment.objects.create(
         organisation_id=w.alpha.id,
         invoice_id=placed.invoice.id,
@@ -186,7 +191,7 @@ def test_a_debit_still_settling_gets_no_second_link(w, placed, fake):
         state="processing",
         amount_minor=placed.invoice.total_incl_vat_minor,
         currency="EUR",
-        last_event_at=timezone.now(),
+        last_event_at=event_at,
     )
     found = problem(post(w, w.owner, placed.invoice.id), LINK, "post", 409, "conflict")
     assert "reason" not in found and fake.links == []
@@ -464,7 +469,7 @@ def test_mutation_control_the_checks_pass_with_the_routes(w, placed, fake):
 def test_mutation_without_the_download_route_the_conflict_is_a_404(
     w, placed, monkeypatch, restore_urls
 ):
-    _without(monkeypatch, "/download")
+    _without(monkeypatch, "invoices/<uuid:invoice_id>/download")
     assert download(w, w.owner, placed.invoice.id).status_code == 404
 
 

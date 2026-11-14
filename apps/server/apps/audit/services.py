@@ -585,6 +585,21 @@ def record_owner_event(
 
 # AUDIT_TAXONOMY.md §Billing: each billing action and the actor types its row allows.
 BILLING_ACTIONS: Mapping[str, frozenset[str]] = {
+    "dunning.proposal_prepared": frozenset({"system"}),
+    "dunning.cleared": frozenset({"system"}),
+    "dunning.dispute_recorded": frozenset({"staff"}),
+    **dict.fromkeys(
+        (
+            "dunning.reminder_sent",
+            "dunning.formal_notice_sent",
+            "dunning.suspension_notice_sent",
+            "dunning.suspended",
+            "dunning.terminated",
+        ),
+        frozenset({"staff"}),
+    ),
+    "invoice.download_requested": frozenset({"tenant"}),
+    "vat.vies_checked": frozenset({"system", "staff"}),
     **dict.fromkeys(
         ("plan.published", "plan.deprecated", "price.published", "price.deprecated"),
         frozenset({"staff"}),
@@ -844,3 +859,59 @@ def record_workspace_resource_event(
             from apps.notifications.services import record_moderation
 
             record_moderation(organisation_id=organisation_id, membership_id=target_id)
+
+
+def record_workspace_quota_configured(
+    *, actor_id: UUID, organisation_id: UUID, quota_id: UUID, policy_ref: str
+) -> None:
+    """The supervised quota change, in the caller's configuration transaction."""
+    AuditEvent.objects.create(
+        action="workspace.quota.configured",
+        actor_type="staff",
+        actor_id=actor_id,
+        actor_label=f"urn:kodera:identity:{actor_id}",
+        organisation_id=organisation_id,
+        target_urn=f"urn:kodera:workspace-resource:{quota_id}",
+        retention_class="standard",
+        metadata={"policy_ref": policy_ref},
+    )
+
+
+AUDIT_FIELDS = {
+    "installed": frozenset({"generation"}),
+    "rotated": frozenset({"generation", "previous_generation", "grace_expires_at"}),
+    "revoked": frozenset(),
+    "delivery_queued": frozenset({"delivery_id", "event_type"}),
+    "delivery_reconciled": frozenset(
+        {"delivery_id", "decision_id", "observed", "evidence_ref", "evidence_kind"}
+    ),
+    "import_started": frozenset({"source", "archive_sha256"}),
+    "object_imported": frozenset({"source", "document_id", "source_sha256"}),
+    "digest_consent_changed": frozenset({"enabled", "consent_version"}),
+}
+
+
+def record_extension_event(
+    *,
+    action: str,
+    identity_id: UUID | None,
+    organisation_id: UUID,
+    target_id: UUID,
+    metadata: object,
+) -> None:
+    """Only the eight registered extension actions and their closed metadata shapes."""
+    fields = AUDIT_FIELDS.get(action)
+    if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
+        raise ValueError("extension audit action or metadata refused")
+    if identity_id is None:
+        raise ValueError("extension audit principal required")
+    AuditEvent.objects.create(
+        action="extension." + action,
+        actor_type="tenant",
+        actor_id=identity_id,
+        actor_label="urn:kodera:identity:" + str(identity_id),
+        organisation_id=organisation_id,
+        target_urn="urn:kodera:extension:" + str(target_id),
+        retention_class="standard",
+        metadata=metadata,
+    )

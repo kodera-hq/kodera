@@ -230,6 +230,9 @@ def test_a_list_route_answers_only_get(w, placed):
 
 def _place_for(w, organisation, subject, key="order-key-000000002", **request):
     """An order placed through the service, with the legal documents, the DPA and a tenant."""
+    from billing_fiscal_fixtures import register_test_fiscal_periods
+
+    register_test_fiscal_periods()
     documents_published()
     services.set_billing_profile(
         organisation_id=organisation.id,
