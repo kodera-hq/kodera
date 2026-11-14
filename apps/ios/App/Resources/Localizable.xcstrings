@@ -4832,6 +4832,38 @@
           }
         }
       }
+    },
+    "proximity.voluntary_preparing": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Préparation de votre participation…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing your check-in…"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_unavailable": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La détection de proximité est indisponible. Vérifiez vos autorisations et réessayez."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nearby discovery is unavailable. Check your permissions and try again."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -335,4 +335,7 @@
     <string name="proximity_voluntary_lan_badge">LAN mDNS/QUIC</string>
     <string name="proximity_voluntary_open_thread">Fil éphémère</string>
     <string name="proximity_voluntary_start_call">Appel direct</string>
+    <string name="proximity_voluntary_preparing">Vérification de l’accès à la proximité…</string>
+    <string name="proximity_voluntary_bootstrap_unavailable">La proximité est indisponible. Vérifiez votre accès à cet espace puis réessayez.</string>
+    <string name="proximity_voluntary_radio_unavailable">La découverte locale est indisponible. Vérifiez le Bluetooth et les autorisations.</string>
 </resources>

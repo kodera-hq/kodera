@@ -43,7 +43,11 @@ struct SignedInView: View {
                 .buttonStyle(.bordered)
                 .accessibilityLabel(Text("session.sign_out"))
                 .accessibilityHint(Text("session.sign_out_hint"))
-                ProximityCheckInCard(organisationId: soundScope?.organisationId)
+                ProximityVoluntaryCheckInView(
+                    session: session.proximityRadioSession, onPrepare: session.prepareProximity,
+                    isPreparing: session.isPreparingProximity, canPrepare: soundScope != nil,
+                    preparationErrorKey: session.proximityPreparationErrorKey
+                )
                 workspaceSection
                 CommunityWorkspaceCard(organisationId: soundScope?.organisationId)
                 VoiceCallDockCard(scope: voiceScope)

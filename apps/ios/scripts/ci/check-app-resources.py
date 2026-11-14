@@ -335,6 +335,27 @@ def findings(root):
     for key in FORBIDDEN_PLIST_KEYS:
         if key in info:
             errors.append(f"Info.plist declares {key}, a capability this app has not qualified")
+    if info.get("NSBonjourServices") != ["_kodera-prox._udp"]:
+        errors.append("Info.plist must declare only the foreground proximity Bonjour service")
+    for key in info:
+        if key.startswith("NSLocation"):
+            errors.append("Info.plist requests location access; proximity uses no location permission")
+    privacy = read_json(app / "Resources/InfoPlist.xcstrings")
+    privacy_keys = {"NSBluetoothAlwaysUsageDescription", "NSLocalNetworkUsageDescription"}
+    if privacy.get("sourceLanguage") != SOURCE_LANGUAGE or set(privacy.get("strings", {})) != privacy_keys:
+        errors.append("InfoPlist.xcstrings must contain exactly the French-source proximity permission descriptions")
+    for key in sorted(privacy_keys):
+        if not isinstance(info.get(key), str) or not info[key].strip():
+            errors.append(f"Info.plist lacks the foreground proximity permission description {key}")
+        for language in LANGUAGES:
+            unit = privacy.get("strings", {}).get(key, {}).get("localizations", {}).get(language, {}).get("stringUnit", {})
+            if unit.get("state") != "translated" or not unit.get("value"):
+                errors.append(f"InfoPlist.xcstrings: {key} has no {language} translation")
+        english = privacy.get("strings", {}).get(key, {}).get("localizations", {}).get("en", {}).get("stringUnit", {}).get("value")
+        if info.get(key) and english and info[key] != english:
+            errors.append(f"Info.plist {key} differs from its English permission description")
+    if "path: App/Resources/InfoPlist.xcstrings" not in read_bytes(root / "project.yml").decode("utf-8"):
+        errors.append("project.yml must bundle the localized proximity permission descriptions")
     for key, setting in DEPLOYMENT_PLIST_KEYS.items():
         reference = f"$({setting})"
         if key not in info:

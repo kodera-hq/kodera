@@ -54,6 +54,10 @@ fun ProximityVoluntaryCheckInScreen(
     controller: VoluntaryProximitySessionController,
     onOpenEphemeralThread: ((DiscoveredProximityPeer) -> Unit)? = null,
     onStartDirectCall: ((DiscoveredProximityPeer) -> Unit)? = null,
+    onPrepareConsent: (() -> Unit)? = null,
+    preparing: Boolean = false,
+    statusMessage: Int? = null,
+    statusNoteIsShared: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalKoderaPalette.current
@@ -110,6 +114,10 @@ fun ProximityVoluntaryCheckInScreen(
                     color = palette.warnInk,
                 )
             }
+            if (statusMessage != null || controller.lastError != null) {
+                Text(stringResource(statusMessage ?: R.string.proximity_voluntary_radio_unavailable),
+                    style = NativeTypography.caption, color = palette.warnInk)
+            }
 
             Column(verticalArrangement = Arrangement.spacedBy(KoderaTokens.Space.s2)) {
                 Text(
@@ -140,19 +148,21 @@ fun ProximityVoluntaryCheckInScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = controller.statusNote,
-                onValueChange = { next ->
-                    if (next.length <= ProximityRadioConstants.MAX_STATUS_NOTE_LENGTH) {
-                        controller.statusNote = next
-                    }
-                },
-                enabled = !controller.isSessionActive,
-                singleLine = true,
-                label = { Text(stringResource(R.string.proximity_voluntary_note_label)) },
-                placeholder = { Text(stringResource(R.string.proximity_voluntary_note_placeholder)) },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (statusNoteIsShared) {
+                OutlinedTextField(
+                    value = controller.statusNote,
+                    onValueChange = { next ->
+                        if (next.length <= ProximityRadioConstants.MAX_STATUS_NOTE_LENGTH) {
+                            controller.statusNote = next
+                        }
+                    },
+                    enabled = !controller.isSessionActive,
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.proximity_voluntary_note_label)) },
+                    placeholder = { Text(stringResource(R.string.proximity_voluntary_note_placeholder)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             when {
                 controller.isSessionActive -> {
@@ -170,9 +180,20 @@ fun ProximityVoluntaryCheckInScreen(
                         )
                     }
                 }
+                controller.organisationId == null || controller.missingRuntimePermissions.isNotEmpty() -> {
+                    OutlinedButton(
+                        onClick = { onPrepareConsent?.invoke() },
+                        enabled = controller.isForegroundActive && !preparing && onPrepareConsent != null,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12),
+                    ) {
+                        Text(stringResource(if (preparing) R.string.proximity_voluntary_preparing else
+                            R.string.proximity_voluntary_consent_grant), style = NativeTypography.emphasis,
+                            color = palette.accentInk)
+                    }
+                }
                 !controller.hasForegroundConsent -> {
                     OutlinedButton(
-                        onClick = { runCatching { controller.grantForegroundConsent() } },
+                        onClick = { if (onPrepareConsent != null) onPrepareConsent() else runCatching { controller.grantForegroundConsent() } },
                         enabled = controller.isForegroundActive && controller.organisationId != null,
                         modifier = Modifier.fillMaxWidth().heightIn(min = KoderaTokens.Space.s12),
                     ) {
@@ -267,6 +288,7 @@ private fun PeerRadarCard(
         ) {
             OutlinedButton(
                 onClick = { onOpenEphemeralThread?.invoke(peer) },
+                enabled = onOpenEphemeralThread != null,
                 modifier = Modifier.weight(1f).heightIn(min = KoderaTokens.Space.s10),
             ) {
                 Text(
@@ -277,6 +299,7 @@ private fun PeerRadarCard(
             }
             OutlinedButton(
                 onClick = { onStartDirectCall?.invoke(peer) },
+                enabled = onStartDirectCall != null,
                 modifier = Modifier.weight(1f).heightIn(min = KoderaTokens.Space.s10),
             ) {
                 Text(

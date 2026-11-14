@@ -12,6 +12,8 @@ import io.kodera.android.client.BackendException
 import io.kodera.android.client.BackendFailure
 import io.kodera.android.client.CoreMeClient
 import io.kodera.android.client.CoreWorkspaceClient
+import io.kodera.android.client.CoreProximityClient
+import io.kodera.android.client.ProximityBootstrap
 import io.kodera.android.client.WorkspaceCategory
 import io.kodera.android.client.WorkspaceChannel
 import io.kodera.android.client.WorkspaceChannelLifecycle
@@ -37,6 +39,11 @@ import io.kodera.android.client.StoredGrant
 import io.kodera.android.client.TokenStore
 import io.kodera.android.domain.AdmittedIssuer
 import io.kodera.android.domain.LoopbackPolicy
+import io.kodera.android.proximity.ProximityBleRadioDriver
+import io.kodera.android.proximity.ProximityNsdMdnsDriver
+import io.kodera.android.proximity.ProximitySessionTimer
+import io.kodera.android.proximity.RuntimeProximityPermissionChecker
+import io.kodera.android.proximity.VoluntaryProximitySessionController
 import io.kodera.android.entry.Deployment
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -530,7 +537,9 @@ class SessionControllerTests {
     private fun loaded(label: String, organisation: String = organisationA): WorkspaceOutcome =
         WorkspaceOutcome.Loaded(tree(label, organisation))
 
-    private inner class ChannelFixture(meSteps: List<ReadStep<MeOutcome>>, channelSteps: List<ReadStep<WorkspaceOutcome>>) {
+    private inner class ChannelFixture(meSteps: List<ReadStep<MeOutcome>>, channelSteps: List<ReadStep<WorkspaceOutcome>>,
+        radio: VoluntaryProximitySessionController? = null,
+        fetchProximity: (CoreProximityClient, String) -> ProximityBootstrap? = { _, _ -> null }) {
         val browser = FakeBrowser()
         val service = KoderaSignInService(configuration, InMemoryTokenStore(), browser)
         val me = ReadScript(meSteps)
@@ -550,7 +559,7 @@ class SessionControllerTests {
             },
             fetchMember = { me.read() }, fetchWorkspace = { client, id ->
                 clients.add(client); requestedIds.add(id); channels.read()
-            })
+            }, voluntaryProximityController = radio, fetchProximity = fetchProximity)
         init {
             controller.start()
             runMainUntil("restored for channels") { controller.phase == SessionPhase.SignedOut }
@@ -565,6 +574,154 @@ class SessionControllerTests {
         }
         fun label(): String = (controller.workspace as WorkspaceViewState.Loaded).snapshot.categories.first().channels.first().name
         fun reenter() = controller.enter(checkNotNull(service.captureAcceptedOwner()), refreshFirst = false)
+    }
+
+    private class RadioFixture {
+        var permissionsGranted = true
+        var starts = 0
+        val ble = object : ProximityBleRadioDriver {
+            override var onPeerTokenObserved: ((ByteArray, Int) -> Unit)? = null
+            override fun startAdvertisingAndScanning(ephemeralToken: ByteArray) { starts++ }
+            override fun stopAll() { }
+        }
+        private val nsd = object : ProximityNsdMdnsDriver {
+            override var onPeerTxtObserved: ((Map<String, String>) -> Unit)? = null
+            override fun startAdvertisingAndDiscovery(attributes: Map<String, String>, quicPort: Int) { }
+            override fun stopAll() { }
+        }
+        val controller = VoluntaryProximitySessionController(ble, nsd,
+            RuntimeProximityPermissionChecker({ 33 }, { permissionsGranted }), timer = ProximitySessionTimer { AutoCloseable { } },
+            clockUnixSeconds = { 1_800_000_100L })
+    }
+
+    @Test fun voluntaryRadioBootstrapUsesWorkspaceIdWithoutAutomaticallyStartingRadios() {
+        val radio = RadioFixture()
+        val actualWorkspace = checkNotNull(tree("Current").id)
+        val material = ProximityBootstrap(actualWorkspace, "default", 2_000_000L, 1_800_000_900L, ByteArray(32) { 7 })
+        val requested = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val f = ChannelFixture(listOf(ReadStep<MeOutcome>(profile(organisationA))), listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio.controller, { _, id -> requested.add(id); material })
+        try {
+            f.settled()
+            assertTrue(requested.isEmpty())
+            assertEquals(0, radio.starts)
+            checkNotNull(f.controller.proximityConsentRequest()).complete()
+            runMainUntil("voluntary bootstrap provisioned") { !f.controller.proximityPreparing }
+            assertEquals(listOf(actualWorkspace), requested)
+            assertEquals(actualWorkspace, radio.controller.organisationId)
+            assertTrue(radio.controller.hasForegroundConsent)
+            assertFalse(radio.controller.isSessionActive)
+            assertEquals(0, radio.starts)
+            assertTrue(material.epochMacKey.all { it == 0.toByte() })
+            f.controller.onBackground()
+            assertNull(radio.controller.organisationId)
+            assertFalse(radio.controller.hasForegroundConsent)
+        } finally { f.controller.close() }
+    }
+
+    @Test fun latePermissionAnswerCannotBootstrapAfterSignOut() {
+        val radio = RadioFixture()
+        val calls = AtomicInteger()
+        val f = ChannelFixture(listOf(ReadStep<MeOutcome>(profile(organisationA))), listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio.controller, { _, _ -> calls.incrementAndGet(); null })
+        try {
+            f.settled()
+            val pending = checkNotNull(f.controller.proximityConsentRequest())
+            f.controller.signOut()
+            pending.complete()
+            assertEquals(0, calls.get())
+            assertNull(radio.controller.organisationId)
+            assertEquals(0, radio.starts)
+        } finally { f.controller.close() }
+    }
+
+    @Test fun heldBootstrapIsDiscardedAndWipedWhenAppBackgrounds() {
+        val radio = RadioFixture()
+        val actualWorkspace = checkNotNull(tree("Current").id)
+        val material = ProximityBootstrap(actualWorkspace, "default", 2_000_000L, 1_800_000_900L, ByteArray(32) { 7 })
+        val step = ReadStep<ProximityBootstrap?>(material, held = true)
+        val script = ReadScript(listOf(step))
+        val f = ChannelFixture(listOf(ReadStep<MeOutcome>(profile(organisationA))), listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio.controller, { _, _ -> script.read() })
+        try {
+            f.settled()
+            checkNotNull(f.controller.proximityConsentRequest()).complete()
+            step.awaitEntered()
+            f.controller.onBackground()
+            releaseAndPublish(step)
+            assertNull(radio.controller.organisationId)
+            assertFalse(radio.controller.hasForegroundConsent)
+            assertEquals(0, radio.starts)
+            assertTrue(material.epochMacKey.all { it == 0.toByte() })
+        } finally { step.release.countDown(); f.controller.close() }
+    }
+
+    @Test fun visiblePermissionDialogRestoresOnlyItsOriginalReceiptBeforeBootstrap() {
+        val radio = RadioFixture().also { it.permissionsGranted = false }
+        val actualWorkspace = checkNotNull(tree("Current").id)
+        val calls = AtomicInteger()
+        val material = ProximityBootstrap(actualWorkspace, "default", 2_000_000L, 1_800_000_900L, ByteArray(32) { 7 })
+        val f = ChannelFixture(listOf(ReadStep<MeOutcome>(profile(organisationA))), listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio.controller, { _, _ -> calls.incrementAndGet(); material })
+        try {
+            f.settled()
+            val pending = checkNotNull(f.controller.proximityConsentRequest())
+            assertTrue(pending.permissions.isNotEmpty())
+            assertTrue(pending.pauseForDialog())
+            assertNull(radio.controller.organisationId)
+            assertFalse(radio.controller.isSessionActive)
+            assertEquals(0, calls.get())
+            radio.permissionsGranted = true
+            assertTrue(pending.resumeAfterDialog())
+            pending.complete()
+            runMainUntil("permission dialog bootstrap") { !f.controller.proximityPreparing }
+            assertEquals(1, calls.get())
+            assertTrue(radio.controller.hasForegroundConsent)
+            assertEquals(0, radio.starts)
+            pending.complete()
+            assertEquals(1, calls.get())
+            assertTrue(material.epochMacKey.all { it == 0.toByte() })
+        } finally { f.controller.close() }
+    }
+
+    @Test fun stoppedPermissionDialogCannotRestoreOrBootstrapItsReceipt() {
+        val radio = RadioFixture().also { it.permissionsGranted = false }
+        val calls = AtomicInteger()
+        val f = ChannelFixture(listOf(ReadStep<MeOutcome>(profile(organisationA))), listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio.controller, { _, _ -> calls.incrementAndGet(); null })
+        try {
+            f.settled()
+            val pending = checkNotNull(f.controller.proximityConsentRequest())
+            assertTrue(pending.pauseForDialog())
+            pending.cancel()
+            f.controller.onBackground()
+            radio.permissionsGranted = true
+            assertFalse(pending.resumeAfterDialog())
+            pending.complete()
+            assertEquals(0, calls.get())
+            assertNull(radio.controller.organisationId)
+            assertFalse(radio.controller.hasForegroundConsent)
+            assertEquals(WorkspaceViewState.Hidden, f.controller.workspace)
+        } finally { f.controller.close() }
+    }
+
+    @Test fun permissionDialogReceiptCannotSurviveSignOutWhilePaused() {
+        val radio = RadioFixture().also { it.permissionsGranted = false }
+        val calls = AtomicInteger()
+        val f = ChannelFixture(listOf(ReadStep<MeOutcome>(profile(organisationA))), listOf(ReadStep<WorkspaceOutcome>(loaded("Current"))),
+            radio.controller, { _, _ -> calls.incrementAndGet(); null })
+        try {
+            f.settled()
+            val pending = checkNotNull(f.controller.proximityConsentRequest())
+            assertTrue(pending.pauseForDialog())
+            f.controller.signOut()
+            radio.permissionsGranted = true
+            assertFalse(pending.resumeAfterDialog())
+            pending.complete()
+            assertEquals(0, calls.get())
+            assertNull(radio.controller.organisationId)
+            assertFalse(radio.controller.hasForegroundConsent)
+        } finally { f.controller.close() }
     }
 
     /** Runs the actual queued old publication callback, not merely a wait for a fixture to return. */

@@ -3,6 +3,14 @@ package io.kodera.android.proximity
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattServer
+import android.bluetooth.BluetoothGattServerCallback
+import android.bluetooth.BluetoothGattService
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -18,6 +26,8 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.ParcelUuid
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -25,6 +35,9 @@ import androidx.core.content.ContextCompat
 import io.kodera.android.domain.TrustPolicy
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Timer
+import java.util.TimerTask
+import java.util.UUID
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -33,6 +46,7 @@ object ProximityRadioConstants {
     const val EPOCH_CLOCK_SKEW_SECONDS: Long = 60L
     const val EPHEMERAL_TOKEN_BYTES: Int = 32
     const val GATT_SERVICE_UUID: String = "7b4e4b50-9a10-4f88-b310-6b6f64657261"
+    const val GATT_TOKEN_CHARACTERISTIC_UUID: String = "7b4e4b51-9a10-4f88-b310-6b6f64657261"
     const val MDNS_SERVICE_TYPE: String = "_kodera-prox._udp"
     const val QUIC_ALPN: String = "kodera-prox/1"
     const val MAX_STATUS_NOTE_LENGTH: Int = 80
@@ -100,6 +114,7 @@ class RuntimeProximityPermissionChecker(
             listOf(
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
             )
         } else {
             emptyList()
@@ -291,6 +306,62 @@ object EphemeralHkdfTokenCodec {
         return DecodedToken(raw.copyOf(), epoch, counter, pseudonym)
     }
 
+    internal fun validateEventScope(scope: String) {
+        fun alphanumeric(char: Char) = char in 'a'..'z' || char in 'A'..'Z' || char in '0'..'9'
+        if (scope.length !in 1..64 || !alphanumeric(scope[0]) ||
+            !scope.all { alphanumeric(it) || it in "._:-" }) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TOKEN)
+        }
+    }
+
+    internal fun validateEpochLease(epoch: Long, expiresAt: Long, key: ByteArray, now: Long) {
+        if (key.size != 32 || key.all { it == 0.toByte() }) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+        }
+        if (now < 0 || epoch !in 0..0xFFFF_FFFFL || epoch != now / 900L || expiresAt != (epoch + 1L) * 900L || now >= expiresAt) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.EXPIRED_TOKEN)
+        }
+    }
+
+    /** Production minting has a current-epoch capability only, never a workspace master. */
+    fun mintWithEpochMacKey(
+        organisationId: String, scopeTag: String = "default", epoch: Long, epochExpiresAtUnixSeconds: Long,
+        epochMacKey: ByteArray, deviceSeed: ByteArray, nowUnixSeconds: Long, counter: Long = 0L,
+    ): DecodedToken {
+        if (!TrustPolicy.canonicalNonNilUUID(organisationId)) throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
+        validateEventScope(scopeTag)
+        validateEpochLease(epoch, epochExpiresAtUnixSeconds, epochMacKey, nowUnixSeconds)
+        if (deviceSeed.size != 32 || deviceSeed.all { it == 0.toByte() } || constantTimeEquals(deviceSeed, epochMacKey)) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+        }
+        require(counter in 0..0xFFFF_FFFFL)
+        val pseudonym = deriveRollingPseudonym(deviceSeed, organisationId, scopeTag, epoch)
+        val header = ByteBuffer.allocate(20).order(ByteOrder.BIG_ENDIAN).apply {
+            put(MAGIC_0); put(MAGIC_1); put(VERSION); put(0.toByte())
+            putInt(epoch.toInt()); putInt(counter.toInt()); put(pseudonym)
+        }.array()
+        return DecodedToken(header + computeMac(epochMacKey, organisationId, scopeTag, header), epoch, counter, pseudonym)
+    }
+
+    fun verifyWithEpochMacKey(
+        raw: ByteArray, organisationId: String, scopeTag: String = "default", epoch: Long,
+        epochExpiresAtUnixSeconds: Long, epochMacKey: ByteArray, nowUnixSeconds: Long,
+    ): DecodedToken {
+        if (!TrustPolicy.canonicalNonNilUUID(organisationId)) throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
+        validateEventScope(scopeTag)
+        validateEpochLease(epoch, epochExpiresAtUnixSeconds, epochMacKey, nowUnixSeconds)
+        if (raw.size != 32 || raw[0] != MAGIC_0 || raw[1] != MAGIC_1 || raw[2] != VERSION || raw[3] != 0.toByte()) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TOKEN)
+        }
+        val header = ByteBuffer.wrap(raw, 4, 8).order(ByteOrder.BIG_ENDIAN)
+        if ((header.int.toLong() and 0xFFFF_FFFFL) != epoch) throw ProximityVoluntaryFailure(ProximityVoluntaryError.EXPIRED_TOKEN)
+        val counter = header.int.toLong() and 0xFFFF_FFFFL
+        if (!constantTimeEquals(computeMac(epochMacKey, organisationId, scopeTag, raw.copyOfRange(0, 20)), raw.copyOfRange(20, 32))) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.AUTHENTICATION_FAILED)
+        }
+        return DecodedToken(raw.copyOf(), epoch, counter, raw.copyOfRange(12, 20))
+    }
+
     private fun candidateEpochs(nowUnixSeconds: Long): List<Long> {
         val current = (nowUnixSeconds / ProximityRadioConstants.EPOCH_ROTATION_SECONDS) and 0xFFFF_FFFFL
         val allowed = mutableListOf(current)
@@ -320,6 +391,9 @@ object EphemeralHkdfTokenCodec {
         }.array()
         return hkdfSha256(salt, workspaceMasterKey, info, 32)
     }
+
+    internal fun isLocalPseudonym(decoded: DecodedToken, deviceSeed: ByteArray, organisationId: String, scopeTag: String): Boolean =
+        constantTimeEquals(decoded.rollingPseudonym, deriveRollingPseudonym(deviceSeed, organisationId, scopeTag, decoded.epoch))
 
     private fun deriveRollingPseudonym(
         deviceSeed: ByteArray,
@@ -418,14 +492,14 @@ object MdnsProximityTxtCodec {
                 throw ProximityVoluntaryFailure(ProximityVoluntaryError.FORBIDDEN_COORDINATE_FIELD)
             }
         }
-        if (attributes["v"] != "1" || attributes["alpn"] != ProximityRadioConstants.QUIC_ALPN) {
+        if (attributes.keys != setOf("v", "ep", "tok", "alpn", "port") || attributes["v"] != "1" || attributes["alpn"] != ProximityRadioConstants.QUIC_ALPN) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TXT_RECORD)
         }
-        val epoch = attributes["ep"]?.toLongOrNull()?.takeIf { it in 0L..0xFFFF_FFFFL }
+        val epoch = attributes["ep"]?.takeIf { it.length in 1..10 && it.all { char -> char in '0'..'9' } }?.toLongOrNull()?.takeIf { it in 0L..0xFFFF_FFFFL }
             ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TXT_RECORD)
-        val port = attributes["port"]?.toIntOrNull()?.takeIf { it in 1..65_535 }
+        val port = attributes["port"]?.takeIf { it.length in 1..5 && it.all { char -> char in '0'..'9' } }?.toIntOrNull()?.takeIf { it in 1..65_535 }
             ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TXT_RECORD)
-        val tokenHex = attributes["tok"]
+        val tokenHex = attributes["tok"]?.takeIf { it.length == 64 && it.all { char -> char in '0'..'9' || char in 'a'..'f' } }
             ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TXT_RECORD)
         val token = EphemeralHkdfTokenCodec.fromHex(tokenHex)
             ?.takeIf { it.size == ProximityRadioConstants.EPHEMERAL_TOKEN_BYTES }
@@ -446,14 +520,34 @@ data class DiscoveredProximityPeer(
 
 interface ProximityBleRadioDriver {
     var onPeerTokenObserved: ((ByteArray, Int) -> Unit)?
+    var onFailure: ((ProximityVoluntaryError) -> Unit)?
+        get() = null
+        set(@Suppress("UNUSED_PARAMETER") value) { }
     fun startAdvertisingAndScanning(ephemeralToken: ByteArray)
     fun stopAll()
 }
 
 interface ProximityNsdMdnsDriver {
     var onPeerTxtObserved: ((Map<String, String>) -> Unit)?
+    var onFailure: ((ProximityVoluntaryError) -> Unit)?
+        get() = null
+        set(@Suppress("UNUSED_PARAMETER") value) { }
     fun startAdvertisingAndDiscovery(attributes: Map<String, String>, quicPort: Int)
     fun stopAll()
+}
+
+fun interface ProximitySessionTimer {
+    fun schedule(tick: () -> Unit): AutoCloseable
+}
+
+private object ForegroundProximitySessionTimer : ProximitySessionTimer {
+    override fun schedule(tick: () -> Unit): AutoCloseable {
+        val timer = Timer("proximity-session", true)
+        timer.scheduleAtFixedRate(object : TimerTask() {
+            override fun run() = tick()
+        }, 1_000L, 1_000L)
+        return AutoCloseable { timer.cancel() }
+    }
 }
 
 /**
@@ -466,23 +560,27 @@ class AndroidBleGattProximityDriver(
     private val permissionChecker: ProximityPermissionChecker = RuntimeProximityPermissionChecker(context),
 ) : ProximityBleRadioDriver {
     override var onPeerTokenObserved: ((ByteArray, Int) -> Unit)? = null
+    override var onFailure: ((ProximityVoluntaryError) -> Unit)? = null
 
     private val serviceUuid = ParcelUuid.fromString(ProximityRadioConstants.GATT_SERVICE_UUID)
+    private val tokenUuid = UUID.fromString(ProximityRadioConstants.GATT_TOKEN_CHARACTERISTIC_UUID)
     private var activeAdvertiser: BluetoothLeAdvertiser? = null
     private var activeScanner: BluetoothLeScanner? = null
+    private var activeServer: BluetoothGattServer? = null
+    private var advertiseCallback: AdvertiseCallback? = null
+    private var scanCallback: ScanCallback? = null
+    private var activeToken: ByteArray? = null
+    @Volatile private var generation = 0L
     private var isAdvertising = false
     private var isScanning = false
-
-    private val advertiseCallback = object : AdvertiseCallback() {}
-
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val payload = result.scanRecord?.getServiceData(serviceUuid) ?: return
-            onPeerTokenObserved?.invoke(payload, result.rssi)
-        }
-    }
+    private data class PendingRead(val rssi: Int, val deadlineNanos: Long)
+    private val pendingReads = LinkedHashMap<BluetoothGatt, PendingRead>()
+    private val cooldowns = LinkedHashMap<BluetoothDevice, Long>()
+    private var connectionTimer: Timer? = null
+    private val callbackHandler by lazy { Handler(Looper.getMainLooper()) }
 
     @SuppressLint("MissingPermission")
+    @Synchronized
     override fun startAdvertisingAndScanning(ephemeralToken: ByteArray) {
         if (ephemeralToken.size != ProximityRadioConstants.EPHEMERAL_TOKEN_BYTES) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TOKEN)
@@ -491,6 +589,11 @@ class AndroidBleGattProximityDriver(
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.RUNTIME_PERMISSION_REQUIRED)
         }
         stopAll()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            // Older Android scanning requires location permission; this adapter never requests it.
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE)
+        }
+        val currentGeneration = generation
 
         val manager = context.getSystemService(BluetoothManager::class.java)
         val adapter = manager?.adapter?.takeIf { it.isEnabled }
@@ -500,46 +603,181 @@ class AndroidBleGattProximityDriver(
         val scanner = adapter.bluetoothLeScanner
             ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE)
 
-        val advertiseSettings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-            .setConnectable(false)
-            .build()
-        val advertiseData = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
-            .setIncludeTxPowerLevel(false)
-            .addServiceUuid(serviceUuid)
-            .build()
-        val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
-            .addServiceData(serviceUuid, ephemeralToken)
-            .build()
-
-        advertiser.startAdvertising(advertiseSettings, advertiseData, scanResponse, advertiseCallback)
         activeAdvertiser = advertiser
-        isAdvertising = true
-
-        val filter = ScanFilter.Builder().setServiceUuid(serviceUuid).build()
-        val scanSettings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
-            .build()
-        scanner.startScan(listOf(filter), scanSettings, scanCallback)
         activeScanner = scanner
-        isScanning = true
+        activeToken = ephemeralToken.copyOf()
+        val advertising = object : AdvertiseCallback() {
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
+                synchronized(this@AndroidBleGattProximityDriver) {
+                    if (generation == currentGeneration) isAdvertising = true
+                }
+            }
+            override fun onStartFailure(errorCode: Int) = reportFailure(currentGeneration)
+        }
+        advertiseCallback = advertising
+        val scanning = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                synchronized(this@AndroidBleGattProximityDriver) {
+                    if (generation == currentGeneration) beginRead(result, currentGeneration)
+                }
+            }
+            override fun onScanFailed(errorCode: Int) = reportFailure(currentGeneration)
+        }
+        scanCallback = scanning
+        val serverCallback = object : BluetoothGattServerCallback() {
+            override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+                synchronized(this@AndroidBleGattProximityDriver) {
+                    if (generation != currentGeneration || service.uuid != serviceUuid.uuid) return
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        reportFailure(currentGeneration)
+                        return
+                    }
+                    val settings = AdvertiseSettings.Builder()
+                        .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+                        .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+                        .setConnectable(true).build()
+                    // A 128-bit UUID plus flags fits legacy advertisements; the 32-byte token is read over GATT.
+                    val data = AdvertiseData.Builder().setIncludeDeviceName(false)
+                        .setIncludeTxPowerLevel(false).addServiceUuid(serviceUuid).build()
+                    runCatching { advertiser.startAdvertising(settings, data, advertising) }
+                        .onFailure { reportFailure(currentGeneration) }
+                }
+            }
+            override fun onCharacteristicReadRequest(
+                device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic,
+            ) {
+                synchronized(this@AndroidBleGattProximityDriver) {
+                    if (generation != currentGeneration) return
+                    val token = activeToken ?: return
+                    val status = when {
+                        characteristic.uuid != tokenUuid -> BluetoothGatt.GATT_READ_NOT_PERMITTED
+                        offset !in 0..token.size -> BluetoothGatt.GATT_INVALID_OFFSET
+                        else -> BluetoothGatt.GATT_SUCCESS
+                    }
+                    val bytes = if (status == BluetoothGatt.GATT_SUCCESS) token.copyOfRange(offset, token.size) else null
+                    activeServer?.sendResponse(device, requestId, status, offset, bytes)
+                }
+            }
+        }
+        try {
+            activeServer = manager.openGattServer(context, serverCallback)
+                ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE)
+            val service = BluetoothGattService(serviceUuid.uuid, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+            service.addCharacteristic(BluetoothGattCharacteristic(
+                tokenUuid, BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ,
+            ))
+            if (activeServer?.addService(service) != true) {
+                throw ProximityVoluntaryFailure(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE)
+            }
+            scanner.startScan(listOf(ScanFilter.Builder().setServiceUuid(serviceUuid).build()),
+                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build(), scanning)
+            isScanning = true
+            connectionTimer = Timer("proximity-gatt", true).apply {
+                scheduleAtFixedRate(object : TimerTask() {
+                    override fun run() {
+                        synchronized(this@AndroidBleGattProximityDriver) {
+                            if (generation != currentGeneration) return
+                            val now = System.nanoTime()
+                            pendingReads.filterValues { it.deadlineNanos <= now }.keys.toList().forEach(::finishRead)
+                        }
+                    }
+                }, 1_000L, 1_000L)
+            }
+        } catch (error: Exception) {
+            stopAll()
+            throw error
+        }
     }
 
     @SuppressLint("MissingPermission")
+    private fun beginRead(result: ScanResult, currentGeneration: Long) {
+        if (result.rssi !in -127..20 || pendingReads.size >= 4) return
+        val now = System.nanoTime()
+        cooldowns.entries.removeAll { it.value <= now }
+        if (result.device in cooldowns || cooldowns.size >= 64) return
+        cooldowns[result.device] = now + 30_000_000_000L
+        val callback = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                synchronized(this@AndroidBleGattProximityDriver) {
+                    if (generation != currentGeneration || gatt !in pendingReads) { gatt.close(); return }
+                    if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
+                        if (!gatt.discoverServices()) finishRead(gatt)
+                    } else if (status != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) finishRead(gatt)
+                }
+            }
+            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                synchronized(this@AndroidBleGattProximityDriver) {
+                    if (generation != currentGeneration || gatt !in pendingReads) return
+                    val characteristic = gatt.getService(serviceUuid.uuid)?.getCharacteristic(tokenUuid)
+                    if (status != BluetoothGatt.GATT_SUCCESS || characteristic == null ||
+                        characteristic.properties and BluetoothGattCharacteristic.PROPERTY_READ == 0 ||
+                        !gatt.readCharacteristic(characteristic)
+                    ) finishRead(gatt)
+                }
+            }
+            @Suppress("DEPRECATION")
+            override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                deliverRead(gatt, characteristic, characteristic.value, status, currentGeneration)
+            }
+            override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+                deliverRead(gatt, characteristic, value, status, currentGeneration)
+            }
+        }
+        val gatt = runCatching { result.device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE) }.getOrNull() ?: return
+        pendingReads[gatt] = PendingRead(result.rssi, now + 10_000_000_000L)
+    }
+
+    private fun deliverRead(
+        gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray?, status: Int, currentGeneration: Long,
+    ) {
+        val observed = synchronized(this) {
+            val pending = pendingReads[gatt] ?: return
+            if (generation != currentGeneration) return
+            finishRead(gatt)
+            if (status != BluetoothGatt.GATT_SUCCESS || characteristic.uuid != tokenUuid || value?.size != ProximityRadioConstants.EPHEMERAL_TOKEN_BYTES) return
+            value.copyOf() to pending.rssi
+        }
+        callbackHandler.post {
+            if (generation == currentGeneration) onPeerTokenObserved?.invoke(observed.first, observed.second)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun finishRead(gatt: BluetoothGatt) {
+        if (pendingReads.remove(gatt) == null) return
+        runCatching { gatt.disconnect() }
+        runCatching { gatt.close() }
+    }
+
+    private fun reportFailure(currentGeneration: Long) {
+        callbackHandler.post {
+            if (generation == currentGeneration) {
+                stopAll()
+                onFailure?.invoke(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE)
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    @Synchronized
     override fun stopAll() {
-        if (isAdvertising && permissionChecker.hasBlePermissions()) {
-            runCatching { activeAdvertiser?.stopAdvertising(advertiseCallback) }
-        }
-        if (isScanning && permissionChecker.hasBlePermissions()) {
-            runCatching { activeScanner?.stopScan(scanCallback) }
-        }
+        generation += 1
+        connectionTimer?.cancel()
+        connectionTimer = null
+        advertiseCallback?.let { runCatching { activeAdvertiser?.stopAdvertising(it) } }
+        scanCallback?.let { runCatching { activeScanner?.stopScan(it) } }
+        pendingReads.keys.toList().forEach(::finishRead)
+        runCatching { activeServer?.close() }
+        activeServer = null
+        activeToken?.fill(0)
+        activeToken = null
+        cooldowns.clear()
         isAdvertising = false
         isScanning = false
         activeAdvertiser = null
         activeScanner = null
+        advertiseCallback = null
+        scanCallback = null
     }
 }
 
@@ -552,23 +790,29 @@ class AndroidNsdMdnsProximityDriver(
     private val permissionChecker: ProximityPermissionChecker = RuntimeProximityPermissionChecker(context),
 ) : ProximityNsdMdnsDriver {
     override var onPeerTxtObserved: ((Map<String, String>) -> Unit)? = null
+    override var onFailure: ((ProximityVoluntaryError) -> Unit)? = null
 
     private var nsdManager: NsdManager? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
+    @Volatile private var generation = 0L
+    private val callbackHandler by lazy { Handler(Looper.getMainLooper()) }
 
     override fun startAdvertisingAndDiscovery(attributes: Map<String, String>, quicPort: Int) {
         if (!permissionChecker.hasNsdPermissions()) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.RUNTIME_PERMISSION_REQUIRED)
         }
         stopAll()
+        val currentGeneration = generation
+        val record = MdnsProximityTxtCodec.decode(attributes)
+        if (record.quicPort != quicPort) throw ProximityVoluntaryFailure(ProximityVoluntaryError.MALFORMED_TXT_RECORD)
 
         val manager = context.getSystemService(NsdManager::class.java)
             ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.NSD_UNAVAILABLE)
         nsdManager = manager
 
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = "kodera-prox-${attributes["tok"]?.take(8) ?: "node"}"
+            serviceName = "kodera-prox-${EphemeralHkdfTokenCodec.toHex(record.token.copyOfRange(12, 20))}"
             serviceType = ProximityRadioConstants.MDNS_SERVICE_TYPE
             port = quicPort
             for ((k, v) in attributes) {
@@ -576,7 +820,7 @@ class AndroidNsdMdnsProximityDriver(
             }
         }
         val regListener = object : NsdManager.RegistrationListener {
-            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+            override fun onRegistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = reportFailure(currentGeneration)
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
             override fun onServiceRegistered(serviceInfo: NsdServiceInfo) = Unit
             override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
@@ -587,25 +831,27 @@ class AndroidNsdMdnsProximityDriver(
         val discListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(regType: String) = Unit
             override fun onDiscoveryStopped(serviceType: String) = Unit
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) = reportFailure(currentGeneration)
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) = Unit
             override fun onServiceLost(serviceInfo: NsdServiceInfo) = Unit
 
             override fun onServiceFound(found: NsdServiceInfo) {
+                if (generation != currentGeneration) return
                 @Suppress("DEPRECATION")
                 manager.resolveService(
                     found,
                     object : NsdManager.ResolveListener {
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
                         override fun onServiceResolved(resolved: NsdServiceInfo) {
+                            if (generation != currentGeneration || resolved.attributes.size != 5) return
                             val decoded = LinkedHashMap<String, String>()
                             for ((k, rawVal) in resolved.attributes) {
-                                if (rawVal != null) {
+                                if (rawVal != null && rawVal.size <= 128) {
                                     decoded[k] = rawVal.toString(Charsets.UTF_8)
                                 }
                             }
-                            if (decoded.isNotEmpty()) {
-                                onPeerTxtObserved?.invoke(decoded)
+                            if (runCatching { MdnsProximityTxtCodec.decode(decoded) }.isSuccess) {
+                                callbackHandler.post { if (generation == currentGeneration) onPeerTxtObserved?.invoke(decoded) }
                             }
                         }
                     },
@@ -617,6 +863,7 @@ class AndroidNsdMdnsProximityDriver(
     }
 
     override fun stopAll() {
+        generation += 1
         val manager = nsdManager
         registrationListener?.let { listener ->
             runCatching { manager?.unregisterService(listener) }
@@ -627,6 +874,15 @@ class AndroidNsdMdnsProximityDriver(
         registrationListener = null
         discoveryListener = null
         nsdManager = null
+    }
+
+    private fun reportFailure(expected: Long) {
+        callbackHandler.post {
+            if (generation == expected) {
+                stopAll()
+                onFailure?.invoke(ProximityVoluntaryError.NSD_UNAVAILABLE)
+            }
+        }
     }
 }
 
@@ -640,6 +896,8 @@ class VoluntaryProximitySessionController(
     private val nsdDriver: ProximityNsdMdnsDriver,
     private val permissionChecker: ProximityPermissionChecker,
     private val quicPort: Int = 48_443,
+    private val timer: ProximitySessionTimer = ForegroundProximitySessionTimer,
+    private val clockUnixSeconds: () -> Long = { System.currentTimeMillis() / 1_000L },
 ) : AutoCloseable {
     var organisationId by mutableStateOf<String?>(null)
         private set
@@ -671,15 +929,35 @@ class VoluntaryProximitySessionController(
 
     var lastError by mutableStateOf<ProximityVoluntaryError?>(null)
         private set
+    var onAuthenticatedRebootstrapRequired: ((Long) -> Unit)? = null
 
     private var workspaceMasterKey: ByteArray? = null
+    private data class EpochLease(val epoch: Long, val expiresAt: Long, val key: ByteArray)
+    private var epochLease: EpochLease? = null
     private var deviceSeed: ByteArray? = null
     private var scopeTag: String = "default"
     private var emissionCounter: Long = 0L
+    private val maxTrackedPeers = 256
     private val seenPeerCounters = LinkedHashMap<String, Long>()
     private val rssiClassifiers = LinkedHashMap<String, ProximityRssiClassifier>()
+    private var activeEpoch: Long? = null
+    private var scheduledTick: AutoCloseable? = null
+    private var preparedLeaseTick: AutoCloseable? = null
+    private var sessionGeneration = 0L
 
     init {
+        nsdDriver.onFailure = { error ->
+            synchronized(this) {
+                clearProvisioning()
+                lastError = error
+            }
+        }
+        bleDriver.onFailure = { error ->
+            synchronized(this) {
+                clearProvisioning()
+                lastError = error
+            }
+        }
         bleDriver.onPeerTokenObserved = { tokenBytes, rssiDbm ->
             runCatching { ingestBleObservation(tokenBytes, rssiDbm) }
         }
@@ -703,7 +981,7 @@ class VoluntaryProximitySessionController(
         workspaceMasterKey: ByteArray,
         deviceSeed: ByteArray,
     ) {
-        leaveProximity()
+        clearProvisioning()
         if (!TrustPolicy.canonicalNonNilUUID(organisationId)) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
         }
@@ -717,6 +995,33 @@ class VoluntaryProximitySessionController(
         this.scopeTag = scopeTag
         this.workspaceMasterKey = workspaceMasterKey.copyOf()
         this.deviceSeed = deviceSeed.copyOf()
+    }
+
+    /** Production provisioning retains one current-epoch capability and cannot derive a future one. */
+    @Synchronized
+    fun provisionEpoch(
+        organisationId: String, scopeTag: String = "default", epoch: Long, epochExpiresAtUnixSeconds: Long,
+        epochMacKey: ByteArray, deviceSeed: ByteArray, nowUnixSeconds: Long = clockUnixSeconds(),
+    ) {
+        clearProvisioning()
+        if (!TrustPolicy.canonicalNonNilUUID(organisationId)) throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
+        EphemeralHkdfTokenCodec.validateEventScope(scopeTag)
+        EphemeralHkdfTokenCodec.validateEpochLease(epoch, epochExpiresAtUnixSeconds, epochMacKey, nowUnixSeconds)
+        if (deviceSeed.size != 32 || deviceSeed.all { it == 0.toByte() } || EphemeralHkdfTokenCodec.constantTimeEquals(epochMacKey, deviceSeed)) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+        }
+        this.organisationId = organisationId
+        this.scopeTag = scopeTag
+        this.deviceSeed = deviceSeed.copyOf()
+        epochLease = EpochLease(epoch, epochExpiresAtUnixSeconds, epochMacKey.copyOf())
+        val generation = sessionGeneration
+        preparedLeaseTick = timer.schedule {
+            synchronized(this) {
+                if (generation == sessionGeneration && !isSessionActive) {
+                    evaluateExpiry(clockUnixSeconds())
+                }
+            }
+        }
     }
 
     @Synchronized
@@ -733,11 +1038,11 @@ class VoluntaryProximitySessionController(
     }
 
     @Synchronized
-    fun startVoluntarySession(nowUnixSeconds: Long = System.currentTimeMillis() / 1_000L) {
+    fun startVoluntarySession(nowUnixSeconds: Long = clockUnixSeconds(), consentExpiresAtUnixSeconds: Long? = null) {
+        evaluateExpiry(nowUnixSeconds)
         val orgId = organisationId
-        val masterKey = workspaceMasterKey
         val seed = deviceSeed
-        if (orgId == null || masterKey == null || seed == null) {
+        if (orgId == null || seed == null) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
         }
         if (!isForegroundActive || !hasForegroundConsent) {
@@ -758,14 +1063,11 @@ class VoluntaryProximitySessionController(
         }
         statusNote = trimmedNote
 
-        val minted = EphemeralHkdfTokenCodec.mint(
-            organisationId = orgId,
-            scopeTag = scopeTag,
-            workspaceMasterKey = masterKey,
-            deviceSeed = seed,
-            nowUnixSeconds = nowUnixSeconds,
-            counter = emissionCounter,
-        )
+        if (nowUnixSeconds < 0 || nowUnixSeconds > Long.MAX_VALUE - selectedDuration.durationSeconds ||
+            (consentExpiresAtUnixSeconds != null && consentExpiresAtUnixSeconds <= nowUnixSeconds)) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.EXPIRED_TOKEN)
+        }
+        val minted = mintToken(nowUnixSeconds)
         emissionCounter = (emissionCounter + 1L) and 0xFFFF_FFFFL
 
         val txtRecord = MdnsProximityTxtCodec.Record(
@@ -774,25 +1076,62 @@ class VoluntaryProximitySessionController(
             quicPort = quicPort,
         )
 
-        bleDriver.startAdvertisingAndScanning(minted.raw)
         try {
+            bleDriver.startAdvertisingAndScanning(minted.raw)
             nsdDriver.startAdvertisingAndDiscovery(txtRecord.toAttributeMap(), quicPort)
-        } catch (err: Throwable) {
-            bleDriver.stopAll()
+        } catch (err: Exception) {
+            clearProvisioning()
+            lastError = (err as? ProximityVoluntaryFailure)?.reason ?: ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE
             throw err
         }
 
         activeTokenHex = minted.tokenHex
-        expiresAtUnixSeconds = nowUnixSeconds + selectedDuration.durationSeconds
+        activeEpoch = minted.epoch
+        expiresAtUnixSeconds = minOf(nowUnixSeconds + selectedDuration.durationSeconds, consentExpiresAtUnixSeconds ?: Long.MAX_VALUE)
         isSessionActive = true
         lastError = null
+        preparedLeaseTick?.close()
+        preparedLeaseTick = null
+        scheduledTick?.close()
+        val generation = ++sessionGeneration
+        scheduledTick = timer.schedule {
+            synchronized(this) {
+                if (generation == sessionGeneration && isSessionActive) {
+                    runCatching { refreshSession(clockUnixSeconds()) }
+                }
+            }
+        }
+    }
+
+    /** Rotates both transports without extending consent or resurrecting a stopped session. */
+    @Synchronized
+    fun refreshSession(nowUnixSeconds: Long) {
+        evaluateExpiry(nowUnixSeconds)
+        if (!isSessionActive || !isForegroundActive || !hasForegroundConsent) return
+        val epoch = nowUnixSeconds / ProximityRadioConstants.EPOCH_ROTATION_SECONDS
+        if (epoch == activeEpoch) return
+        try {
+            val minted = mintToken(nowUnixSeconds)
+            emissionCounter = (emissionCounter + 1L) and 0xFFFF_FFFFL
+            val record = MdnsProximityTxtCodec.Record(minted.epoch, minted.raw, quicPort)
+            bleDriver.startAdvertisingAndScanning(minted.raw)
+            nsdDriver.startAdvertisingAndDiscovery(record.toAttributeMap(), quicPort)
+            activeTokenHex = minted.tokenHex
+            activeEpoch = minted.epoch
+            peers = emptyList()
+            rssiClassifiers.clear()
+        } catch (error: Exception) {
+            clearProvisioning()
+            lastError = (error as? ProximityVoluntaryFailure)?.reason ?: ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE
+            throw error
+        }
     }
 
     @Synchronized
     fun onForegroundChanged(active: Boolean) {
         isForegroundActive = active
         if (!active) {
-            stopRadiosPreservingProvisioning()
+            if (epochLease != null) clearProvisioning() else stopRadiosPreservingProvisioning()
         }
     }
 
@@ -800,14 +1139,29 @@ class VoluntaryProximitySessionController(
     fun evaluateExpiry(nowUnixSeconds: Long) {
         val exp = expiresAtUnixSeconds
         if (exp != null && nowUnixSeconds >= exp) {
-            leaveProximity()
+            if (epochLease != null) clearProvisioning() else leaveProximity()
+            return
+        }
+        val lease = epochLease
+        if (lease != null && nowUnixSeconds >= lease.expiresAt) {
+            val deadline = if (isSessionActive && isForegroundActive && hasForegroundConsent) exp else null
+            clearProvisioning()
+            if (deadline != null && nowUnixSeconds < deadline) onAuthenticatedRebootstrapRequired?.invoke(deadline)
         }
     }
 
     @Synchronized
     fun leaveProximity() {
+        val hadEpochLease = epochLease != null
         stopRadiosPreservingProvisioning()
         hasForegroundConsent = false
+        if (hadEpochLease) {
+            epochLease?.key?.fill(0)
+            epochLease = null
+            deviceSeed?.fill(0)
+            deviceSeed = null
+            organisationId = null
+        }
     }
 
     @Synchronized
@@ -855,9 +1209,15 @@ class VoluntaryProximitySessionController(
         return peer
     }
 
-    override fun close() {
+    @Synchronized
+    override fun close() = clearProvisioning()
+
+    @Synchronized
+    fun clearProvisioning() {
         leaveProximity()
         workspaceMasterKey?.fill(0)
+        epochLease?.key?.fill(0)
+        epochLease = null
         deviceSeed?.fill(0)
         workspaceMasterKey = null
         deviceSeed = null
@@ -872,8 +1232,7 @@ class VoluntaryProximitySessionController(
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.FOREGROUND_CONSENT_REQUIRED)
         }
         val orgId = organisationId
-        val masterKey = workspaceMasterKey
-        if (orgId == null || masterKey == null) {
+        if (orgId == null) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
         }
         evaluateExpiry(nowUnixSeconds)
@@ -881,16 +1240,27 @@ class VoluntaryProximitySessionController(
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.EXPIRED_TOKEN)
         }
 
-        val decoded = EphemeralHkdfTokenCodec.verify(
-            raw = tokenBytes,
-            organisationId = orgId,
-            scopeTag = scopeTag,
-            workspaceMasterKey = masterKey,
-            nowUnixSeconds = nowUnixSeconds,
-        )
+        val lease = epochLease
+        val decoded = if (lease != null) {
+            EphemeralHkdfTokenCodec.verifyWithEpochMacKey(tokenBytes, orgId, scopeTag, lease.epoch, lease.expiresAt, lease.key, nowUnixSeconds)
+        } else {
+            val masterKey = workspaceMasterKey ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+            EphemeralHkdfTokenCodec.verify(tokenBytes, orgId, scopeTag, masterKey, nowUnixSeconds)
+        }
+        val seed = deviceSeed ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+        if (EphemeralHkdfTokenCodec.isLocalPseudonym(decoded, seed, orgId, scopeTag)) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.REPLAY_REJECTED)
+        }
         val replayKey = "${decoded.epoch}:${decoded.rollingPseudonymHex}"
         val previousCounter = seenPeerCounters[replayKey]
         if (previousCounter != null && decoded.counter <= previousCounter) {
+            throw ProximityVoluntaryFailure(ProximityVoluntaryError.REPLAY_REJECTED)
+        }
+        // Keep replay receipts for the valid lease/session; capacity never evicts old tokens.
+        // Check all bounds before mutating replay, peer or RSSI classifier state.
+        if ((previousCounter == null && seenPeerCounters.size >= maxTrackedPeers) ||
+            (peers.none { it.id == decoded.rollingPseudonymHex } && peers.size >= maxTrackedPeers) ||
+            (!rssiClassifiers.containsKey(decoded.rollingPseudonymHex) && rssiClassifiers.size >= maxTrackedPeers)) {
             throw ProximityVoluntaryFailure(ProximityVoluntaryError.REPLAY_REJECTED)
         }
         seenPeerCounters[replayKey] = decoded.counter
@@ -908,11 +1278,27 @@ class VoluntaryProximitySessionController(
         peers = next
     }
 
+    private fun mintToken(nowUnixSeconds: Long): EphemeralHkdfTokenCodec.DecodedToken {
+        val orgId = organisationId ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_ORGANISATION)
+        val seed = deviceSeed ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+        val lease = epochLease
+        if (lease != null) return EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgId, scopeTag, lease.epoch, lease.expiresAt,
+            lease.key, seed, nowUnixSeconds, emissionCounter)
+        val master = workspaceMasterKey ?: throw ProximityVoluntaryFailure(ProximityVoluntaryError.INVALID_KEY_MATERIAL)
+        return EphemeralHkdfTokenCodec.mint(orgId, scopeTag, master, seed, nowUnixSeconds, emissionCounter)
+    }
+
     private fun stopRadiosPreservingProvisioning() {
+        sessionGeneration += 1
+        preparedLeaseTick?.close()
+        preparedLeaseTick = null
+        scheduledTick?.close()
+        scheduledTick = null
         bleDriver.stopAll()
         nsdDriver.stopAll()
         isSessionActive = false
         activeTokenHex = null
+        activeEpoch = null
         expiresAtUnixSeconds = null
         peers = emptyList()
         seenPeerCounters.clear()

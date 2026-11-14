@@ -45,6 +45,14 @@
 	<true/>
 	<key>MinimumOSVersion</key>
 	<string>16.0</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Discover nearby workspace members only during a check-in you start.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Discover workspace check-ins on your local network only while you participate.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_kodera-prox._udp</string>
+	</array>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Fonts/PlusJakartaSans-Regular.ttf</string>

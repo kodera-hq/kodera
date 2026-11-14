@@ -131,12 +131,22 @@ public actor CoreRequester {
 
     /// `GET` of `path` on the Core origin, such as `/api/v1/me`.
     func get(path: String) async -> CoreReply {
+        await send(path: path, jsonBody: nil)
+    }
+
+    /// Bounded JSON POST through the same origin, owner, refresh and response policy as GET.
+    func post(path: String, jsonBody: Data) async -> CoreReply {
+        guard jsonBody.count <= StrictJSON.byteLimit else { return .tooLarge }
+        return await send(path: path, jsonBody: jsonBody)
+    }
+
+    private func send(path: String, jsonBody: Data?) async -> CoreReply {
         guard Self.staysOnOrigin(path), let url = URL(string: origin + path) else { return .pathRefused }
         guard !closed.isClosed else { return .transport(.other) }
         let first: AccessToken
         do { first = try await tokens.accessToken(forceRefresh: false) }
         catch { return Self.reply(error) }
-        switch await attempt(url, token: first.value) {
+        switch await attempt(url, token: first.value, jsonBody: jsonBody) {
         case let .done(reply): return reply
         case .unauthorized: break
         }
@@ -146,7 +156,7 @@ public actor CoreRequester {
         let second: AccessToken
         do { second = try await tokens.accessToken(forceRefresh: true) }
         catch { return Self.reply(error) }
-        switch await attempt(url, token: second.value) {
+        switch await attempt(url, token: second.value, jsonBody: jsonBody) {
         case let .done(reply): return reply
         case .unauthorized: return await endSession(servedBy: second.session)
         }
@@ -199,11 +209,15 @@ public actor CoreRequester {
 
     private enum Attempt { case done(CoreReply), unauthorized }
 
-    private func attempt(_ url: URL, token: String) async -> Attempt {
+    private func attempt(_ url: URL, token: String, jsonBody: Data?) async -> Attempt {
         // Checked again here: the requester may have been invalidated while the token was fetched.
         guard !Task.isCancelled, !closed.isClosed else { return .done(.transport(.other)) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
-        request.httpMethod = "GET"
+        request.httpMethod = jsonBody == nil ? "GET" : "POST"
+        if let jsonBody {
+            request.httpBody = jsonBody
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         request.httpShouldHandleCookies = false
         request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json, application/problem+json", forHTTPHeaderField: "Accept")

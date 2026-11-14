@@ -39,6 +39,11 @@ enum ProximityVoluntaryPresentation {
 @MainActor
 struct ProximityVoluntaryCheckInView: View {
     @ObservedObject var session: VoluntaryProximityRadioSession
+    var onPrepare: (() -> Void)? = nil
+    var isPreparing = false
+    var canPrepare = false
+    var preparationErrorKey: String? = nil
+    var statusNoteIsShared = false
     var onOpenEphemeralThread: ((DiscoveredProximityPeer) -> Void)?
     var onStartDirectCall: ((DiscoveredProximityPeer) -> Void)?
 
@@ -54,8 +59,17 @@ struct ProximityVoluntaryCheckInView: View {
             headerRow
             privacyPledgeBanner
             durationSelector
-            statusNoteField
+            if statusNoteIsShared { statusNoteField }
             sessionControls
+            if isPreparing {
+                ProgressView().accessibilityLabel(Text("proximity.voluntary_preparing"))
+            }
+            if let preparationErrorKey {
+                Text(LocalizedStringKey(preparationErrorKey)).font(NativeTypography.caption).foregroundStyle(palette.warnInk)
+            }
+            if session.lastError != nil {
+                Text("proximity.voluntary_unavailable").font(NativeTypography.caption).foregroundStyle(palette.warnInk)
+            }
             peerRadarList
         }
         .foregroundStyle(palette.ink)
@@ -68,6 +82,7 @@ struct ProximityVoluntaryCheckInView: View {
         .onChange(of: scenePhase) { phase in
             session.handleSceneForegroundChange(isActive: phase == .active)
         }
+        .onDisappear { session.clearProvisioning() }
     }
 
     private var headerRow: some View {
@@ -156,7 +171,8 @@ struct ProximityVoluntaryCheckInView: View {
             .buttonStyle(.bordered)
         } else if !session.hasForegroundConsent {
             Button {
-                try? session.grantForegroundConsent()
+                if let onPrepare { onPrepare() }
+                else { try? session.grantForegroundConsent() }
             } label: {
                 Text("proximity.voluntary_consent_grant")
                     .font(NativeTypography.emphasis)
@@ -165,7 +181,7 @@ struct ProximityVoluntaryCheckInView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.bordered)
-            .disabled(!session.isForegroundActive || session.organisationId == nil)
+            .disabled(isPreparing || !session.isForegroundActive || (session.organisationId == nil && !canPrepare))
         } else {
             Button {
                 try? session.startVoluntarySession()
@@ -235,6 +251,7 @@ struct ProximityVoluntaryCheckInView: View {
                         .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s10)
                 }
                 .buttonStyle(.bordered)
+                .disabled(onOpenEphemeralThread == nil)
 
                 Button {
                     onStartDirectCall?(peer)
@@ -245,6 +262,7 @@ struct ProximityVoluntaryCheckInView: View {
                         .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s10)
                 }
                 .buttonStyle(.bordered)
+                .disabled(onStartDirectCall == nil)
             }
         }
         .padding(KoderaTokens.Space.s3)

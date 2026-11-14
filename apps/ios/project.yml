@@ -27,6 +27,8 @@ targets:
           - Generated/*.json
       - path: App/Resources/Localizable.xcstrings
         buildPhase: resources
+      - path: App/Resources/InfoPlist.xcstrings
+        buildPhase: resources
       - path: App/Resources/Fonts
         type: folder
         buildPhase: resources
