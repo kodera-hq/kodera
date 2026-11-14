@@ -329,3 +329,9 @@ config/settings/deploy_worker.py
 !apps/workspaces/quotas.py
 !apps/workspaces/quota_http.py
 !apps/workspaces/api/quotas.py
+
+# Inert extension persistence only; dispatch/import/mail/operator code is excluded.
+!apps/extensions/__init__.py
+!apps/extensions/apps.py
+!apps/extensions/models.py
+!apps/extensions/expiry.py

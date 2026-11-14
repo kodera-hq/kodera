@@ -27,9 +27,16 @@ APPS = [
     "apps.engine_intents",
     "apps.workspaces",
     "apps.docs",
+    "apps.extensions",
     "apps.media",
 ]
 COMMANDS = [
+    "dispatch_extensions",
+    "purge_extension_payloads",
+    "import_workspace",
+    "manage_extension",
+    "schedule_digest",
+    "set_digest_consent",
     "configure_workspace_quotas",
     "configure_collab_role",
     "configure_api_role",

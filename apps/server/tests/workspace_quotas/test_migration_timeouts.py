@@ -98,11 +98,9 @@ def test_each_new_migration_bounds_forward_and_reverse_ddl(
         target.execute_wrapper(checked),
     ):
         executor = MigrationExecutor(target)
-        targets = [
-            node
-            for node in executor.loader.graph.leaf_nodes()
-            if node[0] in {"identity", "orgs", "docs", "workspaces", "media"}
-        ]
+        from historical_lifecycle import HISTORICAL_LIFECYCLE_TARGETS
+
+        targets = list(HISTORICAL_LIFECYCLE_TARGETS)
         executor.migrate(targets)
         first = schema_objects(target)
         MigrationExecutor(target).migrate(

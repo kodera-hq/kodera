@@ -469,3 +469,21 @@ Rules:
 - Adds `order.complimentary` (staff, target `order`): a staff operator settled an order in flight with no charge, its invoice credited in full; `metadata` carries the `reason`, the `invoice_id` and the `credit_note_id` (`BILLING_MODEL.md` §4.2).
 - `agent.enrolled` is written by a staff operator's command, so its actor is `staff`, and adds `agent.revoked` (staff, target `agent`): a staff operator revoked a tenant agent's credential (`enrol_tenant_agent`, `revoke_tenant_agent`, ADR-0016).
 - Adds `tenant.failed` (`provisioning → failed`, TENANT_STATE_MACHINE.md T4). The pilot's operator override (`manage.py tenant_status`, QUICK_WORKSPACE.md §5) writes it, and the `tenant.provision_requested`, `tenant.ready`, `tenant.activated` and `tenant.deleted` rows, as `staff`, with metadata `{from, to, override: true, reason}`; the `provision` job will write it as `system`.
+
+## Local extension writer pending central registry integration
+
+Status: Implemented local writer; central registry/contract cutover remains Proposed.
+
+| Action | Actor | Target kind | Retention |
+|---|---|---|---|
+| `extension.installed`, `extension.rotated`, `extension.revoked` | tenant | `extension` | standard |
+| `extension.delivery_queued`, `extension.delivery_reconciled` | tenant | `extension` | standard |
+| `extension.import_started`, `extension.object_imported` | tenant | `extension` | standard |
+| `extension.digest_consent_changed` | tenant | `extension` | standard |
+
+The local extension writer closes both action names and exact metadata keys. Metadata contains
+only scoped ids, generation references, digests, closed outcomes, consent flags and evidence URNs;
+it never copies event bodies, receiver URLs, signing keys or recipient contacts. Reconciliation
+records an explicit owner/admin attestation, not an independently observed provider receipt.
+The current worker/CLI operations add no public HTTP endpoint. The Proposed central registry and
+future contract audit declarations must include these actions before that cutover is released.
