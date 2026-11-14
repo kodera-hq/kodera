@@ -54,6 +54,24 @@ def build_diagnostics(output):
     return sorted(found)[:32]
 
 
+def process_rss_kib(output):
+    """Docker needs PID in ps output to select container processes; retain only RSS."""
+    lines = [line.split() for line in output.splitlines()]
+    if not lines or lines[0] != ["PID", "RSS"] or len(lines) < 2:
+        raise Refused("process RSS inventory malformed")
+    seen = set()
+    total = 0
+    for row in lines[1:]:
+        if len(row) != 2 or any(not value.isascii() or not value.isdigit() for value in row):
+            raise Refused("process RSS inventory malformed")
+        pid, rss = map(int, row)
+        if pid <= 0 or pid in seen:
+            raise Refused("process RSS inventory malformed")
+        seen.add(pid)
+        total += rss
+    return total
+
+
 def hosted(environment):
     return (
         environment.get("GITHUB_ACTIONS") == "true"
@@ -314,11 +332,8 @@ class Qualification:
         # docker top uses the Linux daemon's process table; RSS is KiB, unlike docker stats memory usage.
         rss = {}
         for container in ids:
-            output = self.run("process-rss", ["docker", "top", container, "-eo", "rss"], 15)
-            rows = output.splitlines()[1:]
-            if not rows or any(not row.strip().isdigit() for row in rows):
-                raise Refused("process RSS inventory malformed")
-            rss[container] = sum(int(row.strip()) for row in rows)
+            output = self.run("process-rss", ["docker", "top", container, "-eo", "pid,rss"], 15)
+            rss[container] = process_rss_kib(output)
         self.evidence["process_rss_kib_by_container"] = rss
         self.evidence["process_rss_kib_total"] = sum(rss.values())
         self.evidence["rss_semantics"] = "Sum of process RSS in KiB; shared pages may be counted in more than one process"

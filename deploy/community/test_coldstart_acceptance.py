@@ -13,6 +13,15 @@ import accept_coldstart as acceptance
 
 
 class QualificationBoundaryTests(unittest.TestCase):
+    def test_process_rss_requires_pid_filter_column_and_refuses_bad_inventory(self):
+        self.assertEqual(acceptance.process_rss_kib("PID RSS\n 42 512\n 43 1024\n"), 1536)
+        self.assertEqual(acceptance.process_rss_kib("PID RSS\n 42 0\n"), 0)
+        for output in ("", "RSS\n512\n", "PID RSS\n", "PID RSS\n0 12\n",
+                       "PID RSS\n42 12\n42 12\n", "PID RSS\n42 -1\n",
+                       "PID RSS\n42 12 secret\n", "PID RSS\n42 NaN\n"):
+            with self.subTest(output=output), self.assertRaises(acceptance.Refused):
+                acceptance.process_rss_kib(output)
+
     def test_build_diagnostics_publish_only_bounded_locations_and_codes(self):
         output = (
             "#15 4.1 src/example.test.ts(19,2): error TS2307: private diagnostic value\n"
