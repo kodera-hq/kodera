@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Expire prepared proximity capabilities at their lease deadline even before scanning starts, and reject noncanonical event scopes. Bound peer tracking without evicting replay receipts, and exclude this device’s own beacons.
+
+- Wire explicit foreground proximity consent to authenticated workspace provisioning and localized Bluetooth/local-network permission descriptions. Retain only a current-epoch MAC lease, stop and wipe at its boundary, and authenticate any renewal without extending consent. Read the bounded token characteristic through GATT rather than expecting unsupported advertisement service data. Physical interoperability, authenticated QUIC and live-service acceptance remain unqualified.
+
 - Align `PasskeyDeviceBinding` with `kodera-rs` `PasskeyBackupPolicy` and Android WebAuthn Level 3 flags so hardware security keys (`0x05`), backup-eligible passkeys (`0x0D`) and synced keychain or software vault passkeys (`0x1D`) verify under `.universal` while still rejecting invalid `0x15` (`BS=1, BE=0`), missing `UP`/`UV`, `AT`/`ED` and reserved bits, with opt-in `.strictNonBackupable`.
 - Adopt the `ciel` (light) and `cielNuit` (dark) generated design-token palettes across the entry, signed-in, call, passkey, community and `#proximity` surfaces.
 - Add the canonical three-category `community.kodera.io` workspace structure (`Community`, `Core Kodera`, `Design Partners`) with localized FR/EN audience subtitles, federated partner badges, universal Matrix invitation URI builder/parser (`matrix.to`, `matrix:` URIs, `#alias:domain`, `@user:domain`), `ChannelInviteCoordinator` and clipboard-only `ChannelInviteSheet`.

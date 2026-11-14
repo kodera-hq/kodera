@@ -199,6 +199,22 @@ expect_refusal "a missing licence notice" 1 \
   "expected 2 OFL font licence notices in Resources/Licenses, found 1"
 
 # ── Info.plist capabilities and deployment ────────────────────────────────
+fresh; edit_plist Info.plist 'del d["NSBluetoothAlwaysUsageDescription"]'
+expect_refusal "missing Bluetooth consent description" 1 \
+  "Info.plist lacks the foreground proximity permission description NSBluetoothAlwaysUsageDescription"
+
+fresh; edit_json Resources/InfoPlist.xcstrings 'del d["strings"]["NSLocalNetworkUsageDescription"]["localizations"]["fr"]'
+expect_refusal "missing local-network consent translation" 1 \
+  "InfoPlist.xcstrings: NSLocalNetworkUsageDescription has no fr translation"
+
+fresh; edit_plist Info.plist 'd["NSBonjourServices"] = ["_http._tcp"]'
+expect_refusal "unexpected Bonjour service" 1 \
+  "Info.plist must declare only the foreground proximity Bonjour service"
+
+fresh; edit_plist Info.plist 'd["NSLocationWhenInUseUsageDescription"] = "Unexpected location request"'
+expect_refusal "location permission is not proximity" 1 \
+  "Info.plist requests location access; proximity uses no location permission"
+
 fresh; edit_plist Info.plist 'd["CFBundleURLTypes"] = [{"CFBundleURLSchemes": ["io.kodera.app"]}]'
 expect_refusal "a registered callback scheme" 1 \
   "Info.plist declares CFBundleURLTypes, a capability this app has not qualified"
@@ -569,6 +585,6 @@ fresh
 expect_clean "the copy passes again once restored"
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=115
+expected_cases=119
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

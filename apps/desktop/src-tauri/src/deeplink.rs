@@ -186,6 +186,57 @@ pub struct MatrixDeepLink {
     pub canonical_uri: String,
 }
 
+/// Ephemeral OIDC authorization code wrapper whose `Debug` and `Display` implementations are
+/// redacted and whose backing byte buffer is logically overwritten on drop.
+#[derive(PartialEq, Eq)]
+pub struct RedactedOidcCode(Vec<u8>);
+
+impl Clone for RedactedOidcCode {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl RedactedOidcCode {
+    pub fn new(raw: &str) -> Result<Self, DeepLinkError> {
+        if !(8..=256).contains(&raw.len())
+            || !raw
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~'))
+        {
+            return Err(DeepLinkError::InvalidQuery);
+        }
+        Ok(Self(raw.as_bytes().to_vec()))
+    }
+
+    pub fn expose_for_token_exchange(&self) -> &str {
+        core::str::from_utf8(&self.0).expect("validated RFC 3986 unreserved ASCII")
+    }
+
+    pub fn clear(&mut self) {
+        self.0.fill(0);
+        self.0.clear();
+    }
+}
+
+impl Drop for RedactedOidcCode {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+impl fmt::Debug for RedactedOidcCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RedactedOidcCode([REDACTED])")
+    }
+}
+
+impl fmt::Display for RedactedOidcCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
 /// Validated, origin-admitted `kodera://` deep link.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KoderaDeepLink {
@@ -207,6 +258,12 @@ pub enum KoderaDeepLink {
         origin: Option<String>,
         canonical_uri: String,
     },
+    AuthCallback {
+        code: RedactedOidcCode,
+        state: String,
+        origin: Option<String>,
+        canonical_uri: String,
+    },
 }
 
 impl KoderaDeepLink {
@@ -214,7 +271,8 @@ impl KoderaDeepLink {
         match self {
             Self::Workspace { canonical_uri, .. }
             | Self::Invite { canonical_uri, .. }
-            | Self::Call { canonical_uri, .. } => canonical_uri,
+            | Self::Call { canonical_uri, .. }
+            | Self::AuthCallback { canonical_uri, .. } => canonical_uri,
         }
     }
 }
@@ -495,12 +553,12 @@ fn parse_kodera_deep_link(
         None => (authority_and_path, None),
     };
     if let Some((host_prefix, _port)) = route_host.split_once(':') {
-        if matches!(host_prefix, "workspace" | "invite" | "call") {
+        if matches!(host_prefix, "workspace" | "invite" | "call" | "auth") {
             return Err(DeepLinkError::MalformedUri);
         }
         return Err(DeepLinkError::UntrustedOrigin);
     }
-    if !matches!(route_host, "workspace" | "invite" | "call") {
+    if !matches!(route_host, "workspace" | "invite" | "call" | "auth") {
         return Err(DeepLinkError::UntrustedOrigin);
     }
     let Some(raw_path) = raw_path_opt else {
@@ -517,6 +575,23 @@ fn parse_kodera_deep_link(
     }
     if segments.iter().any(|s| s.is_empty()) {
         return Err(DeepLinkError::MalformedUri);
+    }
+
+    if route_host == "auth" {
+        if segments.as_slice() != ["callback"] {
+            return Err(DeepLinkError::MalformedUri);
+        }
+        let (code, state, origin) = parse_kodera_auth_callback_query(query_opt, policy)?;
+        let canonical_uri = match &origin {
+            Some(domain) => format!("kodera://auth/callback?state={state}&origin={domain}"),
+            None => format!("kodera://auth/callback?state={state}"),
+        };
+        return Ok(KoderaDeepLink::AuthCallback {
+            code,
+            state,
+            origin,
+            canonical_uri,
+        });
     }
 
     let origin = parse_kodera_origin_query(query_opt, policy)?;
@@ -606,6 +681,74 @@ fn parse_kodera_deep_link(
         },
         _ => Err(DeepLinkError::UntrustedOrigin),
     }
+}
+
+fn parse_kodera_auth_callback_query(
+    query_opt: Option<&str>,
+    policy: &DeepLinkAdmissionPolicy,
+) -> Result<(RedactedOidcCode, String, Option<String>), DeepLinkError> {
+    let Some(query) = query_opt else {
+        return Err(DeepLinkError::InvalidQuery);
+    };
+    if query.is_empty() {
+        return Err(DeepLinkError::InvalidQuery);
+    }
+    let pairs: Vec<&str> = query.split('&').collect();
+    if pairs.len() > 4 {
+        return Err(DeepLinkError::InvalidQuery);
+    }
+    let mut code: Option<RedactedOidcCode> = None;
+    let mut state: Option<String> = None;
+    let mut origin: Option<String> = None;
+    let mut seen_session_state = false;
+
+    for pair in pairs {
+        let Some((key, value)) = pair.split_once('=') else {
+            return Err(DeepLinkError::InvalidQuery);
+        };
+        if key.is_empty() || value.is_empty() || value.contains('=') {
+            return Err(DeepLinkError::InvalidQuery);
+        }
+        if value.contains("..") {
+            return Err(DeepLinkError::PathTraversal);
+        }
+        match key {
+            "code" if code.is_none() => {
+                code = Some(RedactedOidcCode::new(value)?);
+            }
+            "state" if state.is_none() => {
+                if !(16..=128).contains(&value.len())
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+                {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                state = Some(value.to_owned());
+            }
+            "origin" if origin.is_none() => {
+                ensure_admitted_domain(value, policy)?;
+                origin = Some(value.to_owned());
+            }
+            "session_state" if !seen_session_state => {
+                if !(4..=128).contains(&value.len())
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+                {
+                    return Err(DeepLinkError::InvalidQuery);
+                }
+                seen_session_state = true;
+            }
+            _ => return Err(DeepLinkError::InvalidQuery),
+        }
+    }
+
+    Ok((
+        code.ok_or(DeepLinkError::InvalidQuery)?,
+        state.ok_or(DeepLinkError::InvalidQuery)?,
+        origin,
+    ))
 }
 
 fn parse_kodera_origin_query(
@@ -985,5 +1128,63 @@ mod tests {
                 "expected InvalidQuery for {bad_query}"
             );
         }
+    }
+
+    #[test]
+    fn admits_kodera_auth_callback_and_redacts_code_while_rejecting_open_redirects() {
+        let mut policy = DeepLinkAdmissionPolicy::kodera_default();
+        policy.add_domain("auth.kodera.io").unwrap();
+
+        let raw_code = "oidc_code_fixture_sample_value";
+        let raw_state = "pkce_state_fixture_sample_value";
+        let admitted = route_deep_link(
+            &format!(
+                "kodera://auth/callback?code={raw_code}&state={raw_state}&origin=auth.kodera.io"
+            ),
+            &policy,
+        )
+        .unwrap();
+
+        assert!(!admitted.canonical_uri().contains(raw_code));
+        assert!(!format!("{admitted:?}").contains(raw_code));
+        assert_eq!(
+            admitted.canonical_uri(),
+            format!("kodera://auth/callback?state={raw_state}&origin=auth.kodera.io")
+        );
+        let AdmittedDeepLink::Kodera(KoderaDeepLink::AuthCallback {
+            code,
+            state,
+            origin,
+            ..
+        }) = admitted
+        else {
+            panic!("expected AuthCallback");
+        };
+        assert_eq!(code.expose_for_token_exchange(), raw_code);
+        assert_eq!(state, raw_state);
+        assert_eq!(origin.as_deref(), Some("auth.kodera.io"));
+
+        for open_redirect in [
+            "kodera://auth/callback?code=oidc_code_fixture&state=pkce_state_fixture_01&redirect=https://evil.test",
+            "kodera://auth/callback?code=oidc_code_fixture&state=pkce_state_fixture_01&redirect_uri=javascript:alert(1)",
+            "kodera://auth/callback?code=oidc_code_fixture&state=pkce_state_fixture_01&next=data:text/html,hi",
+            "kodera://auth/callback?code=oidc_code_fixture&state=pkce_state_fixture_01&return_to=file:///etc/passwd",
+            "kodera://auth/callback?code=short&state=pkce_state_fixture_01",
+            "kodera://auth/callback?code=oidc_code_fixture&state=short",
+        ] {
+            assert_eq!(
+                route_deep_link(open_redirect, &policy),
+                Err(DeepLinkError::InvalidQuery),
+                "expected InvalidQuery for {open_redirect}"
+            );
+        }
+
+        assert_eq!(
+            route_deep_link(
+                "kodera://auth/callback?code=oidc_code_fixture&state=pkce_state_fixture_01&origin=evil.example.org",
+                &policy,
+            ),
+            Err(DeepLinkError::UntrustedOrigin)
+        );
     }
 }

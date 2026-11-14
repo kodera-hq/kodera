@@ -12,6 +12,7 @@
 
 use core::fmt;
 use kodera_rs::{validate_docs_host, OrganisationId};
+use std::collections::BTreeMap;
 
 /// Canonical reverse-DNS prefix for all Kodera Desktop keychain services.
 pub const KEYCHAIN_SERVICE_NAMESPACE: &str = "io.kodera.desktop";
@@ -27,6 +28,9 @@ pub const MAX_KEYCHAIN_SERVICE_BYTES: usize = 128;
 
 /// Maximum UTF-8 byte length of a keychain `account` identifier.
 pub const MAX_KEYCHAIN_ACCOUNT_BYTES: usize = 255;
+
+/// Upper bound on stored credential slots per organisation session.
+pub const MAX_KEYCHAIN_SLOTS_PER_ORG: usize = 32;
 
 /// Closed refusal codes for keychain slot naming, secret wrapping, and metadata validation.
 /// Carries zero raw token or untrusted input excerpts.
@@ -44,6 +48,7 @@ pub enum KeychainError {
     SecretTooLarge,
     SecretInvalidCharacters,
     SecretLeakedInMetadata,
+    CapacityExceeded,
 }
 
 impl fmt::Display for KeychainError {
@@ -61,6 +66,7 @@ impl fmt::Display for KeychainError {
             Self::SecretTooLarge => "secret_too_large",
             Self::SecretInvalidCharacters => "secret_invalid_characters",
             Self::SecretLeakedInMetadata => "secret_leaked_in_metadata",
+            Self::CapacityExceeded => "capacity_exceeded",
         };
         f.write_str(code)
     }
@@ -363,6 +369,296 @@ fn is_valid_device_id(device_id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
+/// Platform OS credential backend targeted by the safe command specification builder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OsKeychainPlatform {
+    MacOsSecurity,
+    LinuxSecretTool,
+    WindowsCmdKey,
+}
+
+impl OsKeychainPlatform {
+    pub const fn host() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            Self::MacOsSecurity
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Self::WindowsCmdKey
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Self::LinuxSecretTool
+        }
+    }
+}
+
+/// Safe, `unsafe`-free OS keychain CLI specification for validated `(service, account)` slots.
+///
+/// Secrets are never placed in public `args` on platforms supporting standard-input streaming
+/// (`secret-tool store`) and are never formatted in `Debug` or `Display`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OsKeychainCommandSpec {
+    pub platform: OsKeychainPlatform,
+    pub program: &'static str,
+    pub args: Vec<String>,
+    pub secret_via_stdin: bool,
+}
+
+impl OsKeychainCommandSpec {
+    pub fn build_lookup(
+        platform: OsKeychainPlatform,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<Self, KeychainError> {
+        validate_keychain_service_id(&slot.service_name)?;
+        validate_keychain_account_id(&slot.account_name)?;
+        Ok(match platform {
+            OsKeychainPlatform::MacOsSecurity => Self {
+                platform,
+                program: "security",
+                args: vec![
+                    "find-generic-password".to_owned(),
+                    "-s".to_owned(),
+                    slot.service_name.clone(),
+                    "-a".to_owned(),
+                    slot.account_name.clone(),
+                    "-w".to_owned(),
+                ],
+                secret_via_stdin: false,
+            },
+            OsKeychainPlatform::LinuxSecretTool => Self {
+                platform,
+                program: "secret-tool",
+                args: vec![
+                    "lookup".to_owned(),
+                    "service".to_owned(),
+                    slot.service_name.clone(),
+                    "account".to_owned(),
+                    slot.account_name.clone(),
+                ],
+                secret_via_stdin: false,
+            },
+            OsKeychainPlatform::WindowsCmdKey => Self {
+                platform,
+                program: "cmdkey",
+                args: vec![format!("/list:{}/{}", slot.service_name, slot.account_name)],
+                secret_via_stdin: false,
+            },
+        })
+    }
+
+    pub fn build_delete(
+        platform: OsKeychainPlatform,
+        slot: &KeychainSlotDescriptor,
+    ) -> Result<Self, KeychainError> {
+        validate_keychain_service_id(&slot.service_name)?;
+        validate_keychain_account_id(&slot.account_name)?;
+        Ok(match platform {
+            OsKeychainPlatform::MacOsSecurity => Self {
+                platform,
+                program: "security",
+                args: vec![
+                    "delete-generic-password".to_owned(),
+                    "-s".to_owned(),
+                    slot.service_name.clone(),
+                    "-a".to_owned(),
+                    slot.account_name.clone(),
+                ],
+                secret_via_stdin: false,
+            },
+            OsKeychainPlatform::LinuxSecretTool => Self {
+                platform,
+                program: "secret-tool",
+                args: vec![
+                    "clear".to_owned(),
+                    "service".to_owned(),
+                    slot.service_name.clone(),
+                    "account".to_owned(),
+                    slot.account_name.clone(),
+                ],
+                secret_via_stdin: false,
+            },
+            OsKeychainPlatform::WindowsCmdKey => Self {
+                platform,
+                program: "cmdkey",
+                args: vec![format!(
+                    "/delete:{}/{}",
+                    slot.service_name, slot.account_name
+                )],
+                secret_via_stdin: false,
+            },
+        })
+    }
+}
+
+/// Non-secret lookup result returned across IPC when inspecting or loading a keychain slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeychainCredentialStatus {
+    pub slot: KeychainSlotDescriptor,
+    pub present: bool,
+    pub metadata: Option<KeychainSessionMetadata>,
+}
+
+/// Organisation-isolated bounded credential bridge store.
+///
+/// Backing [`RedactedSessionSecret`] buffers are overwritten on overwrite, deletion, organisation
+/// switch, and drop, and `Debug` never prints secret material.
+#[derive(Default)]
+pub struct KeychainCredentialStore {
+    entries: BTreeMap<(String, String), (KeychainSessionMetadata, RedactedSessionSecret)>,
+}
+
+impl fmt::Debug for KeychainCredentialStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeychainCredentialStore")
+            .field("slot_count", &self.entries.len())
+            .finish()
+    }
+}
+
+impl KeychainCredentialStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn slot_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn metadata_snapshot(&self) -> Vec<KeychainSessionMetadata> {
+        self.entries
+            .values()
+            .map(|(meta, _)| meta.clone())
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn store_credential(
+        &mut self,
+        secret_kind: KeychainSecretKind,
+        organisation_id: &str,
+        matrix_user_id: &str,
+        device_id: &str,
+        issued_at_unix_secs: u64,
+        expires_at_unix_secs: Option<u64>,
+        raw_secret: &str,
+    ) -> Result<KeychainSessionMetadata, KeychainError> {
+        let (metadata, wrapped) = KeychainSessionMetadata::validate_with_secret(
+            secret_kind,
+            organisation_id,
+            matrix_user_id,
+            device_id,
+            issued_at_unix_secs,
+            expires_at_unix_secs,
+            Some(raw_secret),
+        )?;
+        let secret = wrapped.expect("Some(raw_secret) produces Some(RedactedSessionSecret)");
+        let key = (
+            metadata.slot.service_name.clone(),
+            metadata.slot.account_name.clone(),
+        );
+        if !self.entries.contains_key(&key) {
+            let org_count = self
+                .entries
+                .values()
+                .filter(|(m, _)| m.organisation_id == metadata.organisation_id)
+                .count();
+            if org_count >= MAX_KEYCHAIN_SLOTS_PER_ORG {
+                return Err(KeychainError::CapacityExceeded);
+            }
+        }
+        if let Some((_, mut previous_secret)) = self.entries.insert(key, (metadata.clone(), secret))
+        {
+            previous_secret.clear();
+        }
+        Ok(metadata)
+    }
+
+    /// Loads validated metadata and the redacted secret handle strictly for the matching org.
+    pub fn load_credential_secret(
+        &self,
+        secret_kind: KeychainSecretKind,
+        organisation_id: &str,
+        matrix_user_id: &str,
+    ) -> Result<Option<(KeychainSessionMetadata, RedactedSessionSecret)>, KeychainError> {
+        let slot = build_keychain_slot(secret_kind, organisation_id, matrix_user_id)?;
+        let key = (slot.service_name, slot.account_name);
+        Ok(self.entries.get(&key).cloned())
+    }
+
+    /// Loads non-secret slot presence and metadata across the IPC boundary without exposing tokens.
+    pub fn load_credential_status(
+        &self,
+        secret_kind: KeychainSecretKind,
+        organisation_id: &str,
+        matrix_user_id: &str,
+    ) -> Result<KeychainCredentialStatus, KeychainError> {
+        let slot = build_keychain_slot(secret_kind, organisation_id, matrix_user_id)?;
+        let key = (slot.service_name.clone(), slot.account_name.clone());
+        let metadata = self.entries.get(&key).map(|(meta, _)| meta.clone());
+        Ok(KeychainCredentialStatus {
+            slot,
+            present: metadata.is_some(),
+            metadata,
+        })
+    }
+
+    /// Deletes a single organisation-scoped credential slot, overwriting its secret bytes.
+    pub fn delete_credential(
+        &mut self,
+        secret_kind: KeychainSecretKind,
+        organisation_id: &str,
+        matrix_user_id: &str,
+    ) -> Result<KeychainCredentialStatus, KeychainError> {
+        let slot = build_keychain_slot(secret_kind, organisation_id, matrix_user_id)?;
+        let key = (slot.service_name.clone(), slot.account_name.clone());
+        let existed = if let Some((_, mut secret)) = self.entries.remove(&key) {
+            secret.clear();
+            true
+        } else {
+            false
+        };
+        Ok(KeychainCredentialStatus {
+            slot,
+            present: existed,
+            metadata: None,
+        })
+    }
+
+    /// Removes and overwrites every credential belonging to `organisation_id`.
+    pub fn clear_organisation(&mut self, organisation_id: &str) -> Result<usize, KeychainError> {
+        let org = OrganisationId::parse(organisation_id)
+            .map_err(|_| KeychainError::InvalidOrganisation)?;
+        let target = org.as_str();
+        let keys_to_remove: Vec<(String, String)> = self
+            .entries
+            .iter()
+            .filter(|(_, (meta, _))| meta.organisation_id == target)
+            .map(|(k, _)| k.clone())
+            .collect();
+        let count = keys_to_remove.len();
+        for key in keys_to_remove {
+            if let Some((_, mut secret)) = self.entries.remove(&key) {
+                secret.clear();
+            }
+        }
+        Ok(count)
+    }
+
+    pub fn clear_all(&mut self) {
+        for (_, (_, mut secret)) in core::mem::take(&mut self.entries) {
+            secret.clear();
+        }
+    }
+}
+
+impl Drop for KeychainCredentialStore {
+    fn drop(&mut self) {
+        self.clear_all();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,5 +758,69 @@ mod tests {
         let err = RedactedSessionSecret::new(&malformed_fixture).unwrap_err();
         assert!(matches!(err, KeychainError::SecretInvalidCharacters));
         assert!(!err.to_string().contains("syt_sample"));
+    }
+
+    #[test]
+    fn credential_store_isolates_organisations_redacts_debug_and_builds_os_specs() {
+        const OTHER_ORG: &str = "019a5e62-6ca0-7303-8303-030303030304";
+        let mut store = KeychainCredentialStore::new();
+        let stored = store
+            .store_credential(
+                KeychainSecretKind::MatrixSession,
+                ORG,
+                "@alice:kodera.io",
+                "MACBOOK_PRO_01",
+                1_762_520_000,
+                Some(1_762_523_600),
+                SAMPLE_OPAQUE_PAYLOAD,
+            )
+            .unwrap();
+        assert_eq!(store.slot_count(), 1);
+        assert!(!format!("{store:?}").contains(SAMPLE_OPAQUE_PAYLOAD));
+
+        // Other organisation cannot see Alice's credential.
+        let other_status = store
+            .load_credential_status(
+                KeychainSecretKind::MatrixSession,
+                OTHER_ORG,
+                "@alice:kodera.io",
+            )
+            .unwrap();
+        assert!(!other_status.present);
+        assert!(other_status.metadata.is_none());
+
+        // Matching organisation sees metadata via status and redacted secret via internal handle.
+        let own_status = store
+            .load_credential_status(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
+            .unwrap();
+        assert!(own_status.present);
+        assert_eq!(own_status.metadata.as_ref(), Some(&stored));
+
+        let (_, loaded_secret) = store
+            .load_credential_secret(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            loaded_secret.expose_for_keychain_write(),
+            SAMPLE_OPAQUE_PAYLOAD
+        );
+
+        // OS command specs validate slot IDs across all three desktop OS backends.
+        for platform in [
+            OsKeychainPlatform::MacOsSecurity,
+            OsKeychainPlatform::LinuxSecretTool,
+            OsKeychainPlatform::WindowsCmdKey,
+        ] {
+            let lookup = OsKeychainCommandSpec::build_lookup(platform, &stored.slot).unwrap();
+            let delete = OsKeychainCommandSpec::build_delete(platform, &stored.slot).unwrap();
+            assert!(!lookup.args.is_empty());
+            assert!(!delete.args.is_empty());
+        }
+
+        let deleted = store
+            .delete_credential(KeychainSecretKind::MatrixSession, ORG, "@alice:kodera.io")
+            .unwrap();
+        assert!(deleted.present);
+        assert_eq!(store.slot_count(), 0);
     }
 }

@@ -4,9 +4,24 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
+  "description": "Typed Tauri v2 native desktop shell, system tray, deep-link, keychain, and packaging bridge for Kodera.",
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.mjs"
+    }
+  },
   "scripts": {
-    "dev": "cargo run --locked --manifest-path src-tauri/Cargo.toml --features desktop-app --bin kodera-desktop",
-    "build": "cargo build --locked --manifest-path src-tauri/Cargo.toml --features desktop-app --bin kodera-desktop",
-    "typecheck": "node scripts/verify-config.mjs --selftest"
+    "dev": "node scripts/desktop-cli.mjs dev",
+    "build": "node scripts/desktop-cli.mjs build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && node scripts/verify-config.mjs --selftest",
+    "test": "node scripts/verify-config.mjs --selftest && node --test --test-concurrency=1 test/*.test.mjs",
+    "package:macos": "node scripts/desktop-cli.mjs package --target macos",
+    "package:linux": "node scripts/desktop-cli.mjs package --target linux",
+    "package:windows": "node scripts/desktop-cli.mjs package --target windows",
+    "icons:generate": "node scripts/generate-icons.mjs --write",
+    "icons:check": "node scripts/generate-icons.mjs --check"
   }
 }

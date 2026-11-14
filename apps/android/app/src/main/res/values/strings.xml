@@ -145,7 +145,7 @@
     <string name="poll_unprovisioned">Sondages indisponibles ; aucun aperçu local n’est fourni.</string>
     <string name="poll_preview_only">Un seul participant local ; aucune participation distante vérifiée.</string>
     <string name="poll_single">Choix unique dans l’aperçu.</string>
-    <string name="poll_multiple">Choix multiples dans l’aperçu ; les pourcentages peuvent dépasser 100 % au total.</string>
+    <string name="poll_multiple" formatted="false">Choix multiples dans l’aperçu ; les pourcentages peuvent dépasser 100 % au total.</string>
     <string name="poll_option_result">%1$d vote local · %2$d%%</string>
     <string name="poll_voters">Participants locaux ayant choisi : %1$d</string>
     <string name="poll_closed">Aperçu fermé ; les choix sont en lecture seule.</string>
@@ -335,4 +335,7 @@
     <string name="proximity_voluntary_lan_badge">LAN mDNS/QUIC</string>
     <string name="proximity_voluntary_open_thread">Fil éphémère</string>
     <string name="proximity_voluntary_start_call">Appel direct</string>
+    <string name="proximity_voluntary_preparing">Vérification de l’accès à la proximité…</string>
+    <string name="proximity_voluntary_bootstrap_unavailable">La proximité est indisponible. Vérifiez votre accès à cet espace puis réessayez.</string>
+    <string name="proximity_voluntary_radio_unavailable">La découverte locale est indisponible. Vérifiez le Bluetooth et les autorisations.</string>
 </resources>

@@ -20,6 +20,7 @@ class VoluntaryProximityRadioSessionTest {
 
     private class FakeBleDriver : ProximityBleRadioDriver {
         override var onPeerTokenObserved: ((ByteArray, Int) -> Unit)? = null
+        override var onFailure: ((ProximityVoluntaryError) -> Unit)? = null
         val advertisedTokens = mutableListOf<ByteArray>()
         var stopCount = 0
 
@@ -34,16 +35,324 @@ class VoluntaryProximityRadioSessionTest {
 
     private class FakeNsdDriver : ProximityNsdMdnsDriver {
         override var onPeerTxtObserved: ((Map<String, String>) -> Unit)? = null
+        override var onFailure: ((ProximityVoluntaryError) -> Unit)? = null
         val advertisedAttributes = mutableListOf<Map<String, String>>()
         var stopCount = 0
+        var failNextStart = false
 
         override fun startAdvertisingAndDiscovery(attributes: Map<String, String>, quicPort: Int) {
+            if (failNextStart) throw ProximityVoluntaryFailure(ProximityVoluntaryError.NSD_UNAVAILABLE)
             advertisedAttributes += LinkedHashMap(attributes)
         }
 
         override fun stopAll() {
             stopCount += 1
         }
+    }
+
+    private class ManualTimer : ProximitySessionTimer {
+        val callbacks = mutableListOf<() -> Unit>()
+        override fun schedule(tick: () -> Unit): AutoCloseable {
+            callbacks += tick
+            return AutoCloseable { }
+        }
+    }
+
+    @Test
+    fun currentEpochLeaseMatchesSharedFrozenWireAndCannotAuthorizeFutureEpoch() {
+        val path = "packages/kodera-rs/vectors/proximity-epoch-lease-v1.json"
+        val root = generateSequence(java.io.File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
+            .first { java.io.File(it, path).isFile }
+        val fixture = java.io.File(root, path).readText()
+        fun text(name: String) = Regex("\"$name\"\\s*:\\s*\"([^\"]+)\"").find(fixture)!!.groupValues[1]
+        fun number(name: String) = Regex("\"$name\"\\s*:\\s*([0-9]+)").find(fixture)!!.groupValues[1].toLong()
+        val workspace = text("workspace_id")
+        val key = EphemeralHkdfTokenCodec.fromHex(text("epoch_mac_key"))!!
+        val seed = EphemeralHkdfTokenCodec.fromHex(text("device_seed"))!!
+        val epoch = number("epoch")
+        val expiry = number("epoch_expires_at")
+        val now = number("now_unix_seconds")
+        val token = EphemeralHkdfTokenCodec.mintWithEpochMacKey(workspace, "default", epoch, expiry, key, seed, now, number("counter"))
+        assertEquals(text("token_hex"), token.tokenHex)
+        assertArrayEquals(token.raw, EphemeralHkdfTokenCodec.verifyWithEpochMacKey(token.raw, workspace, "default", epoch, expiry, key, now).raw)
+        assertThrows(ProximityVoluntaryFailure::class.java) {
+            EphemeralHkdfTokenCodec.mintWithEpochMacKey(workspace, "default", epoch, expiry, key, seed, expiry)
+        }
+        val forged = EphemeralHkdfTokenCodec.mintWithEpochMacKey(workspace, "default", epoch + 1, expiry + 900, key, seed, expiry)
+        val refusal = assertThrows(ProximityVoluntaryFailure::class.java) {
+            EphemeralHkdfTokenCodec.verifyWithEpochMacKey(forged.raw, workspace, "default", epoch + 1, expiry + 900, ByteArray(32) { 0xcd.toByte() }, expiry)
+        }
+        assertEquals(ProximityVoluntaryError.AUTHENTICATION_FAILED, refusal.reason)
+    }
+
+    @Test
+    fun epochCodecRejectsNonCanonicalScopesAtMintVerifyAndProvision() {
+        val now = 1_800_001L
+        val key = ByteArray(32) { 0xab.toByte() }
+        val token = EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgA, "default", 2_000, 1_800_900, key, aliceSeed, now)
+        val controller = VoluntaryProximitySessionController(FakeBleDriver(), FakeNsdDriver(),
+            RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true }), timer = ManualTimer())
+        for (scope in listOf("", "_first", "-first", "first space", "évent", "default\n", "a".repeat(65))) {
+            assertThrows(ProximityVoluntaryFailure::class.java) {
+                EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgA, scope, 2_000, 1_800_900, key, aliceSeed, now)
+            }
+            assertThrows(ProximityVoluntaryFailure::class.java) {
+                EphemeralHkdfTokenCodec.verifyWithEpochMacKey(token.raw, orgA, scope, 2_000, 1_800_900, key, now)
+            }
+            assertThrows(ProximityVoluntaryFailure::class.java) {
+                controller.provisionEpoch(orgA, scope, 2_000, 1_800_900, key, aliceSeed, now)
+            }
+            assertNull(controller.organisationId)
+        }
+        for (scope in listOf("A", "0._:-Z", "a".repeat(64))) {
+            val minted = EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgA, scope, 2_000, 1_800_900, key, aliceSeed, now)
+            assertArrayEquals(minted.raw, EphemeralHkdfTokenCodec.verifyWithEpochMacKey(minted.raw, orgA, scope,
+                2_000, 1_800_900, key, now).raw)
+        }
+        controller.close()
+    }
+
+    @Test
+    fun ownBleAndMdnsBeaconsCannotBecomePeersEvenWithAnotherCounter() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val now = 1_800_001L
+        val key = ByteArray(32) { 0xab.toByte() }
+        val controller = VoluntaryProximitySessionController(ble, nsd,
+            RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true }), timer = ManualTimer())
+        controller.provisionEpoch(orgA, "default", 2_000, 1_800_900, key, aliceSeed, now)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(now)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.ingestBleObservation(ble.advertisedTokens[0], -30, nowUnixSeconds = now) }
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.ingestMdnsObservation(nsd.advertisedAttributes[0], now) }
+        val ownCounter = EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgA, "default", 2_000, 1_800_900, key, aliceSeed, now, 17)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.ingestBleObservation(ownCounter.raw, -30, nowUnixSeconds = now) }
+        assertTrue(controller.peers.isEmpty())
+        val peer = EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgA, "default", 2_000, 1_800_900, key, bobSeed, now)
+        controller.ingestBleObservation(peer.raw, -65, nowUnixSeconds = now)
+        assertEquals(1, controller.peers.size)
+        controller.close()
+    }
+
+    @Test
+    fun peerCapacityRefusesNewPseudonymsButRetainsCountersUntilLeaseExpiry() {
+        val now = 1_800_001L
+        val key = ByteArray(32) { 0xab.toByte() }
+        fun token(index: Int, counter: Long = 0L, at: Long = now): ByteArray {
+            val seed = ByteArray(32) { 0x55.toByte() }
+            seed[0] = index.toByte(); seed[1] = (index shr 8).toByte()
+            return EphemeralHkdfTokenCodec.mintWithEpochMacKey(orgA, "default", at / 900,
+                (at / 900 + 1) * 900, key, seed, at, counter).raw
+        }
+        val controller = VoluntaryProximitySessionController(FakeBleDriver(), FakeNsdDriver(),
+            RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true }), timer = ManualTimer())
+        controller.provisionEpoch(orgA, "default", 2_000, 1_800_900, key, aliceSeed, now)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(now)
+        for (index in 0 until 256) controller.ingestBleObservation(token(index), -65, nowUnixSeconds = now)
+        assertEquals(256, controller.peers.size)
+        val overflow = token(256)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.ingestBleObservation(overflow, -30, nowUnixSeconds = now) }
+        val txt = MdnsProximityTxtCodec.Record(2_000, overflow, 48_443)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.ingestMdnsObservation(txt.toAttributeMap(), now) }
+        controller.ingestBleObservation(token(0, 1), -30, nowUnixSeconds = now)
+        assertEquals(256, controller.peers.size)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.ingestBleObservation(token(0), -30, nowUnixSeconds = now) }
+        controller.evaluateExpiry(1_800_900)
+        assertTrue(controller.peers.isEmpty())
+        controller.provisionEpoch(orgA, "default", 2_001, 1_801_800, key, bobSeed, 1_800_900)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(1_800_900)
+        controller.ingestBleObservation(token(256, at = 1_800_900), -65, nowUnixSeconds = 1_800_900)
+        assertEquals(1, controller.peers.size)
+        controller.close()
+    }
+
+    @Test
+    fun preparedEpochLeaseExpiresWithoutScanningAndObsoleteTickCannotClearReplacement() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val timer = ManualTimer()
+        var now = 1_800_899L
+        val controller = VoluntaryProximitySessionController(ble, nsd,
+            RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true }),
+            timer = timer, clockUnixSeconds = { now })
+        var renewals = 0
+        controller.onAuthenticatedRebootstrapRequired = { renewals++ }
+        controller.provisionEpoch(orgA, "default", 2_000, 1_800_900,
+            ByteArray(32) { 0xab.toByte() }, aliceSeed, now)
+        controller.grantForegroundConsent()
+        val obsoleteTick = timer.callbacks.single()
+        obsoleteTick()
+        assertEquals(orgA, controller.organisationId)
+        now = 1_800_900
+        obsoleteTick()
+        assertNull(controller.organisationId)
+        assertFalse(controller.hasForegroundConsent)
+        assertFalse(controller.isSessionActive)
+        assertTrue(ble.advertisedTokens.isEmpty())
+        assertTrue(nsd.advertisedAttributes.isEmpty())
+        assertEquals(0, renewals)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.startVoluntarySession(now) }
+        controller.provisionEpoch(orgB, "default", 2_001, 1_801_800,
+            ByteArray(32) { 0xcd.toByte() }, bobSeed, now)
+        obsoleteTick()
+        assertEquals(orgB, controller.organisationId)
+        now = 1_801_800
+        timer.callbacks.last().invoke()
+        assertNull(controller.organisationId)
+        assertEquals(0, renewals)
+        controller.close()
+    }
+
+    @Test
+    fun epochExpiryStopsAndWipesBeforeRequestingRenewalWithoutExtendingConsent() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val timer = ManualTimer()
+        var now = 1_800_899L
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val controller = VoluntaryProximitySessionController(ble, nsd, checker, timer = timer, clockUnixSeconds = { now })
+        val deadlines = mutableListOf<Long>()
+        controller.onAuthenticatedRebootstrapRequired = { deadlines += it }
+        controller.provisionEpoch(orgA, "default", 2_000, 1_800_900, ByteArray(32) { 0xab.toByte() }, aliceSeed, now)
+        controller.grantForegroundConsent()
+        controller.selectedDuration = ProximitySessionDuration.HOURS_2
+        controller.startVoluntarySession(now)
+        val deadline = controller.expiresAtUnixSeconds!!
+        now = 1_800_900
+        timer.callbacks.last().invoke()
+        assertEquals(listOf(deadline), deadlines)
+        assertFalse(controller.isSessionActive)
+        assertFalse(controller.hasForegroundConsent)
+        assertNull(controller.organisationId)
+        assertNull(controller.activeTokenHex)
+        assertEquals(1, ble.advertisedTokens.size)
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.startVoluntarySession(now) }
+        controller.provisionEpoch(orgA, "default", 2_001, 1_801_800, ByteArray(32) { 0xcd.toByte() }, bobSeed, now)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(now, consentExpiresAtUnixSeconds = deadline)
+        assertEquals(deadline, controller.expiresAtUnixSeconds)
+        now = deadline
+        timer.callbacks.last().invoke()
+        assertFalse(controller.isSessionActive)
+        assertEquals(listOf(deadline), deadlines)
+        controller.close()
+    }
+
+    @Test
+    fun scheduledTicksRotateBothTransportsPreserveTtlAndCannotReviveStoppedSessions() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val timer = ManualTimer()
+        var now = 1_800_899L
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val controller = VoluntaryProximitySessionController(
+            ble, nsd, checker, timer = timer, clockUnixSeconds = { now },
+        )
+        controller.provision(orgA, "default", masterKey, aliceSeed)
+        controller.grantForegroundConsent()
+        controller.selectedDuration = ProximitySessionDuration.HOURS_2
+        controller.startVoluntarySession(now)
+        val expiry = controller.expiresAtUnixSeconds
+        val token = controller.activeTokenHex
+        timer.callbacks.single().invoke()
+        assertEquals(1, ble.advertisedTokens.size)
+        now += 1
+        timer.callbacks.single().invoke()
+        assertEquals(2, ble.advertisedTokens.size)
+        assertEquals(2, nsd.advertisedAttributes.size)
+        assertNotEquals(token, controller.activeTokenHex)
+        assertEquals(expiry, controller.expiresAtUnixSeconds)
+        EphemeralHkdfTokenCodec.verify(ble.advertisedTokens.last(), orgA, "default", masterKey, now)
+        controller.leaveProximity()
+        now += 900
+        timer.callbacks.single().invoke()
+        assertEquals(2, ble.advertisedTokens.size)
+        assertFalse(controller.isSessionActive)
+        controller.close()
+    }
+
+    @Test
+    fun automaticExpiryPrecedesRotationAndOldTimerCannotExpireReplacement() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val timer = ManualTimer()
+        var now = 1_800_000L
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val controller = VoluntaryProximitySessionController(ble, nsd, checker, timer = timer, clockUnixSeconds = { now })
+        controller.provision(orgA, "default", masterKey, aliceSeed)
+        controller.grantForegroundConsent()
+        controller.selectedDuration = ProximitySessionDuration.MINUTES_15
+        controller.startVoluntarySession(now)
+        now += 900
+        timer.callbacks[0].invoke()
+        assertFalse(controller.isSessionActive)
+        assertFalse(controller.hasForegroundConsent)
+        assertEquals(1, ble.advertisedTokens.size)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(now)
+        now += 900
+        timer.callbacks[0].invoke()
+        assertTrue(controller.isSessionActive)
+        timer.callbacks[1].invoke()
+        assertFalse(controller.isSessionActive)
+        assertEquals(2, ble.advertisedTokens.size)
+        controller.close()
+    }
+
+    @Test
+    fun failedEpochRefreshStopsBothRadiosAndClearsActiveToken() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val controller = VoluntaryProximitySessionController(ble, nsd, checker, timer = ManualTimer())
+        controller.provision(orgA, "default", masterKey, aliceSeed)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(1_800_899L)
+        nsd.failNextStart = true
+        assertThrows(ProximityVoluntaryFailure::class.java) { controller.refreshSession(1_800_900L) }
+        assertFalse(controller.isSessionActive)
+        assertNull(controller.activeTokenHex)
+        assertEquals(ProximityVoluntaryError.NSD_UNAVAILABLE, controller.lastError)
+        assertTrue(ble.stopCount > 0)
+        assertTrue(nsd.stopCount > 0)
+        controller.close()
+    }
+
+    @Test
+    fun asynchronousAdvertisingFailureClearsSessionAndBothTransports() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val controller = VoluntaryProximitySessionController(ble, nsd, checker, timer = ManualTimer())
+        controller.provision(orgA, "default", masterKey, aliceSeed)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(1_800_000L)
+        ble.onFailure?.invoke(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE)
+        assertFalse(controller.isSessionActive)
+        assertNull(controller.activeTokenHex)
+        assertEquals(ProximityVoluntaryError.BLUETOOTH_UNAVAILABLE, controller.lastError)
+        assertTrue(ble.stopCount > 0)
+        assertTrue(nsd.stopCount > 0)
+        controller.close()
+    }
+
+    @Test
+    fun mdnsFailureWipesPreparedEpochCapability() {
+        val ble = FakeBleDriver()
+        val nsd = FakeNsdDriver()
+        val checker = RuntimeProximityPermissionChecker({ Build.VERSION_CODES.TIRAMISU }, { true })
+        val controller = VoluntaryProximitySessionController(ble, nsd, checker, timer = ManualTimer())
+        controller.provisionEpoch(orgA, "default", 2_000, 1_800_900, ByteArray(32) { 0xab.toByte() }, aliceSeed, 1_800_001)
+        controller.grantForegroundConsent()
+        controller.startVoluntarySession(1_800_001)
+        nsd.onFailure?.invoke(ProximityVoluntaryError.NSD_UNAVAILABLE)
+        assertFalse(controller.isSessionActive)
+        assertNull(controller.organisationId)
+        assertNull(controller.activeTokenHex)
+        assertEquals(ProximityVoluntaryError.NSD_UNAVAILABLE, controller.lastError)
+        controller.close()
     }
 
     @Test
@@ -89,6 +398,7 @@ class VoluntaryProximityRadioSessionTest {
             listOf(
                 Manifest.permission.BLUETOOTH_ADVERTISE,
                 Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.NEARBY_WIFI_DEVICES,
             ),
             checker.missingPermissions(),
@@ -111,6 +421,7 @@ class VoluntaryProximityRadioSessionTest {
         sdkInt = Build.VERSION_CODES.S
         granted += Manifest.permission.BLUETOOTH_ADVERTISE
         granted += Manifest.permission.BLUETOOTH_SCAN
+        granted += Manifest.permission.BLUETOOTH_CONNECT
         assertTrue(checker.missingPermissions().isEmpty())
 
         controller.startVoluntarySession(1_760_000_100L)
@@ -147,6 +458,12 @@ class VoluntaryProximityRadioSessionTest {
         val roundtrip = MdnsProximityTxtCodec.decode(valid)
         assertEquals(48_443, roundtrip.quicPort)
         assertArrayEquals(token.raw, roundtrip.token)
+        assertThrows(ProximityVoluntaryFailure::class.java) {
+            MdnsProximityTxtCodec.decode(valid + ("tok" to "a".repeat(100_000)))
+        }
+        assertThrows(ProximityVoluntaryFailure::class.java) {
+            MdnsProximityTxtCodec.decode(valid + ("unexpected" to "field"))
+        }
 
         for (forbiddenKey in listOf("lat", "latitude", "lon", "longitude", "gps", "geo", "bssid")) {
             val poisoned = LinkedHashMap(valid).apply { put(forbiddenKey, "48.8566") }

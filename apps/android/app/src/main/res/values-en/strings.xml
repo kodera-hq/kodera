@@ -335,4 +335,7 @@
     <string name="proximity_voluntary_lan_badge">LAN mDNS/QUIC</string>
     <string name="proximity_voluntary_open_thread">Ephemeral thread</string>
     <string name="proximity_voluntary_start_call">Direct call</string>
+    <string name="proximity_voluntary_preparing">Checking proximity access…</string>
+    <string name="proximity_voluntary_bootstrap_unavailable">Proximity is unavailable. Check your workspace access and try again.</string>
+    <string name="proximity_voluntary_radio_unavailable">Local discovery is unavailable. Check Bluetooth and system permissions.</string>
 </resources>

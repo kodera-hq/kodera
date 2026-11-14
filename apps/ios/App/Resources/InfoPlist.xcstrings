@@ -1,0 +1,38 @@
+{
+  "sourceLanguage": "fr",
+  "strings": {
+    "NSBluetoothAlwaysUsageDescription": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Détecter les membres de votre espace à proximité uniquement pendant une participation que vous démarrez."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discover nearby workspace members only during a check-in you start."
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Détecter les participations de votre espace sur votre réseau local uniquement pendant votre participation."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Discover workspace check-ins on your local network only while you participate."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}
