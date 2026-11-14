@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -409,3 +410,58 @@ def test_ledger_syncs_from_django_audit_events(enterprise_client: Client) -> Non
         assert imported == 1
         ok, errs = default_audit_ledger.verify_vault_integrity("acme-audit-org")
         assert ok is True and errs == []
+
+
+def test_audit_export_linear_redaction_and_sanitized_http_errors(
+    enterprise_client: Client,
+) -> None:
+    """Pathological @-strings redact in O(n) time and malformed inputs return static error details."""
+    with override_settings(KODERA_EDITION="enterprise"):
+        # Invalid occurred_at timestamp must NOT expose raw Python ValueError (`fromisoformat` text)
+        bad_evt = enterprise_client.post(
+            "/api/v1/ee/compliance/audit-exports/events",
+            data=json.dumps(
+                {
+                    "tenant_slug": "acme-corp",
+                    "actor_type": "customer_user",
+                    "actor_id": "u-1",
+                    "action": "org.updated",
+                    "target_urn": "urn:kodera:org:acme-corp",
+                    "occurred_at": "not-an-iso-timestamp-secret-marker",
+                }
+            ),
+            content_type="application/json",
+        )
+        assert bad_evt.status_code == 400
+        assert bad_evt.json()["code"] == "invalid_event"
+        assert "not-an-iso-timestamp-secret-marker" not in bad_evt.json()["detail"]
+        assert "isoformat" not in bad_evt.json()["detail"].lower()
+
+        # Linear-time redaction on pathological long non-email `@` text
+        adversarial_note = ("a" * 20_000) + "@" + ("b." * 5_000) + "!"
+        ok_evt = enterprise_client.post(
+            "/api/v1/ee/compliance/audit-exports/events",
+            data=json.dumps(
+                {
+                    "tenant_slug": "acme-corp",
+                    "actor_type": "customer_user",
+                    "actor_id": "u-1",
+                    "action": "org.note",
+                    "target_urn": "urn:kodera:org:acme-corp",
+                    "metadata": {"note": adversarial_note, "contact": "secops@acme.fr."},
+                }
+            ),
+            content_type="application/json",
+        )
+        assert ok_evt.status_code == 201
+
+        started = time.perf_counter()
+        exp = enterprise_client.post(
+            "/api/v1/ee/compliance/audit-exports",
+            data=json.dumps({"tenant_slug": "acme-corp", "redact_pii": True}),
+            content_type="application/json",
+        )
+        assert (time.perf_counter() - started) < 0.25
+        assert exp.status_code == 200
+        assert "secops@acme.fr" not in exp.json()["payload"]
+        assert "@redacted.invalid." in exp.json()["payload"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -400,3 +401,82 @@ def test_scim_cross_tenant_bearer_token_isolation(enterprise_client: Client) -> 
             **_auth(token_beta),
         )
         assert still_active.status_code == 200 and still_active.json()["active"] is True
+
+
+def test_scim_filter_and_patch_path_linear_time_no_redos_and_sanitized_errors(
+    enterprise_client: Client,
+) -> None:
+    """Adversarial whitespace SCIM filters & paths must execute in O(n) time with static errors."""
+    with override_settings(KODERA_EDITION="enterprise"):
+        token, _ = default_scim_service.tokens.issue_token(tenant_slug="acme-corp")
+        created = enterprise_client.post(
+            "/api/v1/ee/scim/v2/Users",
+            data=json.dumps(
+                {
+                    "schemas": [SCIM_USER_SCHEMA],
+                    "userName": "alice@acme.fr",
+                    "externalId": "ext-alice-1",
+                    "displayName": "Alice Martin",
+                    "active": True,
+                }
+            ),
+            content_type="application/scim+json",
+            **_auth(token),
+        ).json()
+        uid = created["id"]
+
+        # Valid compound linear filter (`sw` + `eq` boolean + `pr`)
+        compound = enterprise_client.get(
+            "/api/v1/ee/scim/v2/Users",
+            {"filter": 'userName sw "alice@" and active eq true and externalId pr'},
+            **_auth(token),
+        )
+        assert compound.status_code == 200
+        assert compound.json()["totalResults"] == 1
+
+        # Adversarial whitespace / repeated-clause filters must fail fast without ReDoS or echo
+        adversarial_filters = [
+            "userName" + (" " * 495) + "!",
+            ('userName eq "x" and ' * 24) + "!",
+            "userName" + (" " * 50_000) + 'eq "alice@acme.fr"',
+            'userName eq "unterminated' + (" " * 450),
+        ]
+        for bad_filter in adversarial_filters:
+            started = time.perf_counter()
+            resp = enterprise_client.get(
+                "/api/v1/ee/scim/v2/Users",
+                {"filter": bad_filter},
+                **_auth(token),
+            )
+            elapsed = time.perf_counter() - started
+            assert elapsed < 0.20
+            assert resp.status_code == 400
+            err = resp.json()
+            assert err["schemas"] == [SCIM_ERROR_SCHEMA]
+            assert err["scimType"] == "invalidFilter"
+            assert "unterminated" not in err["detail"]
+            assert "Traceback" not in err["detail"]
+
+        # Adversarial bracketed PATCH path rejects cleanly in O(n) with static error detail
+        started_patch = time.perf_counter()
+        bad_patch = enterprise_client.patch(
+            f"/api/v1/ee/scim/v2/Users/{uid}",
+            data=json.dumps(
+                {
+                    "schemas": [SCIM_PATCH_OP_SCHEMA],
+                    "Operations": [
+                        {
+                            "op": "replace",
+                            "path": "emails[" + (" " * 220) + "type!]",
+                            "value": "x@acme.fr",
+                        }
+                    ],
+                }
+            ),
+            content_type="application/scim+json",
+            **_auth(token),
+        )
+        assert (time.perf_counter() - started_patch) < 0.20
+        assert bad_patch.status_code == 400
+        assert bad_patch.json()["scimType"] == "invalidPath"
+        assert "type!" not in bad_patch.json()["detail"]

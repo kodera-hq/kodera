@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 import secrets
 import threading
 from collections.abc import Iterable
@@ -38,14 +37,32 @@ DEFAULT_SCIM_SCOPES = frozenset({"scim:read", "scim:write"})
 
 _TOKEN_HASH_DOMAIN = b"kodera-scim-bearer-v1\x00"
 _DUMMY_DIGEST = hashlib.sha256(_TOKEN_HASH_DOMAIN + b"dummy-constant-time-pad").digest()
-_SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+
+
+def _is_valid_slug(value: str) -> bool:
+    if not (1 <= len(value) <= 63):
+        return False
+    first, last = value[0], value[-1]
+    if not (("a" <= first <= "z") or ("0" <= first <= "9")):
+        return False
+    if not (("a" <= last <= "z") or ("0" <= last <= "9")):
+        return False
+    return all(("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "-" for ch in value)
 
 
 class ScimAuthError(PermissionError):
     """Raised when SCIM bearer authentication, revocation, scope, or tenant check fails."""
 
-    def __init__(self, message: str, *, status: int = 401, scim_type: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "invalid_token",
+        status: int = 401,
+        scim_type: str | None = None,
+    ) -> None:
         super().__init__(message)
+        self.code = code
         self.status = status
         self.scim_type = scim_type
 
@@ -108,8 +125,8 @@ class ScimTokenManager:
     ) -> tuple[str, ScimTokenRecord]:
         """Issue a new tenant-scoped SCIM bearer token and return `(plaintext_token, record)`."""
         require_enterprise_edition()
-        if not _SLUG_RE.fullmatch(tenant_slug):
-            raise ValueError(f"Invalid tenant_slug: {tenant_slug!r}")
+        if not _is_valid_slug(tenant_slug):
+            raise ValueError("Invalid tenant_slug")
         resolved_scopes = frozenset(scopes) if scopes is not None else DEFAULT_SCIM_SCOPES
         if not resolved_scopes or not resolved_scopes <= ALL_SCIM_SCOPES:
             raise ValueError("Invalid or empty SCIM token scopes")
@@ -157,24 +174,30 @@ class ScimTokenManager:
         """Verify `Authorization: Bearer scim_<id>.<secret>` in constant time."""
         require_enterprise_edition()
         if not authorization_header or not isinstance(authorization_header, str):
-            raise ScimAuthError("Missing SCIM Bearer token", status=401)
+            raise ScimAuthError("Missing SCIM Bearer token", code="missing_token", status=401)
         if len(authorization_header) > 512:
-            raise ScimAuthError("Malformed Authorization header", status=401)
+            raise ScimAuthError(
+                "Malformed Authorization header", code="malformed_auth_header", status=401
+            )
 
         parts = authorization_header.strip().split(" ")
         if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
-            raise ScimAuthError("Authorization header must use Bearer scheme", status=401)
+            raise ScimAuthError(
+                "Authorization header must use Bearer scheme",
+                code="invalid_auth_scheme",
+                status=401,
+            )
 
         raw_token = parts[1]
         if not raw_token.startswith("scim_") or "." not in raw_token:
             hmac.compare_digest(_DUMMY_DIGEST, _DUMMY_DIGEST)
-            raise ScimAuthError("Invalid SCIM Bearer token", status=401)
+            raise ScimAuthError("Invalid SCIM Bearer token", code="invalid_token", status=401)
 
         prefix_part, _, raw_secret = raw_token.partition(".")
         token_id = prefix_part.removeprefix("scim_")
         if not token_id or not raw_secret:
             hmac.compare_digest(_DUMMY_DIGEST, _DUMMY_DIGEST)
-            raise ScimAuthError("Invalid SCIM Bearer token", status=401)
+            raise ScimAuthError("Invalid SCIM Bearer token", code="invalid_token", status=401)
 
         candidate_digest = _hash_secret(token_id, raw_secret)
         with self._lock:
@@ -182,27 +205,31 @@ class ScimTokenManager:
 
         if record is None:
             hmac.compare_digest(candidate_digest, _DUMMY_DIGEST)
-            raise ScimAuthError("Invalid SCIM Bearer token", status=401)
+            raise ScimAuthError("Invalid SCIM Bearer token", code="invalid_token", status=401)
 
         matched = hmac.compare_digest(candidate_digest, record.secret_sha256)
         if not matched:
-            raise ScimAuthError("Invalid SCIM Bearer token", status=401)
+            raise ScimAuthError("Invalid SCIM Bearer token", code="invalid_token", status=401)
 
         current_time = (now or datetime.now(UTC)).astimezone(UTC)
         if record.revoked_at is not None:
-            raise ScimAuthError("SCIM Bearer token has been revoked", status=401)
+            raise ScimAuthError(
+                "SCIM Bearer token has been revoked", code="token_revoked", status=401
+            )
         if record.expires_at is not None and current_time >= record.expires_at:
-            raise ScimAuthError("SCIM Bearer token has expired", status=401)
+            raise ScimAuthError("SCIM Bearer token has expired", code="token_expired", status=401)
 
         if expected_tenant_slug is not None and record.tenant_slug != expected_tenant_slug:
             raise ScimAuthError(
                 "SCIM Bearer token is not authorized for the target tenant",
+                code="tenant_forbidden",
                 status=403,
             )
 
         if not _scope_satisfies(record.scopes, required_scope):
             raise ScimAuthError(
-                f"SCIM Bearer token lacks required scope '{required_scope}'",
+                "SCIM Bearer token lacks required scope",
+                code="insufficient_scope",
                 status=403,
             )
 

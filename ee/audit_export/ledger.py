@@ -5,7 +5,6 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 
 from __future__ import annotations
 
-import re
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -31,7 +30,16 @@ FRAMEWORK_CONTROL_CATALOG: Mapping[str, tuple[str, ...]] = {
     "SECNUMCLOUD": ("SNC-11.2", "SNC-12.1", "SNC-12.4", "SNC-16.1"),
 }
 
-_SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+
+def _is_valid_slug(value: str) -> bool:
+    if not (1 <= len(value) <= 63):
+        return False
+    first, last = value[0], value[-1]
+    if not (("a" <= first <= "z") or ("0" <= first <= "9")):
+        return False
+    if not (("a" <= last <= "z") or ("0" <= last <= "9")):
+        return False
+    return all(("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "-" for ch in value)
 
 
 def format_utc_iso(dt: datetime) -> str:
@@ -139,8 +147,8 @@ class ComplianceAuditLedger:
     ) -> ComplianceAuditEvent:
         """Append one immutable event linked via `prev_hash -> entry_hash`."""
         require_enterprise_edition()
-        if not _SLUG_RE.fullmatch(tenant_slug):
-            raise ValueError(f"Invalid tenant_slug: {tenant_slug!r}")
+        if not _is_valid_slug(tenant_slug):
+            raise ValueError("Invalid tenant_slug")
         if not action or not action.strip():
             raise ValueError("Audit event action must be non-empty")
         if not actor_type or not actor_type.strip():

@@ -6,12 +6,114 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 from __future__ import annotations
 
 import json
+from typing import Final
 from urllib.parse import parse_qs
 
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
 from ee.saml.service import SamlError, default_saml_service
+
+_SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
+    # XML pre-parse & structural security rejections (400)
+    ("unexpected_child_element", 400, "SAML XML element contains forbidden child elements"),
+    ("malformed_qname", 400, "Malformed XML qualified name"),
+    ("xml_size_limit", 400, "SAML XML size is outside permitted bounds"),
+    ("forbidden_encoding", 400, "Forbidden or non-UTF-8 XML encoding"),
+    ("null_byte_forbidden", 400, "Null bytes are forbidden in SAML XML"),
+    ("dtd_or_entity_forbidden", 400, "XML DTD and entity declarations are strictly forbidden"),
+    ("invalid_utf8", 400, "SAML XML must be valid UTF-8"),
+    ("processing_instruction_forbidden", 400, "XML processing instructions are forbidden"),
+    ("xml_comments_forbidden", 400, "XML comments are forbidden in SAML payloads"),
+    ("cdata_forbidden", 400, "CDATA sections are forbidden in SAML assertions"),
+    ("unterminated_entity", 400, "Malformed ampersand or entity reference"),
+    ("external_or_custom_entity_forbidden", 400, "Custom or external XML entity is forbidden"),
+    ("invalid_char_ref", 400, "Invalid numeric character reference"),
+    ("external_entity_forbidden", 400, "External entity resolution is forbidden"),
+    ("xml_element_limit", 400, "XML exceeds maximum element count"),
+    ("xml_depth_limit", 400, "XML exceeds maximum nesting depth"),
+    ("invalid_xmlns", 400, "Invalid xmlns prefix declaration"),
+    ("empty_xmlns_uri", 400, "Empty namespace URI on prefix"),
+    ("xinclude_forbidden", 400, "XInclude elements and namespaces are forbidden"),
+    ("unbound_prefix", 400, "Unbound XML element prefix"),
+    ("unbound_attr_prefix", 400, "Unbound XML attribute prefix"),
+    ("ambiguous_id_attribute", 400, "SAML elements must use exact ID attribute casing"),
+    ("invalid_xml_id", 400, "Empty or invalid XML ID attribute"),
+    ("duplicate_xml_id", 400, "Duplicate XML ID attribute detected across document"),
+    ("malformed_xml", 400, "Malformed SAML XML document"),
+    # Request & configuration errors (400 / 404)
+    ("invalid_tenant_slug", 400, "Invalid tenant slug"),
+    ("invalid_idp_id", 400, "Invalid Identity Provider identifier"),
+    ("invalid_idp_entity_id", 400, "Invalid Identity Provider entityID"),
+    ("invalid_idp_sso_url", 400, "Invalid Identity Provider SSO URL"),
+    ("missing_verified_domains", 400, "Missing verified email domains"),
+    ("invalid_verified_domain", 400, "Invalid verified email domain"),
+    ("invalid_default_role", 400, "Unsupported default role"),
+    ("invalid_group_mapping", 400, "Unsupported group role mapping"),
+    ("invalid_clock_skew", 400, "Invalid SAML clock skew configuration"),
+    ("invalid_idp_certificate", 400, "Invalid Identity Provider certificate or key"),
+    ("invalid_sp_base_url", 400, "Invalid Service Provider base URL"),
+    ("invalid_return_path", 400, "Invalid return path"),
+    ("invalid_saml_response", 400, "Missing or oversized SAMLResponse payload"),
+    ("invalid_base64_response", 400, "SAMLResponse is not valid base64"),
+    ("unsupported_saml_version", 400, "SAML Version must be 2.0"),
+    ("idp_not_found", 404, "SAML Identity Provider is not configured for tenant"),
+    ("organisation_not_found", 404, "Bound organisation does not exist"),
+    # Cryptographic signature & XSW rejections (403)
+    ("key_algorithm_mismatch", 403, "SAML signature algorithm does not match IdP key"),
+    ("invalid_signature", 403, "SAML cryptographic signature verification failed"),
+    ("invalid_ecdsa_signature_length", 403, "Invalid ECDSA-SHA256 signature length"),
+    ("unsupported_signature_algorithm", 403, "Unsupported or forbidden SAML signature algorithm"),
+    ("missing_signed_element_id", 403, "Signed SAML element lacks an ID attribute"),
+    ("signature_object_forbidden", 403, "ds:Object elements inside ds:Signature are forbidden"),
+    ("malformed_signature", 403, "Malformed XMLDSig Signature structure"),
+    ("malformed_signed_info", 403, "Malformed XMLDSig SignedInfo structure"),
+    ("unsupported_c14n_algorithm", 403, "CanonicalizationMethod must be exc-c14n#"),
+    ("reference_uri_mismatch", 403, "ds:Reference URI does not match parent element ID"),
+    ("missing_transforms", 403, "ds:Reference lacks explicit Transforms"),
+    ("invalid_transforms", 403, "Invalid ds:Transforms chain"),
+    ("malformed_reference", 403, "Malformed ds:Reference element"),
+    ("unsupported_digest_algorithm", 403, "DigestMethod must be SHA-256"),
+    ("invalid_base64", 403, "Invalid base64 in DigestValue or SignatureValue"),
+    ("digest_mismatch", 403, "Computed SHA-256 digest does not match DigestValue"),
+    ("invalid_root_element", 403, "Root element must be samlp:Response"),
+    ("encrypted_assertion_unsupported", 403, "EncryptedAssertion is not enabled"),
+    ("invalid_assertion_count", 403, "SAML Response must contain exactly one Assertion"),
+    ("wrapped_assertion_detected", 403, "SAML Assertion must be a direct child of Response"),
+    ("multiple_signatures", 403, "Multiple Signature elements on single target are forbidden"),
+    ("stray_signature_detected", 403, "Unexpected nested Signature element detected"),
+    ("unsigned_assertion", 403, "SAML Assertion element must be signed"),
+    ("missing_signature", 403, "SAML payload is unsigned"),
+    # Protocol, RelayState CSRF, replay, & domain binding rejections (403)
+    ("missing_timestamp", 403, "Missing required SAML timestamp"),
+    ("malformed_timestamp", 403, "Malformed SAML UTC timestamp"),
+    ("invalid_relay_state", 403, "Invalid, expired, or consumed SAML RelayState"),
+    ("cross_tenant_relay_state", 403, "SAML RelayState belongs to a different tenant"),
+    ("sp_origin_mismatch", 403, "Service Provider origin mismatch"),
+    ("in_response_to_mismatch", 403, "SAML InResponseTo does not match pending AuthnRequest"),
+    ("invalid_destination", 403, "SAML Response Destination mismatch"),
+    ("saml_status_not_success", 403, "Identity Provider returned non-Success SAML Status"),
+    ("issuer_mismatch", 403, "SAML Issuer does not match configured Identity Provider"),
+    ("missing_assertion_issuer", 403, "SAML Assertion lacks Issuer"),
+    ("missing_assertion_id", 403, "SAML Assertion lacks ID attribute"),
+    ("missing_subject", 403, "SAML Assertion lacks Subject"),
+    ("missing_name_id", 403, "SAML Subject lacks NameID"),
+    ("empty_name_id", 403, "SAML Subject NameID is empty"),
+    ("missing_bearer_confirmation", 403, "SAML Subject lacks bearer SubjectConfirmationData"),
+    ("invalid_recipient", 403, "SAML SubjectConfirmationData Recipient mismatch"),
+    ("assertion_expired", 403, "SAML Assertion validity window has expired"),
+    ("assertion_not_yet_valid", 403, "SAML Assertion NotBefore is in the future"),
+    ("missing_conditions", 403, "SAML Assertion lacks Conditions"),
+    ("invalid_condition_window", 403, "Invalid SAML Conditions validity window"),
+    ("missing_audience_restriction", 403, "SAML Conditions lacks AudienceRestriction"),
+    ("invalid_audience", 403, "SAML AudienceRestriction does not authorize this Service Provider"),
+    ("replayed_assertion_id", 403, "SAML Assertion ID has already been consumed"),
+    ("ambiguous_email_attribute", 403, "Multiple email attribute values are forbidden"),
+    ("subject_email_mismatch", 403, "Subject NameID email does not match email attribute"),
+    ("missing_email_claim", 403, "SAML Assertion lacks an email claim"),
+    ("invalid_email_claim", 403, "Malformed email address in SAML Assertion"),
+    ("unverified_email_domain", 403, "Email domain is not verified for this tenant"),
+)
 
 
 def _json(payload: dict[str, object], *, status: int = 200) -> HttpResponse:
@@ -22,6 +124,14 @@ def _json(payload: dict[str, object], *, status: int = 200) -> HttpResponse:
     )
     resp["Cache-Control"] = "no-store"
     return resp
+
+
+def _saml_error_response(error_code: str) -> HttpResponse:
+    """Map domain error code to static constant HTTP status & message without exposing exception text."""
+    for code_lit, status_lit, detail_lit in _SAML_PUBLIC_ERRORS:
+        if error_code == code_lit:
+            return _json({"detail": detail_lit, "code": code_lit}, status=status_lit)
+    return _json({"detail": "SAML request rejected", "code": "saml_error"}, status=400)
 
 
 def _sp_base_url(request: HttpRequest) -> str:
@@ -41,7 +151,7 @@ def metadata_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
     try:
         xml_bytes = default_saml_service.build_sp_metadata_xml(tenant_slug, _sp_base_url(request))
     except SamlError as exc:
-        return _json({"detail": str(exc), "code": exc.code}, status=exc.status)
+        return _saml_error_response(exc.code)
     resp = HttpResponse(
         xml_bytes,
         status=200,
@@ -131,7 +241,7 @@ def login_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             return_path=return_path,
         )
     except SamlError as exc:
-        return _json({"detail": str(exc), "code": exc.code}, status=exc.status)
+        return _saml_error_response(exc.code)
 
     if want_redirect:
         redirect_resp = HttpResponse(status=302)
@@ -200,7 +310,7 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             sp_base_url=_sp_base_url(request),
         )
     except SamlError as exc:
-        return _json({"detail": str(exc), "code": exc.code}, status=exc.status)
+        return _saml_error_response(exc.code)
 
     return _json(
         {

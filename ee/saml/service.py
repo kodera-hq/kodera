@@ -8,7 +8,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import re
 import secrets
 import threading
 import urllib.parse
@@ -43,12 +42,44 @@ SAML_CM_BEARER = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
 VALID_ROLES = ("org_member", "org_billing", "org_admin")
 _ROLE_PRIORITY = {"org_member": 1, "org_billing": 2, "org_admin": 3}
 
-_SLUG_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
-_DOMAIN_RE = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\Z")
-_EMAIL_RE = re.compile(r"[^\s@<>\"']{1,64}@([A-Za-z0-9.-]{1,253})\Z")
-_SAML_INSTANT_RE = re.compile(
-    r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6})\d*)?Z\Z"
-)
+
+def _is_ascii_lower_alnum(ch: str) -> bool:
+    return ("a" <= ch <= "z") or ("0" <= ch <= "9")
+
+
+def _is_valid_slug(value: str) -> bool:
+    if not (1 <= len(value) <= 63):
+        return False
+    if not _is_ascii_lower_alnum(value[0]) or not _is_ascii_lower_alnum(value[-1]):
+        return False
+    return all(_is_ascii_lower_alnum(ch) or ch == "-" for ch in value)
+
+
+def _is_valid_domain(value: str) -> bool:
+    if not (1 <= len(value) <= 253) or "." not in value:
+        return False
+    labels = value.split(".")
+    if len(labels) < 2:
+        return False
+    if not all(_is_valid_slug(label) for label in labels):
+        return False
+    tld = labels[-1]
+    return 2 <= len(tld) <= 63 and all("a" <= ch <= "z" for ch in tld)
+
+
+def _extract_email_domain(candidate: str) -> str | None:
+    local, sep, domain = candidate.partition("@")
+    if not sep or "@" in domain:
+        return None
+    if not (1 <= len(local) <= 64) or not (1 <= len(domain) <= 253):
+        return None
+    if any(ch.isspace() or ch in "<>\"'" for ch in local):
+        return None
+    low_domain = domain.lower()
+    if not _is_valid_domain(low_domain):
+        return None
+    return low_domain
+
 
 MAX_PENDING_REQUESTS = 10_000
 MAX_REPLAY_ENTRIES = 50_000
@@ -82,9 +113,9 @@ class SamlIdpConfig:
     _public_key: PublicVerificationKey = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if not _SLUG_RE.fullmatch(self.tenant_slug):
+        if not _is_valid_slug(self.tenant_slug):
             raise SamlError("invalid_tenant_slug", "Invalid tenant slug format")
-        if not _SLUG_RE.fullmatch(self.idp_id):
+        if not _is_valid_slug(self.idp_id):
             raise SamlError("invalid_idp_id", "Invalid IdP identifier format")
         if not self.idp_entity_id or len(self.idp_entity_id) > 512:
             raise SamlError("invalid_idp_entity_id", "Invalid IdP entityID")
@@ -99,27 +130,25 @@ class SamlIdpConfig:
         normalized_domains: set[str] = set()
         for domain in self.verified_domains:
             clean = domain.strip().lower()
-            if not _DOMAIN_RE.fullmatch(clean):
-                raise SamlError("invalid_verified_domain", f"Invalid verified domain: {domain!r}")
+            if not _is_valid_domain(clean):
+                raise SamlError("invalid_verified_domain", "Invalid verified domain")
             normalized_domains.add(clean)
         object.__setattr__(self, "verified_domains", frozenset(normalized_domains))
 
         if self.default_role not in VALID_ROLES:
-            raise SamlError(
-                "invalid_default_role", f"Unsupported default role: {self.default_role}"
-            )
+            raise SamlError("invalid_default_role", "Unsupported default role")
         for grp, role in self.group_role_mapping.items():
             if not grp or role not in VALID_ROLES:
-                raise SamlError(
-                    "invalid_group_mapping", f"Unsupported mapped role for group {grp!r}"
-                )
+                raise SamlError("invalid_group_mapping", "Unsupported mapped role for group")
         if not 0 <= self.clock_skew_seconds <= MAX_CLOCK_SKEW_S:
             raise SamlError("invalid_clock_skew", "Clock skew must be between 0 and 180 seconds")
 
         try:
             key = load_idp_verification_key(self.public_key_pem)
         except Exception as exc:
-            raise SamlError("invalid_idp_certificate", str(exc)) from exc
+            raise SamlError(
+                "invalid_idp_certificate", "Invalid IdP verification certificate or key"
+            ) from exc
         object.__setattr__(self, "_public_key", key)
 
     @property
@@ -173,23 +202,60 @@ def _parse_saml_instant(raw: str | None, field_name: str) -> datetime:
         raise SamlError(
             "missing_timestamp", f"Missing required SAML timestamp {field_name}", status=403
         )
-    match = _SAML_INSTANT_RE.fullmatch(raw.strip())
-    if match is None:
+    cleaned = raw.strip()
+    if (
+        len(cleaned) < 20
+        or len(cleaned) > 30
+        or cleaned[4] != "-"
+        or cleaned[7] != "-"
+        or cleaned[10] != "T"
+        or cleaned[13] != ":"
+        or cleaned[16] != ":"
+        or not cleaned.endswith("Z")
+    ):
         raise SamlError(
             "malformed_timestamp",
             f"SAML timestamp {field_name} must be UTC ISO-8601 ending in Z",
             status=403,
         )
-    year, month, day, hour, minute, second, micro_raw = match.groups()
-    micro = int((micro_raw or "").ljust(6, "0")) if micro_raw else 0
+    year_s = cleaned[0:4]
+    month_s = cleaned[5:7]
+    day_s = cleaned[8:10]
+    hour_s = cleaned[11:13]
+    minute_s = cleaned[14:16]
+    second_s = cleaned[17:19]
+    frac_s = cleaned[19:-1]
+    fixed_parts = (year_s, month_s, day_s, hour_s, minute_s, second_s)
+    if not all(all("0" <= ch <= "9" for ch in seg) for seg in fixed_parts):
+        raise SamlError(
+            "malformed_timestamp",
+            f"SAML timestamp {field_name} must be UTC ISO-8601 ending in Z",
+            status=403,
+        )
+    micro = 0
+    if frac_s:
+        if not frac_s.startswith("."):
+            raise SamlError(
+                "malformed_timestamp",
+                f"SAML timestamp {field_name} must be UTC ISO-8601 ending in Z",
+                status=403,
+            )
+        digits = frac_s[1:]
+        if not (1 <= len(digits) <= 9) or not all("0" <= ch <= "9" for ch in digits):
+            raise SamlError(
+                "malformed_timestamp",
+                f"SAML timestamp {field_name} must be UTC ISO-8601 ending in Z",
+                status=403,
+            )
+        micro = int(digits[:6].ljust(6, "0"))
     try:
         return datetime(
-            int(year),
-            int(month),
-            int(day),
-            int(hour),
-            int(minute),
-            int(second),
+            int(year_s),
+            int(month_s),
+            int(day_s),
+            int(hour_s),
+            int(minute_s),
+            int(second_s),
             micro,
             tzinfo=UTC,
         )
@@ -248,13 +314,13 @@ class SamlService:
             self._provisioned_users.clear()
 
     def sp_entity_id(self, tenant_slug: str, sp_base_url: str) -> str:
-        if not _SLUG_RE.fullmatch(tenant_slug):
+        if not _is_valid_slug(tenant_slug):
             raise SamlError("invalid_tenant_slug", "Invalid tenant slug")
         base = _normalize_sp_base_url(sp_base_url)
         return f"{base}/api/v1/ee/sso/saml/{tenant_slug}/metadata"
 
     def sp_acs_url(self, tenant_slug: str, sp_base_url: str) -> str:
-        if not _SLUG_RE.fullmatch(tenant_slug):
+        if not _is_valid_slug(tenant_slug):
             raise SamlError("invalid_tenant_slug", "Invalid tenant slug")
         base = _normalize_sp_base_url(sp_base_url)
         return f"{base}/api/v1/ee/sso/saml/{tenant_slug}/acs"
@@ -490,7 +556,9 @@ class SamlService:
         try:
             response_root = parse_hardened_xml(xml_bytes)
         except SamlXmlSecurityError as exc:
-            raise SamlError(exc.code, str(exc), status=400) from exc
+            raise SamlError(
+                exc.code, "SAML XML payload failed security validation", status=400
+            ) from exc
 
         pending = self._consume_relay_state(
             tenant_slug=tenant_slug,
@@ -507,7 +575,7 @@ class SamlService:
                 want_assertions_signed=idp.want_assertions_signed,
             )
         except SamlSignatureError as exc:
-            raise SamlError(exc.code, str(exc), status=403) from exc
+            raise SamlError(exc.code, "SAML signature verification failed", status=403) from exc
 
         expected_entity_id = self.sp_entity_id(tenant_slug, sp_base_url)
         expected_acs_url = self.sp_acs_url(tenant_slug, sp_base_url)
@@ -824,17 +892,16 @@ def _resolve_verified_email(
             "missing_email_claim", "SAML Assertion must carry a user email address", status=403
         )
 
-    match = _EMAIL_RE.fullmatch(candidate)
-    if match is None or candidate.count("@") != 1:
+    domain = _extract_email_domain(candidate)
+    if domain is None:
         raise SamlError(
             "invalid_email_claim", "Malformed email address in SAML Assertion", status=403
         )
 
-    domain = match.group(1).lower()
     if domain not in verified_domains:
         raise SamlError(
             "unverified_email_domain",
-            f"Email domain {domain!r} is not verified for this tenant",
+            "Email domain is not verified for this tenant",
             status=403,
         )
     return candidate
@@ -894,7 +961,8 @@ def _sync_django_organisation_member(
             raise SamlError(
                 "organisation_not_found", "Bound organisation does not exist", status=404
             )
-        subject_key = re.sub(r"[^\x21-\x7e]", "_", f"saml:{idp_id}:{subject}")[:255]
+        raw_subject_key = f"saml:{idp_id}:{subject}"
+        subject_key = "".join(ch if "!" <= ch <= "~" else "_" for ch in raw_subject_key)[:255]
         identity = (
             Identity.objects.select_for_update()
             .select_related("user")

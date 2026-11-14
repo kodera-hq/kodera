@@ -6,11 +6,11 @@ Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 from __future__ import annotations
 
 import json
-import re
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Final
 from uuid import UUID, uuid4
 
 from ee.edition import require_enterprise_edition
@@ -25,23 +25,13 @@ from ee.scim.schemas import (
 
 MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 100
+MAX_SCIM_FILTER_LENGTH: Final[int] = 512
+MAX_SCIM_PATH_LENGTH: Final[int] = 256
 
-_MEMBER_FILTER_PATH_RE = re.compile(
-    r'^members\[\s*value\s+eq\s+"([^"]+)"\s*\]\Z',
-    re.IGNORECASE,
+_FILTER_ATTR_CHARS: Final[frozenset[str]] = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.:-"
 )
-_EMAIL_FILTER_PATH_RE = re.compile(
-    r'^emails\[\s*type\s+eq\s+"([^"]+)"\s*\](?:\.([A-Za-z0-9_]+))?\Z',
-    re.IGNORECASE,
-)
-_COMPARE_EXPR_RE = re.compile(
-    r'^\s*([A-Za-z0-9_.:-]+)\s+(eq|ne|co|sw|ew)\s+("(?:\\.|[^"\\])*"|true|false)\s*\Z',
-    re.IGNORECASE,
-)
-_PRESENT_EXPR_RE = re.compile(r"^\s*([A-Za-z0-9_.:-]+)\s+pr\s*\Z", re.IGNORECASE)
-_AND_SPLIT_RE = re.compile(
-    r"\s+and\s+(?=[A-Za-z0-9_.:-]+\s+(?:eq|ne|co|sw|ew|pr)\b)", re.IGNORECASE
-)
+_COMPARE_OPS: Final[frozenset[str]] = frozenset({"eq", "ne", "co", "sw", "ew"})
 
 
 class ScimError(ValueError):
@@ -53,11 +43,24 @@ class ScimError(ValueError):
         *,
         status: int = 400,
         scim_type: str | None = None,
+        code: str | None = None,
     ) -> None:
         super().__init__(detail)
         self.detail = detail
         self.status = status
         self.scim_type = scim_type
+        if code is not None:
+            self.code = code
+        elif status == 409:
+            self.code = "uniqueness"
+        elif status == 404:
+            self.code = "not_found"
+        elif status == 403:
+            self.code = "forbidden"
+        elif scim_type is not None:
+            self.code = f"scim_{scim_type}"
+        else:
+            self.code = "invalid_request"
 
 
 @dataclass(slots=True)
@@ -314,42 +317,203 @@ def _matches_single_clause(
     raise ScimError(f"Unsupported filter operator '{op}'", status=400, scim_type="invalidFilter")
 
 
-def _parse_filter_clauses(filter_expr: str) -> list[tuple[str, str, str | bool | None]]:
-    cleaned = filter_expr.strip()
-    if not cleaned or len(cleaned) > 512:
-        raise ScimError("Invalid or oversized SCIM filter", status=400, scim_type="invalidFilter")
-    parts = _AND_SPLIT_RE.split(cleaned)
-    clauses: list[tuple[str, str, str | bool | None]] = []
-    for part in parts:
-        pr_match = _PRESENT_EXPR_RE.match(part)
-        if pr_match is not None:
-            clauses.append((pr_match.group(1), "pr", None))
+def _tokenize_scim_filter(cleaned: str) -> list[tuple[str, str]]:
+    """Tokenize a bounded SCIM filter string in O(n) linear time without regular expressions."""
+    tokens: list[tuple[str, str]] = []
+    idx = 0
+    limit = len(cleaned)
+    while idx < limit:
+        while idx < limit and cleaned[idx].isspace():
+            idx += 1
+        if idx >= limit:
+            break
+
+        if cleaned[idx] == '"':
+            start = idx
+            idx += 1
+            escaped = False
+            while idx < limit:
+                ch = cleaned[idx]
+                if escaped:
+                    escaped = False
+                    idx += 1
+                    continue
+                if ch == "\\":
+                    escaped = True
+                    idx += 1
+                    continue
+                if ch == '"':
+                    break
+                idx += 1
+            if idx >= limit:
+                raise ScimError(
+                    "Unterminated string literal in SCIM filter",
+                    status=400,
+                    scim_type="invalidFilter",
+                )
+            raw_quoted = cleaned[start : idx + 1]
+            idx += 1
+            if idx < limit and not cleaned[idx].isspace():
+                raise ScimError(
+                    "Unexpected trailing character after string literal in SCIM filter",
+                    status=400,
+                    scim_type="invalidFilter",
+                )
+            try:
+                decoded = json.loads(raw_quoted)
+            except ValueError as exc:
+                raise ScimError(
+                    "Malformed string literal in SCIM filter",
+                    status=400,
+                    scim_type="invalidFilter",
+                ) from exc
+            if not isinstance(decoded, str):
+                raise ScimError(
+                    "Expected string literal in SCIM filter",
+                    status=400,
+                    scim_type="invalidFilter",
+                )
+            tokens.append(("str", decoded))
             continue
-        cmp_match = _COMPARE_EXPR_RE.match(part)
-        if cmp_match is None:
+
+        if cleaned[idx] in _FILTER_ATTR_CHARS:
+            start = idx
+            while idx < limit and cleaned[idx] in _FILTER_ATTR_CHARS:
+                idx += 1
+            if idx < limit and not cleaned[idx].isspace():
+                raise ScimError(
+                    "Unexpected character in SCIM filter expression",
+                    status=400,
+                    scim_type="invalidFilter",
+                )
+            tokens.append(("word", cleaned[start:idx]))
+            continue
+
+        raise ScimError(
+            "Invalid character in SCIM filter expression",
+            status=400,
+            scim_type="invalidFilter",
+        )
+
+    return tokens
+
+
+def _parse_filter_clauses(filter_expr: str) -> list[tuple[str, str, str | bool | None]]:
+    """Parse RFC 7644 SCIM filter expression in deterministic O(n) linear time (`len <= 512`)."""
+    if len(filter_expr) > MAX_SCIM_FILTER_LENGTH:
+        raise ScimError("Invalid or oversized SCIM filter", status=400, scim_type="invalidFilter")
+    cleaned = filter_expr.strip()
+    if not cleaned:
+        raise ScimError("Invalid or oversized SCIM filter", status=400, scim_type="invalidFilter")
+
+    tokens = _tokenize_scim_filter(cleaned)
+    if len(tokens) < 2:
+        raise ScimError("Malformed SCIM filter expression", status=400, scim_type="invalidFilter")
+
+    clauses: list[tuple[str, str, str | bool | None]] = []
+    pos = 0
+    total = len(tokens)
+    while pos < total:
+        attr_kind, attr_name = tokens[pos]
+        if attr_kind != "word" or pos + 1 >= total or tokens[pos + 1][0] != "word":
             raise ScimError(
-                f"Malformed SCIM filter expression: {filter_expr!r}",
+                "Malformed SCIM filter expression", status=400, scim_type="invalidFilter"
+            )
+        op_word = tokens[pos + 1][1].lower()
+        if op_word == "pr":
+            clauses.append((attr_name, "pr", None))
+            pos += 2
+        elif op_word in _COMPARE_OPS:
+            if pos + 2 >= total:
+                raise ScimError(
+                    "Missing comparison value in SCIM filter",
+                    status=400,
+                    scim_type="invalidFilter",
+                )
+            lit_kind, lit_val = tokens[pos + 2]
+            if lit_kind == "str":
+                clauses.append((attr_name, op_word, lit_val))
+            elif lit_kind == "word" and lit_val.lower() == "true":
+                clauses.append((attr_name, op_word, True))
+            elif lit_kind == "word" and lit_val.lower() == "false":
+                clauses.append((attr_name, op_word, False))
+            else:
+                raise ScimError(
+                    "Invalid literal in SCIM filter expression",
+                    status=400,
+                    scim_type="invalidFilter",
+                )
+            pos += 3
+        else:
+            raise ScimError(
+                "Unsupported operator in SCIM filter expression",
                 status=400,
                 scim_type="invalidFilter",
             )
-        attr, op, raw_lit = cmp_match.groups()
-        if raw_lit.lower() == "true":
-            clauses.append((attr, op, True))
-        elif raw_lit.lower() == "false":
-            clauses.append((attr, op, False))
-        else:
-            try:
-                str_val = json.loads(raw_lit)
-            except ValueError as exc:
+
+        if pos < total:
+            sep_kind, sep_word = tokens[pos]
+            if sep_kind != "word" or sep_word.lower() != "and" or pos + 1 >= total:
                 raise ScimError(
-                    "Malformed string literal in SCIM filter", status=400, scim_type="invalidFilter"
-                ) from exc
-            if not isinstance(str_val, str):
-                raise ScimError(
-                    "Expected string literal in SCIM filter", status=400, scim_type="invalidFilter"
+                    "Malformed logical conjunction in SCIM filter",
+                    status=400,
+                    scim_type="invalidFilter",
                 )
-            clauses.append((attr, op, str_val))
+            pos += 1
+
     return clauses
+
+
+def _parse_bracket_eq_literal(inner: str, expected_attr: str) -> str | None:
+    if not inner or len(inner) > MAX_SCIM_PATH_LENGTH:
+        return None
+    try:
+        tokens = _tokenize_scim_filter(inner)
+    except ScimError:
+        return None
+    if len(tokens) != 3:
+        return None
+    if tokens[0][0] != "word" or tokens[0][1].lower() != expected_attr:
+        return None
+    if tokens[1][0] != "word" or tokens[1][1].lower() != "eq":
+        return None
+    if tokens[2][0] != "str" or not tokens[2][1]:
+        return None
+    return tokens[2][1]
+
+
+def _parse_member_filter_path(path: str) -> str | None:
+    """Match `members[value eq "<id>"]` in linear O(n) time without regex."""
+    if len(path) > MAX_SCIM_PATH_LENGTH or not path.endswith("]"):
+        return None
+    prefix, sep, rest = path[:-1].partition("[")
+    if not sep or prefix.lower() != "members" or "]" in rest:
+        return None
+    return _parse_bracket_eq_literal(rest.strip(), "value")
+
+
+def _parse_email_filter_path(path: str) -> tuple[str, str | None] | None:
+    """Match `emails[type eq "<type>"][.<subattr>]` in linear O(n) time without regex."""
+    if len(path) > MAX_SCIM_PATH_LENGTH:
+        return None
+    prefix, sep, after_open = path.partition("[")
+    if not sep or prefix.lower() != "emails":
+        return None
+    inside, sep_close, suffix = after_open.partition("]")
+    if not sep_close:
+        return None
+    etype = _parse_bracket_eq_literal(inside.strip(), "type")
+    if etype is None:
+        return None
+    if suffix == "":
+        return etype, None
+    if (
+        suffix.startswith(".")
+        and len(suffix) > 1
+        and all(ch.isalnum() or ch == "_" for ch in suffix[1:])
+    ):
+        return etype, suffix[1:]
+    return None
 
 
 def _paginate(
@@ -840,9 +1004,9 @@ class ScimService:
             user.emails = [] if op == "remove" else _parse_emails(value, user.user_name)
             return False, False
 
-        email_filter_match = _EMAIL_FILTER_PATH_RE.match(path)
-        if email_filter_match is not None:
-            etype, subattr = email_filter_match.groups()
+        email_filter_parsed = _parse_email_filter_path(path)
+        if email_filter_parsed is not None:
+            etype, subattr = email_filter_parsed
             sub = (subattr or "value").lower()
             if sub == "value" and isinstance(value, str) and value.strip():
                 updated = False
@@ -1121,9 +1285,8 @@ class ScimService:
                     self._apply_group_members_op_locked(group, op=op, value=value)
                     continue
 
-                member_filter = _MEMBER_FILTER_PATH_RE.match(path)
-                if member_filter is not None and op == "remove":
-                    target_uid = member_filter.group(1)
+                target_uid = _parse_member_filter_path(path)
+                if target_uid is not None and op == "remove":
                     group.member_ids = [uid for uid in group.member_ids if uid != target_uid]
                     continue
 
@@ -1214,7 +1377,7 @@ def _sync_django_scim_provision(
         org = Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True).first()
         if org is None:
             raise ScimError("Bound organisation does not exist", status=404)
-        subj = re.sub(r"[^\x21-\x7e]", "_", user_name.lower())[:255]
+        subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
         identity = (
             Identity.objects.select_for_update()
             .select_related("user")

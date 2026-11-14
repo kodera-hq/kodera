@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import time
 import urllib.parse
 import zlib
 from datetime import UTC, datetime, timedelta
@@ -724,3 +725,49 @@ def test_saml_protocol_constraints_audience_recipient_expiry_replay_and_domain_s
                 verified_domains=frozenset({"acme.fr"}),
             )
         assert weak_err.value.code == "invalid_idp_certificate"
+
+
+def test_saml_xml_prolog_linear_time_no_redos_and_sanitized_errors(
+    enterprise_client: Client,
+    rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
+) -> None:
+    """Adversarial whitespace XML prologs must fail in O(n) time without ReDoS or traceback leaks."""
+    _, _, cert_pem = rsa_idp_keypair
+    adversarial_cases = [
+        ("<?xml " + (" " * 50_000) + 'version="1.0" encoding="UTF-8"', "malformed_xml"),
+        (
+            "<?xml " + (" \t\n" * 15_000) + 'version="1.0" encoding="ISO-8859-1"?><r/>',
+            "forbidden_encoding",
+        ),
+        ((" " * 30_000) + "<?xml " + (" " * 30_000) + "unterminated", "malformed_xml"),
+    ]
+
+    with override_settings(KODERA_EDITION="enterprise"):
+        default_saml_service.register_idp(
+            SamlIdpConfig(
+                tenant_slug="acme-corp",
+                idp_id="okta",
+                idp_entity_id="https://idp.acme-corp.test/saml2",
+                idp_sso_url="https://idp.acme-corp.test/sso",
+                public_key_pem=cert_pem,
+                verified_domains=frozenset({"acme.fr"}),
+            )
+        )
+        for raw_payload, expected_code in adversarial_cases:
+            login = enterprise_client.get("/api/v1/ee/sso/saml/acme-corp/login").json()
+            started = time.perf_counter()
+            resp = enterprise_client.post(
+                "/api/v1/ee/sso/saml/acme-corp/acs",
+                data={
+                    "SAMLResponse": base64.b64encode(raw_payload.encode("utf-8")).decode("ascii"),
+                    "RelayState": login["relay_state"],
+                },
+                content_type="application/json",
+            )
+            elapsed = time.perf_counter() - started
+            assert elapsed < 0.25
+            assert resp.status_code == 400
+            body = resp.json()
+            assert body["code"] == expected_code
+            assert "Traceback" not in body["detail"]
+            assert "ExpatError" not in body["detail"]

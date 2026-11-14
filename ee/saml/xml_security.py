@@ -20,7 +20,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import re
 from dataclasses import dataclass, field
 from typing import Final
 from xml.parsers import expat
@@ -51,17 +50,9 @@ MAX_SAML_XML_BYTES: Final[int] = 262_144
 MAX_XML_DEPTH: Final[int] = 28
 MAX_XML_ELEMENTS: Final[int] = 600
 
-_FORBIDDEN_PROLOG_RE = re.compile(
-    r"<!\s*(?:DOCTYPE|ENTITY|ELEMENT|ATTLIST|NOTATION)\b",
-    re.IGNORECASE,
-)
-_XML_DECL_RE = re.compile(r"\A\s*<\?xml(?:\s+[^?]*)?\?>", re.IGNORECASE)
-_PI_RE = re.compile(r"<\?(?!xml\b)", re.IGNORECASE)
-_ENCODING_ATTR_RE = re.compile(r"""encoding\s*=\s*['"]([^'"]+)['"]""", re.IGNORECASE)
-_ENTITY_REF_RE = re.compile(r"&([^;\s]{1,64});|&(?![a-zA-Z0-9#]{1,10};)")
-_PREDEFINED_ENTITIES = frozenset({"amp", "lt", "gt", "quot", "apos"})
-_NUMERIC_DEC_RE = re.compile(r"#([0-9]{1,7})\Z")
-_NUMERIC_HEX_RE = re.compile(r"#x([0-9a-fA-F]{1,6})\Z")
+_PREDEFINED_ENTITIES: Final[frozenset[str]] = frozenset({"amp", "lt", "gt", "quot", "apos"})
+_XML_WS_CHARS: Final[str] = " \t\r\n"
+_HEX_CHARS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
 
 
 class SamlXmlSecurityError(ValueError):
@@ -154,6 +145,121 @@ def _split_qname(qname: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
+def _scan_xml_prolog(text: str) -> str:
+    """Validate optional `<?xml ... ?>` declaration in linear O(n) time without regex."""
+    stripped = text.lstrip(_XML_WS_CHARS)
+    if not stripped.lower().startswith("<?xml"):
+        return stripped
+    if len(stripped) > 5 and stripped[5] not in (_XML_WS_CHARS + "?"):
+        return stripped
+
+    end_decl = stripped.find("?>", 5)
+    if end_decl == -1:
+        raise SamlXmlSecurityError("malformed_xml", "Unterminated XML declaration")
+
+    prolog_body = stripped[5:end_decl]
+    if "<" in prolog_body or ">" in prolog_body:
+        raise SamlXmlSecurityError("malformed_xml", "Malformed XML declaration")
+
+    idx = 0
+    limit = len(prolog_body)
+    while idx < limit:
+        while idx < limit and prolog_body[idx] in _XML_WS_CHARS:
+            idx += 1
+        if idx >= limit:
+            break
+        name_start = idx
+        while idx < limit and (prolog_body[idx].isalnum() or prolog_body[idx] in "_-:."):
+            idx += 1
+        attr_name = prolog_body[name_start:idx].lower()
+        if not attr_name:
+            raise SamlXmlSecurityError("malformed_xml", "Malformed XML declaration attribute")
+        while idx < limit and prolog_body[idx] in _XML_WS_CHARS:
+            idx += 1
+        if idx >= limit or prolog_body[idx] != "=":
+            raise SamlXmlSecurityError("malformed_xml", "Malformed XML declaration attribute")
+        idx += 1
+        while idx < limit and prolog_body[idx] in _XML_WS_CHARS:
+            idx += 1
+        if idx >= limit or prolog_body[idx] not in {"'", '"'}:
+            raise SamlXmlSecurityError("malformed_xml", "Unquoted XML declaration attribute")
+        quote_ch = prolog_body[idx]
+        idx += 1
+        val_end = prolog_body.find(quote_ch, idx)
+        if val_end == -1:
+            raise SamlXmlSecurityError("malformed_xml", "Unterminated XML declaration attribute")
+        attr_val = prolog_body[idx:val_end].strip()
+        if attr_name == "encoding" and attr_val.upper() != "UTF-8":
+            raise SamlXmlSecurityError(
+                "forbidden_encoding", "Only UTF-8 XML declarations are allowed"
+            )
+        idx = val_end + 1
+
+    return stripped[end_decl + 2 :]
+
+
+def _scan_xml_bang_constructs(text: str) -> None:
+    """Reject DTD/entity declarations, XML comments, and CDATA sections in linear O(n) time."""
+    bang = text.find("<!")
+    if bang == -1:
+        return
+    if text.startswith("<!--", bang):
+        raise SamlXmlSecurityError(
+            "xml_comments_forbidden",
+            "XML comments are forbidden in SAML payloads to prevent comment-truncation attacks",
+        )
+    if text.startswith("<![CDATA[", bang):
+        raise SamlXmlSecurityError(
+            "cdata_forbidden",
+            "CDATA sections are forbidden in SAML assertions",
+        )
+    raise SamlXmlSecurityError(
+        "dtd_or_entity_forbidden",
+        "XML DTD and entity declarations are strictly forbidden",
+    )
+
+
+def _scan_xml_entity_references(text: str) -> None:
+    """Validate XML predefined & numeric character references in linear O(n) time."""
+    pos = 0
+    while True:
+        amp = text.find("&", pos)
+        if amp == -1:
+            return
+        semi = text.find(";", amp + 1, amp + 66)
+        if semi == -1:
+            raise SamlXmlSecurityError(
+                "unterminated_entity", "Malformed ampersand or entity reference"
+            )
+        ref = text[amp + 1 : semi]
+        if not ref or any(ch.isspace() or ch == "&" for ch in ref):
+            raise SamlXmlSecurityError(
+                "unterminated_entity", "Malformed ampersand or entity reference"
+            )
+        if ref in _PREDEFINED_ENTITIES:
+            pos = semi + 1
+            continue
+
+        codepoint: int | None = None
+        if ref.startswith(("#x", "#X")):
+            hex_digits = ref[2:]
+            if 1 <= len(hex_digits) <= 6 and all(ch in _HEX_CHARS for ch in hex_digits):
+                codepoint = int(hex_digits, 16)
+        elif ref.startswith("#"):
+            dec_digits = ref[1:]
+            if 1 <= len(dec_digits) <= 7 and all("0" <= ch <= "9" for ch in dec_digits):
+                codepoint = int(dec_digits, 10)
+
+        if codepoint is None:
+            raise SamlXmlSecurityError(
+                "external_or_custom_entity_forbidden",
+                "Custom or external XML entity reference is forbidden",
+            )
+        if codepoint == 0 or codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+            raise SamlXmlSecurityError("invalid_char_ref", "Invalid numeric character reference")
+        pos = semi + 1
+
+
 def _validate_raw_xml_preparse(raw_xml: bytes | str) -> str:
     if isinstance(raw_xml, bytes):
         if len(raw_xml) == 0 or len(raw_xml) > MAX_SAML_XML_BYTES:
@@ -192,64 +298,16 @@ def _validate_raw_xml_preparse(raw_xml: bytes | str) -> str:
         text = raw_xml
 
     text = text.lstrip("\ufeff")
-    if _FORBIDDEN_PROLOG_RE.search(text):
-        raise SamlXmlSecurityError(
-            "dtd_or_entity_forbidden",
-            "XML DTD and entity declarations are strictly forbidden",
-        )
+    _scan_xml_bang_constructs(text)
+    remainder = _scan_xml_prolog(text)
 
-    decl_match = _XML_DECL_RE.match(text)
-    if decl_match is not None:
-        enc_match = _ENCODING_ATTR_RE.search(decl_match.group(0))
-        if enc_match is not None and enc_match.group(1).strip().upper() != "UTF-8":
-            raise SamlXmlSecurityError(
-                "forbidden_encoding", "Only UTF-8 XML declarations are allowed"
-            )
-        remainder = text[decl_match.end() :]
-    else:
-        remainder = text
-
-    if "<?xml" in remainder.lower() or _PI_RE.search(text):
+    if "<?" in remainder:
         raise SamlXmlSecurityError(
             "processing_instruction_forbidden",
             "XML processing instructions are forbidden",
         )
 
-    if "<!--" in text:
-        raise SamlXmlSecurityError(
-            "xml_comments_forbidden",
-            "XML comments are forbidden in SAML payloads to prevent comment-truncation attacks",
-        )
-
-    if "<![CDATA[" in text:
-        raise SamlXmlSecurityError(
-            "cdata_forbidden",
-            "CDATA sections are forbidden in SAML assertions",
-        )
-
-    for match in _ENTITY_REF_RE.finditer(text):
-        ref = match.group(1)
-        if ref is None:
-            raise SamlXmlSecurityError(
-                "unterminated_entity", "Malformed ampersand or entity reference"
-            )
-        if ref in _PREDEFINED_ENTITIES:
-            continue
-        dec = _NUMERIC_DEC_RE.match(ref)
-        hex_m = _NUMERIC_HEX_RE.match(ref)
-        codepoint: int | None = None
-        if dec is not None:
-            codepoint = int(dec.group(1), 10)
-        elif hex_m is not None:
-            codepoint = int(hex_m.group(1), 16)
-        if codepoint is None:
-            raise SamlXmlSecurityError(
-                "external_or_custom_entity_forbidden",
-                f"Custom or external XML entity reference '&{ref};' is forbidden",
-            )
-        if codepoint == 0 or codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
-            raise SamlXmlSecurityError("invalid_char_ref", "Invalid numeric character reference")
-
+    _scan_xml_entity_references(text)
     return text
 
 
