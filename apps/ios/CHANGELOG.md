@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Declare the three approved associated domains and bind the app entitlement file to the public signing team. Refuse domain, capability, entitlement-path and team drift in resource checks. Signed-device Universal Links and inbound link handling remain unqualified; no push entitlement or background mode is added.
+
 - Expire prepared proximity capabilities at their lease deadline even before scanning starts, and reject noncanonical event scopes. Bound peer tracking without evicting replay receipts, and exclude this device’s own beacons.
 
 - Wire explicit foreground proximity consent to authenticated workspace provisioning and localized Bluetooth/local-network permission descriptions. Retain only a current-epoch MAC lease, stop and wipe at its boundary, and authenticate any renewal without extending consent. Read the bounded token characteristic through GATT rather than expecting unsupported advertisement service data. Physical interoperability, authenticated QUIC and live-service acceptance remain unqualified.
