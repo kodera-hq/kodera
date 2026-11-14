@@ -1,6 +1,7 @@
 import * as RadixTooltip from '@radix-ui/react-tooltip'
+import { Slot } from '@radix-ui/react-slot'
 import { forwardRef } from 'react'
-import type { ReactElement } from 'react'
+import type { ComponentPropsWithoutRef, ReactElement } from 'react'
 import { cx } from '../cx'
 
 export type TooltipSide = 'top' | 'right' | 'bottom' | 'left'
@@ -32,6 +33,16 @@ export interface TooltipProps {
   sideOffset?: number
 }
 
+// Radix adds its content ID and Slot concatenates descriptions. Filter that injected value
+// at this boundary, before the final Slot merges the actual child's own description and ref.
+const NameTrigger = forwardRef<HTMLElement, ComponentPropsWithoutRef<typeof Slot>>(
+  function NameTrigger(props, ref) {
+    const triggerProps = { ...props }
+    delete triggerProps['aria-describedby']
+    return <Slot {...triggerProps} ref={ref} />
+  }
+)
+
 /**
  * Keyboard: shown on focus, exactly as it is on hover — `Tab` reaches the
  * trigger and the tooltip appears; moving on hides it. No separate keyboard
@@ -52,8 +63,8 @@ export const Tooltip = forwardRef<HTMLDivElement, TooltipProps>(function Tooltip
     <RadixTooltip.Root>
       {/* Radix names the trigger's description after the content while it is open; a name
           restated as its own description is read twice, so `names` takes that back off. */}
-      <RadixTooltip.Trigger asChild {...(names ? { 'aria-describedby': undefined } : {})}>
-        {children}
+      <RadixTooltip.Trigger asChild>
+        {names ? <NameTrigger>{children}</NameTrigger> : children}
       </RadixTooltip.Trigger>
       <RadixTooltip.Portal container={container}>
         <RadixTooltip.Content
