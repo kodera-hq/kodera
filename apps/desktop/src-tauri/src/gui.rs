@@ -763,21 +763,32 @@ pub fn resolve_asset_response(
         if let Ok(canonical_root) = fs::canonicalize(root) {
             let relative = normalized.trim_start_matches('/');
             let candidate = canonical_root.join(relative);
-            if let Ok(canonical_file) = fs::canonicalize(&candidate) {
-                if canonical_file.starts_with(&canonical_root) && canonical_file.is_file() {
-                    if let Ok(meta) = fs::metadata(&canonical_file) {
-                        if meta.len() <= MAX_STATIC_ASSET_BYTES {
-                            if let Ok(bytes) = fs::read(&canonical_file) {
-                                return AssetHttpPayload {
-                                    status: 200,
-                                    content_type: mime_type_for_path(&normalized),
-                                    csp_header: embedded_csp.to_owned(),
-                                    body: bytes,
-                                };
-                            }
-                        }
-                    }
+            if let Some(bytes) = read_contained_asset(&canonical_root, &candidate) {
+                return AssetHttpPayload {
+                    status: 200,
+                    content_type: mime_type_for_path(&normalized),
+                    csp_header: embedded_csp.to_owned(),
+                    body: bytes,
+                };
+            }
+            let last_segment = normalized.rsplit('/').next().unwrap_or("");
+            let index_candidate = canonical_root.join("index.html");
+            if !last_segment.contains('.') {
+                if let Some(index_bytes) = read_contained_asset(&canonical_root, &index_candidate) {
+                    return AssetHttpPayload {
+                        status: 200,
+                        content_type: "text/html; charset=utf-8",
+                        csp_header: embedded_csp.to_owned(),
+                        body: index_bytes,
+                    };
                 }
+            } else if index_candidate.is_file() {
+                return AssetHttpPayload {
+                    status: 404,
+                    content_type: "text/plain; charset=utf-8",
+                    csp_header: embedded_csp.to_owned(),
+                    body: b"not_found".to_vec(),
+                };
             }
         }
     }
@@ -808,6 +819,18 @@ pub fn resolve_asset_response(
             body: b"not_found".to_vec(),
         },
     }
+}
+
+fn read_contained_asset(canonical_root: &Path, candidate: &Path) -> Option<Vec<u8>> {
+    let canonical_file = fs::canonicalize(candidate).ok()?;
+    if !canonical_file.starts_with(canonical_root) || !canonical_file.is_file() {
+        return None;
+    }
+    let meta = fs::metadata(&canonical_file).ok()?;
+    if meta.len() > MAX_STATIC_ASSET_BYTES {
+        return None;
+    }
+    fs::read(&canonical_file).ok()
 }
 
 fn mime_type_for_path(path: &str) -> &'static str {
@@ -1229,31 +1252,71 @@ impl DesktopGuiOptions {
 }
 
 fn discover_frontend_dist_dir() -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("KODERA_DESKTOP_DIST_DIR") {
-        let trimmed = explicit.trim();
-        if !trimmed.is_empty() {
-            let path = PathBuf::from(trimmed);
-            if path.join("index.html").is_file() {
-                return Some(path);
+    let explicit = std::env::var("KODERA_DESKTOP_DIST_DIR")
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    let appdir = std::env::var_os("APPDIR")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    let current_exe = std::env::current_exe().ok();
+    #[cfg(debug_assertions)]
+    let debug_manifest_dist =
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist"));
+    #[cfg(not(debug_assertions))]
+    let debug_manifest_dist: Option<PathBuf> = None;
+
+    discover_frontend_dist_from_context(
+        explicit.as_deref(),
+        appdir.as_deref(),
+        current_exe.as_deref(),
+        debug_manifest_dist.as_deref(),
+    )
+}
+
+fn discover_frontend_dist_from_context(
+    explicit_dist_dir: Option<&Path>,
+    appdir: Option<&Path>,
+    exe_path: Option<&Path>,
+    debug_manifest_dist: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(explicit) = explicit_dist_dir {
+        if explicit.join("index.html").is_file() {
+            return Some(explicit.to_path_buf());
+        }
+    }
+    if let Some(exe_dir) = exe_path.and_then(Path::parent) {
+        for rel in [
+            "../Resources/web",
+            "../Resources/dist",
+            "../share/kodera-desktop/web",
+            "../share/kodera-desktop/dist",
+            "web",
+            "dist",
+            "../../apps/web/dist",
+        ] {
+            let candidate = exe_dir.join(rel);
+            if candidate.join("index.html").is_file() {
+                return Some(candidate);
             }
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            for candidate in [
-                exe_dir.join("../Resources/dist"),
-                exe_dir.join("dist"),
-                exe_dir.join("../../apps/web/dist"),
-            ] {
-                if candidate.join("index.html").is_file() {
-                    return Some(candidate);
-                }
+    if let Some(app_root) = appdir {
+        for rel in [
+            "usr/share/kodera-desktop/web",
+            "usr/share/kodera-desktop/dist",
+        ] {
+            let candidate = app_root.join(rel);
+            if candidate.join("index.html").is_file() {
+                return Some(candidate);
             }
         }
     }
-    let manifest_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web/dist");
-    if manifest_dist.join("index.html").is_file() {
-        return Some(manifest_dist);
+    if let Some(manifest_dist) = debug_manifest_dist {
+        if manifest_dist.join("index.html").is_file() {
+            return Some(manifest_dist.to_path_buf());
+        }
     }
     None
 }
@@ -1773,6 +1836,124 @@ mod tests {
 
         let traversal = resolve_asset_response(None, "/../../Cargo.toml", &csp);
         assert_eq!(traversal.status, 400);
+    }
+
+    struct ScopedTempDir(PathBuf);
+
+    impl ScopedTempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let dir = std::env::temp_dir().join(format!(
+                "kodera-desktop-gui-test-{tag}-{}-{nanos}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for ScopedTempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn spa_route_fallback_serves_bundled_index_html_and_returns_404_for_missing_assets() {
+        let csp = verify_embedded_tauri_conf_csp().unwrap();
+        let scratch = ScopedTempDir::new("spa-fallback");
+        let dist = scratch.path().join("web");
+        fs::create_dir_all(dist.join("assets")).unwrap();
+        let spa_html = b"<!doctype html><html><head><title>Kodera SPA</title></head><body><div id=\"root\"></div></body></html>";
+        fs::write(dist.join("index.html"), spa_html).unwrap();
+        fs::write(dist.join("assets/main.js"), b"console.log('kodera');").unwrap();
+
+        let static_js = resolve_asset_response(Some(&dist), "/assets/main.js", &csp);
+        assert_eq!(static_js.status, 200);
+        assert_eq!(static_js.content_type, "text/javascript; charset=utf-8");
+        assert_eq!(static_js.csp_header, csp);
+        assert_eq!(static_js.body, b"console.log('kodera');");
+
+        for spa_route in ["/login", "/onboarding", "/channels/general"] {
+            let resp = resolve_asset_response(Some(&dist), spa_route, &csp);
+            assert_eq!(resp.status, 200, "SPA route {spa_route} must return 200");
+            assert_eq!(resp.content_type, "text/html; charset=utf-8");
+            assert_eq!(resp.csp_header, csp);
+            assert_eq!(resp.body, spa_html);
+        }
+
+        for missing_asset in ["/missing.js", "/assets/absent.css", "/bootstrap.js"] {
+            let miss = resolve_asset_response(Some(&dist), missing_asset, &csp);
+            assert_eq!(
+                miss.status, 404,
+                "missing static asset {missing_asset} must return 404"
+            );
+            assert_eq!(miss.csp_header, csp);
+        }
+    }
+
+    #[test]
+    fn bundle_asset_discovery_resolves_macos_linux_appimage_and_windows_layouts() {
+        let scratch = ScopedTempDir::new("bundle-discovery");
+
+        // 1. macOS `.app`: Contents/MacOS/kodera-desktop -> Contents/Resources/web/index.html
+        let mac_exe = scratch
+            .path()
+            .join("Kodera.app/Contents/MacOS/kodera-desktop");
+        let mac_web = scratch.path().join("Kodera.app/Contents/Resources/web");
+        fs::create_dir_all(mac_exe.parent().unwrap()).unwrap();
+        fs::create_dir_all(&mac_web).unwrap();
+        fs::write(mac_web.join("index.html"), b"<!doctype html>").unwrap();
+        let found_mac =
+            discover_frontend_dist_from_context(None, None, Some(&mac_exe), None).unwrap();
+        assert_eq!(
+            fs::canonicalize(found_mac).unwrap(),
+            fs::canonicalize(&mac_web).unwrap()
+        );
+
+        // 2. Linux `.deb`: /usr/bin/kodera-desktop -> /usr/share/kodera-desktop/web/index.html
+        let deb_exe = scratch.path().join("deb-root/usr/bin/kodera-desktop");
+        let deb_web = scratch.path().join("deb-root/usr/share/kodera-desktop/web");
+        fs::create_dir_all(deb_exe.parent().unwrap()).unwrap();
+        fs::create_dir_all(&deb_web).unwrap();
+        fs::write(deb_web.join("index.html"), b"<!doctype html>").unwrap();
+        let found_deb =
+            discover_frontend_dist_from_context(None, None, Some(&deb_exe), None).unwrap();
+        assert_eq!(
+            fs::canonicalize(found_deb).unwrap(),
+            fs::canonicalize(&deb_web).unwrap()
+        );
+
+        // 3. Linux `.AppImage` via `$APPDIR/usr/share/kodera-desktop/web/index.html`
+        let appdir = scratch.path().join("AppDir");
+        let appimage_web = appdir.join("usr/share/kodera-desktop/web");
+        fs::create_dir_all(&appimage_web).unwrap();
+        fs::write(appimage_web.join("index.html"), b"<!doctype html>").unwrap();
+        let found_appimage =
+            discover_frontend_dist_from_context(None, Some(&appdir), None, None).unwrap();
+        assert_eq!(
+            fs::canonicalize(found_appimage).unwrap(),
+            fs::canonicalize(&appimage_web).unwrap()
+        );
+
+        // 4. Windows `.msi` / NSIS: Program Files/Kodera/kodera-desktop.exe -> Program Files/Kodera/web/index.html
+        let win_exe = scratch.path().join("win-install/Kodera/kodera-desktop.exe");
+        let win_web = scratch.path().join("win-install/Kodera/web");
+        fs::create_dir_all(&win_web).unwrap();
+        fs::write(win_web.join("index.html"), b"<!doctype html>").unwrap();
+        let found_win =
+            discover_frontend_dist_from_context(None, None, Some(&win_exe), None).unwrap();
+        assert_eq!(
+            fs::canonicalize(found_win).unwrap(),
+            fs::canonicalize(&win_web).unwrap()
+        );
     }
 
     #[test]
