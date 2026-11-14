@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import '../../i18n'
+import i18n from '../../i18n'
 import { ExtensionsCatalogPanel } from './ExtensionsCatalogPanel'
 import {
   EXTENSION_CATEGORY_FILTERS,
@@ -11,11 +13,13 @@ import {
   isAllowedExtensionWebhookUrl,
 } from './catalog'
 
+const repoRoot = resolve(import.meta.dirname, '../../../../..')
+
 describe('ExtensionsCatalogPanel & catalog', () => {
-  it('defines the ten official kodera.extension.v1 extensions, their slash commands, and categories', () => {
+  it('defines all twenty-two slash-command kodera.extension.v1 reference connectors in parity with extensions/catalog.json', () => {
     expect(EXTENSION_SCHEMA_VERSION).toBe('kodera.extension.v1')
     expect(OFFICIAL_EXTENSIONS).toBe(OFFICIAL_EXTENSIONS_CATALOG)
-    expect(OFFICIAL_EXTENSIONS_CATALOG).toHaveLength(10)
+    expect(OFFICIAL_EXTENSIONS_CATALOG).toHaveLength(22)
 
     expect(
       OFFICIAL_EXTENSIONS_CATALOG.map((ext) => ({
@@ -27,9 +31,30 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       {
         id: 'io.kodera.ext.frameio-review-bridge',
         slashCommand: '/frameio-review',
-        category: 'productivity',
+        category: 'studio',
+      },
+      {
+        id: 'io.kodera.ext.frameio',
+        slashCommand: '/dailies',
+        category: 'studio',
+      },
+      {
+        id: 'io.kodera.ext.renderfarm',
+        slashCommand: '/render',
+        category: 'studio',
       },
       { id: 'io.kodera.ext.hello-webhook', slashCommand: '/hello', category: 'devops' },
+      { id: 'io.kodera.ext.github', slashCommand: '/gh', category: 'devops' },
+      { id: 'io.kodera.ext.gitlab', slashCommand: '/gitlab', category: 'devops' },
+      { id: 'io.kodera.ext.linear', slashCommand: '/linear', category: 'devops' },
+      { id: 'io.kodera.ext.sentry', slashCommand: '/sentry', category: 'devops' },
+      { id: 'io.kodera.ext.alertmanager', slashCommand: '/alerts', category: 'devops' },
+      { id: 'io.kodera.ext.rss-advisories', slashCommand: '/advisories', category: 'devops' },
+      {
+        id: 'io.kodera.ext.release-assistant',
+        slashCommand: '/release-draft',
+        category: 'devops',
+      },
       {
         id: 'io.kodera.ext.github-release-notifier',
         slashCommand: '/release-notes',
@@ -46,6 +71,16 @@ describe('ExtensionsCatalogPanel & catalog', () => {
         category: 'productivity',
       },
       {
+        id: 'io.kodera.ext.openproject',
+        slashCommand: '/work',
+        category: 'productivity',
+      },
+      {
+        id: 'io.kodera.ext.calcom',
+        slashCommand: '/schedule',
+        category: 'productivity',
+      },
+      {
         id: 'io.kodera.ext.github-repo-tracker',
         slashCommand: '/github-track',
         category: 'devops',
@@ -53,6 +88,11 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       {
         id: 'io.kodera.ext.qonto-treasury-feed',
         slashCommand: '/qonto-feed',
+        category: 'finance',
+      },
+      {
+        id: 'io.kodera.ext.billing-webhooks',
+        slashCommand: '/billing-ops',
         category: 'finance',
       },
       {
@@ -72,8 +112,30 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       },
     ])
 
+    const rawCatalog = JSON.parse(
+      readFileSync(resolve(repoRoot, 'extensions/catalog.json'), 'utf8')
+    ) as {
+      extensions: readonly {
+        id: string
+        slug: string
+        version: string
+        scopes: readonly string[]
+        commands: readonly { slashCommand: string }[]
+      }[]
+    }
+    const slashCommandManifests = rawCatalog.extensions.filter((entry) => entry.commands.length > 0)
+    expect(slashCommandManifests).toHaveLength(22)
+
+    const byId = new Map(slashCommandManifests.map((entry) => [entry.id, entry]))
     for (const ext of OFFICIAL_EXTENSIONS_CATALOG) {
+      const manifest = byId.get(ext.id)
+      expect(manifest, `manifest for ${ext.id}`).toBeDefined()
+      expect(ext.slug).toBe(manifest?.slug)
+      expect(ext.version).toBe(manifest?.version)
       expect(ext.schemaVersion).toBe('kodera.extension.v1')
+      expect(ext.verifiedManifest).toBe(true)
+      expect(ext.nameEn.length).toBeGreaterThan(0)
+      expect(ext.descriptionEn.length).toBeGreaterThan(0)
       expect(ext.scopes).toContain('messages:write')
       expect(ext.scopes).toContain('commands:register')
       expect(ext.scopes).toContain('webhooks:incoming')
@@ -112,7 +174,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     }
   })
 
-  it('renders all 10 reference implementations, filters by category pills, switches inspected extension, and fails closed on http:// or private IPs', async () => {
+  it('renders all 22 reference implementations, verified schema badges, category filters, and SSRF validation', async () => {
     const user = userEvent.setup()
     const onWebhookValidated = vi.fn()
 
@@ -121,7 +183,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     expect(
       screen.getByRole('heading', { name: "Catalogue d'extensions Kodera v1" })
     ).toBeInTheDocument()
-    expect(screen.getByText('10 implémentations de référence')).toBeInTheDocument()
+    expect(screen.getByText('22 implémentations de référence')).toBeInTheDocument()
     expect(
       screen.getByText('Exemples de départ à adapter : aucun compte externe n’est connecté.')
     ).toBeInTheDocument()
@@ -130,15 +192,30 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     ).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent(/officiel/i)
 
-    // Verify all 5 category filter pills are rendered
+    // Verify all 6 category filter pills are rendered
     const filterGroup = screen.getByRole('group', { name: "Filtrer par catégorie d'extension" })
+    expect(EXTENSION_CATEGORY_FILTERS).toHaveLength(6)
     for (const filter of EXTENSION_CATEGORY_FILTERS) {
       expect(within(filterGroup).getByRole('button', { name: filter.label })).toBeInTheDocument()
     }
 
     for (const ext of OFFICIAL_EXTENSIONS_CATALOG) {
-      expect(screen.getAllByText(new RegExp(ext.id)).length).toBeGreaterThanOrEqual(1)
+      expect(screen.getAllByText(new RegExp(`${ext.id}(?:$|\\s)`)).length).toBeGreaterThanOrEqual(
+        1
+      )
+      expect(screen.getByTestId(`extension-verified-${ext.slug}`)).toHaveTextContent(
+        'Schéma v1 vérifié'
+      )
     }
+
+    // Filter by Studio & Production
+    await user.click(within(filterGroup).getByRole('button', { name: 'Studio & Production' }))
+    expect(
+      within(filterGroup).getByRole('button', { name: 'Studio & Production' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText(/io\.kodera\.ext\.frameio$/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText(/io\.kodera\.ext\.renderfarm/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('io.kodera.ext.hello-webhook')).toBeNull()
 
     // Filter by Finance (Qonto)
     await user.click(within(filterGroup).getByRole('button', { name: 'Finance (Qonto)' }))
@@ -149,6 +226,9 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     expect(
       screen.getAllByText(/io\.kodera\.ext\.qonto-treasury-feed/).length
     ).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText(/io\.kodera\.ext\.billing-webhooks/).length).toBeGreaterThanOrEqual(
+      1
+    )
     expect(screen.queryByText('io.kodera.ext.hello-webhook')).toBeNull()
 
     // Filter by Productivité (Docs / Notion / GDrive)
@@ -158,6 +238,8 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     expect(
       screen.getAllByText(/io\.kodera\.ext\.docs-collab-announcer/).length
     ).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText(/io\.kodera\.ext\.openproject/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText(/io\.kodera\.ext\.calcom/).length).toBeGreaterThanOrEqual(1)
     expect(
       screen.getAllByText(/io\.kodera\.ext\.notion-workspace-bridge/).length
     ).toBeGreaterThanOrEqual(1)
@@ -222,6 +304,27 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     )
     await user.type(urlInput, '/changed')
     expect(screen.queryByTestId('extension-webhook-valid')).toBeNull()
+  })
+
+  it('renders localized English labels, descriptions, and verified badges when i18n is en', async () => {
+    try {
+      await i18n.changeLanguage('en')
+      render(<ExtensionsCatalogPanel defaultSelectedId="io.kodera.ext.renderfarm" />)
+      expect(
+        screen.getByRole('heading', { name: 'Kodera v1 extension catalogue' })
+      ).toBeInTheDocument()
+      expect(screen.getByText('22 reference implementations')).toBeInTheDocument()
+      const filterGroup = screen.getByRole('group', { name: 'Filter by extension category' })
+      expect(within(filterGroup).getByRole('button', { name: 'Finance & Billing' })).toBeVisible()
+      expect(screen.getByTestId('extension-verified-renderfarm')).toHaveTextContent(
+        'Verified v1 schema'
+      )
+      expect(
+        screen.getByText(/Tracks 3D and VFX render queues with shot codes/i)
+      ).toBeInTheDocument()
+    } finally {
+      await i18n.changeLanguage('fr')
+    }
   })
 })
 

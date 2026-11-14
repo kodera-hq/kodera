@@ -1,0 +1,32 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.calcom",
+  "name": "Cal.com Scheduling & Voice Room Bridge",
+  "version": "0.1.0",
+  "description": "Open-source Cal.com booking lifecycle webhooks, UTC/ISO-8601 window validation, Kodera voice room jump cards, and X-Cal-Signature-256 verification reference implementation.",
+  "permissions": [
+    "messages:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/schedule",
+      "name": "/schedule",
+      "description": "Inspect upcoming booking windows, configure a Kodera voice room jump target, or check scheduling status"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/calcom"
+}
