@@ -32,24 +32,24 @@
 - **Channels in the web client.** Text channels with threads, replies, reactions, typing and presence, backed by a Matrix homeserver (Synapse) that a Kodera policy module keeps under the control plane's rules.
 - **Always-open audio and video rooms.** Join over a LiveKit SFU, with camera video, screen sharing and who-is-in-the-room shown in the channel list. The web client publishes and plays microphone audio.
 - **Direct conversations and media.** Private one-to-one and bounded group conversations, message search, checked file uploads and downloads, text-only link previews, notification history and payload-free Web Push are implemented in the web client and server.
-- **Native collaborative Pages.** Workspace documents have a page tree, document roles, Markdown editing, wikilinks, backlinks, search and a Yjs collaboration service with persisted updates and snapshots.
-- **Community membership and moderation.** Canonical-realm self-signup, reusable invitation links, public local rooms, private staff/partner categories, reports and workspace moderation are implemented. An operator still prepares and verifies the identity provider and promotes the real Community tenant.
-- **A control plane with a contract.** `apps/server` (Django) owns organisations, members, roles, workspaces and channel access behind an OpenAPI 3.1 contract, from which the web client's API types are generated.
-- **Sign-in through OpenID Connect.** The server trusts the issuers you list; the web client signs in at your identity provider, and Synapse signs members in through the same realm. The web client's "Create an account" sends a new person to the identity provider's own registration page.
-- **A self-host profile.** [`deploy/community`](./deploy/community/README.md): a single-node Docker Compose stack with Synapse on PostgreSQL, federation closed, rate limits set and the agent API off the internet. `scripts/ci/check-community-deploy.py` holds it to that on every change.
-- **An extension SDK.** [`@kodera/extension-sdk`](./packages/extension-sdk/README.md) for signed webhooks and slash commands, with [reference implementations](./extensions/README.md) that run against its test harness.
+- **Native collaborative Pages and typed Collections.** Workspace documents have a page tree, document roles, Markdown/Tiptap block editing, wikilinks, backlinks, search, a Yjs collaboration service with persisted updates and snapshots, and typed Collections (`Table`, `Kanban` and `List` views).
+- **Community membership, moderation and lifecycle controls.** Canonical-realm self-signup, reusable invitation links, public local rooms, private staff/partner categories, reports, workspace moderation, transactional workspace quotas, Factur-X `380`/`381` PDF/A-3 + XML billing documents, VIES VAT evidence and GDPR Art. 17/20 signed exports and erasure are implemented. An operator still prepares and verifies the identity provider and promotes the real Community tenant.
+- **A control plane with a contract.** `apps/server` (Django) owns organisations, members, roles, workspaces, channel access, quotas, billing ledger and GDPR workflows behind an OpenAPI 3.1 contract (`0.44.2`), from which the web client's API types are generated.
+- **Sign-in through OpenID Connect and WebAuthn passkeys.** The server trusts the issuers you list; the web client signs in at your identity provider, Synapse signs members in through the same realm, and `kodera-rs` + native clients support universal ES256 passkey binding without authenticator lock-in. The web client's "Create an account" sends a new person to the identity provider's own registration page.
+- **A self-host profile.** [`deploy/community`](./deploy/community/README.md): a single-node Docker Compose stack with Synapse on PostgreSQL, federation closed by default, rate limits set and the agent API off the internet. `scripts/ci/check-community-deploy.py` holds it to that on every change.
+- **Extension SDK, outbound runtime v2 and workspace importers.** [`@kodera/extension-sdk`](./packages/extension-sdk/README.md) defines signed webhooks and slash commands; `apps/server` registers manifests, installs workspace extensions and dispatches dual-key HMAC webhooks with pinned-IP SSRF guards; [`extensions/`](./extensions/README.md) carries 22 reference implementations, alongside bounded `Slack`, `Discord` and `Notion` importers.
+- **Native desktop, mobile and Rust foundations.** [`packages/kodera-rs`](./packages/kodera-rs) provides `UuidV7`, `Ed25519` identity, scoped OpenMLS/Megolm primitives, ES256 passkey binding and `#proximity` frame v1/v2 codecs; `apps/desktop` implements the origin-fenced Tauri v2 bridge (`kodera://` / `matrix:`, tray, PTT, OS keychain) and `apps/ios` + `apps/android` implement `ciel` companion workspace, invitation, call-kit and payload-free push layers.
 - **One design system.** [`@kodera/design-tokens`](./packages/design-tokens) is the single source of colour, type and motion for the web and native clients, with contrast gates in CI.
 
 ## What is not there yet
 
-Status: Planned. The [roadmap](./ROADMAP.md) orders the remaining work. The [collaboration status](./docs/specs/collaboration-status.md) distinguishes shipped code from the pending production cutover.
+Status: Planned. The [roadmap](./ROADMAP.md) orders the remaining work. The [collaboration status](./docs/specs/collaboration-status.md) distinguishes shipped code from operator-run cutover and distribution gates.
 
-- **End-to-end encryption and Matrix federation.** Both are deferred. Channels are encrypted in transit and the homeserver is closed; `kodera-rs` carries only the type seams for a future encryption provider.
-- **Passkeys and magic-link sign-in** ("Kodera Passport"). Community is designed for self-signup with an optional TOTP second factor; today accounts and second factors live in the identity provider you operate.
-- **Mobile and desktop apps.** `apps/ios` and `apps/android` are native clients in development, without chat or call transport yet; version 1.0 is a companion app with no in-app purchase and no pricing screen. `apps/desktop` is a Rust backend preview without a running window.
-- **`#proximity`**, an everyday proximity channel with a voluntary, pseudonymous check-in. Its signed frame codec exists; no radio transport and no check-in screen do. It is not an emergency service ([`RFC-0001`](./docs/rfcs/RFC-0001-emergency-ble-channel.md)).
-- **An extension runtime.** The server does not yet register, install or call an extension.
-- **Enterprise modules.** [`ee/`](./ee) holds a licence and READMEs, no code.
+- **Cross-client end-to-end encrypted rooms and open Matrix federation.** Channels are encrypted in transit and stored by the homeserver in clear today; while `kodera-rs` implements OpenMLS/Megolm primitives and `packages/synapse-policy` supports explicit partner-room federation rules, end-to-end encrypted confidential rooms across clients, encrypted LiveKit media frames and open homeserver federation remain deferred.
+- **Cross-workspace magic-link sign-in** ("Kodera Passport"). Accounts and second factors (optional TOTP on Community, WebAuthn passkeys) live in the identity provider realm you operate.
+- **Signed desktop installers and mobile store releases.** Notarised macOS/Windows/Linux desktop installers and published Apple App Store / Google Play companion builds (v1.0 has no in-app purchase and no pricing screen) await operator signing and store submission.
+- **Physical `#proximity` radio adapters.** `#proximity` is an everyday proximity channel with a voluntary, pseudonymous check-in; its v1/v2 signed frame codecs and replay guards exist in `kodera-rs`, while physical `mDNS + QUIC` and `BLE GATT` radio hardware adapters remain planned. It is not an emergency service ([`RFC-0001`](./docs/rfcs/RFC-0001-emergency-ble-channel.md)).
+- **Clean-host footprint measurements and Enterprise modules.** Clean-host install time and memory measurements for `deploy/community` are pending, and [`ee/`](./ee) holds its licence and READMEs with SAML 2.0 / SCIM 2.0 code still planned.
 
 ---
 
@@ -73,16 +73,16 @@ flowchart TB
     WEB["`apps/web
 React 19 + Vite + Tailwind`"]
     DESK["`apps/desktop
-Rust backend, developer preview`"]
+Tauri v2 bridge & self-host preflight`"]
     IOS["`apps/ios
-SwiftUI, in development`"]
+SwiftUI companion client`"]
     AND["`apps/android
-Kotlin + Jetpack Compose, in development`"]
+Kotlin + Jetpack Compose companion client`"]
   end
 
   subgraph Shared["Shared Packages & SDKs (Apache-2.0)"]
     RS["`packages/kodera-rs
-UuidV7 · Ed25519 · crypto seam · proximity frames`"]
+UuidV7 · Ed25519 · OpenMLS/Megolm · passkeys · proximity`"]
     TOK["`packages/design-tokens
 Cobalt × Kodera`"]
     API["`packages/api-contract
@@ -113,11 +113,11 @@ Planned enterprise modules`"]
 | Path | Package / Target | License | Description |
 | :--- | :--- | :--- | :--- |
 | [`apps/web`](./apps/web) | `@kodera/web` | `Apache-2.0` | Customer console and workspace web client |
-| [`apps/desktop`](./apps/desktop) | `@kodera/desktop` | `Apache-2.0` | Desktop developer preview: Rust backend seams and a local self-host preflight; no running shell and no provider calls yet |
-| [`apps/ios`](./apps/ios) | `KoderaiOS` | `Apache-2.0` | Native SwiftUI client, in development |
-| [`apps/android`](./apps/android) | `KoderaAndroid` | `Apache-2.0` | Native Kotlin / Jetpack Compose client, in development |
-| [`apps/server`](./apps/server) | `kodera-server` | `AGPL-3.0-or-later` | Control plane API, job runner, `room_access` and `tenant_agent` |
-| [`packages/kodera-rs`](./packages/kodera-rs) | `kodera-rs` | `Apache-2.0` | Zero-unsafe Rust core (`UuidV7`, `Ed25519` device identity, crypto provider seam, `#proximity` frame codec), linked by the desktop preview |
+| [`apps/desktop`](./apps/desktop) | `@kodera/desktop` | `Apache-2.0` | Origin-fenced Tauri v2 desktop bridge, deep-links, tray/PTT controls, OS keychain and local self-host preflight |
+| [`apps/ios`](./apps/ios) | `KoderaiOS` | `Apache-2.0` | Native SwiftUI companion client (`ciel` parity, CallKit, PushKit, universal passkeys) |
+| [`apps/android`](./apps/android) | `KoderaAndroid` | `Apache-2.0` | Native Kotlin / Jetpack Compose companion client (`ciel` parity, `ConnectionService`, UnifiedPush/FCM, universal passkeys) |
+| [`apps/server`](./apps/server) | `kodera-server` | `AGPL-3.0-or-later` | Control plane API, extension runtime v2, billing/GDPR jobs, `room_access` and `tenant_agent` |
+| [`packages/kodera-rs`](./packages/kodera-rs) | `kodera-rs` | `Apache-2.0` | Zero-unsafe Rust core (`UuidV7`, `Ed25519` device identity, OpenMLS/Megolm primitives, ES256 passkey binding, `#proximity` v1/v2 frame codecs) |
 | [`packages/design-tokens`](./packages/design-tokens) | `@kodera/design-tokens` | `Apache-2.0` | Single source of truth for colour, typography and contrast gates |
 | [`packages/api-contract`](./packages/api-contract) | `@kodera/api-contract` | `Apache-2.0` | Canonical OpenAPI 3.1 specifications |
 | [`packages/extension-sdk`](./packages/extension-sdk) | `@kodera/extension-sdk` | `Apache-2.0` | Zero-dependency SDK for HMAC-signed webhooks and slash commands |
