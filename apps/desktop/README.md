@@ -1,106 +1,141 @@
 # Kodera Desktop (`@kodera/desktop`)
 
-Status: Developer preview; native shell and transport activation are not complete.
+Status: Active native Tauri v2 desktop host, typed IPC client, and multi-OS installer configuration.
 
-The desktop backend links the shared `kodera-rs` frame codec and bounded proximity mesh coordinator, alongside native deep-link admission (`kodera://` and `matrix:`), deterministic system tray and opt-in Push-to-Talk (`PTT`) state machines, OS keychain session slot validation, and a non-blocking `< 1.5 GiB` (`1536 MiB`) local Community self-host health inspector. Tauri v2 configuration, protocol schemes, capabilities, and icons are verified locally. The current binary remains a shell placeholder: no running WebView, OS tray/shortcut hook registration, or JavaScript IPC bridge is claimed yet.
+`@kodera/desktop` packages the Kodera workspace shell for macOS, Linux, and Windows on top of Tauri v2 and the shared `kodera-rs` Rust crate. It provides a `#![forbid(unsafe_code)]` Rust host binary (`kodera-desktop`), least-privilege Tauri v2 capabilities (`src-tauri/capabilities/default.json`), a strict `WEB-ADR-0012` Content Security Policy with zero `'unsafe-eval'`, deterministic multi-OS bundle icons (`PNG`, `ICNS`, `ICO`), and a zero-dependency TypeScript IPC client (`@kodera/desktop`) with automatic browser no-op fallback when running outside Tauri.
 
-## Local backend capabilities
+## Architecture & Native Capabilities
 
-- `DesktopProximityNode` holds one provisioned organisation salt/roster, validates beacon windows and signatures, suppresses duplicate and older check-ins, tracks member status timestamps, and schedules a bounded priority outbox. Its constructor limits roster and outbox sizes.
-- `emit_proximity_checkin`, `ingest_ble_frame`, and `get_proximity_roster_status` are Rust-callable command seams. The future trusted native adapter must own signing/verifying providers, bind the commands to the correct organisation session and apply platform transport permissions. Callers must not supply arbitrary crypto providers through IPC.
-- `preflight_self_host_spec` validates provider, region, public domain, email and token shape locally. Token `Debug` and `Display` are redacted. It performs no provider request or deployment, and redaction is not memory zeroisation.
-- `SelfHostDeploymentPlan::from_spec` revalidates mutable public spec fields and derives the root, `matrix`, `visio`, `docs` and `auth` DNS requirements and HTTPS origins. Targets remain unresolved public addresses until a future provider adapter allocates the server. Its public configuration preview contains only the existing `KODERA_DOMAIN` and `KODERA_ACME_EMAIL` keys from `deploy/community`; it neither reads nor copies the provider token. The planned service origins are not routes configured by today's single-origin community Caddy profile. No DNS writes, cloud API call, secret generation, container execution or instance installation occurs.
-- `DesktopWorkspaceSession` privately owns one proximity node under a canonical non-nil organisation UUID. Every operation checks the expected organisation. `clear_session()` clears roster, replay and outbox, overwrites the held beacon salt, then drops the node. `switch_organisation()` clears first and requires fresh salt/roster provisioning; a failed replacement stays unprovisioned. This is logical state teardown, not a guarantee of physical zeroisation of Rust allocations, allocator copies or caller-owned inputs.
-- The same workspace session starts with Docs unprovisioned. A trusted native adapter can configure a canonical Docs host; every configuration/link check verifies the current organisation first. Invalid host replacements preserve the current policy, and explicit removal unprovisions Docs. Validated immutable links contain only canonical HTTPS host/path metadata; they perform no fetch, WebView navigation or access grant. Clearing, switching or dropping the session discards the host policy, so replacement sessions require fresh configuration.
-- A session-owned `ExtensionWebhookVerifier` performs the native `kodera-ext-v1:` HMAC/timestamp/replay checks and is discarded on clear/switch/drop. It holds no secret; a trusted adapter must select a separate secret per organisation/extension pair, never from untrusted request input. The transcript does not sign organisation or extension ID and is incompatible with the existing extension SDK's timestamp-dot-body / `v1=` format. There is no network ingress, provider credential store, SDK compatibility fallback or IPC registration. Replay state is capped at 4096 entries, FIFO-evicted and not persisted; payloads are capped at 1 MiB. A previously returned URL or caller-owned secret is outside this object's logical teardown.
-- `deeplink` (`src/deeplink.rs`) implements a pure `#![forbid(unsafe_code)]` parser and origin-fenced admission router for `kodera://` (`kodera://workspace/...`, `kodera://invite/...`, `kodera://call/...`) and MSC2312 `matrix:` (`matrix:r/<alias>:<domain>?action=join`, `matrix:roomid/<id>:<domain>`, `matrix:u/<localpart>:<domain>`) URIs registered in `src-tauri/tauri.conf.json`. Payloads are capped at 512 bytes; control characters, whitespace, fragments, backslashes, percent-encoded delimiters, path traversal (`..`), embedded credentials (`@`), dangerous/web schemes (`javascript:`, `data:`, `file:`, `http:`, `https:`), and homeserver/workspace origins outside `DeepLinkAdmissionPolicy` fail closed with typed refusal codes.
-- `tray_ptt` (`src/tray_ptt.rs`) provides deterministic `TrayController` indicator resolution (`Idle`, `Unread` with `"99+"` badge cap, `Muted`, `ActiveCall` for voice/video, and `SelfHostDegraded`) and `PttController` global Push-to-Talk state transitions. Global PTT defaults to disabled (`opt_in_enabled == false`) until explicit user opt-in, automatically releases on call end or session clear/switch, and rejects single-character alphanumeric bindings (`A`–`Z`, `0`–`9`), `Space`, punctuation keys, Shift-only typing combinations (`Shift+A`), and reserved OS/editing shortcuts (`Alt+F4`, `Ctrl+Q`, `Super+W`, `Enter`, `Escape`, `Tab`, `Backspace`) without a command modifier (`Ctrl`, `Alt`, or `Super`) so normal typing can never be hijacked.
-- `keychain` (`src/keychain.rs`) defines canonical OS keychain `(service, account)` coordinates (`io.kodera.desktop.<kind>` and `org:<organisation_uuid>:user:@<localpart>:<domain>`), `KeychainSessionMetadata` validation, and `RedactedSessionSecret`. Secrets are redacted in `Debug`/`Display`, logically overwritten on drop, never echoed in errors, and rejected if accidentally copied into public metadata fields.
-- `self_host_health` (`src/self_host_health.rs`) implements `inspect_community_compose_ps`, `probe_local_community_stack`, and background `CommunityProbeHandle` for the single-node `deploy/community/docker-compose.yml` profile (`postgres` / `synapse-db`, `synapse` with `KoderaPolicy`, and `coturn`). It parses both Docker Compose v2 JSON arrays and NDJSON streams up to 64 KiB, flags RAM above the `1536 MiB` (`< 1.5 GiB`) ceiling (`StackHealthState::OverBudget` + `MemoryBudgetWarning`), reports per-service readiness (`Ready`, `Starting`, `Restarting`, `Unhealthy`, `Stopped`, `PolicyDegraded`, `Missing`), and classifies missing CLI, missing Compose file, permission-denied, offline daemon, and bounded probe timeouts (`DockerUnavailable`) without blocking indefinitely.
+### 1. Runnable Rust Host & Window Lifecycle (`apps/desktop/src-tauri/`)
 
-The shared `SessionEnvelopeTracker` is a separate authenticated-metadata coordinator: a trusted native crypto adapter must bind every header field to the actual authenticated ciphertext/session. This code does not supply that provider or implement MLS. Within one organisation it pins each room's algorithm, refuses lower epochs and deduplicates retained message IDs across epoch advances. Room records never evict at capacity, so flooding cannot reset an established room's epoch. Replay IDs are FIFO-bounded and eventually evict; replay protection is not permanent. Both room and replay entry limits are at most 4096. Reset is reserved for ending the trusted session; persistence and process-restart rollback protection remain the adapter's responsibility.
+- **Executable host (`src/main.rs`, `src/shell.rs`)**: `kodera-desktop` runs standalone health/contract diagnostics (`--version`, `--help`, `--print-runtime-metadata`, `--self-check`), single-shot deep-link admission (`--deep-link <uri>`), and a bounded line-delimited JSON IPC loop (`--ipc-stdio`) over `DesktopWorkspaceSession`.
+- **Window state & multi-monitor bounds clamping (`src/window_state.rs`)**: Default `1280x820` geometry (`minWidth: 960`, `minHeight: 640`). Restored window coordinates are clamped onto intersecting monitor work areas with minimum visible titlebar margins, windows stranded on unplugged secondary monitors are re-centered onto the primary work area, oversized dimensions shrink cleanly onto compact displays, and state snapshots write atomically via temporary file rename.
+- **System tray icon & menu (`src/tray_ptt.rs`)**: Configured in `tauri.conf.json` (`app.trayIcon.id = "kodera-tray"`, `icons/32x32.png`). `TrayController` drives a deterministic 4-item native tray menu (*Open Kodera*, *Toggle Mute / Unmute Microphone*, *Unread Messages: `<badge>`* disabled status row capped at `"99+"`, and *Quit Kodera*) plus indicator priority resolution (`ActiveCall` > `SelfHostDegraded` > `Muted` > `Unread` > `Idle`) and opt-in global Push-to-Talk (`PTT`) with typing-hijack guards.
+- **Deep-link router & OIDC PKCE `S256` loopback handler (`src/deeplink.rs`, `src/oidc_loopback.rs`)**:
+  - Validates `kodera://` (`kodera://workspace/...`, `kodera://invite/...`, `kodera://call/...`, `kodera://auth/callback?code=...&state=...`) and MSC2312 `matrix:` URIs up to 512 bytes against `DeepLinkAdmissionPolicy`. Control characters, fragments, backslashes, percent-encoded delimiters, path traversal (`..`), embedded credentials (`@`), dangerous/web schemes (`javascript:`, `data:`, `file:`, `http:`, `https:`), and unapproved origins fail closed; OIDC authorization codes are wrapped in `RedactedOidcCode`.
+  - Implements RFC 8252 §7.3 loopback callback handling (`OidcLoopbackListener` bound strictly to `127.0.0.1:0` with `Host` header DNS-rebinding defense) and RFC 7636 `S256` PKCE challenge/verifier validation (`OidcPkceSession`, `OidcIssuerAllowlist`).
+- **OS keychain secure credential bridge (`src/keychain.rs`)**: Derives canonical `(service, account)` coordinates (`io.kodera.desktop.<kind>` and `org:<organisation_uuid>:user:@<localpart>:<domain>`), validates `KeychainSessionMetadata`, stores redacted `RedactedSessionSecret` values in an organisation-isolated bounded store (`KeychainCredentialStore`: `store_keychain_credential`, `load_keychain_credential`, `delete_keychain_credential`) that overwrites secret bytes on overwrite/delete/switch/drop, and generates platform CLI command specs (`security` on macOS, `secret-tool` on Linux Secret Service, `cmdkey` on Windows Credential Locker) without shell interpolation.
+- **Native desktop notifications & dock/taskbar unread badge (`src/notifications.rs`)**: `NotificationCenter` (`dispatch_notification`, `set_unread_badge`) validates titles/bodies (rejecting control characters and Unicode bidi spoofing overrides), validates optional `route_uri` targets through `route_deep_link`, supports `redact_preview` and Do-Not-Disturb suppression, caps history at 64 entries, and formats dock/taskbar unread badges (`None` for `0`, `"1"`–`"99"`, `"99+"`).
+- **Strict CSP & least-privilege capabilities (`src/csp_policy.rs`, `tauri.conf.json`, `capabilities/default.json`)**:
+  - Enforces `default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, zero `'unsafe-eval'`, and explicit path-scoped HTTPS/WSS `connect-src` origins (`https://api.kodera.io`, `https://staging-api.kodera.io`, `https://auth.kodera.io/realms/`, `https://matrix.kodera.io/_matrix/`, `https://*.kodera.io/_matrix/`, `wss://livekit.kodera.io`, `wss://collab.kodera.io`).
+  - `capabilities/default.json` binds only the `main` window on local assets (`local: true`) to `core:default`, `core:window:allow-show`, `core:window:allow-hide`, `core:window:allow-set-focus`, `core:window:allow-unminimize`, and `deep-link:default` — zero shell, filesystem, or wildcard permissions.
+  - `build.rs` verifies `tauri.conf.json`, `capabilities/default.json`, and the binary headers of all 6 icon files (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`, `icon.icns`, `icon.ico`) at compile time.
+- **Proximity mesh, self-host planner & health inspector (`src/lib.rs`, `src/self_host_health.rs`)**:
+  - `DesktopProximityNode` coordinates signed 129-byte proximity check-ins (`kodera-rs`), replay suppression, and priority relay queues within one provisioned organisation session.
+  - `#proximity` is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service: it does not reach emergency services, and delivery is never guaranteed. It was first named `#urgence`. The 129-byte public frame and every other v1 wire byte are frozen under their historical values (magic `KE`, signed label `kodera-emergency-v1:`); only names in code, routes and copy changed.
+  - `SelfHostDeploymentPlan` validates self-host domain/provider inputs with redacted tokens, and `inspect_community_compose_ps` / `probe_local_community_stack` monitor the `< 1.5 GiB` (`1536 MiB`) single-node Community Compose profile (`postgres`, `synapse`, `coturn`).
 
-Proximity v1 frames are signed plaintext. They do not contain a signed organisation binding, and a public rotating beacon is discovery metadata rather than authorisation. Production activation, especially with a device key shared across organisations, requires the security review described in [the shared protocol boundary and test vector](../../packages/kodera-rs/docs/emergency-v1-vectors.md). Drop the node on organisation/session change or roster replacement. Historical check-ins are not a guarantee that a person is currently safe.
+### 2. TypeScript IPC Bridge & Browser Fallback (`apps/desktop/src/`)
 
-`#proximity` is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service: it does not reach emergency services, and delivery is never guaranteed. It was first named `#urgence`. The 129-byte public frame and every other v1 wire byte are frozen under their historical values (magic `KE`, signed label `kodera-emergency-v1:`); only names in code, routes and copy changed.
+`@kodera/desktop` exports a typed ESM + `.d.ts` client consumed by `@kodera/web`:
 
-No live BLE/Wi-Fi exchange, hardware-backed crypto, provider provisioning or deploy flow is claimed by these local tests.
+```ts
+import { createDesktopClient, isTauriDesktopRuntime } from "@kodera/desktop";
 
-## Bounded JSON command seam
+const desktop = createDesktopClient({ organisationId });
+if (desktop.isNativeDesktop()) {
+  await desktop.setUnreadCount(4);
+  const metadata = await desktop.getAppMetadata();
+}
+```
 
-`DesktopWorkspaceSession::dispatch_command(&str)` accepts at most 16,384 UTF-8 bytes and returns a typed `DesktopCommandResponse`. It is a local Rust backend seam, not registered Tauri JavaScript IPC, a WebView, caller authentication or an executed provider operation. A trusted future bridge must establish the current caller/session authority separately. The implementation remains dependency-free: strict field rejection is implemented by the command decoder, not a Serde annotation.
+- Detects `window.__TAURI_INTERNALS__.invoke` (`isTauriDesktopRuntime`) and falls back to deterministic no-ops outside Tauri without touching `localStorage` or `sessionStorage`, while still enforcing client-side scheme/origin/character validation.
+- Exposes `getAppMetadata()`, `checkForAppUpdates()`, `routeDeepLink(rawUri)`, `listenDeepLinks(listener)`, `setUnreadCount(unreadCount)`, `updateTrayState(state)`, `triggerTrayAction(action)`, `listenTrayActions(listener)`, `sendNotification(request)`, `storeSecureCredential(input)`, `loadSecureCredentialStatus(secretKind, matrixUserId)`, `deleteSecureCredential(secretKind, matrixUserId)`, `beginOidcPkceLoopback(input)`, `completeOidcPkceCallback(callbackUri)`, and `restoreWindowBounds(savedStateJson)`.
 
-Each request is one flat JSON object with exactly one `command` discriminator and one `organisation_id` string. All commands, including planning and clearing, require the currently active canonical non-nil organisation UUID. Wrong-org, malformed and unprovisioned requests fail without effects. A repeated clear returns unavailable because the session is already ended; it never reactivates it. An old organisation's clear cannot end a replacement organisation's session. Organisation equality alone is not a generation token or proof of membership.
+## Bounded JSON Command Seam (37 Routes + 3 Permanent Aliases)
 
-| `command` | Additional required fields |
+`DesktopWorkspaceSession::dispatch_command(&str)` accepts flat JSON objects up to 16,384 UTF-8 bytes with `command` (or `op` on the 6 workspace preference routes) and active canonical non-nil `organisation_id`. Unknown fields, duplicate keys (including Unicode-escaped duplicates), nested objects, trailing bytes, and wrong-organisation calls fail closed without side effects.
+
+| `command` | Required / optional fields |
 | --- | --- |
-| `plan_self_host` | `provider` (`scaleway`, `hetzner`, `hostinger`, `ovhcloud`), `region`, `fqdn`, `acme_email`, `raw_token`: strings |
-| `validate_docs_pad_url` | `raw_url`: string; trusted Docs host must already be configured |
-| `proximity_current_beacon` (legacy name `emergency_current_beacon`) | `now_unix_secs`: unsigned decimal integer |
-| `proximity_member_statuses` (legacy name `emergency_member_statuses`) | None |
-| `proximity_next_relay_batch` (legacy name `emergency_next_relay_batch`) | `max_frames`: unsigned integer representable as `usize`, capped at 128 before drain |
-| `set_sound_pack` | `sound_pack`: exact native pack ID string |
-| `get_sound_pack` | None |
+| `plan_self_host` | `provider` (`scaleway`, `hetzner`, `hostinger`, `ovhcloud`), `region`, `fqdn`, `acme_email`, `raw_token` |
+| `validate_docs_pad_url` | `raw_url` (trusted Docs host must be provisioned) |
+| `proximity_current_beacon` (alias `emergency_current_beacon`) | `now_unix_secs` |
+| `proximity_member_statuses` (alias `emergency_member_statuses`) | None |
+| `proximity_next_relay_batch` (alias `emergency_next_relay_batch`) | `max_frames` (`<= 128`) |
+| `set_sound_pack` / `get_sound_pack` | `sound_pack` (`givre`, `cristal`, `atelier`, `8bit`, `404`, `silent`) / None |
 | `clear_workspace_session` | None |
-| `create_channel_poll` | `channel_id`, `poll_id`, `question`: strings; `options`: 2–10 strings; `allow_multiple`: boolean |
-| `vote_channel_poll` | `channel_id`, `poll_id`, `voter_id`: strings; `selections`: 0–10 unsigned option indices |
-| `get_channel_poll`, `close_channel_poll` | `channel_id`, `poll_id`: strings |
-| `redact_iban` | `raw_iban`: structurally canonical IBAN string, at most 128 raw bytes |
-| `validate_connector_post_url` | `raw_url`: conservative canonical public HTTPS post URL |
-| `set_theme_mode` | `mode`: `"light"`, `"dark"`, or `"black"` (also admitted via `op`) |
-| `import_shareable_theme` | `code`: canonical `kodera-theme:v1:` payload (also admitted via `op`) |
-| `export_shareable_theme` | None (also admitted via `op`) |
-| `update_user_profile` | `user_id`, `display_name`, `handle`, `role_title`, `presence`, `rank`: strings; optional `status_emoji`, `status_text` (also admitted via `op`) |
-| `evaluate_channel_iam` | `channel_id`, `rank`: strings (also admitted via `op`) |
-| `save_docs_pad` | `pad_id`, `channel_id`, `title`, `markdown_body`, `actor`: strings (also admitted via `op`) |
-| `route_deep_link` | `raw_uri`: bounded `kodera://` or `matrix:` URI validated against session `DeepLinkAdmissionPolicy` |
-| `update_tray_state` | `unread_count`: unsigned integer (`<= 99999`); `call_state`: `"none"`, `"voice"`, or `"video"`; `muted`, `self_host_degraded`: booleans |
-| `get_tray_state` | None |
-| `configure_ptt` | `opt_in`: boolean; optional `chord`: validated global shortcut string |
-| `set_ptt_pressed` | `pressed`: boolean; `now_ms`: unsigned integer |
-| `get_ptt_state` | None |
-| `validate_keychain_metadata` | `secret_kind` (`"matrix-session"`, `"oidc-refresh"`, `"mls-store-key"`), `matrix_user_id`, `device_id`: strings; `issued_at_unix_secs`: integer; optional `expires_at_unix_secs`: integer; optional `raw_secret`: redacted token |
-| `inspect_self_host_health` | `compose_ps_json`: `docker compose ps --format json` snapshot string |
+| `create_channel_poll` | `channel_id`, `poll_id`, `question`, `options` (2–10 strings), `allow_multiple` |
+| `vote_channel_poll` | `channel_id`, `poll_id`, `voter_id`, `selections` (0–10 indices) |
+| `get_channel_poll` / `close_channel_poll` | `channel_id`, `poll_id` |
+| `redact_iban` | `raw_iban` (`<= 128` bytes, canonical structure) |
+| `validate_connector_post_url` | `raw_url` (canonical HTTPS public FQDN URL) |
+| `set_theme_mode` | `mode` (`light`, `dark`, `black`; also admitted via `op`) |
+| `import_shareable_theme` / `export_shareable_theme` | `code` (`kodera-theme:v1:...`) / None (also admitted via `op`) |
+| `update_user_profile` | `user_id`, `display_name`, `handle`, `role_title`, `presence`, `rank`; optional `status_emoji`, `status_text` |
+| `evaluate_channel_iam` | `channel_id`, `rank` |
+| `save_docs_pad` | `pad_id`, `channel_id`, `title`, `markdown_body`, `actor` |
+| `route_deep_link` | `raw_uri` (`kodera://` or `matrix:`) |
+| `update_tray_state` / `get_tray_state` | `unread_count`, `call_state`, `muted`, `self_host_degraded` / None |
+| `trigger_tray_menu_action` | `action` (`open_kodera`, `toggle_mute`, `unread_indicator`, `quit`) |
+| `set_unread_badge` | `unread_count` (`<= 99999`) |
+| `configure_ptt` / `set_ptt_pressed` / `get_ptt_state` | `opt_in`, optional `chord` / `pressed`, `now_ms` / None |
+| `validate_keychain_metadata` | `secret_kind`, `matrix_user_id`, `device_id`, `issued_at_unix_secs`; optional `expires_at_unix_secs`, `raw_secret` |
+| `store_keychain_credential` | `secret_kind`, `matrix_user_id`, `device_id`, `issued_at_unix_secs`, `raw_secret`; optional `expires_at_unix_secs` |
+| `load_keychain_credential` / `delete_keychain_credential` | `secret_kind`, `matrix_user_id` |
+| `dispatch_notification` | `title`, `body`, `redact_preview`; optional `route_uri` |
+| `restore_window_bounds` | optional `saved_state_json` |
+| `begin_oidc_pkce_loopback` | `issuer_origin`, `client_id`, `code_verifier`, `state`, `loopback_port` |
+| `complete_oidc_pkce_callback` | `callback_uri` |
+| `inspect_self_host_health` | `compose_ps_json` |
 
-The three proximity routes answer under two names, permanently: the `proximity_*` name and the `emergency_*` name they carried when the channel was called `#urgence`. `LEGACY_ROUTE_ALIASES` resolves a legacy name to its proximity route before the decoder runs, so both share one schema, one set of effects and one response. The alias applies to the `command` discriminator only and no other spelling is accepted. Each member status carries `sender_handle`, the pseudonym derived from the sender key under the organisation's beacon salt (`ProximityHandle::generated`), and `sender_fingerprint`, present whenever another provisioned member shows the same handle, whether or not that member has checked in. The fingerprint is keyed with the organisation's beacon salt, so the same key shows another one in another organisation. `provision_dedicated_handle` is a Rust-callable provisioning seam, not a JSON route: it records the pseudonym a roster member picked and changes nothing but that member's label. Both are display labels: never a name, never an identity and never an authorisation input. Identity stays the signing key.
+## Local Development, Code Signing & Multi-OS Packaging
 
-Unknown and duplicate fields are denied, including escaped duplicate key spellings. At most ten fields are admitted. Only poll schemas admit one-level scalar arrays of at most ten elements; boolean fields are checked against the exact route schema (`allow_multiple`, `muted`, `self_host_degraded`, `opt_in`, `pressed`). Nested arrays/objects, null, numeric strings, negative/fractional/exponent numbers, leading-zero numbers, overflow and trailing data are refused before dispatch. Ordinary JSON string escapes and valid Unicode surrogate pairs are decoded; unpaired surrogates and raw control characters are refused. This is a bounded command-only JSON subset, not a general-purpose JSON library. Parsing/schema errors are closed codes with no input excerpts. No operation executes until the entire request has parsed and matched its exact field schema.
+### Native GUI Window vs Headless CLI Execution
 
-Request `Debug`/`Display` redact the whole request. Plans contain no token field; if a caller copies the validated trimmed token into public plan metadata, the dispatcher refuses the response rather than emitting a corrupted redacted plan. Actual returned strings and plan diagnostics are checked case-insensitively so domain case-folding cannot expose a normalized token. Errors never interpolate request values. Caller-owned input and temporary Rust allocations are not guaranteed physically zeroised. Roster responses are sorted, relay batches contain only the existing verified bounded wire frames, and beacon responses include matching bytes/lowercase hex.
+- **GUI Launch (default installer entrypoint)**: Invoking `kodera-desktop` with no arguments (or `--gui`, macOS LaunchServices `-psn_*`, or a bare `kodera://` / `matrix:` protocol URI) opens the native OS WebView window titled `"Kodera"` (`1280x820`, min `900x600`), serving bundled `apps/web/dist` assets or the CSP-verified bootstrap shell over `kodera-asset://localhost/index.html` with `window.__TAURI_INTERNALS__` + `window.koderaDesktop` IPC bridged to `DesktopShellHost` and fail-closed navigation validation (`validate_navigation_url`).
+- **Headless CLI / RPC flags**: `--health` / `--self-check`, `--stdio-rpc` / `--ipc-stdio`, `--open-url <uri>` / `--deep-link <uri>`, `--print-runtime-metadata`, `--version` / `-V`, `--help` / `-h`.
+- **Linux system packages** (Ubuntu / Debian): `pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`.
 
-The native pack IDs are `givre`, `cristal`, `atelier`, `8bit`, `404`, and `silent`, following the current native contract. Older Web slugs are not accepted as aliases and no Web migration is claimed. Each provisioned organisation starts with `givre`; clear removes the preference and replacement provisioning resets it. Preference changes do not synthesize or play audio. Unit tests cover every typed/raw command, token aliases/redaction, wrong-org effects, sound resets, parser bounds/escapes/duplicates/deep input and transactional clear/drain refusal.
+### Scripts (`apps/desktop/package.json`)
 
-## Local polls and connector metadata
+```bash
+# Run native desktop host in development mode (launches Tauri CLI when installed, or native host)
+npm --workspace @kodera/desktop run dev
 
-`ChannelPoll` holds a validated question (1–280 UTF-8 bytes) and 2–10 unique trimmed option labels (1–120 bytes each). Canonical non-nil UUIDs correlate at most 512 voter ballots. They are bookkeeping keys, not authenticated identities. A voter replaces one complete selection atomically; duplicate or out-of-range indices are refused, and a single-choice ballot contains at most one index. An empty selection removes that voter's ballot, including when the registry is full. New voters fail at capacity while existing voters can replace/remove. Closed polls refuse all voting and repeated closing; trusted lifecycle teardown can still clear them.
+# Build native host binary (`kodera-desktop`) and verify icons + Tauri security contracts
+npm --workspace @kodera/desktop run build
 
-Poll text rejects control characters and an explicit Unicode 15.1 format-control set (including zero-width, bidi and BOM controls), without normalizing or case-folding ordinary labels. Future Unicode format-set additions need a coordinated policy update; exact admitted UTF-8 labels remain distinct.
+# Run TypeScript strict typecheck + security mutation self-tests
+npm --workspace @kodera/desktop run typecheck
 
-The denominator is the number of distinct voters with nonempty ballots, not the count of selected options. Percentages are rounded half up using `(optionVotes * 100 + totalVotes / 2) / totalVotes`, or zero without voters. Multiple-choice percentages can sum above 100. Public snapshots and diagnostic formatting expose aggregates, never voter identifiers or individual ballots. A workspace owns at most 32 polls keyed by channel and poll ID; an existing ID cannot be silently replaced, including after closing. Clear, organisation switch, failed replacement and Drop discard the complete poll registry. A future authenticated adapter must establish the current org, channel, voter and close/create permissions; this seam is not live distributed voting, persistence or an authorised poll service.
+# Run TypeScript/Node IPC bridge, browser fallback, packaging plan, and native binary stdio tests
+npm --workspace @kodera/desktop run test
 
-`redact_iban` only validates the uppercase ASCII country/check/body structure, 15–34 canonical characters after removing ASCII spaces. It rejects more than 128 raw bytes before processing. The result preserves the first four and last four characters, masks every middle character and groups the masked text in blocks of four. No checksum, country-length registry, account existence, provider verification or payment action is supplied. Raw accounts are not retained in session state or formatted by request/errors/responses; transient input memory is not guaranteed physically zeroised.
+# Multi-OS installer packaging
+npm --workspace @kodera/desktop run package:macos
+npm --workspace @kodera/desktop run package:linux
+npm --workspace @kodera/desktop run package:windows
+```
 
-`validate_connector_post_url` admits bounded lowercase public-DNS HTTPS post metadata with omitted/exact port 443, a nonempty unreserved ASCII path and optional Mastodon-style `@` handle segments. Query strings, fragments, percent escapes, backslashes, path parameters, dot segments, repeated slashes, credentials, local names and IP literals are refused; admitted port 443 is omitted in the returned string. Common platform hosts and any syntactically admitted public FQDN are allowed because Mastodon deployments are not a finite host list. This does not establish platform identity, DNS/public resolved addresses, ownership, redirects, document authority or network SSRF safety. No connector request, notification delivery, treasury access, fetch or navigation occurs.
+### Multi-OS Installer Outputs
+
+| Target script | Bundle formats | Expected bundle artifacts |
+| --- | --- | --- |
+| `package:macos` | `app`, `dmg` | `bundle/macos/Kodera.app`, `bundle/dmg/Kodera_<version>_aarch64.dmg`, `bundle/dmg/Kodera_<version>_x64.dmg` |
+| `package:linux` | `appimage`, `deb` | `bundle/appimage/Kodera_<version>_amd64.AppImage`, `bundle/deb/Kodera_<version>_amd64.deb` |
+| `package:windows` | `msi`, `nsis` | `bundle/msi/Kodera_<version>_x64_en-US.msi`, `bundle/nsis/Kodera_<version>_x64-setup.exe` |
+
+When running on CI or developer hosts without platform-specific GUI bundlers (`tauri`, `linuxdeploy`, WiX/NSIS), `desktop-cli.mjs` stages the release `kodera-desktop` host binary and emits a secret-free packaging manifest (`--dry-run` inspects the plan without building).
+
+### Code Signing & Notarization Environment Variables
+
+Template placeholders live in [`apps/desktop/.env.example`](./.env.example). Never commit a `.env` file or signing material to git:
+
+- **macOS (`app`, `dmg`)**: `APPLE_SIGNING_IDENTITY`, `APPLE_TEAM_ID`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific notarytool credential), `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`.
+- **Windows (`msi`, `nsis`)**: `WINDOWS_CERTIFICATE_THUMBPRINT`, `WINDOWS_TIMESTAMP_URL`.
+- **Linux & Release Update Signatures (`appimage`, `deb`)**: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
 ## Verification
 
 ```bash
-node apps/desktop/scripts/verify-config.mjs --selftest && node apps/desktop/scripts/verify-config.mjs
+npm --workspace @kodera/desktop run typecheck
+npm --workspace @kodera/desktop run test
 cargo fmt --all -- --check
 cargo check --locked --workspace --all-targets --all-features
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --workspace --all-targets --all-features
 ```
-
-Both Rust crates forbid unsafe code. Tests cover multi-hop TTL exhaustion, priority and capacity, replay/own-echo suppression, beacon windows, stale-status rejection, roster isolation, malformed/signature/off-roster input, token redaction, safe deterministic plan derivation, authenticated-header refusal/retry, algorithm/epoch pinning, deep-link scheme/origin/traversal/credential refusals, tray priority resolution, opt-in PTT typing-hijack guards, OS keychain slot scoping and secret leak detection, `< 1.5 GiB` Community Compose health/budget/CLI diagnostics, and organisation-session teardown. The exact shared 129-byte frame uses a genuine Ed25519 signature generated from a published RFC test key; Rust crypto-provider tests remain injected trait tests.
-
-Docs policy tests reject URL authority/normalization/traversal ambiguities. Native webhook tests pin an independently calculated binary-payload HMAC fixture, reject tampering of each signature byte and the existing SDK transcript, exercise timestamp extremes, bounded replay/reset and failed-auth retry, and expose the reused-secret context limitation. Desktop tests cover organisation checks and the complete Docs/verifier/deep-link/tray/PTT reset on successful and failed switches.
-
-The desktop typecheck runs `verify-config.mjs --selftest`: 45 in-memory negative mutations verify identifier, the complete approved CSP source policy, CSP asset protection, local-only capability origins/windows/permissions, exact `kodera` and `matrix` desktop deep-link scheme registration, frontend bundle path, and icon/capability file selection refusals before the real configuration passes. It changes no on-disk configuration or asset. Directive, source, and scheme ordering are allowed to vary without changing the admitted policy.
-
-The same script holds the desktop preview to its companion role: it sells nothing. `verifyCompanionSurface` reads every Rust source, the Tauri configuration, the capabilities, `Cargo.toml` and `package.json` and refuses pricing, plan-tier, upgrade, checkout, invoice, payment or subscription wording in English or French, a stated price, a billing provider or store purchase API, and any address or path that names a billing destination. The word `plan` alone stays admitted because it names the self-host deployment plan. The selftest reintroduces 14 such cases in memory and requires each to be refused for its own diagnostic.
-
-The dispatch audit covers all 28 current JSON routes (`REGISTERED_DESKTOP_COMMANDS`), plus the three legacy route names. A populated workspace exercises every successful route, all 124 combinations of the 31 route names with wrong organisation/decoded duplicate key/unknown field/wrong scope type, and all 31 names after teardown. Refusals preserve theme, profile, Docs, poll, member, deep-link policy, tray, and PTT state alongside the pending proximity outbox. `legacy_emergency_routes_are_permanent_aliases_of_the_proximity_routes` holds each legacy name to the same response and the same resulting state as its proximity route, on success and on refusal; `dropping_any_legacy_alias_is_refused_by_the_dual_name_check` removes one alias at a time and requires that check to fail. These are local end-to-end decoder-to-session checks, not a running WebView or radio test.
 
 ## License
 

@@ -1,10 +1,13 @@
 //! Typed local backend operations. This is not registered Tauri IPC or an authentication layer.
 
 use super::{
-    AdmittedDeepLink, CloudProvider, DeepLinkError, DeployValidationError, DesktopWorkspaceSession,
-    KeychainError, KeychainSecretKind, KeychainSessionMetadata, PttStateSnapshot,
-    SelfHostDeploymentPlan, SelfHostDeploymentSpec, SelfHostHealthError, SelfHostHealthReport,
-    TrayCallKind, TrayPttError, TrayStateSnapshot,
+    AdmittedDeepLink, CloudProvider, DeepLinkError, DeployValidationError,
+    DesktopNotificationRequest, DesktopWorkspaceSession, DispatchedNotification, DockBadgeSnapshot,
+    KeychainCredentialStatus, KeychainError, KeychainSecretKind, KeychainSessionMetadata,
+    NotificationError, OidcCallbackOutcome, OidcLoopbackError, OidcLoopbackSessionReady,
+    PttStateSnapshot, RestoredWindowPlacement, SelfHostDeploymentPlan, SelfHostDeploymentSpec,
+    SelfHostHealthError, SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId,
+    TrayPttError, TrayStateSnapshot, WindowStateError,
 };
 use kodera_rs::{
     encode_hex, ChannelAccessDecision, ChannelPermissionPolicy, ChannelPollSnapshot, CoreError,
@@ -18,7 +21,7 @@ use std::{collections::BTreeMap, fmt};
 pub const MAX_IPC_COMMAND_BYTES: usize = 16_384;
 
 /// Canonical desktop command names admitted by the dispatcher.
-pub const REGISTERED_DESKTOP_COMMANDS: [&str; 28] = [
+pub const REGISTERED_DESKTOP_COMMANDS: [&str; 37] = [
     "plan_self_host",
     "validate_docs_pad_url",
     "proximity_current_beacon",
@@ -47,6 +50,15 @@ pub const REGISTERED_DESKTOP_COMMANDS: [&str; 28] = [
     "get_ptt_state",
     "validate_keychain_metadata",
     "inspect_self_host_health",
+    "restore_window_bounds",
+    "trigger_tray_menu_action",
+    "set_unread_badge",
+    "dispatch_notification",
+    "store_keychain_credential",
+    "load_keychain_credential",
+    "delete_keychain_credential",
+    "begin_oidc_pkce_loopback",
+    "complete_oidc_pkce_callback",
 ];
 
 /// The proximity routes answer under two names, permanently. The channel was first called
@@ -204,6 +216,56 @@ pub enum DesktopCommandRequest {
     InspectSelfHostHealth {
         organisation_id: String,
         compose_ps_json: String,
+    },
+    RestoreWindowBounds {
+        organisation_id: String,
+        saved_state_json: Option<String>,
+    },
+    TriggerTrayMenuAction {
+        organisation_id: String,
+        action: String,
+    },
+    SetUnreadBadge {
+        organisation_id: String,
+        unread_count: u64,
+    },
+    DispatchNotification {
+        organisation_id: String,
+        title: String,
+        body: String,
+        route_uri: Option<String>,
+        redact_preview: bool,
+    },
+    StoreKeychainCredential {
+        organisation_id: String,
+        secret_kind: String,
+        matrix_user_id: String,
+        device_id: String,
+        issued_at_unix_secs: u64,
+        expires_at_unix_secs: Option<u64>,
+        raw_secret: String,
+    },
+    LoadKeychainCredential {
+        organisation_id: String,
+        secret_kind: String,
+        matrix_user_id: String,
+    },
+    DeleteKeychainCredential {
+        organisation_id: String,
+        secret_kind: String,
+        matrix_user_id: String,
+    },
+    BeginOidcPkceLoopback {
+        organisation_id: String,
+        issuer_origin: String,
+        client_id: String,
+        code_verifier: String,
+        state: String,
+        loopback_port: u64,
+    },
+    CompleteOidcPkceCallback {
+        organisation_id: String,
+        callback_uri: String,
     },
 }
 
@@ -412,6 +474,56 @@ impl DesktopCommandRequest {
                 organisation_id,
                 compose_ps_json: take_string(&mut fields, "compose_ps_json")?,
             },
+            "restore_window_bounds" => Self::RestoreWindowBounds {
+                organisation_id,
+                saved_state_json: take_optional_string(&mut fields, "saved_state_json")?,
+            },
+            "trigger_tray_menu_action" => Self::TriggerTrayMenuAction {
+                organisation_id,
+                action: take_string(&mut fields, "action")?,
+            },
+            "set_unread_badge" => Self::SetUnreadBadge {
+                organisation_id,
+                unread_count: take_integer(&mut fields, "unread_count")?,
+            },
+            "dispatch_notification" => Self::DispatchNotification {
+                organisation_id,
+                title: take_string(&mut fields, "title")?,
+                body: take_string(&mut fields, "body")?,
+                route_uri: take_optional_string(&mut fields, "route_uri")?,
+                redact_preview: take_bool(&mut fields, "redact_preview")?,
+            },
+            "store_keychain_credential" => Self::StoreKeychainCredential {
+                organisation_id,
+                secret_kind: take_string(&mut fields, "secret_kind")?,
+                matrix_user_id: take_string(&mut fields, "matrix_user_id")?,
+                device_id: take_string(&mut fields, "device_id")?,
+                issued_at_unix_secs: take_integer(&mut fields, "issued_at_unix_secs")?,
+                expires_at_unix_secs: take_optional_integer(&mut fields, "expires_at_unix_secs")?,
+                raw_secret: take_string(&mut fields, "raw_secret")?,
+            },
+            "load_keychain_credential" => Self::LoadKeychainCredential {
+                organisation_id,
+                secret_kind: take_string(&mut fields, "secret_kind")?,
+                matrix_user_id: take_string(&mut fields, "matrix_user_id")?,
+            },
+            "delete_keychain_credential" => Self::DeleteKeychainCredential {
+                organisation_id,
+                secret_kind: take_string(&mut fields, "secret_kind")?,
+                matrix_user_id: take_string(&mut fields, "matrix_user_id")?,
+            },
+            "begin_oidc_pkce_loopback" => Self::BeginOidcPkceLoopback {
+                organisation_id,
+                issuer_origin: take_string(&mut fields, "issuer_origin")?,
+                client_id: take_string(&mut fields, "client_id")?,
+                code_verifier: take_string(&mut fields, "code_verifier")?,
+                state: take_string(&mut fields, "state")?,
+                loopback_port: take_integer(&mut fields, "loopback_port")?,
+            },
+            "complete_oidc_pkce_callback" => Self::CompleteOidcPkceCallback {
+                organisation_id,
+                callback_uri: take_string(&mut fields, "callback_uri")?,
+            },
             _ => return Err(DesktopCommandError::InvalidRequest),
         };
         if !fields.is_empty() {
@@ -492,6 +604,33 @@ impl DesktopCommandRequest {
                 organisation_id, ..
             }
             | Self::InspectSelfHostHealth {
+                organisation_id, ..
+            }
+            | Self::RestoreWindowBounds {
+                organisation_id, ..
+            }
+            | Self::TriggerTrayMenuAction {
+                organisation_id, ..
+            }
+            | Self::SetUnreadBadge {
+                organisation_id, ..
+            }
+            | Self::DispatchNotification {
+                organisation_id, ..
+            }
+            | Self::StoreKeychainCredential {
+                organisation_id, ..
+            }
+            | Self::LoadKeychainCredential {
+                organisation_id, ..
+            }
+            | Self::DeleteKeychainCredential {
+                organisation_id, ..
+            }
+            | Self::BeginOidcPkceLoopback {
+                organisation_id, ..
+            }
+            | Self::CompleteOidcPkceCallback {
                 organisation_id, ..
             } => organisation_id,
         }
@@ -810,6 +949,9 @@ pub enum DesktopCommandError {
     TrayPtt(TrayPttError),
     Keychain(KeychainError),
     SelfHostHealth(SelfHostHealthError),
+    WindowState(WindowStateError),
+    Notification(NotificationError),
+    OidcLoopback(OidcLoopbackError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -837,9 +979,16 @@ pub enum DesktopCommandResponse {
     DocsPad(DocsPadDocument),
     DeepLink(AdmittedDeepLink),
     TrayState(TrayStateSnapshot),
+    TrayMenuAction(TrayMenuActionOutcome),
     PttState(PttStateSnapshot),
     KeychainMetadata(KeychainSessionMetadata),
+    KeychainStatus(KeychainCredentialStatus),
     SelfHostHealth(SelfHostHealthReport),
+    WindowPlacement(RestoredWindowPlacement),
+    DockBadge(DockBadgeSnapshot),
+    Notification(DispatchedNotification),
+    OidcLoopbackReady(OidcLoopbackSessionReady),
+    OidcCallback(OidcCallbackOutcome),
     WorkspaceSessionCleared,
     Error(DesktopCommandError),
 }
@@ -1174,6 +1323,117 @@ impl DesktopWorkspaceSession {
             } => self
                 .inspect_self_host_health(&organisation_id, &compose_ps_json)
                 .map(DesktopCommandResponse::SelfHostHealth),
+            DesktopCommandRequest::RestoreWindowBounds {
+                organisation_id,
+                saved_state_json,
+            } => self
+                .restore_window_bounds(&organisation_id, saved_state_json.as_deref())
+                .map(DesktopCommandResponse::WindowPlacement),
+            DesktopCommandRequest::TriggerTrayMenuAction {
+                organisation_id,
+                action,
+            } => (|| {
+                let parsed_action =
+                    TrayMenuItemId::parse(&action).map_err(DesktopCommandError::TrayPtt)?;
+                self.trigger_tray_menu_action(&organisation_id, parsed_action)
+                    .map(DesktopCommandResponse::TrayMenuAction)
+            })(),
+            DesktopCommandRequest::SetUnreadBadge {
+                organisation_id,
+                unread_count,
+            } => (|| {
+                let count = u32::try_from(unread_count).map_err(|_| {
+                    DesktopCommandError::Notification(NotificationError::UnreadCountOutOfRange)
+                })?;
+                self.set_unread_badge(&organisation_id, count)
+                    .map(DesktopCommandResponse::DockBadge)
+            })(),
+            DesktopCommandRequest::DispatchNotification {
+                organisation_id,
+                title,
+                body,
+                route_uri,
+                redact_preview,
+            } => self
+                .dispatch_notification(
+                    &organisation_id,
+                    &DesktopNotificationRequest {
+                        title,
+                        body,
+                        route_uri,
+                        redact_preview,
+                    },
+                )
+                .map(DesktopCommandResponse::Notification),
+            DesktopCommandRequest::StoreKeychainCredential {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+                device_id,
+                issued_at_unix_secs,
+                expires_at_unix_secs,
+                raw_secret,
+            } => (|| {
+                let kind = KeychainSecretKind::parse(&secret_kind)
+                    .map_err(DesktopCommandError::Keychain)?;
+                self.store_keychain_credential(
+                    &organisation_id,
+                    kind,
+                    &matrix_user_id,
+                    &device_id,
+                    issued_at_unix_secs,
+                    expires_at_unix_secs,
+                    &raw_secret,
+                )
+                .map(DesktopCommandResponse::KeychainMetadata)
+            })(),
+            DesktopCommandRequest::LoadKeychainCredential {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+            } => (|| {
+                let kind = KeychainSecretKind::parse(&secret_kind)
+                    .map_err(DesktopCommandError::Keychain)?;
+                self.load_keychain_credential(&organisation_id, kind, &matrix_user_id)
+                    .map(DesktopCommandResponse::KeychainStatus)
+            })(),
+            DesktopCommandRequest::DeleteKeychainCredential {
+                organisation_id,
+                secret_kind,
+                matrix_user_id,
+            } => (|| {
+                let kind = KeychainSecretKind::parse(&secret_kind)
+                    .map_err(DesktopCommandError::Keychain)?;
+                self.delete_keychain_credential(&organisation_id, kind, &matrix_user_id)
+                    .map(DesktopCommandResponse::KeychainStatus)
+            })(),
+            DesktopCommandRequest::BeginOidcPkceLoopback {
+                organisation_id,
+                issuer_origin,
+                client_id,
+                code_verifier,
+                state,
+                loopback_port,
+            } => (|| {
+                let port = u16::try_from(loopback_port).map_err(|_| {
+                    DesktopCommandError::OidcLoopback(OidcLoopbackError::InvalidLoopbackPort)
+                })?;
+                self.begin_oidc_pkce_loopback(
+                    &organisation_id,
+                    &issuer_origin,
+                    &client_id,
+                    &code_verifier,
+                    &state,
+                    port,
+                )
+                .map(DesktopCommandResponse::OidcLoopbackReady)
+            })(),
+            DesktopCommandRequest::CompleteOidcPkceCallback {
+                organisation_id,
+                callback_uri,
+            } => self
+                .complete_oidc_pkce_callback(&organisation_id, &callback_uri)
+                .map(DesktopCommandResponse::OidcCallback),
         };
         result.unwrap_or_else(DesktopCommandResponse::Error)
     }
@@ -1269,6 +1529,105 @@ pub fn inspect_desktop_self_host_health(
     compose_ps_json: &str,
 ) -> Result<SelfHostHealthReport, DesktopCommandError> {
     session.inspect_self_host_health(organisation_id, compose_ps_json)
+}
+
+pub fn restore_desktop_window_bounds(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    saved_state_json: Option<&str>,
+) -> Result<RestoredWindowPlacement, DesktopCommandError> {
+    session.restore_window_bounds(organisation_id, saved_state_json)
+}
+
+pub fn trigger_desktop_tray_menu_action(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    action: TrayMenuItemId,
+) -> Result<TrayMenuActionOutcome, DesktopCommandError> {
+    session.trigger_tray_menu_action(organisation_id, action)
+}
+
+pub fn set_desktop_unread_badge(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    unread_count: u32,
+) -> Result<DockBadgeSnapshot, DesktopCommandError> {
+    session.set_unread_badge(organisation_id, unread_count)
+}
+
+pub fn dispatch_desktop_notification(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    request: &DesktopNotificationRequest,
+) -> Result<DispatchedNotification, DesktopCommandError> {
+    session.dispatch_notification(organisation_id, request)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn store_desktop_keychain_credential(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    secret_kind: KeychainSecretKind,
+    matrix_user_id: &str,
+    device_id: &str,
+    issued_at_unix_secs: u64,
+    expires_at_unix_secs: Option<u64>,
+    raw_secret: &str,
+) -> Result<KeychainSessionMetadata, DesktopCommandError> {
+    session.store_keychain_credential(
+        organisation_id,
+        secret_kind,
+        matrix_user_id,
+        device_id,
+        issued_at_unix_secs,
+        expires_at_unix_secs,
+        raw_secret,
+    )
+}
+
+pub fn load_desktop_keychain_credential(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+    secret_kind: KeychainSecretKind,
+    matrix_user_id: &str,
+) -> Result<KeychainCredentialStatus, DesktopCommandError> {
+    session.load_keychain_credential(organisation_id, secret_kind, matrix_user_id)
+}
+
+pub fn delete_desktop_keychain_credential(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    secret_kind: KeychainSecretKind,
+    matrix_user_id: &str,
+) -> Result<KeychainCredentialStatus, DesktopCommandError> {
+    session.delete_keychain_credential(organisation_id, secret_kind, matrix_user_id)
+}
+
+pub fn begin_desktop_oidc_pkce_loopback(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    issuer_origin: &str,
+    client_id: &str,
+    raw_code_verifier: &str,
+    expected_state: &str,
+    loopback_port: u16,
+) -> Result<OidcLoopbackSessionReady, DesktopCommandError> {
+    session.begin_oidc_pkce_loopback(
+        organisation_id,
+        issuer_origin,
+        client_id,
+        raw_code_verifier,
+        expected_state,
+        loopback_port,
+    )
+}
+
+pub fn complete_desktop_oidc_pkce_callback(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    callback_uri: &str,
+) -> Result<OidcCallbackOutcome, DesktopCommandError> {
+    session.complete_oidc_pkce_callback(organisation_id, callback_uri)
 }
 
 #[cfg(test)]
@@ -2340,6 +2699,27 @@ mod tests {
             .configure_ptt(ORG, true, Some("Ctrl+Shift+Space"))
             .unwrap();
         state
+            .store_keychain_credential(
+                ORG,
+                KeychainSecretKind::OidcRefresh,
+                "@member:community.kodera.io",
+                "DEV_01",
+                1_762_520_000,
+                Some(1_762_523_600),
+                TOKEN,
+            )
+            .unwrap();
+        state
+            .begin_oidc_pkce_loopback(
+                ORG,
+                "https://auth.kodera.io",
+                "kodera-desktop",
+                "pkce_verifier_fixture_alpha_bravo_charlie_delta_01",
+                "audit_pkce_state_fixture_01",
+                49_152,
+            )
+            .unwrap();
+        state
     }
 
     /// The complete current JSON surface, including routes added after the original shell.
@@ -2473,6 +2853,65 @@ mod tests {
                 json(
                     "inspect_self_host_health",
                     r#","compose_ps_json":"[{\"Service\":\"postgres\",\"State\":\"running\",\"Health\":\"healthy\",\"MemoryMiB\":256},{\"Service\":\"synapse\",\"State\":\"running\",\"Health\":\"healthy\",\"KoderaPolicy\":\"0.1.4\",\"MemoryMiB\":640},{\"Service\":\"coturn\",\"State\":\"running\",\"Health\":\"\",\"MemoryMiB\":96}]""#,
+                ),
+            ),
+            (
+                "restore_window_bounds",
+                json(
+                    "restore_window_bounds",
+                    r#","saved_state_json":"{\"x\":-3200,\"y\":120,\"width\":1400,\"height\":900,\"maximized\":false,\"fullscreen\":false,\"visible\":true}""#,
+                ),
+            ),
+            (
+                "trigger_tray_menu_action",
+                json("trigger_tray_menu_action", r#","action":"toggle_mute""#),
+            ),
+            (
+                "set_unread_badge",
+                json("set_unread_badge", r#","unread_count":12"#),
+            ),
+            (
+                "dispatch_notification",
+                json(
+                    "dispatch_notification",
+                    r#","title":"Ops channel","body":"Deployment verified","route_uri":"kodera://workspace/acme-ops/ops","redact_preview":false"#,
+                ),
+            ),
+            (
+                "store_keychain_credential",
+                json(
+                    "store_keychain_credential",
+                    &format!(
+                        r#","secret_kind":"matrix-session","matrix_user_id":"@member:community.kodera.io","device_id":"DEV_01","issued_at_unix_secs":1762520000,"expires_at_unix_secs":1762523600,"raw_secret":"{TOKEN}""#
+                    ),
+                ),
+            ),
+            (
+                "load_keychain_credential",
+                json(
+                    "load_keychain_credential",
+                    r#","secret_kind":"oidc-refresh","matrix_user_id":"@member:community.kodera.io""#,
+                ),
+            ),
+            (
+                "delete_keychain_credential",
+                json(
+                    "delete_keychain_credential",
+                    r#","secret_kind":"oidc-refresh","matrix_user_id":"@member:community.kodera.io""#,
+                ),
+            ),
+            (
+                "begin_oidc_pkce_loopback",
+                json(
+                    "begin_oidc_pkce_loopback",
+                    r#","issuer_origin":"https://auth.kodera.io","client_id":"kodera-desktop","code_verifier":"pkce_verifier_fixture_echo_foxtrot_golf_hotel_002","state":"audit_pkce_state_fixture_02","loopback_port":51920"#,
+                ),
+            ),
+            (
+                "complete_oidc_pkce_callback",
+                json(
+                    "complete_oidc_pkce_callback",
+                    r#","callback_uri":"http://127.0.0.1:49152/auth/callback?code=oidc_code_fixture_0001&state=audit_pkce_state_fixture_01""#,
                 ),
             ),
         ]
@@ -2627,6 +3066,61 @@ mod tests {
                     assert!(report.is_healthy());
                     assert_eq!(report.observed_memory_mib, 992);
                 }
+                ("restore_window_bounds", DesktopCommandResponse::WindowPlacement(placement)) => {
+                    assert!(placement.clamped);
+                    assert_eq!(placement.bounds.width, 1400);
+                    assert_eq!(placement.bounds.height, 900);
+                    assert!(placement.bounds.x >= 0);
+                }
+                (
+                    "trigger_tray_menu_action",
+                    DesktopCommandResponse::TrayMenuAction(TrayMenuActionOutcome::MuteToggled {
+                        muted,
+                        ..
+                    }),
+                ) => {
+                    assert!(muted);
+                }
+                ("set_unread_badge", DesktopCommandResponse::DockBadge(badge)) => {
+                    assert_eq!(badge.unread_count, 12);
+                    assert_eq!(badge.badge_label.as_deref(), Some("12"));
+                    assert_eq!(state.tray_state(ORG).unwrap().unread_count, 12);
+                }
+                ("dispatch_notification", DesktopCommandResponse::Notification(note)) => {
+                    assert_eq!(note.title, "Ops channel");
+                    assert_eq!(
+                        note.canonical_route_uri.as_deref(),
+                        Some("kodera://workspace/acme-ops/ops")
+                    );
+                }
+                (
+                    "store_keychain_credential",
+                    DesktopCommandResponse::KeychainMetadata(metadata),
+                ) => {
+                    assert_eq!(
+                        metadata.slot.service_name,
+                        "io.kodera.desktop.matrix-session"
+                    );
+                }
+                ("load_keychain_credential", DesktopCommandResponse::KeychainStatus(status)) => {
+                    assert!(status.present);
+                    assert!(status.metadata.is_some());
+                }
+                ("delete_keychain_credential", DesktopCommandResponse::KeychainStatus(status)) => {
+                    assert!(status.present);
+                    assert!(status.metadata.is_none());
+                }
+                ("begin_oidc_pkce_loopback", DesktopCommandResponse::OidcLoopbackReady(ready)) => {
+                    assert_eq!(ready.code_challenge_method, "S256");
+                    assert_eq!(ready.redirect_uri, "http://127.0.0.1:51920/auth/callback");
+                }
+                ("complete_oidc_pkce_callback", DesktopCommandResponse::OidcCallback(outcome)) => {
+                    assert_eq!(outcome.issuer_origin, "https://auth.kodera.io");
+                    assert_eq!(
+                        outcome.authorization_code.expose_for_token_exchange(),
+                        "oidc_code_fixture_0001"
+                    );
+                }
                 (route, unexpected) => {
                     panic!("{route} produced unexpected response: {unexpected:?}")
                 }
@@ -2648,6 +3142,12 @@ mod tests {
                 state.tray_state(ORG).unwrap(),
                 state.ptt_state(ORG).unwrap(),
                 state.deep_link_policy.clone(),
+                (
+                    state.window_placement(ORG).unwrap(),
+                    state.dock_badge(ORG).unwrap(),
+                    state.keychain_store.metadata_snapshot(),
+                    state.pending_oidc.is_some(),
+                ),
             )
         };
         for (name, request) in audit_command_cases()
@@ -3124,5 +3624,154 @@ mod tests {
             get_desktop_tray_state(&state, OTHER_ORG).unwrap().indicator,
             crate::TrayIndicator::Idle
         );
+    }
+
+    #[test]
+    fn w8_desktop_shell_lifecycle_synchronizes_window_tray_notifications_keychain_and_oidc() {
+        let mut state = session();
+        // 1. Multi-monitor bounds clamping when an external monitor is unplugged.
+        state
+            .configure_monitors(
+                ORG,
+                vec![crate::MonitorWorkArea {
+                    id: "macbook-retina".to_owned(),
+                    x: 0,
+                    y: 25,
+                    width: 1512,
+                    height: 945,
+                    scale_factor_milli: 2000,
+                    is_primary: true,
+                }],
+            )
+            .unwrap();
+        let restored = restore_desktop_window_bounds(
+            &mut state,
+            ORG,
+            Some(r#"{"x":-2560,"y":100,"width":1600,"height":1000,"maximized":false,"fullscreen":false,"visible":false}"#),
+        )
+        .unwrap();
+        assert!(restored.clamped);
+        assert_eq!(restored.target_monitor_id, "macbook-retina");
+        assert_eq!(restored.bounds.width, 1512);
+        assert_eq!(restored.bounds.height, 945);
+        assert!(!restored.visible);
+
+        // Selecting Open Kodera from the system tray menu reveals and focuses the main window.
+        let open_outcome =
+            trigger_desktop_tray_menu_action(&mut state, ORG, TrayMenuItemId::OpenKodera).unwrap();
+        assert!(matches!(
+            open_outcome,
+            TrayMenuActionOutcome::ShowAndFocusMainWindow { .. }
+        ));
+        assert!(state.window_placement(ORG).unwrap().visible);
+
+        // 2. Unread badge syncs both Dock/Taskbar badge and System Tray unread badge.
+        let badge = set_desktop_unread_badge(&mut state, ORG, 108).unwrap();
+        assert_eq!(badge.badge_label.as_deref(), Some("99+"));
+        assert_eq!(
+            get_desktop_tray_state(&state, ORG)
+                .unwrap()
+                .unread_badge
+                .as_deref(),
+            Some("99+")
+        );
+
+        // 3. Notification bridge rejects javascript: route injection and redacts confidential previews.
+        assert!(dispatch_desktop_notification(
+            &mut state,
+            ORG,
+            &DesktopNotificationRequest {
+                title: "Spoof".to_owned(),
+                body: "Body".to_owned(),
+                route_uri: Some("javascript:alert(1)".to_owned()),
+                redact_preview: false,
+            },
+        )
+        .is_err());
+
+        let confidential = dispatch_desktop_notification(
+            &mut state,
+            ORG,
+            &DesktopNotificationRequest {
+                title: "Direct message".to_owned(),
+                body: "Room secret content".to_owned(),
+                route_uri: Some("kodera://workspace/acme/general".to_owned()),
+                redact_preview: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(confidential.body, crate::REDACTED_NOTIFICATION_PREVIEW);
+
+        // 4. Keychain store + OIDC PKCE single-use loopback consumption + full wipe on switch.
+        store_desktop_keychain_credential(
+            &mut state,
+            ORG,
+            KeychainSecretKind::MatrixSession,
+            "@alice:kodera.io",
+            "MAC_01",
+            1_762_520_000,
+            None,
+            TOKEN,
+        )
+        .unwrap();
+        assert!(
+            load_desktop_keychain_credential(
+                &state,
+                ORG,
+                KeychainSecretKind::MatrixSession,
+                "@alice:kodera.io"
+            )
+            .unwrap()
+            .present
+        );
+
+        let ready = begin_desktop_oidc_pkce_loopback(
+            &mut state,
+            ORG,
+            "https://auth.kodera.io",
+            "kodera-desktop",
+            "pkce_verifier_fixture_alpha_bravo_charlie_delta_99",
+            "pkce_state_fixture_99999",
+            52_100,
+        )
+        .unwrap();
+        assert_eq!(ready.redirect_uri, "http://127.0.0.1:52100/auth/callback");
+
+        let completed = complete_desktop_oidc_pkce_callback(
+            &mut state,
+            ORG,
+            "http://127.0.0.1:52100/auth/callback?code=auth_code_fixture_9999&state=pkce_state_fixture_99999",
+        )
+        .unwrap();
+        assert_eq!(
+            completed.authorization_code.expose_for_token_exchange(),
+            "auth_code_fixture_9999"
+        );
+        // Replay fails closed because the PKCE session was consumed once.
+        assert_eq!(
+            complete_desktop_oidc_pkce_callback(
+                &mut state,
+                ORG,
+                "http://127.0.0.1:52100/auth/callback?code=auth_code_fixture_9999&state=pkce_state_fixture_99999",
+            ),
+            Err(DesktopCommandError::OidcLoopback(
+                OidcLoopbackError::NoPendingSession
+            ))
+        );
+
+        state
+            .switch_organisation(OTHER_ORG, [0x43; 32], HashSet::from([[1; 32]]), 4)
+            .unwrap();
+        assert!(
+            !load_desktop_keychain_credential(
+                &state,
+                OTHER_ORG,
+                KeychainSecretKind::MatrixSession,
+                "@alice:kodera.io"
+            )
+            .unwrap()
+            .present
+        );
+        assert_eq!(state.dock_badge(OTHER_ORG).unwrap().unread_count, 0);
     }
 }
