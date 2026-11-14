@@ -176,6 +176,13 @@ config/settings/deploy_worker.py
 !apps/billing/api/__init__.py
 !apps/billing/api/permissions.py
 !apps/billing/api/views.py
+!apps/billing/api/downloads.py
+!apps/billing/api/vat_status.py
+!apps/billing/downloads.py
+!apps/billing/documents.py
+!apps/billing/artifacts.py
+!apps/billing/integrity.py
+!apps/billing/vies.py
 !apps/billing/api/tenants.py
 !apps/billing/api/create_tenant.py
 !apps/legal/__init__.py

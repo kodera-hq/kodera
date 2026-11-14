@@ -29,6 +29,8 @@ SELECT = (
     "workspaces_workspacequota",
     "docs_collection",
     "docs_collectionrow",
+    "billing_billingartifact",
+    "billing_viesconsultation",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -104,6 +106,7 @@ SELECT = (
 INSERT = (
     "docs_collection",
     "docs_collectionrow",
+    "billing_viesconsultation",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -226,6 +229,8 @@ UPDATE_COLUMNS = (
     ),
     ("docs_collectionrow", "values"),
     ("docs_collectionrow", "updated_at"),
+    ("billing_billingprofile", "vat_number_validated_at"),
+    ("billing_billingprofile", "updated_at"),
     # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
     ("workspaces_workspacememberrestriction", "banned"),
     ("workspaces_workspacememberrestriction", "kicked"),
