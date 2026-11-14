@@ -612,3 +612,7 @@ class Invitation(StoredModel):
 
     def __str__(self) -> str:
         return f"invitation {self.id} {self.state}"
+
+
+# Register the independently owned privacy persistence model with this application.
+from .privacy_models import PrivacyExport as PrivacyExport  # noqa: E402

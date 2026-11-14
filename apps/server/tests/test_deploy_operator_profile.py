@@ -26,8 +26,12 @@ APPS = [
     "apps.support",
     "apps.engine_intents",
     "apps.workspaces",
+    "apps.docs",
+    "apps.media",
 ]
 COMMANDS = [
+    "configure_workspace_quotas",
+    "configure_collab_role",
     "configure_api_role",
     "bind_community_identity",
     "bootstrap_community_workspace",

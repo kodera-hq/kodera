@@ -71,6 +71,7 @@ export async function assertDatabaseBoundary(pool) {
     AND has_function_privilege('docs_collab_fence(uuid,uuid,uuid,uuid,text,text,text)','EXECUTE')
     AND has_function_privilege('docs_collab_audit(uuid,text,uuid,uuid,uuid,text)','EXECUTE')
     AND has_function_privilege('docs_redeem_collaboration_ticket(uuid,bigint)','EXECUTE')
+    AND has_function_privilege('docs_collab_snapshot_admit(uuid,bigint)','EXECUTE')
     AS restricted FROM pg_roles r WHERE r.rolname=current_user`)
   if (result.rows[0]?.restricted !== true) throw new Error('collaboration database role refused')
 }

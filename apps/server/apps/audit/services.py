@@ -588,7 +588,16 @@ BILLING_ACTIONS: Mapping[str, frozenset[str]] = {
     "dunning.proposal_prepared": frozenset({"system"}),
     "dunning.cleared": frozenset({"system"}),
     "dunning.dispute_recorded": frozenset({"staff"}),
-    **dict.fromkeys(("dunning.reminder_sent", "dunning.formal_notice_sent", "dunning.suspension_notice_sent", "dunning.suspended", "dunning.terminated"), frozenset({"staff"})),
+    **dict.fromkeys(
+        (
+            "dunning.reminder_sent",
+            "dunning.formal_notice_sent",
+            "dunning.suspension_notice_sent",
+            "dunning.suspended",
+            "dunning.terminated",
+        ),
+        frozenset({"staff"}),
+    ),
     "invoice.download_requested": frozenset({"tenant"}),
     "vat.vies_checked": frozenset({"system", "staff"}),
     **dict.fromkeys(
@@ -850,3 +859,19 @@ def record_workspace_resource_event(
             from apps.notifications.services import record_moderation
 
             record_moderation(organisation_id=organisation_id, membership_id=target_id)
+
+
+def record_workspace_quota_configured(
+    *, actor_id: UUID, organisation_id: UUID, quota_id: UUID, policy_ref: str
+) -> None:
+    """The supervised quota change, in the caller's configuration transaction."""
+    AuditEvent.objects.create(
+        action="workspace.quota.configured",
+        actor_type="staff",
+        actor_id=actor_id,
+        actor_label=f"urn:kodera:identity:{actor_id}",
+        organisation_id=organisation_id,
+        target_urn=f"urn:kodera:workspace-resource:{quota_id}",
+        retention_class="standard",
+        metadata={"policy_ref": policy_ref},
+    )

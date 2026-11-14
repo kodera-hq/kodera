@@ -149,3 +149,16 @@ def person_memberships(*, user_id: UUID) -> tuple[MembershipSnapshot, ...]:
             )
         )
     return tuple(values)
+
+
+def collection_person_is_current(*, membership_id: UUID, organisation_id: UUID) -> bool:
+    """An accepted active person value in the collection's organisation."""
+    return Membership.objects.filter(
+        pk=membership_id,
+        organisation_id=organisation_id,
+        state="active",
+        accepted_at__isnull=False,
+        deleted_at__isnull=True,
+        user__enabled=True,
+        user__deleted_at__isnull=True,
+    ).exists()

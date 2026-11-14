@@ -24,6 +24,7 @@
 !apps/orgs/__init__.py
 !apps/orgs/apps.py
 !apps/orgs/models.py
+!apps/orgs/privacy_models.py
 # The queue's library: claims, runner writes, sweeps and their audit (JOB_QUEUE.md); not its
 # commands or migrations.
 !apps/jobs/*.py

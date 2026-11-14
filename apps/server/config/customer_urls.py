@@ -31,7 +31,7 @@ from apps.orgs.api.notice_contacts import notice_contacts
 from apps.orgs.api.owner_claims import consume_owner_claim
 from apps.support.api.community import community_support_tickets
 from apps.support.api.views import support_tickets
-from apps.workspaces.api import administration as structure
+from apps.workspaces.api import administration as structure, quotas
 from apps.workspaces.api.instant_claim import instant_claim
 from apps.workspaces.api.views import initialise, workspace
 
@@ -39,6 +39,8 @@ from .urls import urlpatterns as diagnostics
 
 urlpatterns = [
     *diagnostics,
+    path("api/v1/organisations/<uuid:organisation_id>/workspace/quotas/usage", quotas.usage),
+    path("api/v1/organisations/<uuid:organisation_id>/workspace/quotas/limits", quotas.limits),
     path("", include("apps.workspaces.api.moderation_urls")),
     path("", include("apps.media.api.urls")),
     path("", include("apps.notifications.api.urls")),

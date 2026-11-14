@@ -5,6 +5,7 @@ import { Refused } from './engine.mjs'
 import { TicketRefused } from './tickets.mjs'
 
 export class Unavailable extends Error { constructor(cause = undefined) { super('collaboration storage unavailable', {cause}) } }
+export class QuotaRefused extends Refused { constructor() { super('workspace snapshot quota exceeded'); this.name = 'QuotaRefused' } }
 export function uuid7() {
   const value = randomBytes(16)
   value.writeUIntBE(Date.now(), 0, 6)
@@ -41,6 +42,7 @@ export class Store {
       return result
     } catch (error) {
       try { await client.query('ROLLBACK') } catch { discard = true }
+      if (error.constraint === 'workspace_quota_exceeded') throw new QuotaRefused()
       throw error instanceof TicketRefused || error instanceof Refused ? error : new Unavailable(error)
     } finally { client.release(discard) }
   }
@@ -96,6 +98,9 @@ export class Store {
       const state = await this.binary(client, claims.document)
       const result = await work({operation: 'apply', snapshot: state.snapshot.toString('base64'), updates: state.updates.map(part => part.toString('base64')), update: Buffer.from(incoming).toString('base64'), nonce: randomUUID()})
       const snapshot = Buffer.from(result.snapshot, 'base64'), update = Buffer.from(result.update, 'base64')
+      // A small delta can grow the merged document beyond its policy before the
+      // next compaction. Admit the actual materialized size before every write.
+      await client.query('SELECT docs_collab_snapshot_admit($1,$2)', [claims.document, snapshot.length])
       if (state.head >= Number.MAX_SAFE_INTEGER - 1) throw new Unavailable()
       const sequence = state.head + 1
       alive(claims)
