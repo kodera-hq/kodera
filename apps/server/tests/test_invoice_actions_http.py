@@ -447,9 +447,8 @@ def test_a_stored_pdf_with_no_signer_fails_loudly_never_as_a_link(w, placed):
 def _without(monkeypatch, needle):
     from config import customer_urls
 
-    target = "api/v1/invoices/<uuid:invoice_id>" + needle
-    kept = [p for p in customer_urls.urlpatterns if str(p.pattern) != target]
-    assert len(kept) == len(customer_urls.urlpatterns) - 1, f"{target} is not routed once"
+    kept = [p for p in customer_urls.urlpatterns if not str(p.pattern).endswith(needle)]
+    assert len(kept) == len(customer_urls.urlpatterns) - 1, f"{needle} is not routed once"
     monkeypatch.setattr(customer_urls, "urlpatterns", kept)
     clear_url_caches()
 

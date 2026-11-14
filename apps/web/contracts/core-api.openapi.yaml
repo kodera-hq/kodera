@@ -8542,6 +8542,12 @@ components:
       - export.expired
       - audit.exported
       - retention.purged
+      - privacy.erasure_cutoff
+      - privacy.account_cutoff
+      - privacy.account_core_erased
+      - privacy.account_erasure_completed
+      - privacy.core_erased
+      - privacy.erasure_completed
       - support.ticket_linked
       - support.ticket_closed
       - support.ticket_opened
