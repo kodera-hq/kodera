@@ -1513,61 +1513,22 @@ def _sync_django_organisation_member(
                     _lock_and_verify_saml_person(cur, user_id=identity.user_id)
                 user = identity.user
             else:
-                existing_user = (
-                    User.objects.filter(email__iexact=email, deleted_at__isnull=True)
-                    .order_by("created_at", "id")
-                    .first()
+                # Never link or reuse a global `User` across tenants by contact `email`
+                # (`CUSTOMER_PERSISTENCE.md:29` / `ADR-0024` / `owner_binding.py`).
+                user = User.objects.create(
+                    email=email,
+                    display_name=display_name[:200] if display_name else None,
+                    enabled=True,
                 )
-                if existing_user is not None:
-                    with connection.cursor() as cur:
-                        _lock_and_verify_saml_person(cur, user_id=existing_user.id)
-                    user = existing_user
-                    existing_org_identity = (
-                        Identity.objects.filter(organisation=org, issuer=org.issuer, user=user)
-                        .order_by("created_at", "id")
-                        .first()
-                    )
-                    if existing_org_identity is not None:
-                        if (
-                            existing_org_identity.deleted_at is not None
-                            or existing_org_identity.email.startswith("erased:")
-                        ):
-                            raise SamlError(
-                                "account_cutoff_fenced",
-                                "Account is under privacy erasure cutoff",
-                                status=403,
-                            )
-                        if not existing_org_identity.enabled:
-                            raise SamlError(
-                                "user_disabled",
-                                "User account is disabled",
-                                status=403,
-                            )
-                    else:
-                        Identity.objects.create(
-                            user=user,
-                            organisation=org,
-                            realm=org.realm,
-                            issuer=org.issuer,
-                            subject=subject_key,
-                            email=email,
-                            enabled=True,
-                        )
-                else:
-                    user = User.objects.create(
-                        email=email,
-                        display_name=display_name[:200] if display_name else None,
-                        enabled=True,
-                    )
-                    Identity.objects.create(
-                        user=user,
-                        organisation=org,
-                        realm=org.realm,
-                        issuer=org.issuer,
-                        subject=subject_key,
-                        email=email,
-                        enabled=True,
-                    )
+                Identity.objects.create(
+                    user=user,
+                    organisation=org,
+                    realm=org.realm,
+                    issuer=org.issuer,
+                    subject=subject_key,
+                    email=email,
+                    enabled=True,
+                )
 
             now_ts = timezone.now()
             membership = (

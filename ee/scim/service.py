@@ -1374,9 +1374,14 @@ class ScimService:
             if effective_org_id is not None and can_use_postgres():
                 primary_email = user_name
                 for em in emails:
-                    if em.value.strip():
+                    if em.primary and em.value.strip():
                         primary_email = em.value.strip()
                         break
+                else:
+                    for em in emails:
+                        if em.value.strip():
+                            primary_email = em.value.strip()
+                            break
                 django_uid = _sync_django_scim_provision(
                     organisation_id=effective_org_id,
                     user_name=user_name,
@@ -2197,7 +2202,6 @@ def _sync_django_scim_provision(
     from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership, Organisation
     from apps.outbox.realm_enqueue import ACCESS_OFF, ACCESS_ON, enqueue_realm_access
-    from django.db.models import Q
     from django.utils import timezone
 
     try:
@@ -2212,11 +2216,16 @@ def _sync_django_scim_provision(
             subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
             identity = (
                 Identity.objects.select_related("user")
-                .filter(organisation=org, issuer=org.issuer)
-                .filter(Q(subject=subj) | Q(email__iexact=email))
-                .order_by("created_at", "id")
+                .filter(organisation=org, issuer=org.issuer, subject=subj)
                 .first()
             )
+            if identity is None and user_name.strip().lower() == email.strip().lower():
+                identity = (
+                    Identity.objects.select_related("user")
+                    .filter(organisation=org, issuer=org.issuer, email__iexact=email)
+                    .order_by("created_at", "id")
+                    .first()
+                )
             if identity is not None:
                 with connection.cursor() as cur:
                     _lock_and_verify_scim_person(
@@ -2227,53 +2236,22 @@ def _sync_django_scim_provision(
                     )
                 user = identity.user
             else:
-                existing_user = (
-                    User.objects.filter(
-                        Q(email__iexact=email) | Q(email__iexact=user_name),
-                        deleted_at__isnull=True,
-                    )
-                    .order_by("created_at", "id")
-                    .first()
+                # Never link or reuse a global `User` across tenants by contact `email` or
+                # `userName` (`CUSTOMER_PERSISTENCE.md:29` / `ADR-0024` / `owner_binding.py`).
+                user = User.objects.create(
+                    email=email,
+                    display_name=display_name[:200] if display_name else None,
+                    enabled=True,
                 )
-                if existing_user is not None:
-                    with connection.cursor() as cur:
-                        _lock_and_verify_scim_person(
-                            cur,
-                            organisation_id=org.id,
-                            user_uuid=existing_user.id,
-                            require_globally_enabled=True,
-                        )
-                    user = existing_user
-                    existing_org_identity = (
-                        Identity.objects.filter(organisation=org, issuer=org.issuer, user=user)
-                        .order_by("created_at", "id")
-                        .first()
-                    )
-                    if existing_org_identity is None:
-                        Identity.objects.create(
-                            user=user,
-                            organisation=org,
-                            realm=org.realm,
-                            issuer=org.issuer,
-                            subject=subj,
-                            email=email,
-                            enabled=True,
-                        )
-                else:
-                    user = User.objects.create(
-                        email=email,
-                        display_name=display_name[:200] if display_name else None,
-                        enabled=True,
-                    )
-                    Identity.objects.create(
-                        user=user,
-                        organisation=org,
-                        realm=org.realm,
-                        issuer=org.issuer,
-                        subject=subj,
-                        email=email,
-                        enabled=True,
-                    )
+                Identity.objects.create(
+                    user=user,
+                    organisation=org,
+                    realm=org.realm,
+                    issuer=org.issuer,
+                    subject=subj,
+                    email=email,
+                    enabled=True,
+                )
 
             now_ts = timezone.now()
             target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED

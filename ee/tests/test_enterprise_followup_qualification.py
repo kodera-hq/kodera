@@ -1481,18 +1481,25 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
     tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
 ) -> None:
     """Verify under restricted `kodera_api` writer role (`SET ROLE`) that:
-    1. Shared `User` in Tenant A + Tenant B: Tenant A SCIM `create` -> `PATCH active:false` ->
-       `PATCH active:true` -> `DELETE` -> re-`POST active:false` -> `PUT active:true` never
-       mutates global `User.enabled` and leaves Tenant B's `Identity.enabled`, `Membership.state`,
-       and `resolve_member_authority` active throughout while transitioning Tenant A atomically.
+    1. Explicitly pre-linked `User` across Tenant A + Tenant B (`ADR-0024`): Tenant A SCIM `create`
+       -> `PATCH active:false` -> `PATCH active:true` -> `DELETE` -> re-`POST active:false` ->
+       `PUT active:true` never mutates global `User.enabled` and leaves Tenant B's
+       `Identity.enabled`, `Membership.state`, and `resolve_member_authority` active throughout
+       while transitioning Tenant A atomically.
     2. Globally disabled `User` (`User.enabled = False`) and tenant-disabled `Identity`: Tenant A
        SCIM `POST` (`active:true` and `active:false`), `PATCH` (`active:true`), and `PUT`
-       (`active:true`) plus SAML ACS login all refuse (`403`) with atomic rollback and never flip
-       `User.enabled` or `Identity.enabled` back to `True`.
+       (`active:true`) plus SAML ACS login on an existing Tenant A `Identity` all refuse (`403`)
+       with atomic rollback and never flip `User.enabled` or `Identity.enabled` back to `True`.
     3. Tenant A `org_owner` protection: SCIM `POST active:false`, `PATCH active:false`,
        `PUT active:false`, and `DELETE` all refuse (`403`) with atomic rollback while keeping
        `User.enabled == True`, owner `Identity.enabled == True`, owner `Membership` active, and
        SCIM user state consistent.
+    4. Cross-tenant unverified email isolation & `GET /api/v1/me` non-disclosure: neither SCIM
+       `POST /Users` (across case-insensitive victim-only emails, differing `userName` vs primary
+       `email`, identical A/B contact collisions, and multiple global `User` contact matches) nor
+       SAML ACS fresh-tenant JIT ever links or reuses a global `User` across tenants by contact
+       string; each creates a distinct `User` person root and `GET /api/v1/me` discloses zero
+       Tenant B `organisation_id`, `Identity.id`, `Membership.id`, `realm`, or `issuer`.
     """
     import jwt
     from apps.identity.models import Identity, User
@@ -1525,12 +1532,23 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
     org_a = Organisation.objects.get(id=owner_a.organisation_id)
     org_b = Organisation.objects.get(id=owner_b.organisation_id)
 
-    # Seed one shared global `User` initially active in Tenant B (`scim-tenant-b`), plus a second
-    # globally-disabled `User` (`enabled=False`) to test global security disable enforcement.
+    # Seed one explicitly pre-linked (`ADR-0024`) `User` across Tenant A and Tenant B, a
+    # globally-disabled `User` (`enabled=False`) with an existing Tenant A `Identity`, and
+    # cross-tenant / collision person-isolation fixtures for Scenario 4.
     with transaction.atomic():
+        now_seed = timezone.now()
         shared_user = User.objects.create(
             email="shared.claire@corp.fr",
             display_name="Claire Shared",
+            enabled=True,
+        )
+        ident_a = Identity.objects.create(
+            user=shared_user,
+            organisation=org_a,
+            realm=org_a.realm,
+            issuer=org_a.issuer,
+            subject="shared.claire@corp.fr",
+            email="shared.claire@corp.fr",
             enabled=True,
         )
         ident_b = Identity.objects.create(
@@ -1547,12 +1565,142 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             user=shared_user,
             role=Membership.Role.MEMBER,
             state=Membership.State.ACTIVE,
-            accepted_at=timezone.now(),
+            accepted_at=now_seed,
         )
         globally_disabled_user = User.objects.create(
             email="disabled.sec@corp.fr",
             display_name="Security Disabled Person",
             enabled=False,
+        )
+        Identity.objects.create(
+            user=globally_disabled_user,
+            organisation=org_a,
+            realm=org_a.realm,
+            issuer=org_a.issuer,
+            subject="disabled.sec@corp.fr",
+            email="disabled.sec@corp.fr",
+            enabled=True,
+        )
+
+        # Scenario 4 fixtures: victim-only Tenant B people + independent A/B contact collisions +
+        # multiple global contact matches (`CUSTOMER_PERSISTENCE.md:29` non-unique `User.email`).
+        victim_b_user = User.objects.create(
+            email="victim.only@corp.fr",
+            display_name="Tenant B Victim",
+            enabled=True,
+        )
+        victim_b_ident = Identity.objects.create(
+            user=victim_b_user,
+            organisation=org_b,
+            realm=org_b.realm,
+            issuer=org_b.issuer,
+            subject="victim-b-sub",
+            email="victim.only@corp.fr",
+            enabled=True,
+        )
+        victim_b_memb = Membership.objects.create(
+            organisation=org_b,
+            user=victim_b_user,
+            role=Membership.Role.ADMIN,
+            state=Membership.State.ACTIVE,
+            accepted_at=now_seed,
+        )
+        extra_global_victim = User.objects.create(
+            email="victim.only@corp.fr",
+            display_name="Second Unaffiliated Contact Match",
+            enabled=True,
+        )
+
+        victim2_b_user = User.objects.create(
+            email="victim.samename@corp.fr",
+            display_name="Tenant B Same-Name Victim",
+            enabled=True,
+        )
+        victim2_b_ident = Identity.objects.create(
+            user=victim2_b_user,
+            organisation=org_b,
+            realm=org_b.realm,
+            issuer=org_b.issuer,
+            subject="victim.samename@corp.fr",
+            email="victim.samename@corp.fr",
+            enabled=True,
+        )
+        victim2_b_memb = Membership.objects.create(
+            organisation=org_b,
+            user=victim2_b_user,
+            role=Membership.Role.MEMBER,
+            state=Membership.State.ACTIVE,
+            accepted_at=now_seed,
+        )
+
+        indep_a_user = User.objects.create(
+            email="collision@corp.fr",
+            display_name="Independent Tenant A Person",
+            enabled=True,
+        )
+        indep_a_ident = Identity.objects.create(
+            user=indep_a_user,
+            organisation=org_a,
+            realm=org_a.realm,
+            issuer=org_a.issuer,
+            subject="indep-a-sub",
+            email="collision@corp.fr",
+            enabled=True,
+        )
+        indep_a_memb = Membership.objects.create(
+            organisation=org_a,
+            user=indep_a_user,
+            role=Membership.Role.MEMBER,
+            state=Membership.State.ACTIVE,
+            accepted_at=now_seed,
+        )
+        indep_b_user = User.objects.create(
+            email="collision@corp.fr",
+            display_name="Independent Tenant B Person",
+            enabled=True,
+        )
+        indep_b_ident = Identity.objects.create(
+            user=indep_b_user,
+            organisation=org_b,
+            realm=org_b.realm,
+            issuer=org_b.issuer,
+            subject="indep-b-sub",
+            email="collision@corp.fr",
+            enabled=True,
+        )
+        indep_b_memb = Membership.objects.create(
+            organisation=org_b,
+            user=indep_b_user,
+            role=Membership.Role.MEMBER,
+            state=Membership.State.ACTIVE,
+            accepted_at=now_seed,
+        )
+        extra_global_collision = User.objects.create(
+            email="collision@corp.fr",
+            display_name="Third Global Collision Match",
+            enabled=True,
+        )
+
+        saml_victim_b_user = User.objects.create(
+            email="saml.victim@corp.fr",
+            display_name="SAML Tenant B Victim",
+            enabled=True,
+        )
+        saml_victim_b_ident = Identity.objects.create(
+            user=saml_victim_b_user,
+            organisation=org_b,
+            realm=org_b.realm,
+            issuer=org_b.issuer,
+            subject="saml-victim-b-sub",
+            email="saml.victim@corp.fr",
+            enabled=True,
+        )
+        saml_victim_b_memb = Membership.objects.create(
+            organisation=org_b,
+            user=saml_victim_b_user,
+            role=Membership.Role.MEMBER,
+            state=Membership.State.ACTIVE,
+            accepted_at=now_seed,
         )
 
     def _mint_verified_and_bearer(
@@ -1563,17 +1711,18 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             {
                 "iss": issuer,
                 "sub": subject,
-                "aud": "kodera-api",
+                "aud": "kodera-server",
                 "iat": now_epoch - 5,
                 "exp": now_epoch + 900,
+                "typ": "Bearer",
                 "email": email,
                 "email_verified": True,
-                "azp": "kodera-console",
+                "azp": "console",
                 "amr": ["pwd", "otp"],
             },
             oidc_trusted_priv,
             algorithm="RS256",
-            headers={"kid": "ee-test-oidc-k1", "typ": "JWT"},
+            headers={"kid": "ee-test-oidc-k1"},
         )
         verified = VerifiedAccessToken(
             issuer=issuer,
@@ -1586,7 +1735,7 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             acr=None,
             auth_time=now_epoch - 5,
             email_verified=True,
-            authorized_party="kodera-console",
+            authorized_party="console",
             email=email,
         )
         return verified, raw_jwt
@@ -2109,6 +2258,217 @@ def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tena
             assert owner_scim_get.json()["active"] is True
             assert owner_scim_get.json()["displayName"] == "Tenant A Owner"
             assert bearer_a  # sanity check minted JWT non-empty
+
+            # --- Scenario 4: Cross-Tenant Unverified Email Isolation & `GET /api/v1/me` ---
+            forbidden_b_markers = (
+                str(org_b.id),
+                org_b.slug,
+                org_b.realm,
+                org_b.issuer,
+                str(victim_b_user.id),
+                str(victim_b_ident.id),
+                str(victim_b_memb.id),
+                str(victim2_b_user.id),
+                str(victim2_b_ident.id),
+                str(victim2_b_memb.id),
+                str(indep_b_user.id),
+                str(indep_b_ident.id),
+                str(indep_b_memb.id),
+                str(saml_victim_b_user.id),
+                str(saml_victim_b_ident.id),
+                str(saml_victim_b_memb.id),
+            )
+
+            # 4a. Controlled Tenant A `userName` + case-insensitive Tenant B victim primary email
+            # (with secondary email + multiple global `User` contact matches) creates a fresh User!
+            scim_probe_1 = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "controlled-sub-a",
+                        "displayName": "Controlled A Subject",
+                        "active": True,
+                        "emails": [
+                            {"value": "decoy@corp.fr", "type": "other", "primary": False},
+                            {"value": "VICTIM.ONLY@corp.fr", "type": "work", "primary": True},
+                        ],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert scim_probe_1.status_code == 201, scim_probe_1.content
+            ident_probe_1 = Identity.objects.get(organisation=org_a, subject="controlled-sub-a")
+            assert ident_probe_1.email == "VICTIM.ONLY@corp.fr"
+            assert ident_probe_1.user_id not in {
+                victim_b_user.id,
+                extra_global_victim.id,
+            }, "SCIM must never reuse a cross-tenant or global User by contact email!"
+
+            _, bearer_probe_1 = _mint_verified_and_bearer(
+                org_a.issuer,
+                "controlled-sub-a",
+                "VICTIM.ONLY@corp.fr",
+            )
+            me_probe_1 = client.get(
+                "/api/v1/me",
+                headers={"Authorization": f"Bearer {bearer_probe_1}"},
+            )
+            assert me_probe_1.status_code == 200, me_probe_1.content
+            me_raw_1 = me_probe_1.content.decode("utf-8")
+            me_json_1 = json.loads(me_raw_1)
+            assert me_json_1["id"] == str(ident_probe_1.user_id)
+            assert [i["id"] for i in me_json_1["identities"]] == [str(ident_probe_1.id)]
+            assert [o["organisation"]["id"] for o in me_json_1["organisations"]] == [str(org_a.id)]
+            for marker in forbidden_b_markers:
+                assert marker not in me_raw_1, f"Cross-tenant marker {marker!r} leaked in /me!"
+
+            # 4b. Matching `userName == email` against a Tenant-B-only victim AND controlled
+            # `userName` against identical A/B contact collision (`collision@corp.fr`) both create
+            # distinct person roots with zero cross-person or cross-tenant `/api/v1/me` disclosure!
+            scim_probe_2 = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "VICTIM.SAMENAME@corp.fr",
+                        "displayName": "Same-Name Tenant A",
+                        "active": True,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert scim_probe_2.status_code == 201, scim_probe_2.content
+            ident_probe_2 = Identity.objects.get(
+                organisation=org_a, subject="victim.samename@corp.fr"
+            )
+            assert ident_probe_2.user_id != victim2_b_user.id
+
+            _, bearer_probe_2 = _mint_verified_and_bearer(
+                org_a.issuer,
+                "victim.samename@corp.fr",
+                "victim.samename@corp.fr",
+            )
+            me_probe_2 = client.get(
+                "/api/v1/me",
+                headers={"Authorization": f"Bearer {bearer_probe_2}"},
+            )
+            assert me_probe_2.status_code == 200, me_probe_2.content
+            me_raw_2 = me_probe_2.content.decode("utf-8")
+            me_json_2 = json.loads(me_raw_2)
+            assert me_json_2["id"] == str(ident_probe_2.user_id)
+            assert [o["organisation"]["id"] for o in me_json_2["organisations"]] == [str(org_a.id)]
+            for marker in forbidden_b_markers:
+                assert marker not in me_raw_2
+
+            scim_probe_3 = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "controlled-collision-sub",
+                        "displayName": "Collision Subject",
+                        "active": True,
+                        "emails": [{"value": "COLLISION@corp.fr", "primary": True}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert scim_probe_3.status_code == 201, scim_probe_3.content
+            ident_probe_3 = Identity.objects.get(
+                organisation=org_a, subject="controlled-collision-sub"
+            )
+            assert ident_probe_3.user_id not in {
+                indep_a_user.id,
+                indep_b_user.id,
+                extra_global_collision.id,
+            }
+            _, bearer_probe_3 = _mint_verified_and_bearer(
+                org_a.issuer,
+                "controlled-collision-sub",
+                "COLLISION@corp.fr",
+            )
+            me_probe_3 = client.get(
+                "/api/v1/me",
+                headers={"Authorization": f"Bearer {bearer_probe_3}"},
+            )
+            assert me_probe_3.status_code == 200, me_probe_3.content
+            me_raw_3 = me_probe_3.content.decode("utf-8")
+            me_json_3 = json.loads(me_raw_3)
+            assert me_json_3["id"] == str(ident_probe_3.user_id)
+            assert str(indep_a_ident.id) not in me_raw_3
+            assert str(indep_a_memb.id) not in me_raw_3
+            for marker in forbidden_b_markers:
+                assert marker not in me_raw_3
+
+            # Verify pre-existing independent A person's `/api/v1/me` also never discloses B!
+            _, bearer_indep_a = _mint_verified_and_bearer(
+                org_a.issuer,
+                "indep-a-sub",
+                "collision@corp.fr",
+            )
+            me_indep_a = client.get(
+                "/api/v1/me",
+                headers={"Authorization": f"Bearer {bearer_indep_a}"},
+            )
+            assert me_indep_a.status_code == 200, me_indep_a.content
+            me_indep_a_raw = me_indep_a.content.decode("utf-8")
+            assert json.loads(me_indep_a_raw)["id"] == str(indep_a_user.id)
+            for marker in forbidden_b_markers:
+                assert marker not in me_indep_a_raw
+
+            # 4c. SAML ACS fresh-tenant JIT assertion on Tenant A when Tenant B already has
+            # `saml.victim@corp.fr` creates a distinct `User` and discloses zero Tenant B data!
+            login_saml_iso = client.get(
+                "/api/v1/ee/sso/saml/scim-tenant-a/login",
+                {"idp_id": "okta-a"},
+            ).json()
+            xml_saml_iso = _build_signed_saml_response(
+                in_response_to=str(login_saml_iso["request_id"]),
+                tenant_slug="scim-tenant-a",
+                idp_entity_id="https://idp.scim-a.test/saml2",
+                email="SAML.VICTIM@corp.fr",
+                sign_key=saml_priv_key,
+                groups=(),
+            )
+            acs_saml_iso = client.post(
+                "/api/v1/ee/sso/saml/scim-tenant-a/acs",
+                data={
+                    "SAMLResponse": base64.b64encode(xml_saml_iso.encode("utf-8")).decode("ascii"),
+                    "RelayState": str(login_saml_iso["relay_state"]),
+                },
+            )
+            assert acs_saml_iso.status_code == 200, acs_saml_iso.content
+            saml_ident_a = Identity.objects.get(
+                organisation=org_a,
+                email__iexact="saml.victim@corp.fr",
+            )
+            assert saml_ident_a.user_id != saml_victim_b_user.id, (
+                "SAML JIT must never reuse a cross-tenant User by asserted email!"
+            )
+
+            _, bearer_saml_a = _mint_verified_and_bearer(
+                org_a.issuer,
+                saml_ident_a.subject,
+                saml_ident_a.email,
+            )
+            me_saml_a = client.get(
+                "/api/v1/me",
+                headers={"Authorization": f"Bearer {bearer_saml_a}"},
+            )
+            assert me_saml_a.status_code == 200, me_saml_a.content
+            me_saml_raw = me_saml_a.content.decode("utf-8")
+            me_saml_json = json.loads(me_saml_raw)
+            assert me_saml_json["id"] == str(saml_ident_a.user_id)
+            assert [i["id"] for i in me_saml_json["identities"]] == [str(saml_ident_a.id)]
+            assert [o["organisation"]["id"] for o in me_saml_json["organisations"]] == [
+                str(org_a.id)
+            ]
+            for marker in forbidden_b_markers:
+                assert marker not in me_saml_raw, f"Cross-tenant marker {marker!r} leaked in /me!"
     finally:
         with connection.cursor() as cur:
             cur.execute("RESET ROLE")
