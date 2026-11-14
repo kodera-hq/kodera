@@ -89,6 +89,7 @@ export function emitExamples(ops: Operation[]): string {
     '  readonly idempotent: boolean',
     '  /** Whether the operation requires an `If-Match` request header — every `PATCH` today. */',
     '  readonly requiresIfMatch: boolean',
+    '  readonly conditionalWrite?: boolean',
     '}',
     '',
     'export const EXAMPLES = {',
@@ -104,6 +105,7 @@ export function emitExamples(ops: Operation[]): string {
     lines.push(`    isList: ${op.isList},`)
     lines.push(`    idempotent: ${op.idempotent},`)
     lines.push(`    requiresIfMatch: ${op.requiresIfMatch},`)
+    if (op.conditionalWrite) lines.push(`    conditionalWrite: true,`)
     lines.push('  },')
   }
   lines.push('} satisfies Record<string, OperationExample>')
@@ -236,10 +238,25 @@ export function emitHandlers(ops: Operation[], problemTypes: readonly string[]):
     )
   }
 
+  if (ops.some((op) => op.conditionalWrite)) {
+    lines.push(
+      'function answerConditional(example: OperationExample, request: Request): Response {',
+      "  const match = request.headers.get('If-Match')",
+      "  const absent = request.headers.get('If-None-Match')",
+      "  if (match === null && absent === null) return problemMissingHeader('https://kodera.io/problems/precondition-required', request)",
+      "  if ((match !== null && absent !== null) || (absent !== null && absent !== '*') || match === '') return problemMissingHeader('https://kodera.io/problems/validation-error', request)",
+      "  return answer(absent === '*' ? { ...example, status: 201 } : example)",
+      '}',
+      ''
+    )
+  }
+
   lines.push('export const handlers: HttpHandler[] = [')
 
   for (const op of ops) {
-    const url = `\`\${BASE}${toMswPath(op.path)}\``
+    // `quote`, not a hand-written template literal: the path is a value from the
+    // contract, and only a real string literal keeps it out of the program text.
+    const url = `BASE + ${quote(toMswPath(op.path))}`
     const example = `EXAMPLES[${quote(op.operationId)}]`
     if (op.operationId === 'getMe') {
       lines.push(
@@ -248,6 +265,10 @@ export function emitHandlers(ops: Operation[], problemTypes: readonly string[]):
     } else if (op.idempotent) {
       lines.push(
         `  http.${op.method}(${url}, ({ request }) => answerIdempotent(${example}, request)),`
+      )
+    } else if (op.conditionalWrite) {
+      lines.push(
+        `  http.${op.method}(${url}, ({ request }) => answerConditional(${example}, request)),`
       )
     } else if (op.requiresIfMatch && needsIfMatch && missingIfMatch) {
       lines.push(

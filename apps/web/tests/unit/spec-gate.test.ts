@@ -17,6 +17,13 @@ import { describe, expect, it } from 'vitest'
 // path on disk, and the child process below would be given a cwd that does not exist.
 const root = join(import.meta.dirname, '..', '..')
 
+/**
+ * Escapes every regular-expression metacharacter (including backslashes) in one pass.
+ */
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 describe('npm run spec:check', () => {
   it('reports the acceptance-test names it found against the real specifications', () => {
     const output = execFileSync('python3', ['scripts/check-spec-tests.py'], {
@@ -62,7 +69,7 @@ describe('npm run spec:check', () => {
     // The script already exits 1 on a gated miss, which `execFileSync` throws on; this
     // is the same fact read from the per-file lines, so the failure names the spec.
     for (const spec of allowlist.requireAll) {
-      const line = output.match(new RegExp(`^${spec.replace(/\./g, '\\.')}: (\\d+)/(\\d+)`, 'm'))
+      const line = output.match(new RegExp(`^${escapeForRegExp(spec)}: (\\d+)/(\\d+)`, 'm'))
       if (!line) throw new Error(`no per-file line for ${spec} in the gate's output:\n${output}`)
       const [, specPresent, specTotal] = line
       expect(Number(specTotal)).toBeGreaterThan(0)

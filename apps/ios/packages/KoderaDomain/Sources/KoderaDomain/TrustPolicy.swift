@@ -208,7 +208,7 @@ public enum TrustPolicy {
         return bytes.allSatisfy { (97...122).contains($0) || (48...57).contains($0) || $0 == 45 }
     }
 
-    static func validDNSName(_ value: String) -> Bool {
+    public static func validDNSName(_ value: String) -> Bool {
         let bytes = Array(value.utf8)
         guard !bytes.isEmpty, bytes.count <= 253,
               bytes.contains(where: { (97...122).contains($0) }) else { return false }

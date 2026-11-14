@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.43.0
+  version: 0.44.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -1828,6 +1828,31 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/InvitationBatchRequest' }
       responses:
+        '402':
+          description: Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned
+            limit and reserved usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          description: Quota configuration, reservation or enforcement is unavailable; no write is admitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '201':
           description: Per-row outcome of the batch.
           headers:
@@ -2781,31 +2806,62 @@ paths:
 
   /invoices/{invoice_id}/download:
     parameters:
-      - $ref: '#/components/parameters/InvoiceId'
+    - $ref: '#/components/parameters/InvoiceId'
     get:
       operationId: getInvoiceDownloadLink
       summary: Get a short-lived download link for the invoice PDF
-      description: |
-        The API does not proxy the PDF: it returns a pre-signed Object Storage URL valid for a few
+      description: 'The API does not proxy the PDF: it returns a pre-signed Object Storage URL valid for
+        a few
+
         minutes, bound to the requesting subject in the audit event. The console opens it in a new
+
         tab. The link is single organisation, single invoice, and expires.
-      tags: [Billing]
-      x-kodera-scope: 'invoice:read'
+
+        '
+      tags:
+      - Billing
+      x-kodera-scope: invoice:read
       x-kodera-authz:
-        roles: [org_owner, org_billing, org_admin, staff_operator, staff_support]
+        roles:
+        - org_owner
+        - org_billing
+        - org_admin
+        - staff_operator
+        - staff_support
       responses:
         '200':
           description: A short-lived link.
           headers:
-            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DownloadLink' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '500': { $ref: '#/components/responses/InternalError' }
+              schema:
+                $ref: '#/components/schemas/DownloadLink'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+      parameters:
+      - name: format
+        in: query
+        required: false
+        description: PDF/A-3 with embedded Factur-X XML, or the standalone XML from the same immutable snapshot.
+          Omitted format preserves the PDF default.
+        schema:
+          type: string
+          enum:
+          - pdf
+          - xml
+          default: pdf
 
   /invoices/{invoice_id}/payment-link:
     parameters:
@@ -5929,6 +5985,31 @@ paths:
       parameters:
       - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '402':
+          description: Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned
+            limit and reserved usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          description: Quota configuration, reservation or enforcement is unavailable; no write is admitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '200':
           description: Successful operation.
           headers:
@@ -5980,6 +6061,31 @@ paths:
       - $ref: '#/components/parameters/OrganisationId'
       - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '402':
+          description: Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned
+            limit and reserved usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          description: Quota configuration, reservation or enforcement is unavailable; no write is admitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '201':
           description: Successful operation.
           headers:
@@ -6032,6 +6138,31 @@ paths:
       - $ref: '#/components/parameters/AttachmentId'
       - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '402':
+          description: Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned
+            limit and reserved usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          description: Quota configuration, reservation or enforcement is unavailable; no write is admitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '200':
           description: Successful operation.
           headers:
@@ -6459,6 +6590,31 @@ paths:
       - $ref: '#/components/parameters/OrganisationId'
       - $ref: '#/components/parameters/IdempotencyKey'
       responses:
+        '402':
+          description: Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned
+            limit and reserved usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          description: Quota configuration, reservation or enforcement is unavailable; no write is admitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '201':
           description: Successful operation.
           headers:
@@ -6783,6 +6939,1420 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimited'
+
+  /organisations/{organisation_id}/workspace/collections:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    get:
+      operationId: listWorkspaceCollections
+      summary: List visible workspace collections
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: List visible workspace collections.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                title: WorkspaceCollectionPage
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/WorkspaceCollection'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+    post:
+      operationId: createWorkspaceCollection
+      summary: Create a workspace collection
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '402':
+          description: Seat or page quota exhausted (subscription-required). Quota metadata reports the server-owned
+            limit and reserved usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          description: Quota configuration, reservation or enforcement is unavailable; no write is admitted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '201':
+          description: Create a workspace collection.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollection'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCollectionRequest'
+
+  /organisations/{organisation_id}/workspace/collections/{collection_id}:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    - name: collection_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getWorkspaceCollection
+      summary: Get a workspace collection
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get a workspace collection.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollection'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      operationId: updateWorkspaceCollection
+      summary: Update a workspace collection
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Update a workspace collection.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollection'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+      parameters:
+      - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCollectionPatch'
+    delete:
+      operationId: deleteWorkspaceCollection
+      summary: Remove a collection or its row membership
+      description: Editors only; check current visibility and document ACLs under the workspace lock. Remove
+        collection membership and revoke its query cursors. This does not delete a document or bypass its
+        independent deletion policy.
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '204':
+          description: Remove a collection or its row membership.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /organisations/{organisation_id}/workspace/collections/{collection_id}/query:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    - name: collection_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: queryWorkspaceCollection
+      summary: Query visible collection rows
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Query visible collection rows.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                title: WorkspaceCollectionRows
+                allOf:
+                - $ref: '#/components/schemas/CursorPage'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/WorkspaceCollectionRow'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionQuery'
+
+  /organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    - name: collection_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - $ref: '#/components/parameters/DocumentId'
+    put:
+      operationId: putWorkspaceCollectionRow
+      summary: Replace typed collection row values
+      description: 'Current collection editor and document editor permissions are both required. Replace an
+        existing row with If-Match from its GET ETag; create an absent row with If-None-Match: *. Exactly
+        one header is required (428 neither,422 both/invalid;412 stale tag or incompatible row existence).
+        If-Match: * never creates a row. No cross-workspace references are accepted.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '201':
+          description: 'Collection row membership created; If-None-Match: * succeeded.'
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollectionRow'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '200':
+          description: Replace typed collection row values.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollectionRow'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - name: If-Match
+        in: header
+        required: false
+        description: 'Existing row only: its ETag from GET. Mutually exclusive with If-None-Match. Missing
+          row or stale tag is412.'
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - name: If-None-Match
+        in: header
+        required: false
+        description: Initial row creation only. Send *; an existing row is412. Mutually exclusive with If-Match.
+        schema:
+          type: string
+          const: '*'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCollectionRowRequest'
+      x-kodera-one-of-preconditions: true
+
+    get:
+      operationId: getWorkspaceCollectionRow
+      summary: Get a visible collection row
+      description: Read only when both collection and document are currently visible. Return the current
+        row ETag for conditional replacement; collection editor and document editor permissions are both
+        required on writes.
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get a visible collection row.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceCollectionRow'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteWorkspaceCollectionRow
+      summary: Remove a collection or its row membership
+      description: Editors only; check current visibility and document ACLs under the workspace lock. Remove
+        collection membership and revoke its query cursors. This does not delete a document or bypass its
+        independent deletion policy.
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_collection:delete
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '204':
+          description: Remove a collection or its row membership.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /organisations/{organisation_id}/workspace/quotas/usage:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    get:
+      operationId: getWorkspaceQuotaUsage
+      summary: Get workspace quota usage
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_quota:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get workspace quota usage.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceQuotaUsage'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /organisations/{organisation_id}/workspace/quotas/limits:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    get:
+      operationId: getWorkspaceQuotaLimits
+      summary: Get workspace quota limits
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: workspace_quota:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get workspace quota limits.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceQuotaLimits'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /credit-notes/{credit_note_id}/download:
+    parameters:
+    - $ref: '#/components/parameters/CreditNoteId'
+    get:
+      operationId: getCreditNoteDownloadLink
+      summary: Get a credit-note PDF or XML download link
+      description: Short-lived organisation-bound link to an immutable credit note, type code 381, number
+        AV-<series>-<YYYY>-<NNNNN>. Audit issuance against the requesting subject. Return 409 until the
+        requested artifact is verified; no provider billing document is substituted.
+      tags:
+      - Billing
+      x-kodera-scope: invoice:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - staff_operator
+        - staff_support
+      responses:
+        '200':
+          description: Get a credit-note PDF or XML download link.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadLink'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: format
+        in: query
+        required: false
+        description: PDF/A-3 with embedded Factur-X XML, or the standalone XML from the same immutable snapshot.
+          Omitted format preserves the PDF default.
+        schema:
+          type: string
+          enum:
+          - pdf
+          - xml
+          default: pdf
+
+  /organisations/{organisation_id}/billing/vat-status:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    get:
+      operationId: getBillingVatStatus
+      summary: Get persisted VIES VAT status
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Billing
+      x-kodera-scope: billing_vat:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+      responses:
+        '200':
+          description: Get persisted VIES VAT status.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingVatStatus'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: validateBillingVat
+      summary: Validate and persist VIES VAT status
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Billing
+      x-kodera-scope: billing_vat:update
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_billing
+      responses:
+        '200':
+          description: Validate and persist VIES VAT status.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingVatStatus'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BillingVatValidationRequest'
+
+  /organisations/{organisation_id}/workspace/privacy/exports:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    post:
+      operationId: requestWorkspaceExport
+      summary: Request workspace export
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_workspace:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+      responses:
+        '202':
+          description: Request workspace export.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyWorkspaceExport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacyExportRequest'
+
+  /organisations/{organisation_id}/workspace/privacy/exports/{request_id}:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    - name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getWorkspaceExport
+      summary: Get workspace export lifecycle
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_workspace:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+      responses:
+        '200':
+          description: Get workspace export lifecycle.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyWorkspaceExport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    - name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getWorkspaceExportDownloadLink
+      summary: Get workspace export download link
+      description: Recheck requester identity and current scope before issuing a short-lived signed archive
+        URL. Only ready, unexpired exports can download (409 otherwise); never log the URL. Archive SHA-256
+        and signed manifest provide integrity; HTTP range requests resume against the same immutable artifact.
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_workspace:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+      responses:
+        '200':
+          description: Get workspace export download link.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadLink'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /organisations/{organisation_id}/workspace/privacy/deletions:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    post:
+      operationId: requestWorkspaceDeletion
+      summary: Request workspace deletion
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_workspace:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+      responses:
+        '202':
+          description: Request workspace deletion.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyWorkspaceDeletion'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacyDeletionRequest'
+
+  /organisations/{organisation_id}/workspace/privacy/deletions/{request_id}:
+    parameters:
+    - $ref: '#/components/parameters/OrganisationId'
+    - name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getWorkspaceDeletion
+      summary: Get workspace deletion lifecycle
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_workspace:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+      responses:
+        '200':
+          description: Get workspace deletion lifecycle.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyWorkspaceDeletion'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /me/privacy/exports:
+    parameters: []
+    post:
+      operationId: requestAccountExport
+      summary: Request account export
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_account:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '202':
+          description: Request account export.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyAccountExport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacyExportRequest'
+
+  /me/privacy/exports/{request_id}:
+    parameters:
+    - name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getAccountExport
+      summary: Get account export lifecycle
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_account:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get account export lifecycle.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyAccountExport'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /me/privacy/exports/{request_id}/download:
+    parameters:
+    - name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getAccountExportDownloadLink
+      summary: Get account export download link
+      description: Recheck requester identity and current scope before issuing a short-lived signed archive
+        URL. Only ready, unexpired exports can download (409 otherwise); never log the URL. Archive SHA-256
+        and signed manifest provide integrity; HTTP range requests resume against the same immutable artifact.
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_account:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get account export download link.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadLink'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /me/privacy/deletions:
+    parameters: []
+    post:
+      operationId: requestAccountDeletion
+      summary: Request account deletion
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_account:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '202':
+          description: Request account deletion.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyAccountDeletion'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacyDeletionRequest'
+
+  /me/privacy/deletions/{request_id}:
+    parameters:
+    - name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getAccountDeletion
+      summary: Get account deletion lifecycle
+      description: 'Planned Wave 4 surface. Resolve organisation from the verified issuer and recheck active
+        membership and resource visibility on every request. Responses use Cache-Control: no-store; mutations
+        are audited. This declaration does not assert a deployed handler.'
+      tags:
+      - Workspace
+      x-kodera-scope: privacy_account:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      responses:
+        '200':
+          description: Get account deletion lifecycle.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacyAccountDeletion'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Required source, private storage, signing, authority or lifecycle proof is unavailable.
+            No incomplete export or unproved deletion is reported successful.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
 components:
   x-audit-action-registry:
@@ -8618,6 +10188,25 @@ components:
           type: string
           description: Same value as the `X-Request-Id` response header.
           maxLength: 64
+        quota_key:
+          type: string
+          enum:
+          - seats
+          - mediaBytes
+          - pages
+          - snapshotBytes
+        limit:
+          type: integer
+          minimum: 0
+        used:
+          type: integer
+          minimum: 0
+        requested:
+          type: integer
+          minimum: 0
+        remaining:
+          type: integer
+          minimum: 0
         errors:
           type: array
           description: Field-level errors, present on `malformed-request` and on `validation-error`.
@@ -11190,6 +12779,16 @@ components:
         credit_note_id: { type: [string, 'null'], format: uuid, description: 'The credit note that credits the invoice in full (`getCreditNote`), once it is `credited`; null otherwise.' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        facturx_type_code:
+          type: string
+          const: '380'
+        xml_available:
+          type: boolean
+        snapshot_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        artifacts:
+          $ref: '#/components/schemas/BillingArtifacts'
       examples:
         - id: d4e5f6a7-b8c9-4d0e-8f1a-2b3c4d5e6f70
           organisation_id: 6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f
@@ -11242,6 +12841,16 @@ components:
         total_excl_vat: { $ref: '#/components/schemas/Money' }
         vat_amount: { $ref: '#/components/schemas/Money' }
         total_incl_vat: { $ref: '#/components/schemas/Money' }
+        facturx_type_code:
+          type: string
+          const: '381'
+        xml_available:
+          type: boolean
+        snapshot_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        artifacts:
+          $ref: '#/components/schemas/BillingArtifacts'
       examples:
         - id: 7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d
           organisation_id: 6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f
@@ -13747,3 +15356,1220 @@ components:
           can_remove: false
           blocked_reason: last_owner
           invitation_id: null
+
+    CollectionSelectOption:
+      type: object
+      title: CollectionSelectOption
+      additionalProperties: false
+      required:
+      - id
+      - label
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+      examples:
+      - id: todo
+        label: To do
+    CollectionTextProperty:
+      type: object
+      title: CollectionTextProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: text
+    CollectionTextValue:
+      type: object
+      title: CollectionTextValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: text
+        value:
+          type:
+          - string
+          - 'null'
+          maxLength: 10000
+    CollectionNumberProperty:
+      type: object
+      title: CollectionNumberProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: number
+    CollectionNumberValue:
+      type: object
+      title: CollectionNumberValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: number
+        value:
+          type:
+          - number
+          - 'null'
+    CollectionCheckboxProperty:
+      type: object
+      title: CollectionCheckboxProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: checkbox
+    CollectionCheckboxValue:
+      type: object
+      title: CollectionCheckboxValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: checkbox
+        value:
+          type: boolean
+    CollectionDateProperty:
+      type: object
+      title: CollectionDateProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: date
+    CollectionDateValue:
+      type: object
+      title: CollectionDateValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: date
+        value:
+          type:
+          - string
+          - 'null'
+          format: date
+    CollectionUrlProperty:
+      type: object
+      title: CollectionUrlProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: url
+    CollectionUrlValue:
+      type: object
+      title: CollectionUrlValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: url
+        value:
+          type:
+          - string
+          - 'null'
+          format: uri
+          maxLength: 2048
+    CollectionSelectProperty:
+      type: object
+      title: CollectionSelectProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      - options
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: select
+        options:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CollectionSelectOption'
+    CollectionSelectValue:
+      type: object
+      title: CollectionSelectValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: select
+        value:
+          type:
+          - string
+          - 'null'
+          maxLength: 64
+    CollectionMultiSelectProperty:
+      type: object
+      title: CollectionMultiSelectProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      - options
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: multi_select
+        options:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CollectionSelectOption'
+    CollectionMultiSelectValue:
+      type: object
+      title: CollectionMultiSelectValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: multi_select
+        value:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+    CollectionPersonProperty:
+      type: object
+      title: CollectionPersonProperty
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          type: string
+          const: person
+    CollectionPersonValue:
+      type: object
+      title: CollectionPersonValue
+      additionalProperties: false
+      required:
+      - type
+      - value
+      properties:
+        type:
+          type: string
+          const: person
+        value:
+          type:
+          - string
+          - 'null'
+          format: uuid
+    CollectionProperty:
+      title: CollectionProperty
+      oneOf:
+      - $ref: '#/components/schemas/CollectionTextProperty'
+      - $ref: '#/components/schemas/CollectionNumberProperty'
+      - $ref: '#/components/schemas/CollectionCheckboxProperty'
+      - $ref: '#/components/schemas/CollectionDateProperty'
+      - $ref: '#/components/schemas/CollectionUrlProperty'
+      - $ref: '#/components/schemas/CollectionSelectProperty'
+      - $ref: '#/components/schemas/CollectionMultiSelectProperty'
+      - $ref: '#/components/schemas/CollectionPersonProperty'
+      discriminator:
+        propertyName: type
+      description: Stable property IDs are unique per collection. Select option IDs are unique and stored
+        values must reference declared options; person values name current visible workspace memberships.
+    CollectionValue:
+      title: CollectionValue
+      oneOf:
+      - $ref: '#/components/schemas/CollectionTextValue'
+      - $ref: '#/components/schemas/CollectionNumberValue'
+      - $ref: '#/components/schemas/CollectionCheckboxValue'
+      - $ref: '#/components/schemas/CollectionDateValue'
+      - $ref: '#/components/schemas/CollectionUrlValue'
+      - $ref: '#/components/schemas/CollectionSelectValue'
+      - $ref: '#/components/schemas/CollectionMultiSelectValue'
+      - $ref: '#/components/schemas/CollectionPersonValue'
+      discriminator:
+        propertyName: type
+      description: The discriminator must match the collection property definition. Unknown property IDs and
+        type mismatches are 422; values never select database fields or SQL expressions.
+    CollectionSort:
+      type: object
+      title: CollectionSort
+      additionalProperties: false
+      required:
+      - propertyId
+      - direction
+      properties:
+        propertyId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        direction:
+          type: string
+          enum:
+          - asc
+          - desc
+      examples:
+      - propertyId: title
+        direction: asc
+    CollectionFilter:
+      type: object
+      title: CollectionFilter
+      additionalProperties: false
+      required:
+      - propertyId
+      - operator
+      properties:
+        propertyId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        operator:
+          type: string
+          enum:
+          - eq
+          - ne
+          - contains
+          - lt
+          - lte
+          - gt
+          - gte
+          - is_empty
+          - is_not_empty
+        value:
+          $ref: '#/components/schemas/CollectionValue'
+      description: No recursive expressions, raw SQL, dotted field traversal or unbounded regular expressions.
+        Validate operator/value against the declared property type. Empty operators omit value; other operators
+        require it.
+    CollectionTableView:
+      type: object
+      title: CollectionTableView
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      - columns
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        filters:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CollectionFilter'
+        sorts:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CollectionSort'
+        type:
+          type: string
+          const: table
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+    CollectionBoardView:
+      type: object
+      title: CollectionBoardView
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      - groupByPropertyId
+      - showEmptyGroups
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        filters:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CollectionFilter'
+        sorts:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CollectionSort'
+        type:
+          type: string
+          const: board
+        groupByPropertyId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        showEmptyGroups:
+          type: boolean
+    CollectionListView:
+      type: object
+      title: CollectionListView
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - type
+      - titlePropertyId
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        filters:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CollectionFilter'
+        sorts:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CollectionSort'
+        type:
+          type: string
+          const: list
+        titlePropertyId:
+          type: string
+          minLength: 1
+          maxLength: 64
+    CollectionView:
+      title: CollectionView
+      oneOf:
+      - $ref: '#/components/schemas/CollectionTableView'
+      - $ref: '#/components/schemas/CollectionBoardView'
+      - $ref: '#/components/schemas/CollectionListView'
+      discriminator:
+        propertyName: type
+      description: Only declared property IDs may be referenced. Board grouping requires a select property;
+        table columns and list title fields must be visible to the caller.
+    WorkspaceCollection:
+      type: object
+      title: WorkspaceCollection
+      additionalProperties: false
+      required:
+      - id
+      - title
+      - properties
+      - views
+      - role
+      - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        properties:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CollectionProperty'
+        views:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CollectionView'
+        role:
+          type: string
+          enum:
+          - editor
+          - viewer
+        updatedAt:
+          type: string
+          format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        title: Project tasks
+        properties:
+        - id: status
+          name: Status
+          type: select
+          options:
+          - id: todo
+            label: To do
+        views:
+        - id: board
+          name: Board
+          type: board
+          groupByPropertyId: status
+          showEmptyGroups: true
+        role: editor
+        updatedAt: '2026-11-13T12:00:00Z'
+    WorkspaceCollectionRequest:
+      type: object
+      title: WorkspaceCollectionRequest
+      additionalProperties: false
+      required:
+      - title
+      - properties
+      - views
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        properties:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CollectionProperty'
+        views:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CollectionView'
+      description: Editors only. Enforce unique property/view IDs and cross-references transactionally. No
+        client-supplied organisation, row ID, ACL or quota counter is accepted.
+    WorkspaceCollectionPatch:
+      type: object
+      title: WorkspaceCollectionPatch
+      additionalProperties: false
+      required: []
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        properties:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CollectionProperty'
+        views:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/CollectionView'
+      description: At least one field is required. Reject removal or incompatible change of populated properties
+        with 409; validate every saved view against the resulting schema.
+      minProperties: 1
+    WorkspaceCollectionRow:
+      type: object
+      title: WorkspaceCollectionRow
+      additionalProperties: false
+      required:
+      - documentId
+      - values
+      - updatedAt
+      properties:
+        documentId:
+          type: string
+          format: uuid
+        values:
+          type: object
+          maxProperties: 100
+          additionalProperties:
+            $ref: '#/components/schemas/CollectionValue'
+        updatedAt:
+          type: string
+          format: date-time
+      examples:
+      - documentId: 00000000-0000-7000-8000-000000000001
+        values:
+          status:
+            type: select
+            value: todo
+        updatedAt: '2026-11-13T12:00:00Z'
+    WorkspaceCollectionRowRequest:
+      type: object
+      title: WorkspaceCollectionRowRequest
+      additionalProperties: false
+      required:
+      - values
+      properties:
+        values:
+          type: object
+          maxProperties: 100
+          additionalProperties:
+            $ref: '#/components/schemas/CollectionValue'
+      description: Replace typed properties of this collection/document pair. Both must belong to this workspace
+        and the caller must currently edit the document. Unknown, cross-workspace or invisible documents return
+        404.
+    CollectionQuery:
+      type: object
+      title: CollectionQuery
+      additionalProperties: false
+      required: []
+      properties:
+        viewId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        filters:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/CollectionFilter'
+        sorts:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/CollectionSort'
+      description: Bounded conjunction of filters. Stable final sort key is document ID. Opaque signed cursor
+        binds collection, query fingerprint, current membership and ordering; changed query or tampering is
+        400. Visibility is rechecked per row and page.
+    WorkspaceQuotaCounters:
+      type: object
+      title: WorkspaceQuotaCounters
+      additionalProperties: false
+      required:
+      - seats
+      - mediaBytes
+      - pages
+      properties:
+        seats:
+          type: integer
+          minimum: 0
+        mediaBytes:
+          type: integer
+          minimum: 0
+        pages:
+          type: integer
+          minimum: 0
+      examples:
+      - seats: 4
+        mediaBytes: 1024
+        pages: 12
+    WorkspaceQuotaLimits:
+      type: object
+      title: WorkspaceQuotaLimits
+      additionalProperties: false
+      required:
+      - seats
+      - mediaBytes
+      - pages
+      properties:
+        seats:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        mediaBytes:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+        pages:
+          type:
+          - integer
+          - 'null'
+          minimum: 0
+      examples:
+      - seats: 10
+        mediaBytes: 1073741824
+        pages: 100
+      description: Null means explicitly unlimited in the server-owned offer snapshot. Missing configuration
+        never becomes unlimited. Counts are active seats plus outstanding reserved invitations, committed
+        media plus upload reservations, and active pages.
+    WorkspaceQuotaUsage:
+      type: object
+      title: WorkspaceQuotaUsage
+      additionalProperties: false
+      required:
+      - usage
+      - limits
+      - measuredAt
+      properties:
+        usage:
+          $ref: '#/components/schemas/WorkspaceQuotaCounters'
+        limits:
+          $ref: '#/components/schemas/WorkspaceQuotaLimits'
+        measuredAt:
+          type: string
+          format: date-time
+      examples:
+      - usage:
+          seats: 4
+          mediaBytes: 1024
+          pages: 12
+        limits:
+          seats: 10
+          mediaBytes: 1073741824
+          pages: 100
+        measuredAt: '2026-11-13T12:00:00Z'
+      description: Observation only. Writes reserve quota under the same workspace lock as the mutation; never
+        trust this response or client counters as authorization. Seat/page exhaustion is 402, media bytes
+        413, request throttling 429 with Retry-After. Configuration/enforcement failure is 503, never a successful
+        uncharged write.
+    BillingArtifact:
+      type: object
+      title: BillingArtifact
+      additionalProperties: false
+      required:
+      - content_type
+      - filename
+      - sha256
+      - size_bytes
+      properties:
+        content_type:
+          type: string
+          enum:
+          - application/pdf
+          - application/xml
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 255
+        sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        size_bytes:
+          type: integer
+          minimum: 1
+      description: Digest and size identify bytes built solely from an immutable Core billing snapshot; no
+        mutable catalogue, organisation profile or provider invoice contributes to these bytes.
+    BillingArtifacts:
+      type: object
+      title: BillingArtifacts
+      additionalProperties: false
+      required: []
+      properties:
+        pdf:
+          $ref: '#/components/schemas/BillingArtifact'
+        xml:
+          $ref: '#/components/schemas/BillingArtifact'
+      description: PDF/A-3 embeds factur-x.xml; standalone XML is Factur-X EN 16931. Presence means generated
+        and verified, never an unsupported conformance claim. Type code is 380 for invoices and 381 for credit
+        notes.
+    BillingVatStatus:
+      type: object
+      title: BillingVatStatus
+      additionalProperties: false
+      required:
+      - vat_number
+      - country_code
+      - status
+      - checked_at
+      - next_check_at
+      - evidence_id
+      properties:
+        vat_number:
+          type:
+          - string
+          - 'null'
+          maxLength: 32
+        country_code:
+          type:
+          - string
+          - 'null'
+          pattern: ^[A-Z]{2}$
+        status:
+          type: string
+          enum:
+          - not_checked
+          - valid
+          - invalid
+          - unavailable
+        checked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        next_check_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        evidence_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      examples:
+      - vat_number: null
+        country_code: null
+        status: not_checked
+        checked_at: null
+        next_check_at: null
+        evidence_id: null
+      description: Persisted VIES consultation, not a live assertion or a tax exemption by itself. Unavailable
+        never means valid. Snapshot VAT treatment is frozen on invoice issuance; later consultations cannot
+        rewrite an issued invoice. No raw upstream response or customer address is disclosed.
+    BillingVatValidationRequest:
+      type: object
+      title: BillingVatValidationRequest
+      additionalProperties: false
+      required:
+      - vat_number
+      - country_code
+      properties:
+        vat_number:
+          type: string
+          minLength: 1
+          maxLength: 32
+        country_code:
+          type: string
+          pattern: ^[A-Z]{2}$
+      description: Normalize and validate the country-specific number before bounded VIES consultation. Persist
+        valid, invalid and unavailable outcomes with evidence and retry time; never silently grant reverse-charge
+        treatment on a timeout.
+    PrivacyExportRequest:
+      type: object
+      title: PrivacyExportRequest
+      additionalProperties: false
+      required:
+      - format
+      properties:
+        format:
+          type: string
+          const: zip
+        includeMedia:
+          type: boolean
+          default: true
+      description: Export only currently authorized data. Account scope exports the person's own data and
+        never every workspace record. Signed archive manifest binds requester, scope, snapshot, entries, checksums
+        and expiry. Worker resumes from persisted bounded checkpoints; retries do not duplicate entries.
+    PrivacyDeletionRequest:
+      type: object
+      title: PrivacyDeletionRequest
+      additionalProperties: false
+      required:
+      - confirmation
+      properties:
+        confirmation:
+          type: string
+          const: delete
+        reason:
+          type: string
+          maxLength: 500
+      description: Explicit irreversible intent; require recent verified reauthentication server-side. Revoke
+        sessions, tickets and uploads before purge. Retain only statutory accounting snapshots and minimal
+        lawful proof until purgeAfter. Legal hold is an explicit blocked lifecycle, never successful deletion.
+    PrivacyWorkspaceExport:
+      type: object
+      title: PrivacyWorkspaceExport
+      additionalProperties: false
+      required:
+      - id
+      - scope
+      - kind
+      - status
+      - requestedAt
+      - updatedAt
+      - expiresAt
+      - purgeAfter
+      - failureCode
+      properties:
+        id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          const: workspace
+        kind:
+          type: string
+          const: export
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - ready
+          - failed
+          - expired
+          - cancelled
+        requestedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        purgeAfter:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        failureCode:
+          type:
+          - string
+          - 'null'
+          enum:
+          - build_failed
+          - storage_unavailable
+          - identity_conflict
+          - legal_hold
+          - null
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        scope: workspace
+        kind: export
+        status: queued
+        requestedAt: '2026-11-13T12:00:00Z'
+        updatedAt: '2026-11-13T12:00:00Z'
+        expiresAt: null
+        purgeAfter: null
+        failureCode: null
+      description: 'Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed).
+        Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes
+        durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace
+        scope requires its current owner. Last-owner account deletion requires a prior ownership transfer.
+        Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal
+        holds reported explicitly. No active content is retained merely because accounting must be retained.'
+    PrivacyWorkspaceDeletion:
+      type: object
+      title: PrivacyWorkspaceDeletion
+      additionalProperties: false
+      required:
+      - id
+      - scope
+      - kind
+      - status
+      - requestedAt
+      - updatedAt
+      - expiresAt
+      - purgeAfter
+      - failureCode
+      properties:
+        id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          const: workspace
+        kind:
+          type: string
+          const: deletion
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - retention_pending
+          - completed
+          - failed
+          - cancelled
+        requestedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        purgeAfter:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        failureCode:
+          type:
+          - string
+          - 'null'
+          enum:
+          - build_failed
+          - storage_unavailable
+          - identity_conflict
+          - legal_hold
+          - null
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        scope: workspace
+        kind: deletion
+        status: queued
+        requestedAt: '2026-11-13T12:00:00Z'
+        updatedAt: '2026-11-13T12:00:00Z'
+        expiresAt: null
+        purgeAfter: null
+        failureCode: null
+      description: 'Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed).
+        Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes
+        durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace
+        scope requires its current owner. Last-owner account deletion requires a prior ownership transfer.
+        Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal
+        holds reported explicitly. No active content is retained merely because accounting must be retained.'
+    PrivacyAccountExport:
+      type: object
+      title: PrivacyAccountExport
+      additionalProperties: false
+      required:
+      - id
+      - scope
+      - kind
+      - status
+      - requestedAt
+      - updatedAt
+      - expiresAt
+      - purgeAfter
+      - failureCode
+      properties:
+        id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          const: account
+        kind:
+          type: string
+          const: export
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - ready
+          - failed
+          - expired
+          - cancelled
+        requestedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        purgeAfter:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        failureCode:
+          type:
+          - string
+          - 'null'
+          enum:
+          - build_failed
+          - storage_unavailable
+          - identity_conflict
+          - legal_hold
+          - null
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        scope: account
+        kind: export
+        status: queued
+        requestedAt: '2026-11-13T12:00:00Z'
+        updatedAt: '2026-11-13T12:00:00Z'
+        expiresAt: null
+        purgeAfter: null
+        failureCode: null
+      description: 'Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed).
+        Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes
+        durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace
+        scope requires its current owner. Last-owner account deletion requires a prior ownership transfer.
+        Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal
+        holds reported explicitly. No active content is retained merely because accounting must be retained.'
+    PrivacyAccountDeletion:
+      type: object
+      title: PrivacyAccountDeletion
+      additionalProperties: false
+      required:
+      - id
+      - scope
+      - kind
+      - status
+      - requestedAt
+      - updatedAt
+      - expiresAt
+      - purgeAfter
+      - failureCode
+      properties:
+        id:
+          type: string
+          format: uuid
+        scope:
+          type: string
+          const: account
+        kind:
+          type: string
+          const: deletion
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - retention_pending
+          - completed
+          - failed
+          - cancelled
+        requestedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        purgeAfter:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        failureCode:
+          type:
+          - string
+          - 'null'
+          enum:
+          - build_failed
+          - storage_unavailable
+          - identity_conflict
+          - legal_hold
+          - null
+      examples:
+      - id: 00000000-0000-7000-8000-000000000001
+        scope: account
+        kind: deletion
+        status: queued
+        requestedAt: '2026-11-13T12:00:00Z'
+        updatedAt: '2026-11-13T12:00:00Z'
+        expiresAt: null
+        purgeAfter: null
+        failureCode: null
+      description: 'Durable restart-safe lifecycle. Export: queued -> running -> ready -> expired (or failed).
+        Deletion: queued -> running -> retention_pending -> completed (or failed); completed never precedes
+        durable purge proof. Account scope binds the authenticated person, never a body subject ID. Workspace
+        scope requires its current owner. Last-owner account deletion requires a prior ownership transfer.
+        Accounting records remain access-restricted until their statutory ten-year purgeAfter, with legal
+        holds reported explicitly. No active content is retained merely because accounting must be retained.'

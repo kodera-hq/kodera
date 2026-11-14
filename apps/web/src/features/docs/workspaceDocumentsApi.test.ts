@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
+import * as apiClient from '@/api/client'
 import { ApiProblem } from '@/api/client'
 import { maySeedFromMarkdown } from './collabSession'
-import { updateWorkspaceDocumentMetadata } from './workspaceDocumentsApi'
+import {
+  isCollectionPreconditionFailedError,
+  putWorkspaceCollectionRow,
+  updateWorkspaceDocumentMetadata,
+} from './workspaceDocumentsApi'
 
 const ORG = crypto.randomUUID()
 const DOC = crypto.randomUUID()
@@ -40,5 +45,118 @@ describe('seeding the block editor from Markdown', () => {
   it('seeds a local document, and a server document whose server declined collaboration', () => {
     expect(maySeedFromMarkdown(false, 'connecting')).toBe(true)
     expect(maySeedFromMarkdown(true, 'local')).toBe(true)
+  })
+})
+
+describe('Core 0.44.0 conditional collection row writes', () => {
+  it('sends If-Match on updates, If-None-Match: * on creates, and refuses wildcard or empty If-Match', async () => {
+    const putMock = vi.fn().mockResolvedValue({
+      data: {
+        documentId: DOC,
+        values: { status: { type: 'select', value: 'done' } },
+        updatedAt: '2026-11-13T12:00:00Z',
+      },
+      response: new Response(null, { status: 200, headers: { ETag: '"row-v2"' } }),
+    })
+    const clientSpy = vi
+      .spyOn(apiClient, 'coreApi')
+      .mockReturnValue({ PUT: putMock } as unknown as ReturnType<typeof apiClient.coreApi>)
+
+    try {
+      await expect(
+        putWorkspaceCollectionRow(
+          ORG,
+          'col-1',
+          DOC,
+          { status: { kind: 'status', value: 'done' } },
+          { mode: 'update', ifMatch: '*' }
+        )
+      ).rejects.toThrow(RangeError)
+
+      await expect(
+        putWorkspaceCollectionRow(
+          ORG,
+          'col-1',
+          DOC,
+          { status: { kind: 'status', value: 'done' } },
+          { mode: 'update', ifMatch: '   ' }
+        )
+      ).rejects.toThrow(RangeError)
+
+      const updated = await putWorkspaceCollectionRow(
+        ORG,
+        'col-1',
+        DOC,
+        { status: { kind: 'status', value: 'done' } },
+        { mode: 'update', ifMatch: '"row-v1"' },
+        [
+          {
+            id: 'status',
+            name: 'Status',
+            kind: 'status',
+            options: [{ id: 'done', label: 'Done', isDone: true }],
+          },
+        ]
+      )
+      expect(updated.etag).toBe('"row-v2"')
+      expect(updated.created).toBe(false)
+      expect(putMock).toHaveBeenLastCalledWith(
+        '/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}',
+        expect.objectContaining({
+          params: {
+            path: { organisation_id: ORG, collection_id: 'col-1', document_id: DOC },
+            header: { 'If-Match': '"row-v1"' },
+          },
+          body: { values: { status: { type: 'select', value: 'done' } } },
+        })
+      )
+
+      putMock.mockResolvedValueOnce({
+        data: {
+          documentId: DOC,
+          values: { status: { type: 'select', value: 'done' } },
+          updatedAt: '2026-11-13T12:05:00Z',
+        },
+        response: new Response(null, { status: 201, headers: { ETag: '"row-v1"' } }),
+      })
+
+      const created = await putWorkspaceCollectionRow(
+        ORG,
+        'col-1',
+        DOC,
+        { status: { kind: 'status', value: 'done' } },
+        { mode: 'create', ifNoneMatch: '*' }
+      )
+      expect(created.created).toBe(true)
+      expect(putMock).toHaveBeenLastCalledWith(
+        '/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}',
+        expect.objectContaining({
+          params: {
+            path: { organisation_id: ORG, collection_id: 'col-1', document_id: DOC },
+            header: { 'If-None-Match': '*' },
+          },
+        })
+      )
+    } finally {
+      clientSpy.mockRestore()
+    }
+  })
+
+  it('identifies 412 Precondition Failed ApiProblem instances accurately', () => {
+    const err412 = new ApiProblem({
+      type: 'https://kodera.io/problems/precondition-failed',
+      status: 412,
+      title: 'Precondition Failed',
+      currentEtag: '"row-v9"',
+    } as never)
+    const err409 = new ApiProblem({
+      type: 'https://kodera.io/problems/conflict',
+      status: 409,
+      title: 'Conflict',
+    } as never)
+
+    expect(isCollectionPreconditionFailedError(err412)).toBe(true)
+    expect(isCollectionPreconditionFailedError(err409)).toBe(false)
+    expect(isCollectionPreconditionFailedError(new Error('network'))).toBe(false)
   })
 })
