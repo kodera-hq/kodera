@@ -2,12 +2,12 @@
 // Shell-less, outside any organisation: the person is not a member yet.
 
 import { createRoute, lazyRouteComponent } from '@tanstack/react-router'
-import { Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { rootRoute } from '../../app/root-route'
 import { SessionLoading } from '../../app/SessionLoading'
 import { forgetInvitationEntryIfHeld, readInvitationEntry } from './entry'
 
-const LazyInvitationRoute = lazyRouteComponent(() => import('./InvitationRoute'))
+const LazyInvitationRoute = lazy(() => import('./InvitationRoute'))
 
 export const invitationRoute = createRoute({
   getParentRoute: () => rootRoute,
