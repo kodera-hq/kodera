@@ -27,6 +27,16 @@
       "csp": "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "kodera",
+          "matrix"
+        ]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

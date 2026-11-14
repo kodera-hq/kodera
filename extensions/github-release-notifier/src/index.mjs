@@ -45,6 +45,105 @@ export function validateReleaseTag(tag) {
   return trimmed.startsWith('v') ? trimmed : `v${trimmed}`;
 }
 
+const MARKUP_BLOCK_TAGS = Object.freeze(['script', 'style', 'iframe']);
+const MARKUP_TAG_BOUNDARY = Object.freeze([' ', '\t', '\n', '\r', '\f', '\v', '>', '/']);
+
+/**
+ * Removes one forward pass of `<script>`, `<style>`, and `<iframe>` blocks — opening
+ * tag, inner body, and closing tag — using case-insensitive `indexOf` scans only.
+ * No HTML-tag regular expression is involved, so `<SCRIPT>`, `<script\n foo>`, and
+ * `</script >` are all handled identically.
+ *
+ * @param {string} input
+ * @returns {string}
+ */
+function removeMarkupBlocksOnce(input) {
+  const lower = input.toLowerCase();
+  let out = '';
+  let copiedUntil = 0;
+  let searchFrom = 0;
+
+  while (searchFrom < input.length) {
+    let start = -1;
+    let name = '';
+    for (const candidate of MARKUP_BLOCK_TAGS) {
+      const at = lower.indexOf(`<${candidate}`, searchFrom);
+      if (at !== -1 && (start === -1 || at < start)) {
+        start = at;
+        name = candidate;
+      }
+    }
+    if (start === -1) {
+      break;
+    }
+
+    const afterName = start + 1 + name.length;
+    const boundary = input[afterName];
+    if (boundary !== undefined && !MARKUP_TAG_BOUNDARY.includes(boundary)) {
+      // `<scripted` opens no block; keep scanning just past this angle bracket.
+      searchFrom = start + 1;
+      continue;
+    }
+
+    let end = input.length;
+    const closeAt = lower.indexOf(`</${name}`, afterName);
+    if (closeAt !== -1) {
+      const closeEnd = input.indexOf('>', closeAt + 2 + name.length);
+      end = closeEnd === -1 ? input.length : closeEnd + 1;
+    }
+
+    out += input.slice(copiedUntil, start);
+    copiedUntil = end;
+    searchFrom = end;
+  }
+
+  return copiedUntil === 0 ? input : out + input.slice(copiedUntil);
+}
+
+/**
+ * Strips every HTML construct from untrusted text in linear time: block tags go first
+ * with their bodies, repeated until the result stops changing because splicing two
+ * halves can reveal a fresh `<script`, then any remaining tag — and any stray angle
+ * bracket — is dropped character by character.
+ *
+ * @param {string} input
+ * @returns {string}
+ */
+function stripMarkupText(input) {
+  let text = input;
+  for (;;) {
+    const next = removeMarkupBlocksOnce(text);
+    if (next === text) {
+      break;
+    }
+    text = next;
+  }
+
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === '>') {
+      continue;
+    }
+    if (char !== '<') {
+      out += char;
+      continue;
+    }
+    const next = text[i + 1] ?? '';
+    const opensTag =
+      next === '/'
+      || next === '!'
+      || next === '?'
+      || (next >= 'a' && next <= 'z')
+      || (next >= 'A' && next <= 'Z');
+    const tagEnd = opensTag ? text.indexOf('>', i + 1) : -1;
+    if (tagEnd !== -1) {
+      i = tagEnd;
+    }
+  }
+  return out;
+}
+
 /**
  * Sanitizes untrusted release notes markdown by stripping embedded HTML tags,
  * neutralizing `javascript:` / `data:` / `vbscript:` markdown link schemes,
@@ -57,13 +156,11 @@ export function sanitizeReleaseNotes(rawNotes) {
   if (typeof rawNotes !== 'string' || rawNotes.trim().length === 0) {
     return 'No release notes provided.';
   }
-  let cleaned = rawNotes
-    .replace(/\r\n/g, '\n')
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<\/?[A-Za-z][^>]*>/g, '')
-    .replace(/\[([^\]]+)\]\(\s*(?:javascript|data|vbscript):[^)]*\)/gi, '$1 (blocked-unsafe-link)');
+  let cleaned = stripMarkupText(
+    rawNotes
+      .replace(/\r\n/g, '\n')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+  ).replace(/\[([^\]]+)\]\(\s*(?:javascript|data|vbscript):[^)]*\)/gi, '$1 (blocked-unsafe-link)');
 
   cleaned = cleaned.trim();
   if (!cleaned) {

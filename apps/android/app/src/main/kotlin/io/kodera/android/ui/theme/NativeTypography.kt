@@ -15,12 +15,18 @@ internal object NativeTypography {
         Font(R.font.plus_jakarta_sans_semibold, KoderaTokens.FontWeight.semibold),
         Font(R.font.plus_jakarta_sans_bold, KoderaTokens.FontWeight.bold),
     )
+    private val mono = FontFamily(
+        Font(R.font.ibm_plex_mono_regular, KoderaTokens.FontWeight.regular),
+    )
+
     val title = TextStyle(fontFamily = sans, fontWeight = KoderaTokens.FontWeight.semibold, fontSize = KoderaTokens.FontSize.s2xl)
     val heading = TextStyle(fontFamily = sans, fontWeight = KoderaTokens.FontWeight.semibold, fontSize = KoderaTokens.FontSize.xl)
     val body = TextStyle(fontFamily = sans, fontWeight = KoderaTokens.FontWeight.regular, fontSize = KoderaTokens.FontSize.lg)
     val emphasis = TextStyle(fontFamily = sans, fontWeight = KoderaTokens.FontWeight.semibold, fontSize = KoderaTokens.FontSize.lg)
     val caption = TextStyle(fontFamily = sans, fontWeight = KoderaTokens.FontWeight.regular, fontSize = KoderaTokens.FontSize.sm)
     val wordmark = TextStyle(fontFamily = sans, fontWeight = KoderaTokens.FontWeight.bold, fontSize = KoderaTokens.FontSize.xl)
+    val monoBody = TextStyle(fontFamily = mono, fontWeight = KoderaTokens.FontWeight.regular, fontSize = KoderaTokens.FontSize.md)
+    val monoCaption = TextStyle(fontFamily = mono, fontWeight = KoderaTokens.FontWeight.regular, fontSize = KoderaTokens.FontSize.xs)
 
     val material = Typography(
         displayLarge = title.copy(fontSize = KoderaTokens.FontSize.s4xl),

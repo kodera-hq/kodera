@@ -12,6 +12,8 @@ const messages = {
     moderationRestricted:
       'Only the workspace’s owners and administrators manage invite links and moderation.',
     extensions: 'Connectors & extensions',
+    quotas: 'Resource quotas',
+    privacy: 'Privacy & GDPR',
     hosting: 'Hosting & administration',
     profileHint: 'Your profile follows you through conversations on this browser.',
     displayName: 'Display name',
@@ -72,6 +74,8 @@ const messages = {
     moderationRestricted:
       'Seuls les propriétaires et administrateurs de l’espace gèrent les liens d’invitation et la modération.',
     extensions: 'Connecteurs & extensions',
+    quotas: 'Quotas & ressources',
+    privacy: 'Confidentialité & RGPD',
     hosting: 'Hébergement & administration',
     profileHint: 'Votre profil vous accompagne dans les conversations sur ce navigateur.',
     displayName: 'Nom d’affichage',

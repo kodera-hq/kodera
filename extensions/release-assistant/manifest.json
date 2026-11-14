@@ -1,0 +1,32 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.release-assistant",
+  "name": "Opt-In Bilingual Release Notes Assistant",
+  "version": "0.1.0",
+  "description": "Per-room opt-in bilingual (FR/EN) conventional-commit and pull-request changelog formatter with optional anti-SSRF validated HTTPS Ollama or vLLM request builder and zero telemetry.",
+  "permissions": [
+    "messages:write",
+    "ephemeral:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "ephemeral:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "release.published"
+  ],
+  "commands": [
+    {
+      "command": "/release-draft",
+      "name": "/release-draft",
+      "description": "Generate deterministic bilingual (FR/EN) release notes in opted-in channels"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/release-assistant"
+}

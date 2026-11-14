@@ -1,26 +1,69 @@
+# Keep weekly minor and patch updates together; major migrations remain separate.
+# Security updates retain their immediate security-update behavior. No major ignore
+# rule may silence a security fix that requires a major version. Action updates
+# preserve the full commit pins already present in the workflows.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      workspace-npm:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: "npm"
+    directory: "/apps/server/yjs_collab"
+    schedule:
+      interval: "weekly"
+    groups:
+      collaboration-npm:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      rust:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "uv"
     directory: "/apps/server"
     schedule:
       interval: "weekly"
+    groups:
+      server-python:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "pip"
     directory: "/packages/synapse-policy"
     schedule:
       interval: "weekly"
+    groups:
+      synapse-python:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: "gradle"
     directory: "/apps/android"
     schedule:
       interval: "weekly"
+    groups:
+      android:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

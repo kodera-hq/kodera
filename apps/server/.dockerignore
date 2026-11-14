@@ -243,6 +243,7 @@ config/settings/deploy_worker.py
 !tenant_agent/agent.py
 !tenant_agent/channels.py
 !tenant_agent/config.py
+!tenant_agent/federation.py
 !tenant_agent/core_api.py
 !tenant_agent/docker_exec.py
 !tenant_agent/engines.py

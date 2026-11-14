@@ -254,7 +254,9 @@ export function emitHandlers(ops: Operation[], problemTypes: readonly string[]):
   lines.push('export const handlers: HttpHandler[] = [')
 
   for (const op of ops) {
-    const url = `\`\${BASE}${toMswPath(op.path)}\``
+    // `quote`, not a hand-written template literal: the path is a value from the
+    // contract, and only a real string literal keeps it out of the program text.
+    const url = `BASE + ${quote(toMswPath(op.path))}`
     const example = `EXAMPLES[${quote(op.operationId)}]`
     if (op.operationId === 'getMe') {
       lines.push(
