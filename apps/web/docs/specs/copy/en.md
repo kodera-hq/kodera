@@ -1858,7 +1858,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.proximity.notice` | This is not an emergency service and does not replace emergency numbers. If someone is in danger, call the emergency services. |
 | `console.workspace.proximity.pseudonym-hint` | Checking in is voluntary. It is shown under a pseudonym, dedicated or generated, not under your name. |
 | `console.workspace.proximity.radar-title` | Voluntary #proximity radar |
-| `console.workspace.proximity.radar-pledge` | Privacy pledge: opt-in only, 15-minute rotating ephemeral radio and LAN token, zero GPS coordinates, automatic expiry. |
+| `console.workspace.proximity.radar-pledge` | Privacy pledge: opt-in only, 15-minute rotating ephemeral radio and local network token, zero location coordinates, automatic expiry. |
 | `console.workspace.proximity.radar-state-active` | Ephemeral visibility active |
 | `console.workspace.proximity.radar-state-idle` | Local radio off |
 | `console.workspace.proximity.radar-duration-label` | Presence duration |
@@ -1874,14 +1874,14 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.proximity.radar-expires-in` | Expires in {minutes} min |
 | `console.workspace.proximity.radar-peers-heading` | Nearby opted-in peers |
 | `console.workspace.proximity.radar-peers-empty` | No opted-in peers nearby in this workspace right now. |
-| `console.workspace.proximity.radar-band-immediate` | Immediate · BLE |
-| `console.workspace.proximity.radar-band-near` | Near · BLE |
-| `console.workspace.proximity.radar-band-ambient` | Ambient · BLE |
-| `console.workspace.proximity.radar-lan-badge` | LAN · mDNS/QUIC |
+| `console.workspace.proximity.radar-band-immediate` | Immediate · short-range radio |
+| `console.workspace.proximity.radar-band-near` | Near · short-range radio |
+| `console.workspace.proximity.radar-band-ambient` | Ambient · short-range radio |
+| `console.workspace.proximity.radar-lan-badge` | Verified local network |
 | `console.workspace.proximity.radar-open-thread` | #proximity thread |
 | `console.workspace.proximity.radar-start-call` | Ephemeral call |
 | `console.workspace.proximity.radar-error-note` | Status note exceeds 80 characters or contains a control character. |
-| `console.workspace.proximity.radar-error-gps` | GPS coordinates refused by the privacy wall. |
+| `console.workspace.proximity.radar-error-gps` | Location coordinates refused by the privacy wall. |
 
 ## Product onboarding and deployment
 

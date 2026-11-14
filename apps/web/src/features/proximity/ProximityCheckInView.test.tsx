@@ -133,7 +133,7 @@ describe('ProximityCheckInView component & voluntary flow', () => {
     // Strict zero-emoji check on rendered DOM text.
     expect(container.textContent ?? '').not.toMatch(/\p{Extended_Pictographic}/u)
     expect(screen.getByTestId('proximity-radar-pledge')).toHaveTextContent(
-      'zéro coordonnée GPS, expiration automatique'
+      'zéro coordonnée géographique, expiration automatique'
     )
     expect(screen.getByText('Radio locale inactive')).toBeInTheDocument()
 
@@ -153,8 +153,8 @@ describe('ProximityCheckInView component & voluntary flow', () => {
     // Bob's card appears with Immediate BLE + LAN mDNS/QUIC badges and status note.
     const peerList = screen.getByTestId('proximity-radar-peer-list')
     expect(peerList).toHaveTextContent('Salle B · café')
-    expect(peerList).toHaveTextContent('Immédiat · BLE')
-    expect(peerList).toHaveTextContent('LAN · mDNS/QUIC')
+    expect(peerList).toHaveTextContent('Immédiat · radio courte portée')
+    expect(peerList).toHaveTextContent('Réseau local vérifié')
     expect(container.textContent ?? '').not.toMatch(/\p{Extended_Pictographic}/u)
 
     // 1-click ephemeral thread & call actions invoke callbacks with resolved peer.
@@ -176,7 +176,9 @@ describe('ProximityCheckInView component & voluntary flow', () => {
       />
     )
     expect(screen.getByText('Ephemeral visibility active')).toBeInTheDocument()
-    expect(screen.getByTestId('proximity-radar-pledge')).toHaveTextContent('zero GPS coordinates')
+    expect(screen.getByTestId('proximity-radar-pledge')).toHaveTextContent(
+      'zero location coordinates'
+    )
     expect(screen.getByRole('button', { name: 'Leave proximity' })).toBeInTheDocument()
 
     // Instant kill-switch wipes local state and removes Alice from Bob's nearby list immediately.
@@ -250,7 +252,7 @@ describe('ProximityCheckInView component & voluntary flow', () => {
       await user.click(screen.getByTestId('proximity-radar-join'))
       await waitFor(() => {
         expect(screen.getByRole('status')).toHaveTextContent(
-          'Coordonnées GPS refusées par la paroi de confidentialité.'
+          'Coordonnées géographiques refusées par la paroi de confidentialité.'
         )
       })
       unmount()

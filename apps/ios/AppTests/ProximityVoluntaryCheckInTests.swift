@@ -123,10 +123,12 @@ final class ProximityVoluntaryCheckInTests: XCTestCase {
         XCTAssertEqual(openedThreadPeerId, peer.id)
         XCTAssertEqual(startedCallPeerId, peer.id)
 
+        let gattStopsBeforeLeave = gatt.stopCount
+        let bonjourStopsBeforeLeave = bonjour.stopCount
         session.leaveProximity()
         XCTAssertFalse(session.isSessionActive)
         XCTAssertTrue(session.peers.isEmpty)
-        XCTAssertEqual(gatt.stopCount, 1)
-        XCTAssertEqual(bonjour.stopCount, 1)
+        XCTAssertEqual(gatt.stopCount, gattStopsBeforeLeave + 1)
+        XCTAssertEqual(bonjour.stopCount, bonjourStopsBeforeLeave + 1)
     }
 }

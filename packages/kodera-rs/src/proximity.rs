@@ -1381,9 +1381,9 @@ impl ProximityMdnsQuicVerifier {
         challenge: &ProximityQuicChallenge,
         response: &ProximityQuicResponse,
     ) -> Result<[u8; 32], ProximityRadioError> {
-        let mut salt = [0u8; 32];
-        salt[0..16].copy_from_slice(&challenge.challenge_nonce);
-        salt[16..32].copy_from_slice(&response.responder_nonce);
+        let mut salt = Vec::with_capacity(32);
+        salt.extend_from_slice(&challenge.challenge_nonce);
+        salt.extend_from_slice(&response.responder_nonce);
 
         let mut info = Vec::with_capacity(112);
         info.extend_from_slice(b"kodera.proximity.w9.channel-binding.v1:");
