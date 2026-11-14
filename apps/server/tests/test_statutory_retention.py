@@ -256,10 +256,12 @@ def test_leap_day_fiscal_close_uses_calendar_year_anniversary_not_fixed_days():
 
 def test_due_only_hard_purge_reports_parent_dependency_without_rewriting_deadline(monkeypatch):
     """A public synthetic historical issue date qualifies the actual due SQL path."""
+    from test_billing_evidence_persistence import SyntheticRenderer, SyntheticValidator
     from test_billing_orders import offer, place, world
 
     from apps.billing import services
-    from apps.billing.models import Invoice, InvoiceLine, StatutoryRecord
+    from apps.billing.artifacts import publish
+    from apps.billing.models import BillingArtifact, Invoice, InvoiceLine, StatutoryRecord
     from apps.billing.statutory import purge_due
 
     event = datetime(2013, 2, 1, tzinfo=UTC)
@@ -273,14 +275,25 @@ def test_due_only_hard_purge_reports_parent_dependency_without_rewriting_deadlin
     monkeypatch.setattr(services, "_allocate", lambda series: ("OLD-2013-00001", event))
     placed = place(world(), offer())
     invoice = Invoice.objects.get(pk=placed.invoice.id)
+    artifact = publish(
+        document_id=invoice.id,
+        credit_note=False,
+        renderer=SyntheticRenderer(),
+        validator=SyntheticValidator(),
+        validator_ref="synthetic-storage-fixture-not-conformance",
+    )
     line = InvoiceLine.objects.get(invoice=invoice)
     deadline = datetime(2024, 1, 1, tzinfo=UTC)
     assert invoice.purge_after == line.purge_after == deadline
+    with pytest.raises(IntegrityError, match="append-only"), transaction.atomic():
+        BillingArtifact.objects.filter(pk=artifact.id).delete()
     assert not purge_due(source_table="billing_invoice", source_id=invoice.id)
     invoice.refresh_from_db()
+    assert BillingArtifact.objects.filter(pk=artifact.id).exists()
     assert invoice.purge_after == deadline and StatutoryRecord.objects.count() == 2
     assert purge_due(source_table="billing_invoiceline", source_id=line.id)
     assert purge_due(source_table="billing_invoice", source_id=invoice.id)
+    assert not BillingArtifact.objects.filter(pk=artifact.id).exists()
     assert not Invoice.objects.filter(pk=invoice.id).exists()
     assert not StatutoryRecord.objects.exists()
 

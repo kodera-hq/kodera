@@ -2,7 +2,7 @@
 
 from django.db import migrations
 
-FORWARD = r'''
+FORWARD = r"""
 
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
 CREATE FUNCTION billing_contract_clock_guard() RETURNS trigger LANGUAGE plpgsql
@@ -90,6 +90,19 @@ BEGIN
     MESSAGE='A legal record is never changed or deleted';
 END $$;
 ALTER FUNCTION legal_append_only_guard() SECURITY DEFINER; ALTER FUNCTION legal_append_only_guard() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION legal_append_only_guard() FROM PUBLIC;
+CREATE OR REPLACE FUNCTION billing_evidence_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE item jsonb;
+BEGIN
+ IF TG_OP='DELETE' AND TG_TABLE_NAME='billing_billingartifact' THEN
+  item:=to_jsonb(OLD);
+  IF (item->>'invoice_id' IS NOT NULL AND public.retention_context('purge','billing_invoice',(item->>'invoice_id')::uuid) IS NOT NULL)
+   OR (item->>'credit_note_id' IS NOT NULL AND public.retention_context('purge','billing_creditnote',(item->>'credit_note_id')::uuid) IS NOT NULL)
+  THEN RETURN OLD; END IF;
+ END IF;
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_evidence_immutable',
+    MESSAGE='Billing evidence is append-only';
+END $$;
+ALTER FUNCTION billing_evidence_immutable() SECURITY DEFINER; ALTER FUNCTION billing_evidence_immutable() SET search_path=pg_catalog,public,pg_temp; REVOKE ALL ON FUNCTION billing_evidence_immutable() FROM PUBLIC;
 
 CREATE FUNCTION retention_current_operator(p_actor uuid) RETURNS boolean LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
@@ -264,9 +277,9 @@ BEGIN
  INSERT INTO public.retention_worker_context VALUES(pg_backend_pid(),txid_current(),'purge',p_table,p_id,'{}');
  BEGIN
   CASE p_table
-   WHEN 'billing_invoice' THEN DELETE FROM public.billing_invoice WHERE id=p_id;
+   WHEN 'billing_invoice' THEN DELETE FROM public.billing_billingartifact WHERE invoice_id=p_id; DELETE FROM public.billing_invoice WHERE id=p_id;
    WHEN 'billing_invoiceline' THEN DELETE FROM public.billing_invoiceline WHERE id=p_id;
-   WHEN 'billing_creditnote' THEN DELETE FROM public.billing_creditnote WHERE id=p_id;
+   WHEN 'billing_creditnote' THEN DELETE FROM public.billing_billingartifact WHERE credit_note_id=p_id; DELETE FROM public.billing_creditnote WHERE id=p_id;
    WHEN 'billing_creditnoteline' THEN DELETE FROM public.billing_creditnoteline WHERE id=p_id;
    WHEN 'billing_payment' THEN DELETE FROM public.billing_payment WHERE id=p_id;
    WHEN 'billing_order' THEN DELETE FROM public.billing_order WHERE id=p_id;
@@ -290,7 +303,7 @@ REVOKE ALL ON FUNCTION billing_purge_due_record(text,uuid) FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION billing_contract_clock_guard() FROM PUBLIC;
 
-'''
+"""
 
 REVERSE = r"""
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
@@ -299,8 +312,14 @@ DROP FUNCTION billing_qualify_legacy_accounting(text,uuid,timestamptz,text);
 DROP FUNCTION billing_close_contract(uuid,timestamptz,text,text,uuid);
 DROP FUNCTION retention_current_operator(uuid);
 
--- The legal guards go back to the bodies of legal 0002, with that migration's SECURITY
--- INVOKER, no search_path of their own and the execute right they were created with.
+-- The legal and billing evidence guards go back to legal 0002 and billing 0013, with those
+-- migrations' SECURITY INVOKER, no search_path of their own and execute rights intact.
+CREATE OR REPLACE FUNCTION billing_evidence_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_evidence_immutable',
+    MESSAGE='Billing evidence is append-only';
+END $$;
+GRANT EXECUTE ON FUNCTION billing_evidence_immutable() TO PUBLIC;
 CREATE OR REPLACE FUNCTION legal_append_only_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0],
@@ -352,5 +371,9 @@ DROP FUNCTION billing_contract_clock_guard();
 
 
 class Migration(migrations.Migration):
-    dependencies = [("billing", "0018_statutory_accounting_guards"), ("legal", "0005_acceptance_close_evidence_ref_and_more"), ("audit", "0003_workspace_resource_writer")]
+    dependencies = [
+        ("billing", "0018_statutory_accounting_guards"),
+        ("legal", "0005_acceptance_close_evidence_ref_and_more"),
+        ("audit", "0003_workspace_resource_writer"),
+    ]
     operations = [migrations.RunSQL(FORWARD, REVERSE)]
