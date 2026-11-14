@@ -220,6 +220,22 @@ def _read(handler: BaseHTTPRequestHandler, limit: int, deadline_s: float) -> byt
     return bytes(body)
 
 
+def _cors_origin(requested: str, origins: frozenset[str]) -> str | None:
+    """The *configured* origin equal to the requested one, or `None`.
+
+    What goes back is the string from the configuration, never the bytes the request sent, so
+    nothing a caller writes can reach a response header. The CR/LF/NUL check is on the value
+    that is actually sent: a configured origin carrying one would split the response.
+    """
+    for candidate in origins:
+        if candidate != requested:
+            continue
+        if "\r" in candidate or "\n" in candidate or "\x00" in candidate:
+            return None
+        return candidate
+    return None
+
+
 def make_token_server(
     bind: str,
     port: int,
@@ -254,11 +270,11 @@ def make_token_server(
         ) -> None:
             raw = json.dumps(body).encode() if body is not None else b""
             self.send_response(status)
-            origin = self.headers.get("Origin", "")
             # Exact match with a configured origin, or no CORS header at all: never `*`, never
             # the origin that was sent.
-            if origin in origins:
-                self.send_header("Access-Control-Allow-Origin", origin)
+            allowed = _cors_origin(self.headers.get("Origin", ""), origins)
+            if allowed is not None:
+                self.send_header("Access-Control-Allow-Origin", allowed)
                 self.send_header("Access-Control-Expose-Headers", "Retry-After")
             # Whatever the origin: the answer depends on it, so no cache may share it.
             self.send_header("Vary", "Origin")
@@ -271,10 +287,11 @@ def make_token_server(
             self.wfile.write(raw)
 
         def do_OPTIONS(self) -> None:  # noqa: N802 - the http.server hook name
-            if self.path != "/token" or self.headers.get("Origin", "") not in origins:
+            allowed = _cors_origin(self.headers.get("Origin", ""), origins)
+            if self.path != "/token" or allowed is None:
                 return self._send(403)
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
+            self.send_header("Access-Control-Allow-Origin", allowed)
             self.send_header("Access-Control-Allow-Methods", "POST")
             self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
             self.send_header("Access-Control-Max-Age", "600")

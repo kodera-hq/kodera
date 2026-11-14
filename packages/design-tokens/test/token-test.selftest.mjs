@@ -19,6 +19,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const RESOLVES = join(HERE, 'fixtures', 'resolves');
 const UNRESOLVED = join(HERE, 'fixtures', 'unresolved');
 
+/**
+ * Escapes every regular-expression metacharacter (including backslashes) in one pass.
+ *
+ * @param {string} literal
+ * @returns {string}
+ */
+function escapeForRegExp(literal) {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 test('the preset declares the families the design system names', () => {
   const families = familiesOf(preset);
   for (const family of ['slate', 'frost', 'cobalt', 'green', 'amber', 'red', 'surface', 'border', 'text', 'action', 'ink']) {
@@ -59,7 +69,7 @@ test('the fixture that must fail, fails — naming every broken class and only t
   assert.ok(error instanceof Error, 'the broken fixture did not fail the check');
 
   for (const cls of ['bg-slate-950', 'border-surface-raised', 'text-ink-4']) {
-    assert.match(error.message, new RegExp(cls.replace(/-/g, '\\-')), `expected ${cls} to be reported`);
+    assert.match(error.message, new RegExp(escapeForRegExp(cls)), `expected ${cls} to be reported`);
   }
   assert.doesNotMatch(error.message, /coral/, 'a retired family is not ours to judge');
   assert.match(error.message, /3 Tailwind class\(es\)/);

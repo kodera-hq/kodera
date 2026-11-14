@@ -293,7 +293,11 @@ def _open(url: str, end: float) -> tuple[_DeadlineSocket, str, str, int, str]:
     try:
         if parts.scheme == "https":
             sock.settimeout(left())
-            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+            context = ssl.create_default_context()
+            # Stated rather than inherited: TLS 1.0 and 1.1 are never negotiated, whatever the
+            # interpreter or the OpenSSL build defaults to.
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            sock = context.wrap_socket(sock, server_hostname=host)
         left()  # a connection ready only after the deadline sends nothing
     except BaseException:
         sock.close()

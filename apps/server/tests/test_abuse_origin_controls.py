@@ -970,16 +970,19 @@ ROOM_MUTATIONS = [
     (
         "a reflected origin",
         "room_case_cors_names_a_configured_origin_only",
-        "            if origin in origins:\n                self.send_header("
-        '"Access-Control-Allow-Origin", origin)\n',
-        "            if origin:\n                self.send_header("
-        '"Access-Control-Allow-Origin", origin)\n',
+        '            allowed = _cors_origin(self.headers.get("Origin", ""), origins)\n'
+        "            if allowed is not None:\n"
+        '                self.send_header("Access-Control-Allow-Origin", allowed)\n',
+        '            allowed = self.headers.get("Origin", "") or None\n'
+        "            if allowed is not None:\n"
+        '                self.send_header("Access-Control-Allow-Origin", allowed)\n',
     ),
     (
         "a wildcard origin",
         "room_case_cors_names_a_configured_origin_only",
-        "            if origin in origins:\n                self.send_header("
-        '"Access-Control-Allow-Origin", origin)\n',
+        '            allowed = _cors_origin(self.headers.get("Origin", ""), origins)\n'
+        "            if allowed is not None:\n"
+        '                self.send_header("Access-Control-Allow-Origin", allowed)\n',
         '            if True:\n                self.send_header("Access-Control-Allow-Origin", "*")\n',
     ),
 ]
