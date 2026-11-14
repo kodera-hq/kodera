@@ -42,6 +42,8 @@ export interface Operation {
   idempotent: boolean
   /** True when the operation requires an `If-Match` request header — every `PATCH` today. */
   requiresIfMatch: boolean
+  /** Exactly one of If-Match or If-None-Match is required for conditional row PUT. */
+  conditionalWrite?: boolean
 }
 
 /** A contract bug: something the mocks need and the contract does not carry. Never patched locally. */
@@ -376,6 +378,18 @@ export function operations(
           return resolved['name'] === headerName && (!requiredOnly || resolved['required'] === true)
         })
 
+      if (
+        op['x-kodera-one-of-preconditions'] === true &&
+        (method !== 'put' ||
+          !hasHeaderParam('If-Match') ||
+          !hasHeaderParam('If-None-Match') ||
+          !responses['201'])
+      ) {
+        throw new ContractError(
+          `${operationId}: conditional writes require both alternative headers and a 201 creation response`
+        )
+      }
+
       const body = schema
         ? exampleOf(spec, schema, operationId, undefined, choices)
         : plain
@@ -393,6 +407,7 @@ export function operations(
         idempotent: hasHeaderParam('Idempotency-Key'),
         // Only a required one: a removal's `If-Match` is optional, enforced when present.
         requiresIfMatch: hasHeaderParam('If-Match', true),
+        ...(op['x-kodera-one-of-preconditions'] === true ? { conditionalWrite: true } : {}),
       })
     }
   }

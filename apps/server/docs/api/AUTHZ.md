@@ -118,10 +118,17 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `WorkspaceAttachment` | full own | full own | full own | full own | — | — | — | — |
 | `WorkspaceUnfurl` | create own | create own | create own | create own | — | — | — | — |
 | `WorkspaceDocument` | full own | full own | full own | full own | — | — | — | — |
+| `WorkspaceCollection` | full own | full own | full own | full own | — | — | — | — |
+| `WorkspaceQuota` | read own | read own | read own | read own | — | — | — | — |
+| `BillingVat` | read, update own | read own | read, update own | — | — | — | — | — |
+| `PrivacyWorkspace` | create, read own | — | — | — | — | — | — | — |
+| `PrivacyAccount` | create, read self | create, read self | create, read self | create, read self | — | — | — | — |
 | `WorkspaceSearch` | read own | read own | read own | read own | — | — | — | — |
 | `PushSubscription` | read, update, delete self | read, update, delete self | read, update, delete self | read, update, delete self | — | — | — | — |
 
 Rules that override the table:
+
+- **Wave 4 proposed contract surfaces.** Collections share document visibility and editor checks; current roles alone do not grant access to a hidden collection or page. Workspace quota counters are observations only and every write reserves capacity server-side. VAT validation changes persisted consultation evidence, never an issued invoice snapshot. Workspace privacy requests belong exclusively to the current organisation owner. Account privacy requests bind the authenticated person and cannot name another account or export another member's data. Last-owner account deletion requires ownership transfer first. Deletion retains only access-restricted statutory accounting snapshots until their ten-year purge clock and reports legal holds explicitly. These declarations do not claim deployed handlers.
 
 - **No principal ever reads a `Secret` value.** `staff_operator` may enqueue `rotate_secret`; the agent pulls by `config_ref` over its own authenticated channel and renders locally (strategy Appendix A). The API returns metadata only: name, version, `rotated_at`, `kek_id`.
 - **"request action"** means creating a job through an action sub-resource, not executing it. At launch, `provision`, `upgrade`, `restore`, `decommission` and `delete` are `staff_operator`-only; the tenant-side request creates a `SupportTicketLink` and a pending job request instead. Which kinds become self-service is a row in [`../domain/JOB_CATALOGUE.md`](../domain/JOB_CATALOGUE.md), not a code change here.

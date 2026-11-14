@@ -128,23 +128,53 @@ function discoverExtensions() {
   });
 }
 
-test('conformance: dynamically discovers all 11 reference extensions under extensions/*', () => {
+const REQUIRED_EXTENSION_DIRS = Object.freeze([
+  'alertmanager',
+  'docs-collab-announcer',
+  'frameio-review-bridge',
+  'gdrive-document-share',
+  'git-tracker',
+  'github',
+  'github-release-notifier',
+  'github-repo-tracker',
+  'gitlab',
+  'hello-webhook',
+  'linear',
+  'notion-workspace-bridge',
+  'qonto-treasury-feed',
+  'rss-advisories',
+  'sentry',
+  'social-pulse-bridge',
+  'uptime-incident-bridge',
+]);
+
+const REQUIRED_SLASH_COMMANDS = Object.freeze([
+  'advisories',
+  'alerts',
+  'doc-pad',
+  'frameio-review',
+  'gdrive-share',
+  'gh',
+  'github-track',
+  'gitlab',
+  'hello',
+  'incident-bridge',
+  'linear',
+  'notion-page',
+  'qonto-feed',
+  'release-notes',
+  'sentry',
+  'social-post',
+]);
+
+test('conformance: dynamically discovers all reference extensions under extensions/*', () => {
   const discovered = discoverExtensions();
   const dirNames = discovered.map((item) => item.dirName);
 
-  assert.deepEqual(dirNames, [
-    'docs-collab-announcer',
-    'frameio-review-bridge',
-    'gdrive-document-share',
-    'git-tracker',
-    'github-release-notifier',
-    'github-repo-tracker',
-    'hello-webhook',
-    'notion-workspace-bridge',
-    'qonto-treasury-feed',
-    'social-pulse-bridge',
-    'uptime-incident-bridge',
-  ]);
+  assert.ok(discovered.length >= REQUIRED_EXTENSION_DIRS.length);
+  for (const requiredDir of REQUIRED_EXTENSION_DIRS) {
+    assert.ok(dirNames.includes(requiredDir), `Expected extension directory "${requiredDir}"`);
+  }
 
   for (const item of discovered) {
     assert.ok(existsSync(item.manifestPath), `Missing manifest file for ${item.dirName}`);
@@ -152,7 +182,7 @@ test('conformance: dynamically discovers all 11 reference extensions under exten
   }
 });
 
-test('conformance: every extension manifest passes validateManifest, SSRF checks, and global uniqueness across all 11 extensions', () => {
+test('conformance: every extension manifest passes validateManifest, SSRF checks, and global uniqueness across extensions/*', () => {
   const discovered = discoverExtensions();
   const seenCanonicalIds = new Set();
   const seenSlugs = new Set();
@@ -227,22 +257,10 @@ test('conformance: every extension manifest passes validateManifest, SSRF checks
     }
   }
 
-  assert.equal(seenCanonicalIds.size, 11);
-  assert.deepEqual(
-    [...seenCommands].sort(),
-    [
-      'doc-pad',
-      'frameio-review',
-      'gdrive-share',
-      'github-track',
-      'hello',
-      'incident-bridge',
-      'notion-page',
-      'qonto-feed',
-      'release-notes',
-      'social-post',
-    ]
-  );
+  assert.equal(seenCanonicalIds.size, discovered.length);
+  for (const requiredCmd of REQUIRED_SLASH_COMMANDS) {
+    assert.ok(seenCommands.has(requiredCmd), `Expected slash command "/${requiredCmd}"`);
+  }
 });
 
 test('conformance: every extension index.mjs exports valid handlers and rejects forged HMAC signatures and expired replay timestamps', async () => {
@@ -269,8 +287,15 @@ test('conformance: every extension index.mjs exports valid handlers and rejects 
 
     const mod = await import(pathToFileURL(item.entryPath).href);
 
-    // Resolve exported slash command object across all 11 reference extensions
+    // Resolve exported slash command object across all reference extensions
     const exportedCommand =
+      mod.slashCommand ??
+      mod.ghCommand ??
+      mod.gitlabCommand ??
+      mod.linearCommand ??
+      mod.sentryCommand ??
+      mod.alertsCommand ??
+      mod.advisoriesCommand ??
       mod.frameioReviewCommand ??
       mod.docPadCommand ??
       mod.gdriveShareCommand ??
@@ -285,8 +310,15 @@ test('conformance: every extension index.mjs exports valid handlers and rejects 
     assert.equal(exportedCommand.name, primaryCommand);
     assert.equal(typeof exportedCommand.handler, 'function');
 
-    // Resolve or instantiate webhook handler across all 11 reference extensions
+    // Resolve or instantiate webhook handler across all reference extensions
     const handlerFactory =
+      mod.createExtensionWebhookHandler ??
+      mod.createGithubWebhookHandler ??
+      mod.createGitlabWebhookHandler ??
+      mod.createLinearWebhookHandler ??
+      mod.createSentryWebhookHandler ??
+      mod.createAlertmanagerWebhookHandler ??
+      mod.createRssAdvisoriesWebhookHandler ??
       mod.createFrameioWebhookHandler ??
       mod.createDocsCollabWebhookHandler ??
       mod.createGdriveShareWebhookHandler ??

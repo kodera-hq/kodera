@@ -93,6 +93,28 @@ function verifyConfiguration(config, availableFiles, defaultCapability) {
     || config.app.security.dangerousDisableAssetCspModification === false,
   'CSP asset modification must not be disabled');
   assert.deepEqual(config.app?.security?.capabilities, ['default'], 'default capability must be selected');
+  const plugins = config.plugins;
+  assert.ok(plugins !== null && typeof plugins === 'object' && !Array.isArray(plugins),
+    'plugins configuration must be present');
+  assert.deepEqual(Object.keys(plugins), ['deep-link'],
+    'plugins must contain only the approved deep-link handler');
+  const deepLink = plugins['deep-link'];
+  assert.ok(deepLink !== null && typeof deepLink === 'object' && !Array.isArray(deepLink),
+    'deep-link plugin configuration must be an object');
+  assert.deepEqual(Object.keys(deepLink), ['desktop'],
+    'deep-link configuration must scope to desktop only');
+  const desktopDeepLink = deepLink.desktop;
+  assert.ok(desktopDeepLink !== null && typeof desktopDeepLink === 'object' && !Array.isArray(desktopDeepLink),
+    'deep-link desktop configuration must be an object');
+  assert.deepEqual(Object.keys(desktopDeepLink), ['schemes'],
+    'deep-link desktop configuration must contain only schemes');
+  const schemes = desktopDeepLink.schemes;
+  assert.ok(Array.isArray(schemes), 'deep-link schemes must be an array');
+  assert.ok(schemes.every((scheme) => typeof scheme === 'string' && /^[a-z][a-z0-9+.-]*$/u.test(scheme)),
+    'deep-link schemes must be canonical lowercase RFC 3986 scheme names');
+  assert.equal(new Set(schemes).size, schemes.length, 'deep-link schemes must not contain duplicates');
+  assert.deepEqual([...schemes].sort(), ['kodera', 'matrix'],
+    'deep-link schemes must register exactly kodera and matrix');
   assert.deepEqual(config.bundle?.icon, requiredIcons, 'all bundled icons must be selected');
   for (const path of requiredFiles) {
     assert.ok(availableFiles.has(path), `required file missing: ${path}`);
@@ -182,6 +204,42 @@ function selftest() {
     ['unreviewed capability platforms', /capability must contain only approved keys/u, (_config, _files, defaultCapability) => {
       defaultCapability.platforms = ['windows'];
     }],
+    ['missing plugins block', /plugins configuration must be present/u, (config) => {
+      delete config.plugins;
+    }],
+    ['unapproved plugin registration', /plugins must contain only the approved deep-link handler/u, (config) => {
+      config.plugins.shell = { open: true };
+    }],
+    ['non-object deep-link plugin config', /deep-link plugin configuration must be an object/u, (config) => {
+      config.plugins['deep-link'] = true;
+    }],
+    ['unapproved deep-link target scope', /deep-link configuration must scope to desktop only/u, (config) => {
+      config.plugins['deep-link'].mobile = [];
+    }],
+    ['extra deep-link desktop key', /deep-link desktop configuration must contain only schemes/u, (config) => {
+      config.plugins['deep-link'].desktop.domains = ['*'];
+    }],
+    ['missing matrix scheme', /deep-link schemes must register exactly kodera and matrix/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['kodera'];
+    }],
+    ['missing kodera scheme', /deep-link schemes must register exactly kodera and matrix/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['matrix'];
+    }],
+    ['duplicate deep-link scheme', /deep-link schemes must not contain duplicates/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['kodera', 'matrix', 'kodera'];
+    }],
+    ['unapproved http deep-link scheme', /deep-link schemes must register exactly kodera and matrix/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['kodera', 'matrix', 'http'];
+    }],
+    ['dangerous javascript deep-link scheme', /deep-link schemes must register exactly kodera and matrix/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['kodera', 'javascript'];
+    }],
+    ['non-canonical scheme delimiter', /deep-link schemes must be canonical lowercase RFC 3986 scheme names/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['kodera://', 'matrix'];
+    }],
+    ['uppercase deep-link scheme', /deep-link schemes must be canonical lowercase RFC 3986 scheme names/u, (config) => {
+      config.plugins['deep-link'].desktop.schemes = ['Kodera', 'matrix'];
+    }],
   ];
   for (const directive of ['connect-src', 'img-src', 'object-src', 'base-uri', 'form-action', 'frame-ancestors']) {
     mutations.push([`expanded ${directive}`, new RegExp(`${directive} must use only approved sources`, 'u'), (config) => {
@@ -203,6 +261,7 @@ function selftest() {
       const [name, ...sources] = part.split(/\s+/u);
       return [name, ...sources.reverse()].join(' ');
     }).reverse().join('; ');
+  reordered.plugins['deep-link'].desktop.schemes = [...conf.plugins['deep-link'].desktop.schemes].reverse();
   verifyConfiguration(reordered, files, capability);
   console.log(`OK — ${mutations.length} in-memory desktop configuration mutations refused.`);
 

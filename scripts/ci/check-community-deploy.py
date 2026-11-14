@@ -23,6 +23,7 @@ import stat
 import sys
 import tempfile
 import types
+import urllib.parse
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -260,7 +261,9 @@ def parse_env_example(env_text: str) -> tuple[dict[str, str], list[str]]:
             continue
         match = ENV_LINE_RE.match(line)
         if not match:
-            errors.append(f".env.example line {idx}: malformed assignment '{line}'")
+            # The line itself is never quoted back: the same parser reads an operator's real
+            # .env, where a malformed line can hold the value of a secret.
+            errors.append(f".env.example line {idx}: malformed assignment (value not shown)")
             continue
         key, value = match.group(1), match.group(2).strip()
         if key in env_map:
@@ -1765,6 +1768,49 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
 MutationFn = Callable[[str, str, str], tuple[str, str, str]]
 
 
+def drop_service_key(compose_text: str, service: str, key: str) -> str:
+    """The compose text without the first `key:` line of `service`'s own block.
+
+    Scanned line by line rather than matched: a pattern that has to skip a service's body
+    needs alternatives for each indentation it may carry, and those overlap, so the engine
+    backtracks exponentially over a block that holds no such key.
+    """
+    out: list[str] = []
+    inside = False
+    dropped = False
+    for line in compose_text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped:
+            indent = len(line) - len(line.lstrip(" "))
+            if indent < 4:
+                inside = indent == 2 and stripped == service + ":"
+            elif inside and not dropped and indent == 4 and stripped.startswith(key + ":"):
+                dropped = True
+                continue
+        out.append(line)
+    return "".join(out)
+
+
+def quotes_host(message: str, host: str) -> bool:
+    """Whether an error message quotes back a URL or a hostname served by `host`.
+
+    The hostname is parsed out of each token and compared, never searched for: a substring
+    test also answers yes to `id.example.net.operator.test`, which is a different host that
+    merely ends in the same text.
+    """
+    for token in message.replace("'", " ").replace('"', " ").replace(",", " ").split():
+        candidate = token.rstrip(".,;:)")
+        if "://" not in candidate:
+            candidate = "//" + candidate
+        try:
+            hostname = urllib.parse.urlsplit(candidate).hostname
+        except ValueError:
+            continue
+        if hostname is not None and (hostname == host or hostname.endswith("." + host)):
+            return True
+    return False
+
+
 def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     baseline_errors = check_community_deploy(compose_text, env_text, caddyfile_text)
     if baseline_errors:
@@ -1961,7 +2007,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "drop the memory limit of livekit",
-            lambda c, e, cf: (re.sub(r"(?m)^(  livekit:\n(?:    .*\n|      .*\n)*?)    mem_limit: [^\n]*\n", r"\1", c, count=1), e, cf),
+            lambda c, e, cf: (drop_service_key(c, "livekit", "mem_limit"), e, cf),
             "service 'livekit' must set mem_limit",
         ),
         (
@@ -2376,7 +2422,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         if expected not in got:
             print(f"[FAIL] preflight case '{label}' did not report the expected error", file=sys.stderr)
             return 1
-        if any("filled-value" in err or "example.net" in err for err in got):
+        if any("filled-value" in err or quotes_host(err, "example.net") for err in got):
             print(f"[FAIL] preflight case '{label}' printed a value", file=sys.stderr)
             return 1
 
@@ -2475,7 +2521,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         if not any(expected in error for error in got):
             print(f"[FAIL] preflight hardening case '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
             return 1
-        if any(re.search(r"example\.net", error) or SYNTHETIC_CREDENTIAL in error for error in got):
+        if any(quotes_host(error, "example.net") or SYNTHETIC_CREDENTIAL in error for error in got):
             print(f"[FAIL] preflight hardening case '{label}' printed a value", file=sys.stderr)
             return 1
     hardening_accepted = [

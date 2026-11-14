@@ -39,6 +39,8 @@ export function WorkspaceSettingsHost(props: WorkspaceSettingsProps) {
           'members',
           'moderation',
           'extensions',
+          'quotas',
+          'privacy',
           'hosting',
         ].includes(event.detail.section)
       ) {

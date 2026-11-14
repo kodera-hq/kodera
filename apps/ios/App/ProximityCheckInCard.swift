@@ -2,19 +2,53 @@ import SwiftUI
 import KoderaClient
 import KoderaDomain
 
+enum ProximitySurfacePresentation {
+    static func localRadioStatusKey(for status: LocalBLERadioStatus) -> String {
+        switch status {
+        case .unprovisioned:
+            "proximity.ble_status_unprovisioned"
+        case .awaitingForegroundConsent:
+            "proximity.ble_status_awaiting_consent"
+        case .suspendedInBackground:
+            "proximity.ble_status_suspended_background"
+        case .throttled(.batteryBudgetExceeded):
+            "proximity.ble_status_battery_paused"
+        case .throttled:
+            "proximity.ble_status_duty_throttled"
+        case .scanningWindowActive:
+            "proximity.ble_status_scanning"
+        case .readyForLocalRadio:
+            "proximity.ble_status_ready"
+        }
+    }
+
+    static func onlineRelayStatusKey(for status: OnlineMatrixRelayStatus) -> String {
+        switch status {
+        case .disconnected:
+            "proximity.online_disconnected"
+        case .connectedRoom:
+            "proximity.online_connected"
+        }
+    }
+}
+
 /// The `#proximity` card: an everyday presence check-in, voluntary and pseudonymous. It is not an
-/// emergency service and says so. The unprovisioned app can prepare a local draft, never fabricate
-/// a trusted radio session.
+/// emergency service and says so. Maintains strict visual and copy separation between online Matrix
+/// room relays and foreground opt-in local BLE v2 rotating-beacon check-ins, never claiming offline
+/// delivery without a verified local radio frame.
+@MainActor
 struct ProximityCheckInCard: View {
     let organisationId: String?
     @Environment(\.colorScheme) private var colorScheme
-    @State private var draft = ProximityCheckInDraft()
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var controller = ProximityV2CheckInController()
     @State private var preparing = false
     @State private var preparationContext: ProximityCheckInContext?
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
+
     var body: some View {
         VStack(alignment: .leading, spacing: KoderaTokens.Space.s4) {
             Label("proximity.title", systemImage: "antenna.radiowaves.left.and.right")
@@ -27,7 +61,13 @@ struct ProximityCheckInCard: View {
             Label("proximity.notice", systemImage: "exclamationmark.triangle")
                 .font(NativeTypography.caption).foregroundStyle(palette.ink2)
                 .fixedSize(horizontal: false, vertical: true)
-            if organisationId != nil, draft.organisationId == organisationId, let status = draft.status {
+
+            onlineMatrixRelayLane
+            localBLERadioLane
+
+            if organisationId != nil,
+               controller.draft.organisationId == organisationId,
+               let status = controller.draft.status {
                 VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
                     Text("proximity.local_draft").font(NativeTypography.caption).foregroundStyle(palette.ink3)
                     Label(LocalizedStringKey(status.proximityCatalogueKey), systemImage: status.proximitySymbol)
@@ -38,7 +78,7 @@ struct ProximityCheckInCard: View {
                 .accessibilityAddTraits(.updatesFrequently)
             }
             Button {
-                preparationContext = draft.preparationContext(forOrganisationId: organisationId)
+                preparationContext = controller.draft.preparationContext(forOrganisationId: organisationId)
                 preparing = preparationContext != nil
             } label: {
                 Text("proximity.prepare").font(NativeTypography.emphasis)
@@ -47,7 +87,7 @@ struct ProximityCheckInCard: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.bordered)
-            .disabled(draft.preparationContext(forOrganisationId: organisationId) == nil)
+            .disabled(controller.draft.preparationContext(forOrganisationId: organisationId) == nil)
         }
         .foregroundStyle(palette.ink)
         .padding(KoderaTokens.Space.s5)
@@ -61,7 +101,10 @@ struct ProximityCheckInCard: View {
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach([ProximitySafetyStatus.safe, .needAssistance, .musterPoint], id: \.rawValue) { status in
                             Button {
-                                _ = draft.prepare(status, context: preparationContext)
+                                if controller.draft.preparationContext(forOrganisationId: organisationId) != nil,
+                                   preparationContext != nil {
+                                    _ = controller.prepareDraft(status)
+                                }
                                 preparationContext = nil
                                 preparing = false
                             } label: {
@@ -86,13 +129,89 @@ struct ProximityCheckInCard: View {
                 }
             }
         }
-        .onAppear { reset(for: organisationId) }
+        .onAppear {
+            controller.setForegroundActive(scenePhase == .active)
+            reset(for: organisationId)
+        }
+        .onChange(of: scenePhase) { phase in
+            controller.setForegroundActive(phase == .active)
+        }
         .onChange(of: organisationId) { reset(for: $0) }
         .onDisappear { reset(for: nil) }
     }
+
+    private var onlineMatrixRelayLane: some View {
+        VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
+            Label("proximity.online_lane_title", systemImage: "network")
+                .font(NativeTypography.emphasis)
+                .foregroundStyle(palette.ink)
+            Text(LocalizedStringKey(ProximitySurfacePresentation.onlineRelayStatusKey(for: controller.onlineMatrixRelayStatus)))
+                .font(NativeTypography.caption)
+                .foregroundStyle(palette.ink2)
+            Text("proximity.online_lane_note")
+                .font(NativeTypography.caption)
+                .foregroundStyle(palette.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(KoderaTokens.Space.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.sunken, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.md))
+    }
+
+    private var localBLERadioLane: some View {
+        VStack(alignment: .leading, spacing: KoderaTokens.Space.s2) {
+            Label("proximity.ble_lane_title", systemImage: "dot.radiowaves.left.and.right")
+                .font(NativeTypography.emphasis)
+                .foregroundStyle(palette.ink)
+            Text(LocalizedStringKey(ProximitySurfacePresentation.localRadioStatusKey(for: controller.localRadioStatus)))
+                .font(NativeTypography.caption)
+                .foregroundStyle(palette.accentInk)
+            Text("proximity.duty_cycle_disclosure")
+                .font(NativeTypography.caption)
+                .foregroundStyle(palette.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+            if !controller.hasVerifiedLocalRadioDelivery {
+                Text("proximity.ble_no_verified_delivery")
+                    .font(NativeTypography.caption)
+                    .foregroundStyle(palette.ink3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if organisationId != nil {
+                if controller.hasForegroundConsent {
+                    Button {
+                        controller.revokeConsent()
+                    } label: {
+                        Text("proximity.consent_revoke")
+                            .font(NativeTypography.emphasis)
+                            .foregroundStyle(palette.ink)
+                            .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s10)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        try? controller.grantForegroundConsent(forOrganisationId: organisationId)
+                    } label: {
+                        Text("proximity.consent_opt_in")
+                            .font(NativeTypography.emphasis)
+                            .foregroundStyle(palette.accentInk)
+                            .frame(maxWidth: .infinity, minHeight: KoderaTokens.Space.s10)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!controller.isForegroundActive)
+                }
+            }
+        }
+        .padding(KoderaTokens.Space.s3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.muted, in: RoundedRectangle(cornerRadius: KoderaTokens.Radius.md))
+    }
+
     private func reset(for organisationId: String?) {
-        preparing = false; preparationContext = nil
-        draft.configure(organisationId: organisationId)
+        preparing = false
+        preparationContext = nil
+        controller.configure(organisationId: organisationId)
     }
 }
 

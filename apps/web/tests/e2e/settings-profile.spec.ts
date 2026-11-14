@@ -83,7 +83,7 @@ test('appearance themes remain accessible and nested studio closes before settin
 test('extensions signs and verifies locally and rejects a modified body', async ({ page }) => {
   const settings = await openSettings(page)
   await settings.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
-  await expect(settings.getByText('10 implémentations de référence', { exact: true })).toBeVisible()
+  await expect(settings.getByText('22 implémentations de référence', { exact: true })).toBeVisible()
   await settings.getByRole('button', { name: 'Générer un secret de test', exact: true }).click()
   await settings.getByRole('button', { name: 'Signer l’exemple', exact: true }).click()
   await expect(settings.getByRole('status')).toContainText('Exemple signé')

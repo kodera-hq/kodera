@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/kodera-hq/kodera",
   "versions": {
-    "core": "0.43.0",
+    "core": "0.44.0",
     "agent": "0.6.0",
     "policy": "0.1.6",
     "sdk": "0.1.0"
@@ -56,6 +56,66 @@
       "slug": "frameio-review-bridge",
       "name": "Frame.io Review Bridge",
       "path": "extensions/frameio-review-bridge/README.md"
+    },
+    {
+      "slug": "frameio",
+      "name": "Frame.io Timecode & OTIO",
+      "path": "extensions/frameio/README.md"
+    },
+    {
+      "slug": "renderfarm",
+      "name": "Render-Farm Monitor (Flamenco & Deadline)",
+      "path": "extensions/renderfarm/README.md"
+    },
+    {
+      "slug": "github",
+      "name": "GitHub Dev & PR Bridge",
+      "path": "extensions/github/README.md"
+    },
+    {
+      "slug": "gitlab",
+      "name": "GitLab MR & Pipeline Bridge",
+      "path": "extensions/gitlab/README.md"
+    },
+    {
+      "slug": "linear",
+      "name": "Linear Issue & Cycle Triage",
+      "path": "extensions/linear/README.md"
+    },
+    {
+      "slug": "sentry",
+      "name": "Sentry Issue & Regression Triage",
+      "path": "extensions/sentry/README.md"
+    },
+    {
+      "slug": "alertmanager",
+      "name": "Alertmanager & Grafana Incident Bridge",
+      "path": "extensions/alertmanager/README.md"
+    },
+    {
+      "slug": "rss-advisories",
+      "name": "RSS & Security Advisories Digest",
+      "path": "extensions/rss-advisories/README.md"
+    },
+    {
+      "slug": "release-assistant",
+      "name": "Release Notes & Triage Assistant",
+      "path": "extensions/release-assistant/README.md"
+    },
+    {
+      "slug": "openproject",
+      "name": "OpenProject & Jira Work Bridge",
+      "path": "extensions/openproject/README.md"
+    },
+    {
+      "slug": "calcom",
+      "name": "Cal.com Scheduling & Voice Bridge",
+      "path": "extensions/calcom/README.md"
+    },
+    {
+      "slug": "billing-webhooks",
+      "name": "Billing & Quota Ops Webhooks",
+      "path": "extensions/billing-webhooks/README.md"
     }
   ],
   "pages": {
@@ -106,7 +166,7 @@
       },
       {
         "id": "extensions",
-        "title": "Extension SDK & 10 connectors",
+        "title": "Extension SDK & 22 connectors",
         "summary": "Bring signed events into channels, with explicit trust boundaries.",
         "keywords": [
           "SDK",
@@ -152,10 +212,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Ten reference implementations",
+            "title": "Twenty-two reference implementations",
             "paragraphs": [
-              "The connector list below describes repository implementations, not connected production accounts. Frame.io routes asset.ready to dailies and comment/review events to post-production without fetching assets.",
-              "Linear, Stripe and Sentry are possible SDK integrations. This checkout does not contain additional reference connectors for those services."
+              "The connector list below describes repository implementations, not connected production accounts. Studio starters route Frame.io timecode/OTIO markers and Flamenco/Deadline render telemetry without fetching private media.",
+              "External providers outside these twenty-two starters remain possible custom SDK integrations. This checkout does not contain additional reference connectors beyond the list below."
             ],
             "callout": "HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.",
             "language": "",
@@ -180,7 +240,7 @@
             "id": "contracts",
             "title": "Two separate API boundaries",
             "paragraphs": [
-              "Core API 0.43.0 is the customer-console contract. Agent API 0.6.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.",
+              "Core API 0.44.0 is the customer-console contract. Agent API 0.6.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.",
               "The console uses its authenticated Core transport. It does not call identity providers, infrastructure providers or tenant control endpoints directly."
             ],
             "callout": "Configure KODERA_CORE_API_BASE to the real Core base ending in /api/v1. Supply an authorized token through your own terminal session. The example is copied, never executed here.",
@@ -320,7 +380,7 @@
       },
       {
         "id": "extensions",
-        "title": "Extension SDK & 10 connecteurs",
+        "title": "Extension SDK & 22 connecteurs",
         "summary": "Amenez les événements signés dans les salons, avec des frontières de confiance explicites.",
         "keywords": [
           "SDK",
@@ -366,10 +426,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Dix implémentations de référence",
+            "title": "Vingt-deux implémentations de référence",
             "paragraphs": [
-              "La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Frame.io route asset.ready vers les dailies et les commentaires/revues vers la post-production sans récupérer les médias.",
-              "Linear, Stripe et Sentry sont des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire pour ces services."
+              "La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Les connecteurs studio routent les marqueurs Frame.io timecode/OTIO et la télémétrie de rendu Flamenco/Deadline sans récupérer les médias.",
+              "Les services externes hors de ces vingt-deux exemples restent des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire au-delà de la liste ci-dessous."
             ],
             "callout": "Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.",
             "language": "",
@@ -394,7 +454,7 @@
             "id": "contracts",
             "title": "Deux frontières API distinctes",
             "paragraphs": [
-              "Core API 0.43.0 est le contrat de la console client. Agent API 0.6.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.",
+              "Core API 0.44.0 est le contrat de la console client. Agent API 0.6.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.",
               "La console utilise son transport Core authentifié. Elle n’appelle pas directement les fournisseurs d’identité, d’infrastructure ou les endpoints de contrôle locataires."
             ],
             "callout": "Renseignez KODERA_CORE_API_BASE avec la vraie base Core terminant par /api/v1. Fournissez un token autorisé via votre propre session terminal. Cet exemple est copié, jamais exécuté ici.",

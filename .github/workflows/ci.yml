@@ -48,6 +48,11 @@ jobs:
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-ci-aggregate.py --selftest
           "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-ci-aggregate.py
           python3 scripts/ci/ci-plan.py --selftest
+      - name: Native packaging and workflow refusal proofs
+        run: |
+          python3 scripts/ci/check-native-packaging.selftest.py
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-native-packaging-workflow.py --selftest
+          "$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-native-packaging-workflow.py
       - name: Documentation links, ADR index and retired wording (with self-test)
         run: |
           python3 scripts/ci/check-docs-truth.py --selftest

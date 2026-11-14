@@ -26,11 +26,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'efa48aaae6e7d2ba401a87f1b65bfe29cec40567',
-  commit: 'efa48aaae6e7d2ba401a87f1b65bfe29cec40567',
+  ref: 'e27efd630ab6edfffb6e8a5c28a0cb9d96c443c0',
+  commit: 'e27efd630ab6edfffb6e8a5c28a0cb9d96c443c0',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.43.0',
-  sha256: '5179c839ac8e84f6c8f2b6237291c7adc8e6f9d5e13ee80bf56551e13ccfc679',
+  version: '0.44.0',
+  sha256: 'be235a9b870d251fd4114c464d8a10580b34d11f4390903cacac7cea82128cda',
 }
 
 function requireThat(condition: unknown, reason: string): asserts condition {
@@ -277,20 +277,20 @@ describe('the immutable contract consumer', () => {
 
   it('retains every operation, collection, schema, problem and protected mock byte', () => {
     const ops = operations(spec)
-    expect(ops).toHaveLength(142)
-    expect(new Set(ops.map((op) => op.operationId)).size).toBe(142)
-    expect(ops.filter((op) => op.isList)).toHaveLength(33)
-    expect(Object.keys(spec.components.schemas)).toHaveLength(202)
+    expect(ops).toHaveLength(166)
+    expect(new Set(ops.map((op) => op.operationId)).size).toBe(166)
+    expect(ops.filter((op) => op.isList)).toHaveLength(35)
+    expect(Object.keys(spec.components.schemas)).toHaveLength(246)
     expect(problems(spec)).toHaveLength(44)
     expect(PROBLEM_TYPES).toHaveLength(44)
     const hashes = {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        '29e7eea66dc49f429c233203d8e6e72bb8e4fedf4daa4b6ec73413c7c7d9d5ea',
+        '52e93bbabdceece9db7468ffb537471d622d193ee00c42b16f47336cedf2f13a',
       'src/mocks/generated/handlers.ts':
-        'aae38bfcdaea9672daad80ffa44dcc26dec263b7e6b5b5979c736f6a7694c3b3',
-      'src/api/schema.d.ts': '720956c0f80c1efbd74ee75c9ebb67c28e83dc8d4b8692dab5a429ac8dc9af83',
+        '22f2c937db62ede6da3beb6581390220df77063427fcf2e4926ecc7d673799e2',
+      'src/api/schema.d.ts': '0e394faee8bfb3fe01acd37f3418c1caec0f92f5b0e9cc882e81d23ab44e226d',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)
@@ -532,4 +532,26 @@ describe("the contract's Espace mapping (0.25.2)", () => {
       rule.replace('{id}', id).replace('{server_name}', server)
     )
   })
+})
+
+describe('conditional write generation declarations', () => {
+  it.each(['missing-alternative', 'missing-created-response'])(
+    'refuses %s with its diagnostic',
+    (mutation) => {
+      const changed = structuredClone(spec)
+      const path =
+        '/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}'
+      const put = object(object(changed.paths[path])['put'])
+      if (mutation === 'missing-alternative') {
+        put['parameters'] = (put['parameters'] as Record<string, unknown>[]).filter(
+          (parameter) => parameter['name'] !== 'If-None-Match'
+        )
+      } else {
+        delete object(put['responses'])['201']
+      }
+      expect(() => operations(changed)).toThrow(
+        'conditional writes require both alternative headers and a 201 creation response'
+      )
+    }
+  )
 })
