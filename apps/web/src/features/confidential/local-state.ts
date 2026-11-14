@@ -23,7 +23,7 @@ export type LocalStateFailure = 'unavailable' | 'closed' | 'owner-revoked' |
 export class ConfidentialStateError extends Error {
   constructor(readonly code: LocalStateFailure) { super(code); this.name = 'ConfidentialStateError' }
 }
-const fail = (code: LocalStateFailure): never => { throw new ConfidentialStateError(code) }
+function fail(code: LocalStateFailure): never { throw new ConfidentialStateError(code) }
 const safeError = (error: unknown): ConfidentialStateError =>
   error instanceof ConfidentialStateError ? error : new ConfidentialStateError('storage')
 interface ScopeBase {
