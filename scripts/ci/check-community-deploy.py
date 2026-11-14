@@ -112,9 +112,17 @@ TOPOLOGIES = ("single", "split")
 LIVEKIT_PUBLISHED_PORTS = ('- "7881:7881"', '- "50000-50200:50000-50200/udp"')
 
 # What Caddy may route from the internet, per upstream. Anything else is refused: the agent API
-# (`/agent/*`) and Matrix federation, key and admin routes are not internet-facing by default.
+# (`/agent/*`), staff plane (`/staff/*`) and Matrix federation, key and admin routes are not
+# internet-facing on the Community ingress.
+MOBILE_ASSOCIATION_ROUTES: frozenset[str] = frozenset(
+    {
+        "/.well-known/apple-app-site-association",
+        "/.well-known/assetlinks.json",
+    }
+)
+CLOSED_INTERNAL_SERVER_ROUTES = ("/agent", "/agent/*", "/staff", "/staff/*")
 ALLOWED_PUBLIC_ROUTES: dict[str, frozenset[str]] = {
-    "server:8000": frozenset({"/api/*", "/health/*"}),
+    "server:8000": frozenset({"/api/*", "/health/*", *MOBILE_ASSOCIATION_ROUTES}),
     "yjs-collab:8098": frozenset({"/documents/collab"}),
     "room-access:8095": frozenset({"/_kodera/rooms/token"}),
     "synapse:8008": frozenset({"/_matrix/client/*", "/_matrix/media/*", "/_synapse/client/*"}),
@@ -1013,6 +1021,8 @@ def _check_caddy(
     for site in sites:
         # Matchers belong to their site block: one block never answers for another.
         matchers: dict[str, list[str]] = {}
+        routed_to_upstream: dict[str, set[str]] = {}
+        closed_paths: set[str] = set()
         answers_unrouted = False
         for line in site.lines:
             if line.startswith("@"):
@@ -1042,6 +1052,14 @@ def _check_caddy(
             matcher = handle.group(1) if handle else None
             if handle and matcher is None and block.lines == ["respond 404"] and not block.blocks:
                 answers_unrouted = True
+            elif (
+                handle
+                and matcher is not None
+                and matcher in matchers
+                and block.lines == ["respond 404"]
+                and not block.blocks
+            ):
+                closed_paths.update(matchers[matcher])
             upstreams: list[tuple[str, list[str]]] = []
             for line in block.lines:
                 if _directive(line) == "reverse_proxy":
@@ -1103,9 +1121,12 @@ def _check_caddy(
                     continue
                 for path in matchers[matcher]:
                     if path in allowed:
+                        routed_to_upstream.setdefault(upstream, set()).add(path)
                         continue
                     if upstream == "server:8000" and path.startswith("/agent"):
                         errors.append(f"{label} must not expose the agent API to the internet (got '{path}')")
+                    elif upstream == "server:8000" and (path == "/staff" or path.startswith("/staff/")):
+                        errors.append(f"{label} must not expose the staff plane to the internet (got '{path}')")
                     elif upstream == "synapse:8008":
                         errors.append(
                             f"federation must be closed by default: {label} must route only the Matrix client API, "
@@ -1113,6 +1134,18 @@ def _check_caddy(
                         )
                     else:
                         errors.append(f"{label} exposes an unreviewed route to '{upstream}': '{path}'")
+        if "server:8000" in site_upstreams.get(site.header, frozenset()):
+            server_routes = routed_to_upstream.get("server:8000", set())
+            for required_route in sorted(MOBILE_ASSOCIATION_ROUTES):
+                if required_route not in server_routes:
+                    errors.append(
+                        f"{label} must proxy mobile association route '{required_route}' to 'server:8000'"
+                    )
+            for closed_route in CLOSED_INTERNAL_SERVER_ROUTES:
+                if closed_route not in closed_paths:
+                    errors.append(
+                        f"{label} must answer 404 on internal or staff path '{closed_route}'"
+                    )
         if catch_all is None and not answers_unrouted:
             errors.append(
                 f"{label} site '{site.header}' must answer 404 for every path it does not route "
@@ -2339,6 +2372,69 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "Caddyfile exposes an unreviewed route to 'server:8000': '/admin/*'",
         ),
         (
+            "Apple Universal Links association route is removed from Caddyfile",
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace(" /.well-known/apple-app-site-association", "", 1),
+            ),
+            "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'",
+        ),
+        (
+            "Android App Links assetlinks.json route is removed from Caddyfile",
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace(" /.well-known/assetlinks.json", "", 1),
+            ),
+            "Caddyfile must proxy mobile association route '/.well-known/assetlinks.json' to 'server:8000'",
+        ),
+        (
+            "mobile association handle block is removed from Caddyfile",
+            lambda c, e, cf: (
+                c,
+                e,
+                re.sub(
+                    r"\n\t# Exact mobile association routes.*\n\t@mobile_association[^\n]+\n\thandle @mobile_association \{\n(?:\t\t.*\n|\t\t\t.*\n)+\t\}\n",
+                    "\n",
+                    cf,
+                    count=1,
+                ),
+            ),
+            "Caddyfile must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'",
+        ),
+        (
+            "wildcard /.well-known/* steals Matrix discovery from web:8080",
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace(
+                    "@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json",
+                    "@mobile_association path /.well-known/*",
+                    1,
+                ),
+            ),
+            "Caddyfile exposes an unreviewed route to 'server:8000': '/.well-known/*'",
+        ),
+        (
+            "the staff plane is exposed on Community customer ingress",
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace("@api path /api/* /health/*", "@api path /api/* /health/* /staff/*", 1),
+            ),
+            "Caddyfile must not expose the staff plane to the internet (got '/staff/*')",
+        ),
+        (
+            "the staff plane 404 guard is removed from Caddyfile",
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace("@internal path /agent /agent/* /staff /staff/*", "@internal path /agent /agent/*", 1),
+            ),
+            "Caddyfile must answer 404 on internal or staff path '/staff/*'",
+        ),
+        (
             "the catch-all proxies to the API",
             lambda c, e, cf: (c, e, cf.replace("reverse_proxy web:8080", "reverse_proxy server:8000", 1)),
             "Caddyfile catch-all must proxy to 'web:8080' only",
@@ -2650,6 +2746,17 @@ def _last(old: str, new: str) -> Callable[[str], str]:
 SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
     ("the API origin routes the agent API", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /agent/*"),
      "Caddyfile.split must not expose the agent API to the internet (got '/agent/*')"),
+    ("the API origin exposes the staff plane", "caddy", _first("@api path /api/* /health/*", "@api path /api/* /health/* /staff/*"),
+     "Caddyfile.split must not expose the staff plane to the internet (got '/staff/*')"),
+    ("the API origin drops the staff 404 guard", "caddy", _first("@internal path /agent /agent/* /staff /staff/*", "@internal path /agent /agent/*"),
+     "Caddyfile.split must answer 404 on internal or staff path '/staff/*'"),
+    ("the API origin drops Apple Universal Links association", "caddy", _first(" /.well-known/apple-app-site-association", ""),
+     "Caddyfile.split must proxy mobile association route '/.well-known/apple-app-site-association' to 'server:8000'"),
+    ("the API origin drops Android App Links assetlinks.json", "caddy", _first(" /.well-known/assetlinks.json", ""),
+     "Caddyfile.split must proxy mobile association route '/.well-known/assetlinks.json' to 'server:8000'"),
+    ("the API origin widens /.well-known/* onto discovery paths", "caddy",
+     _first("@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json", "@mobile_association path /.well-known/*"),
+     "Caddyfile.split exposes an unreviewed route to 'server:8000': '/.well-known/*'"),
     ("the Matrix origin routes federation", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/federation/*"),
      "federation must be closed by default: Caddyfile.split must route only the Matrix client API, never federation, key or admin routes (got '/_matrix/federation/*')"),
     ("the Matrix origin routes the key API", "caddy", _first("/_synapse/client/*", "/_synapse/client/* /_matrix/key/*"),
