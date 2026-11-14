@@ -6,7 +6,25 @@ This Docker Compose stack runs a single-node Kodera Community workspace, in one 
 
 It runs **no identity provider**. Sign-in uses an OIDC issuer you already operate (see "Sign-in"), so plan for one before you start.
 
-No installation time or memory footprint has been measured for this stack, and none is promised here. Every service has a `mem_limit`: those are ceilings that stop one service from starving the others, not a measurement.
+The hosted qualification below measures startup and idle footprint for one isolated run. Every service has a `mem_limit`: those are ceilings, not measurements or production capacity guarantees.
+
+## Measured fresh-volume startup
+
+On 14 November 2026, a fresh hosted Linux x86_64 runner with four logical CPUs and Docker 29.4.2 built the checked-in images and started ten services on new project-owned volumes. The [successful qualification log](https://github.com/kodera-hq/kodera/actions/runs/43631347569/job/132558742760) records PR head `78d080d3adae5eef2739a8a12690a514eb372ecd` and tested merge source `ea86e42e25779cb552f50a6673f1003c07c6e5de`.
+
+| Measurement | Observed value |
+| :--- | ---: |
+| Sequential image builds (server, migrator, collaboration, web) | 137.845 s |
+| Compose startup to healthy, after builds | 70.543 s |
+| Startup through all HTTP checks and the web entry asset, after builds | 72.801 s |
+| Idle interval before sampling | 30 s |
+| Sum of container working sets (`docker stats --no-stream`) | 434.562 MiB |
+| Sum of reported container CPU percentages | 0.78% |
+| Sum of process RSS (`docker top`, KiB) | 976,700 KiB (953.809 MiB) |
+
+The container snapshot was: API 130.2 MiB, Synapse 119.9 MiB, Synapse database 54.95 MiB, Core database 38.09 MiB, collaboration 26.32 MiB, room access 21.69 MiB, LiveKit 14.56 MiB, web 12.64 MiB, Caddy 12.61 MiB and Valkey 3.602 MiB. Working set and process RSS measure different things; summing RSS can count shared pages more than once. CPU is the sum of Docker's reported percentages, not a normalized whole-host percentage.
+
+The run checked actual liveness/readiness JSON, Matrix versions, the web document and its built JavaScript asset; federation and Synapse administration returned `404` through ingress. It used synthetic public trust, loopback ingress and an internal TLS certificate, with OIDC sign-in and the optional governance profile disabled. It establishes boot and route behavior, not sign-in, media, federation interoperability or loaded production capacity. Disk stayed above 82.588 GiB; project containers, volumes, local image tags and private temporary configuration were removed, with cleanup verified. The mandatory CI controller is `deploy/community/accept_coldstart.py`; each run emits its own evidence rather than treating these observations as a target.
 
 ## Before you start
 
