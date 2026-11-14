@@ -13,6 +13,12 @@ class Codes:
     FORBIDDEN = "M_FORBIDDEN"
 
 
+class SynapseError(Exception):
+    def __init__(self, code, message, errcode=None):
+        super().__init__(message)
+        self.code, self.errcode = code, errcode
+
+
 class ConfigError(Exception):
     pass
 
@@ -24,6 +30,7 @@ module_api.NOT_SPAM = NOT_SPAM
 module_api.ModuleApi = object
 errors.Codes = Codes
 errors.ConfigError = ConfigError
+errors.SynapseError = SynapseError
 sys.modules.setdefault("synapse", synapse)
 sys.modules.setdefault("synapse.module_api", module_api)
 sys.modules.setdefault("synapse.module_api.errors", errors)

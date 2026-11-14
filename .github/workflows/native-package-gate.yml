@@ -1,0 +1,42 @@
+name: Verify unsigned native package candidates
+
+on:
+  workflow_call:
+    inputs:
+      bundle-name:
+        description: Current-run artifact containing the two candidates and their evidence
+        required: true
+        type: string
+      target:
+        description: One target admitted by the native packaging gate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    name: Reproducible bytes, bound inventory and permissive licences
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.bundle-name }}
+          path: candidate
+      - name: Verify the exact candidate bundle
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
+          PACKAGE_TARGET: ${{ inputs.target }}
+        run: |
+          python3 scripts/ci/check-native-packaging.py \
+            --first candidate/first/package.zip --second candidate/second/package.zip \
+            --sbom candidate/sbom.cdx.json --evidence candidate/evidence.json \
+            --toolchain candidate/toolchain-lock.json \
+            --revision "$EXPECTED_REVISION" --target "$PACKAGE_TARGET"

@@ -49,9 +49,18 @@ class MainActivity : ComponentActivity() {
             KoderaTheme {
                 when (session.phase) {
                     SessionPhase.Restoring -> RestoringScreen()
-                    is SessionPhase.SignedIn -> SignedInScreen(member = session.member, workspace = session.workspace,
-                        onRetry = session::reloadMember, onCheckAgain = session::checkMemberAgain,
-                        onWorkspaceRetry = session::retryWorkspace, onSignOut = session::signOut)
+                    is SessionPhase.SignedIn -> SignedInScreen(
+                        member = session.member,
+                        workspace = session.workspace,
+                        onRetry = session::reloadMember,
+                        onCheckAgain = session::checkMemberAgain,
+                        onWorkspaceRetry = session::retryWorkspace,
+                        onSignOut = session::signOut,
+                        telecomCoordinator = session.telecomCoordinator,
+                        proximityV2Controller = session.proximityV2Controller,
+                        inviteCoordinator = session.inviteCoordinator,
+                        passkeyCoordinator = session.passkeyCoordinator,
+                    )
                     else -> OrganisationEntryScreen(state = model.state, onSlugChanged = model::updateSlug,
                         onLookup = model::lookup, onClear = model::clear, onCancel = model::cancelLookup,
                         onSelect = model::select,

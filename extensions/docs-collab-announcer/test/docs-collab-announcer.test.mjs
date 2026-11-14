@@ -214,14 +214,20 @@ test('executes /doc-pad slash command (open, link, status) with --doc and --titl
       actorId: 'usr_zxxma',
     },
   });
-  const openResult = /** @type {{ result: { text: string, ephemeral: boolean, subcommand: string, docId: string, title: string } }} */ (
+  const openResult = /** @type {{ result: { text: string, ephemeral: boolean, subcommand: string, docId: string, title: string, documentUrl: string } }} */ (
     openRes.response
   ).result;
   assert.equal(openResult.subcommand, 'open');
   assert.equal(openResult.docId, 'roadmap-q4');
   assert.equal(openResult.title, 'Feuille de route Produit');
   assert.equal(openResult.ephemeral, false);
-  assert.ok(openResult.text.includes('https://docs.kodera.io/pads/roadmap-q4'));
+  // Compare parsed URL components; a substring check would also accept
+  // https://docs.kodera.io.evil.example/pads/roadmap-q4.
+  const openedUrl = new URL(openResult.documentUrl);
+  assert.equal(openedUrl.protocol, 'https:');
+  assert.equal(openedUrl.origin, 'https://docs.kodera.io');
+  assert.equal(openedUrl.pathname, '/pads/roadmap-q4');
+  assert.ok(openResult.text.endsWith(openResult.documentUrl));
 
   // 2. /doc-pad link --doc=spec-visio --title="Spécification Visio"
   const linkRes = await harness.sendWebhook({

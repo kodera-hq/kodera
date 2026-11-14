@@ -289,7 +289,7 @@ describe('the immutable contract consumer', () => {
       'src/mocks/generated/examples.ts':
         '52e93bbabdceece9db7468ffb537471d622d193ee00c42b16f47336cedf2f13a',
       'src/mocks/generated/handlers.ts':
-        'c30b4dc6f6b3e95d38054c6e93a07f1c1c263ae1a28f973730c870f65d8e5d35',
+        '22f2c937db62ede6da3beb6581390220df77063427fcf2e4926ecc7d673799e2',
       'src/api/schema.d.ts': '0e394faee8bfb3fe01acd37f3418c1caec0f92f5b0e9cc882e81d23ab44e226d',
     }
     for (const [path, expected] of Object.entries(hashes)) {

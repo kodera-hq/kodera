@@ -256,6 +256,7 @@ def assert_image_boundary(ignore):
         "!tenant_agent/core_api.py",
         "!tenant_agent/docker_exec.py",
         "!tenant_agent/engines.py",
+        "!tenant_agent/federation.py",
         "!tenant_agent/guard.py",
         "!tenant_agent/handlers.py",
         "!tenant_agent/state.py",

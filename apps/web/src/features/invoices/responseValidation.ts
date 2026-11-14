@@ -2,6 +2,8 @@
 // responses. Check the fields this area renders or opens, without calculating
 // money, certifying payment, or claiming complete OpenAPI validation.
 
+import { isAllowedCheckoutRedirectUrl } from '../billing/checkoutUrl'
+
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -22,6 +24,28 @@ function money(value: unknown): boolean {
   return object(value) && Number.isSafeInteger(value.amount_minor) && value.currency === 'EUR'
 }
 
+const SHA256_HEX = /^[0-9a-f]{64}$/
+
+function artifact(value: unknown, expectedContentType: 'application/pdf' | 'application/xml'): boolean {
+  return (
+    object(value) &&
+    value.content_type === expectedContentType &&
+    text(value.filename) &&
+    typeof value.sha256 === 'string' &&
+    SHA256_HEX.test(value.sha256) &&
+    typeof value.size_bytes === 'number' &&
+    Number.isSafeInteger(value.size_bytes) &&
+    value.size_bytes >= 0
+  )
+}
+
+function billingArtifacts(value: unknown): boolean {
+  if (!object(value)) return false
+  if (value.pdf !== undefined && !artifact(value.pdf, 'application/pdf')) return false
+  if (value.xml !== undefined && !artifact(value.xml, 'application/xml')) return false
+  return true
+}
+
 const STATES: ReadonlySet<unknown> = new Set([
   'draft',
   'issued',
@@ -35,6 +59,17 @@ const VAT_REGIMES: ReadonlySet<unknown> = new Set([
   'eu_reverse_charge',
   'exempt',
   'outside_eu',
+])
+const CREDIT_NOTE_REASONS: ReadonlySet<unknown> = new Set([
+  'customer_cancellation',
+  'unpaid_lapse',
+  'complimentary',
+])
+const VIES_STATUSES: ReadonlySet<unknown> = new Set([
+  'not_checked',
+  'valid',
+  'invalid',
+  'unavailable',
 ])
 
 /** List rows may retain the existing unavailable-amount fallback; detail totals are mandatory. */
@@ -53,10 +88,15 @@ export function requireInvoiceResponse(
     value.organisation_id !== expected.organisationId ||
     (expected.invoiceId !== undefined && value.id !== expected.invoiceId) ||
     (value.pdf_available !== undefined && typeof value.pdf_available !== 'boolean') ||
+    (value.xml_available !== undefined && typeof value.xml_available !== 'boolean') ||
+    (value.facturx_type_code !== undefined && value.facturx_type_code !== '380') ||
+    (value.snapshot_sha256 !== undefined &&
+      (typeof value.snapshot_sha256 !== 'string' || !SHA256_HEX.test(value.snapshot_sha256))) ||
+    (value.artifacts !== undefined && !billingArtifacts(value.artifacts)) ||
     (value.vat_regime !== undefined && !VAT_REGIMES.has(value.vat_regime))
   )
     return fail()
-  for (const field of ['number', 'external_ref']) {
+  for (const field of ['number', 'external_ref', 'credit_note_id']) {
     if (value[field] != null && typeof value[field] !== 'string') return fail()
   }
   for (const field of ['issued_at', 'due_at']) {
@@ -87,6 +127,62 @@ export function requireInvoiceResponse(
     return fail()
 }
 
+export function requireCreditNoteResponse(
+  value: unknown,
+  expected: { organisationId: string; creditNoteId?: string; invoiceId?: string }
+): void {
+  const fail = () => {
+    throw new Error('Credit note response is unavailable.')
+  }
+  if (!object(value)) return fail()
+  if (
+    !text(value.id) ||
+    !text(value.organisation_id) ||
+    !text(value.invoice_id) ||
+    !text(value.invoice_number) ||
+    !text(value.number) ||
+    !timestamp(value.issued_at) ||
+    !CREDIT_NOTE_REASONS.has(value.reason) ||
+    !VAT_REGIMES.has(value.vat_regime) ||
+    value.organisation_id !== expected.organisationId ||
+    (expected.creditNoteId !== undefined && value.id !== expected.creditNoteId) ||
+    (expected.invoiceId !== undefined && value.invoice_id !== expected.invoiceId) ||
+    (value.facturx_type_code !== undefined && value.facturx_type_code !== '381') ||
+    (value.xml_available !== undefined && typeof value.xml_available !== 'boolean') ||
+    (value.snapshot_sha256 !== undefined &&
+      (typeof value.snapshot_sha256 !== 'string' || !SHA256_HEX.test(value.snapshot_sha256))) ||
+    (value.artifacts !== undefined && !billingArtifacts(value.artifacts)) ||
+    !money(value.total_excl_vat) ||
+    !money(value.vat_amount) ||
+    !money(value.total_incl_vat) ||
+    !Array.isArray(value.lines) ||
+    value.lines.some(
+      (line: unknown) =>
+        !object(line) ||
+        typeof line.description !== 'string' ||
+        !money(line.total_excl_vat) ||
+        !Number.isSafeInteger(line.vat_rate_bp)
+    )
+  ) {
+    fail()
+  }
+}
+
+export function requireBillingVatStatus(value: unknown): void {
+  const fail = () => {
+    throw new Error('Billing VAT status response is unavailable.')
+  }
+  if (!object(value) || !VIES_STATUSES.has(value.status)) return fail()
+  for (const field of ['vat_number', 'country_code', 'evidence_id']) {
+    if (value[field] !== null && value[field] !== undefined && !text(value[field])) return fail()
+  }
+  for (const field of ['checked_at', 'next_check_at']) {
+    if (value[field] !== null && value[field] !== undefined && !timestamp(value[field])) {
+      return fail()
+    }
+  }
+}
+
 function usableLink(value: unknown): value is Record<string, unknown> {
   if (!object(value) || !text(value.url) || !timestamp(value.expires_at)) return false
   if (Date.parse(value.expires_at) <= Date.now()) return false
@@ -111,8 +207,23 @@ function usableLink(value: unknown): value is Record<string, unknown> {
 }
 
 export function requirePaymentLink(value: unknown, invoiceId: string): void {
-  if (!usableLink(value) || value.invoice_id !== invoiceId || value.state !== 'active') {
+  if (
+    !usableLink(value) ||
+    !isAllowedCheckoutRedirectUrl(value.url) ||
+    value.invoice_id !== invoiceId ||
+    value.state !== 'active'
+  ) {
     throw new Error('Payment link response is unavailable.')
+  }
+}
+
+export function requireArtifactDownloadLink(
+  value: unknown,
+  format: 'pdf' | 'xml' = 'pdf'
+): void {
+  const expectedType = format === 'xml' ? 'application/xml' : 'application/pdf'
+  if (!usableLink(value) || value.content_type !== expectedType) {
+    throw new Error(`Billing ${format.toUpperCase()} response is unavailable.`)
   }
 }
 

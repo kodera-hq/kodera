@@ -66,6 +66,17 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
             problems.append(f"{ORCHESTRATOR} must rerun label-sensitive gates on {event}")
 
     plan = jobs.get("plan") or {}
+    native_proofs = [
+        "python3 scripts/ci/check-native-packaging.selftest.py",
+        '"$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-native-packaging-workflow.py --selftest',
+        '"$RUNNER_TEMP/ci-tools/bin/python" scripts/ci/check-native-packaging-workflow.py',
+    ]
+    if not any(
+        set(step) == {"name", "run"}
+        and [line.strip() for line in str(step.get("run", "")).splitlines() if line.strip()] == native_proofs
+        for step in plan.get("steps", [])
+    ):
+        problems.append("native packaging and workflow refusal proofs must be mandatory in plan")
     outputs = set((plan.get("outputs") or {}).keys())
     if outputs != AREAS:
         problems.append(f"plan outputs {sorted(outputs)} differ from the areas {sorted(AREAS)}")
@@ -176,7 +187,25 @@ def selftest(root: Path) -> None:
     def skipped_http_job(o, a):
         a["ci-server.yml"]["jobs"]["http-image-acceptance"]["if"] = "false"
 
+    def native_proof_step(o):
+        return next(step for step in o["jobs"]["plan"]["steps"]
+                    if "check-native-packaging.selftest.py" in str(step.get("run", "")))
+
+    def missing_native_proof(o, a):
+        step = native_proof_step(o)
+        step["run"] = step["run"].replace("python3 scripts/ci/check-native-packaging.selftest.py", "echo omitted")
+
+    def masked_native_proof(o, a):
+        step = native_proof_step(o)
+        step["run"] = step["run"].replace("python3 scripts/ci/check-native-packaging.selftest.py", "python3 scripts/ci/check-native-packaging.selftest.py || true")
+
+    def skipped_native_proof(o, a):
+        native_proof_step(o)["if"] = "false"
+
     cases = [
+        (missing_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
+        (masked_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
+        (skipped_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
         (missing_http_job, "server HTTP image acceptance job is missing"),
         (missing_bootstrap_proof, "server HTTP image acceptance must run both unmasked proofs"),
         (soft_http_failure, "server HTTP image acceptance must be mandatory"),

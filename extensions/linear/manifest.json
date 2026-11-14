@@ -1,0 +1,32 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.linear",
+  "name": "Linear Issue, Cycle & Project Bridge",
+  "version": "0.1.0",
+  "description": "Issue lifecycle, comment quote previews, cycle progress, and project health update reference implementation with Linear-Signature verification.",
+  "permissions": [
+    "messages:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/linear",
+      "name": "/linear",
+      "description": "Inspect or triage Linear issues, cycles, and project health updates"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/linear"
+}
