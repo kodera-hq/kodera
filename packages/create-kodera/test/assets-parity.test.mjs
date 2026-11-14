@@ -181,6 +181,7 @@ test('a generated directory holds the deploy/community assets and passes its pre
       'KODERA_SYNAPSE_OIDC_ISSUER',
       'KODERA_SYNAPSE_OIDC_CLIENT_SECRET',
       'KODERA_MATRIX_FEDERATION_ALLOWLIST',
+      'KODERA_FEDERATION_MODE',
     ])
       assert.match(env, new RegExp(`^${key}=$`, 'mu'), key)
     assert.match(env, /^SYNAPSE_POSTGRES_PASSWORD=[0-9a-f]{64}$/mu)
@@ -192,6 +193,17 @@ test('a generated directory holds the deploy/community assets and passes its pre
       join(output, '.env'),
     ])
     assert.match(preflight.stdout, /^OK: /u)
+    // An older configuration without the explicit mode retains the closed default.
+    await writeFile(join(output, '.env'), env.replace(/^KODERA_FEDERATION_MODE=.*\n/mu, ''))
+    const legacy = await run('python3', [
+      join(ROOT, 'scripts/ci/check-community-deploy.py'), '--preflight', join(output, '.env'),
+    ])
+    assert.match(legacy.stdout, /^OK: /u)
+    await writeFile(join(output, '.env'), env.replace(/^KODERA_FEDERATION_MODE=.*$/mu, 'KODERA_FEDERATION_MODE=unrecognized'))
+    await assert.rejects(
+      run('python3', [join(ROOT, 'scripts/ci/check-community-deploy.py'), '--preflight', join(output, '.env')]),
+      /KODERA_FEDERATION_MODE requires closed, partner or open/u,
+    )
     // And it still refuses that file once a required value is gone.
     await writeFile(join(output, '.env'), env.replace(/^SYNAPSE_POSTGRES_PASSWORD=.*$/mu, 'SYNAPSE_POSTGRES_PASSWORD='))
     await assert.rejects(
