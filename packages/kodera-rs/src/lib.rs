@@ -30,6 +30,20 @@ pub use proximity_beacon_v2::{
     PROXIMITY_BEACON_V2_BYTES,
 };
 
+pub mod proximity;
+pub use proximity::{
+    classify_initial_rssi, hkdf_expand_sha256, hkdf_extract_sha256, hkdf_sha256,
+    proximity_epoch_for_unix_secs, validate_ble_rssi_dbm, EphemeralProximityToken,
+    EphemeralTokenRotator, EphemeralTokenVerifier, MdnsProximityTxtRecord, ProximityDistanceBand,
+    ProximityMdnsQuicVerifier, ProximityQuicChallenge, ProximityQuicResponse, ProximityRadioError,
+    RssiDistanceClassifier, RssiHysteresisConfig, VerifiedEphemeralToken,
+    VerifiedQuicPeerHandshake, MAX_MDNS_TXT_RECORD_BYTES, MAX_QUIC_HANDSHAKE_FRAME_BYTES,
+    MAX_QUIC_HANDSHAKE_SKEW_SECS, MAX_VALID_RSSI_DBM, MDNS_PROXIMITY_SERVICE_LABEL,
+    MDNS_PROXIMITY_SERVICE_TYPE, MIN_VALID_RSSI_DBM, PROXIMITY_EPHEMERAL_TOKEN_BYTES,
+    PROXIMITY_EPOCH_CLOCK_SKEW_SECS, PROXIMITY_EPOCH_ROTATION_SECS, PROXIMITY_GATT_SERVICE_UUID,
+    PROXIMITY_GATT_TOKEN_CHAR_UUID, QUIC_PROXIMITY_ALPN,
+};
+
 #[cfg(feature = "openmls-engine")]
 mod mls_engine;
 #[cfg(feature = "openmls-engine")]

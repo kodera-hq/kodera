@@ -310,4 +310,29 @@
     <string name="passkey_posture_bound">Clé Passkey ES256 liée à cette organisation.</string>
     <string name="passkey_verified_count">Assertions cryptographiques vérifiées : %1$d</string>
     <string name="passkey_status_unbound">Aucune clé d’accès Passkey liée pour la session courante. Tous les fournisseurs conformes WebAuthn ES256 sont acceptés.</string>
+
+    <!-- Wave 9 voluntary #proximity BLE GATT + NSD mDNS check-in & radar -->
+    <string name="proximity_voluntary_title">Radar #proximité volontaire</string>
+    <string name="proximity_voluntary_pledge">Activation volontaire sur écran actif · jeton radio et réseau local rotatif (15 min) · aucune coordonnée GPS · expiration automatique.</string>
+    <string name="proximity_voluntary_duration_label">Durée de visibilité</string>
+    <string name="proximity_voluntary_duration_15m">15 min</string>
+    <string name="proximity_voluntary_duration_30m">30 min</string>
+    <string name="proximity_voluntary_duration_1h">1 h</string>
+    <string name="proximity_voluntary_duration_2h">2 h</string>
+    <string name="proximity_voluntary_note_label">Note de présence (facultative)</string>
+    <string name="proximity_voluntary_note_placeholder">Salle B · café</string>
+    <string name="proximity_voluntary_consent_grant">Autoriser la radio locale sur écran actif</string>
+    <string name="proximity_voluntary_permissions_missing">Autorisations système Bluetooth ou Wi-Fi de proximité requises sur Android 12+.</string>
+    <string name="proximity_voluntary_start">Rejoindre #proximité</string>
+    <string name="proximity_voluntary_leave">Quitter la proximité</string>
+    <string name="proximity_voluntary_active_badge">Balise éphémère active</string>
+    <string name="proximity_voluntary_inactive_badge">Radio locale coupée</string>
+    <string name="proximity_voluntary_peers_heading">Pairs à proximité</string>
+    <string name="proximity_voluntary_peers_empty">Aucun pair détecté dans ce périmètre pour le moment.</string>
+    <string name="proximity_voluntary_band_immediate">Très proche (BLE)</string>
+    <string name="proximity_voluntary_band_near">Proche (BLE)</string>
+    <string name="proximity_voluntary_band_ambient">Alentours (BLE)</string>
+    <string name="proximity_voluntary_lan_badge">LAN mDNS/QUIC</string>
+    <string name="proximity_voluntary_open_thread">Fil éphémère</string>
+    <string name="proximity_voluntary_start_call">Appel direct</string>
 </resources>
