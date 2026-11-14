@@ -62,7 +62,7 @@ jobs:
   android-checks:
     name: Android Resource & Unit Checks
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,6 +78,6 @@ jobs:
         run: |
           bash scripts/ci/check-app-resources.selftest.sh
           python3 scripts/ci/check-app-resources.py
-          ./gradlew test :app:processDebugMainManifest :app:processReleaseMainManifest --no-daemon
+          ./gradlew test :app:assembleDebug :app:assembleRelease lint :app:processDebugMainManifest :app:processReleaseMainManifest --no-daemon
           python3 scripts/ci/check-app-resources.py --merged app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml
           python3 scripts/ci/check-app-resources.py --merged-release app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
