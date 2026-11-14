@@ -24,6 +24,7 @@ from config.environment import (
     auth_trust,
     billing_enabled,
     console_client_id,
+    edition,
     intake_admitted,
     legal_text_origin,
     mutation_rate_per_minute,
@@ -101,6 +102,8 @@ KODERA_MUTATION_RATE_PER_MINUTE = mutation_rate_per_minute(os.environ)
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
+# Product edition: KODERA_EDITION (GOVERNANCE.md §1); `community` when unset.
+KODERA_EDITION = edition(os.environ)
 
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)

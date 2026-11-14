@@ -112,6 +112,7 @@ def assert_image_boundary(ignore):
         "!core/api/problems.py",
         "!core/api/lanes.py",
         "!core/api/edge.py",
+        "!core/api/edition.py",
         "!core/api/errors.py",
         "!core/db/__init__.py",
         "!core/db/ids.py",
