@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["security/backports/glib-0.18.5"]
 members = [
     "packages/kodera-rs",
     "apps/desktop/src-tauri",
@@ -12,3 +13,6 @@ rust-version = "1.80"
 license = "Apache-2.0"
 repository = "https://github.com/kodera-hq/kodera"
 homepage = "https://kodera.io"
+
+[patch.crates-io]
+glib = { path = "security/backports/glib-0.18.5" }

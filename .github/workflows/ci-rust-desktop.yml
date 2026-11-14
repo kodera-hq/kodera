@@ -37,6 +37,12 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt
           rustup default stable
+      - name: Verify GLib backport source and qualification guards
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 security/backports/glib-0.18.5/verify.py --selftest
+          python3 scripts/ci/qualify-glib-iterator.py --selftest
       - name: Check formatting, locked clippy, unit tests & desktop host self-check
         run: |
           cargo fmt --all -- --check
@@ -46,6 +52,13 @@ jobs:
           cargo test --locked --workspace --all-targets --all-features
           cargo run --locked -p kodera-desktop --features desktop-app --bin kodera-desktop -- --self-check
           cargo run --locked -p kodera-desktop --features desktop-app --bin kodera-desktop -- --health
+      - name: Qualify optimized GLib iterator and wrong-value oracle
+        timeout-minutes: 7
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 scripts/ci/qualify-glib-iterator.py --execute \
+            --revision "$GITHUB_SHA" --evidence "$RUNNER_TEMP/glib-iterator-evidence.json"
       - name: Verify @kodera/desktop TypeScript bridge, icons & Tauri security contract
         run: |
           node apps/desktop/scripts/verify-config.mjs --selftest
