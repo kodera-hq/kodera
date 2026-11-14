@@ -160,6 +160,13 @@ REVOKE ALL ON FUNCTION extension_erasure_step(uuid,uuid,timestamptz,text,integer
 """
 
 
+REVERSE = r"""
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP TRIGGER IF EXISTS extension_erasure_admission_immutable ON extensions_erasureadmission;
+DROP FUNCTION IF EXISTS extension_erasure_step(uuid,uuid,timestamptz,text,integer);
+"""
+
+
 class Migration(migrations.Migration):
     dependencies = [("extensions", "0009_approved_erasure_admission")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [migrations.RunSQL(FORWARD, reverse_sql=REVERSE)]

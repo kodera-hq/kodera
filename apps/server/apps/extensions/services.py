@@ -39,7 +39,7 @@ def admin(verified, organisation_id):
 def audit(action, principal, organisation_id, target_id, metadata):
     record_extension_event(
         action=action,
-        identity_id=principal.identity_id,
+        identity_id=None if principal is None else principal.identity_id,
         organisation_id=organisation_id,
         target_id=target_id,
         metadata=metadata,

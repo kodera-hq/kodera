@@ -879,7 +879,7 @@ AUDIT_FIELDS = {
 def record_extension_event(
     *,
     action: str,
-    identity_id: UUID,
+    identity_id: UUID | None,
     organisation_id: UUID,
     target_id: UUID,
     metadata: object,
@@ -888,6 +888,8 @@ def record_extension_event(
     fields = AUDIT_FIELDS.get(action)
     if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
         raise ValueError("extension audit action or metadata refused")
+    if identity_id is None:
+        raise ValueError("extension audit principal required")
     AuditEvent.objects.create(
         action="extension." + action,
         actor_type="tenant",
