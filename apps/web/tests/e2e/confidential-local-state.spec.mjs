@@ -43,6 +43,11 @@ async function pageFor(context) {
     window.payload = (n) => ({ checkpoint: new Uint8Array([n, 92, 177]), pendingSends: [{
       id: '01950000-0000-7000-8000-000000000007', ciphertext: new Uint8Array([n, 204]),
     }] })
+    window.deviceContext = () => {
+      const { organisationId, membershipId } = window.scope()
+      return { organisationId, membershipId }
+    }
+    window.vaultState = (n) => ({ checkpoint: window.payload(n).checkpoint, pendingSends: [] })
     window.captured = async (operation) => {
       try { return { ok: true, value: await operation() } }
       catch (error) { return { ok: false, code: error.code ?? error.name } }
@@ -621,4 +626,285 @@ check('inconsistent global accounting aborts deletion and rolls back queued reco
   })
   assert.deepEqual(result.failure, { ok: false, code: 'corrupt' })
   assert.deepEqual(result.persisted, { count: 1, status: 'active', hasKey: true })
+})
+
+check('unique device lookup recovers the persisted key without a hint and preserves context/owner isolation', async (page) => {
+  const result = await page.evaluate(async () => {
+    let store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    const other = await window.stateModule.initializeConfidentialState(window.ownerB)
+    const empty = await store.readUniqueDeviceVault(window.deviceContext())
+    const a = window.scope('device-vault'), b = { ...a, membershipId: window.roomB, devicePublicKey: '42'.repeat(32) }
+    await store.createUniqueDeviceVault(a, window.vaultState(11))
+    await store.createUniqueDeviceVault(b, window.vaultState(22))
+    await other.createUniqueDeviceVault({ ...a, ownerId: window.ownerB }, window.vaultState(33))
+    const stale = await window.captured(() => store.compareAndSwap([
+      { scope: a, expectedGeneration: 0, state: window.vaultState(99) },
+      { scope: window.scope(), expectedGeneration: 0, state: window.payload(99) },
+    ]))
+    const absentRoom = await store.read(window.scope())
+    await store.compareAndSwap([
+      { scope: a, expectedGeneration: 1, state: window.vaultState(44) },
+      { scope: window.scope(), expectedGeneration: 0, state: window.payload(55) },
+    ])
+    store.close(); store = await window.stateModule.openConfidentialState(window.ownerA)
+    const recovered = await store.readUniqueDeviceVault(window.deviceContext())
+    recovered.state.checkpoint[0] = 255; recovered.scope.devicePublicKey = 'ff'.repeat(32)
+    const current = await store.readUniqueDeviceVault(window.deviceContext())
+    return { empty, stale, absentRoom, key: current.scope.devicePublicKey,
+      generation: current.generation, value: [...current.state.checkpoint],
+      otherContext: (await store.readUniqueDeviceVault(b)).state.checkpoint[0],
+      otherOwner: (await other.readUniqueDeviceVault(window.deviceContext())).state.checkpoint[0],
+      conflict: await window.captured(() => store.createUniqueDeviceVault(a, window.vaultState(66))) }
+  })
+  assert.equal(result.empty, null); assert.equal(result.absentRoom, null)
+  assert.deepEqual(result.stale, { ok: false, code: 'conflict' })
+  assert.equal(result.key, '41'.repeat(32)); assert.equal(result.generation, 2)
+  assert.deepEqual(result.value, [44, 92, 177]); assert.equal(result.otherContext, 22); assert.equal(result.otherOwner, 33)
+  assert.deepEqual(result.conflict, { ok: false, code: 'conflict' })
+})
+
+check('two tabs with different candidate keys have exactly one atomic empty-context creation winner', async (page, context) => {
+  const peer = await pageFor(context)
+  await page.evaluate(async () => { window.store = await window.stateModule.initializeConfidentialState(window.ownerA) })
+  await peer.evaluate(async () => { window.store = await window.stateModule.openConfidentialState(window.ownerA) })
+  const empty = await Promise.all([page, peer].map((p) => p.evaluate(() => window.store.readUniqueDeviceVault(window.deviceContext()))))
+  assert.deepEqual(empty, [null, null])
+  await Promise.all([page, peer].map((p, i) => p.evaluate((n) => {
+    window.holdCrypto('encrypt')
+    window.pending = window.captured(() => window.store.createUniqueDeviceVault(
+      { ...window.scope('device-vault'), devicePublicKey: (n === 1 ? '41' : '42').repeat(32) }, window.vaultState(n)))
+  }, i + 1)))
+  await Promise.all([page, peer].map((p) => p.waitForFunction(() => window.cryptoEntered)))
+  const outcomes = await Promise.all([page, peer].map((p) => p.evaluate(async () => { window.releaseCrypto(); return window.pending })))
+  assert.equal(outcomes.filter((r) => r.ok && r.value === 1).length, 1)
+  assert.deepEqual(outcomes.find((r) => !r.ok), { ok: false, code: 'conflict' })
+  const recovered = await Promise.all([page, peer].map((p) => p.evaluate(async () => {
+    const result = await window.store.readUniqueDeviceVault(window.deviceContext())
+    const count = await window.raw((db) => window.idbRequest(db.transaction('records').objectStore('records').count()))
+    return { key: result.scope.devicePublicKey, value: result.state.checkpoint[0], generation: result.generation, count }
+  })))
+  assert.deepEqual(recovered[0], recovered[1]); assert.equal(recovered[0].count, 1)
+  assert.equal(recovered[0].key, (recovered[0].value === 1 ? '41' : '42').repeat(32))
+})
+
+check('unique creation abort is atomic and a committed-but-unacknowledged creation recovers without a second identity', async (page) => {
+  const result = await page.evaluate(async () => {
+    let store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    const add = IDBObjectStore.prototype.add
+    let aborted = false
+    IDBObjectStore.prototype.add = function (...args) {
+      const req = add.apply(this, args)
+      if (this.name === 'records') { aborted = true; this.transaction.abort() }
+      return req
+    }
+    const abort = await window.captured(() => store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(1)))
+    IDBObjectStore.prototype.add = add
+    const empty = await store.readUniqueDeviceVault(window.deviceContext())
+    const transaction = IDBDatabase.prototype.transaction
+    let committed = false, strict = false
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = transaction.apply(this, args)
+      if (args[1] === 'readwrite') {
+        strict = args[2]?.durability === 'strict' && tx.durability === 'strict'
+        // Registered before the module's oncomplete: data committed, acknowledgement fenced.
+        tx.addEventListener('complete', () => { committed = true; store.close() }, { once: true })
+      }
+      return tx
+    }
+    const unacknowledged = await window.captured(() => store.createUniqueDeviceVault(
+      { ...window.scope('device-vault'), devicePublicKey: '43'.repeat(32) }, window.vaultState(7)))
+    IDBDatabase.prototype.transaction = transaction
+    store = await window.stateModule.openConfidentialState(window.ownerA)
+    const recovered = await store.readUniqueDeviceVault(window.deviceContext())
+    const duplicate = await window.captured(() => store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(9)))
+    return { aborted, abort, empty, strict, committed, unacknowledged, duplicate,
+      recovered: { key: recovered.scope.devicePublicKey, generation: recovered.generation, value: recovered.state.checkpoint[0] } }
+  })
+  assert.equal(result.aborted, true); assert.equal(result.abort.ok, false); assert.equal(result.empty, null)
+  assert.equal(result.strict, true); assert.equal(result.committed, true)
+  assert.deepEqual(result.unacknowledged, { ok: false, code: 'closed' })
+  assert.deepEqual(result.duplicate, { ok: false, code: 'conflict' })
+  assert.deepEqual(result.recovered, { key: '43'.repeat(32), generation: 1, value: 7 })
+})
+
+for (const mode of ['duplicate', 'orphan-room', 'room-other-key', 'counter', 'foreign-malformed', 'overflow', 'incarnation', 'generation', 'record-size']) {
+  check(`unique context refuses ${mode} without selecting a vault or changing records`, async (page) => {
+    const result = await page.evaluate(async (mode) => {
+      const store = await window.stateModule.initializeConfidentialState(window.ownerA)
+      const other = await window.stateModule.initializeConfidentialState(window.ownerB)
+      await other.createUniqueDeviceVault(window.scope('device-vault', window.roomA, window.ownerB), window.vaultState(8))
+      const vault = window.scope('device-vault')
+      await store.compareAndSwap([{ scope: mode === 'orphan-room' ? window.scope() : vault,
+        expectedGeneration: 0, state: window.vaultState(1) }])
+      if (mode === 'duplicate' || mode === 'room-other-key') await store.compareAndSwap([{
+        scope: { ...(mode === 'duplicate' ? vault : window.scope()), devicePublicKey: '42'.repeat(32) },
+        expectedGeneration: 0, state: window.vaultState(2),
+      }])
+      if (mode === 'counter') await window.rawUpdate(['owners'], (tx) => {
+        const owners = tx.objectStore('owners'), r = owners.get(window.ownerA)
+        r.onsuccess = () => owners.put({ ...r.result, records: 0 })
+      })
+      if (['incarnation', 'generation', 'record-size'].includes(mode)) await window.rawUpdate(['records'], (tx) => {
+        const records = tx.objectStore('records'), r = records.index('ownerId').openCursor(IDBKeyRange.only(window.ownerA))
+        r.onsuccess = () => {
+          const row = r.result.value
+          records.put({ ...row, ...(mode === 'incarnation' ? { incarnation: window.roomB } :
+            mode === 'generation' ? { generation: 0 } : { ciphertext: new ArrayBuffer(27) }) })
+        }
+      })
+      if (mode === 'foreign-malformed' || mode === 'overflow') await window.rawUpdate(['records'], (tx) => {
+        const records = tx.objectStore('records'), r = records.openCursor()
+        r.onsuccess = () => {
+          const row = r.result.value
+          if (mode === 'foreign-malformed') records.put({ ...row, id: 'not-a-canonical-scope' })
+          else for (let i = 0; i < 64; i++) {
+            const fields = JSON.parse(row.id); fields[2] = `01950000-0000-7000-8000-${(i + 100).toString(16).padStart(12, '0')}`
+            records.put({ ...row, id: JSON.stringify(fields) })
+          }
+        }
+      })
+      const before = await window.raw(async (db) => {
+        const tx = db.transaction(['records', 'owners', 'metadata'])
+        return { count: await window.idbRequest(tx.objectStore('records').count()),
+          owner: await window.idbRequest(tx.objectStore('owners').get(window.ownerA)),
+          meta: await window.idbRequest(tx.objectStore('metadata').get('capacity')) }
+      })
+      const read = await window.captured(() => store.readUniqueDeviceVault(window.deviceContext()))
+      const create = await window.captured(() => store.createUniqueDeviceVault(
+        { ...vault, devicePublicKey: '44'.repeat(32) }, window.vaultState(3)))
+      const unchanged = await window.raw(async (db) => {
+        const tx = db.transaction(['records', 'owners', 'metadata'])
+        const count = await window.idbRequest(tx.objectStore('records').count())
+        const owner = await window.idbRequest(tx.objectStore('owners').get(window.ownerA))
+        const meta = await window.idbRequest(tx.objectStore('metadata').get('capacity'))
+        return count === before.count && owner.records === before.owner.records && owner.bytes === before.owner.bytes && meta.bytes === before.meta.bytes
+      })
+      return { read, create, unchanged, other: (await other.readUniqueDeviceVault(window.deviceContext())).state.checkpoint[0] }
+    }, mode)
+    assert.deepEqual(result.read, { ok: false, code: 'corrupt' })
+    assert.deepEqual(result.create, { ok: false, code: 'corrupt' }); assert.equal(result.unchanged, true)
+    assert.equal(result.other, 8)
+  })
+}
+
+check('unique context snapshots inputs before await and authenticates discovered ciphertext and scope', async (page) => {
+  await page.evaluate(async () => {
+    window.store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    window.inputScope = window.scope('device-vault'); window.inputState = window.vaultState(13)
+    window.holdCrypto('encrypt')
+    window.pending = window.store.createUniqueDeviceVault(window.inputScope, window.inputState)
+  })
+  await page.waitForFunction(() => window.cryptoEntered)
+  const result = await page.evaluate(async () => {
+    window.inputScope.membershipId = window.roomB; window.inputScope.devicePublicKey = 'ff'.repeat(32)
+    window.inputState.checkpoint.fill(255); window.inputState.pendingSends.push(window.payload(1).pendingSends[0])
+    window.releaseCrypto(); await window.pending
+    const context = window.deviceContext(), reading = window.store.readUniqueDeviceVault(context)
+    context.membershipId = window.roomB
+    const original = await reading
+    const row = (await window.raw((db) => window.idbRequest(db.transaction('records').objectStore('records').getAll())))[0]
+    const failures = []
+    for (const mode of ['ciphertext', 'nonce', 'scope']) {
+      const moved = { ...row, ciphertext: row.ciphertext.slice(0), iv: row.iv.slice(0) }
+      if (mode === 'ciphertext') new Uint8Array(moved.ciphertext)[0] ^= 1
+      if (mode === 'nonce') new Uint8Array(moved.iv)[0] ^= 1
+      if (mode === 'scope') { const parts = JSON.parse(row.id); parts[3] = '42'.repeat(32); moved.id = JSON.stringify(parts) }
+      await window.rawUpdate(['records'], (tx) => { tx.objectStore('records').delete(row.id); tx.objectStore('records').put(moved) })
+      failures.push(await window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext())))
+      await window.rawUpdate(['records'], (tx) => { tx.objectStore('records').delete(moved.id); tx.objectStore('records').put(row) })
+    }
+    return { key: original.scope.devicePublicKey, value: original.state.checkpoint[0], failures,
+      empty: await window.store.readUniqueDeviceVault({ ...window.deviceContext(), membershipId: window.roomB }) }
+  })
+  assert.equal(result.key, '41'.repeat(32)); assert.equal(result.value, 13); assert.equal(result.empty, null)
+  for (const failure of result.failures) assert.deepEqual(failure, { ok: false, code: 'corrupt' })
+})
+
+check('unique creation cannot exceed the complete owner record capacity across foreign contexts', async (page) => {
+  const result = await page.evaluate(async () => {
+    const store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    for (let base = 0; base < 64; base += 8) await store.compareAndSwap(Array.from({ length: 8 }, (_, offset) => ({
+      scope: window.scope('room', `01950000-0000-7000-8000-${(base + offset + 100).toString(16).padStart(12, '0')}`),
+      expectedGeneration: 0, state: window.vaultState(1),
+    })))
+    const scope = { ...window.scope('device-vault'), membershipId: window.roomB }
+    const empty = await store.readUniqueDeviceVault(scope)
+    const failure = await window.captured(() => store.createUniqueDeviceVault(scope, window.vaultState(2)))
+    const count = await window.raw((db) => window.idbRequest(db.transaction('records').objectStore('records').count()))
+    return { empty, failure, count }
+  })
+  assert.equal(result.empty, null); assert.deepEqual(result.failure, { ok: false, code: 'capacity' }); assert.equal(result.count, 64)
+})
+
+for (const action of ['close', 'delete']) {
+  check(`unique context holds no stale read or creation after ${action}`, async (page, context) => {
+    const peer = await pageFor(context)
+    await page.evaluate(async () => {
+      window.store = await window.stateModule.initializeConfidentialState(window.ownerA)
+      await window.store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(1))
+      window.holdCrypto('decrypt')
+      window.reading = window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext()))
+    })
+    await page.waitForFunction(() => window.cryptoEntered)
+    if (action === 'close') await page.evaluate(() => window.store.close())
+    else await peer.evaluate(() => window.stateModule.deleteConfidentialOwner(window.ownerA))
+    const read = await page.evaluate(async () => { window.releaseCrypto(); return window.reading })
+    assert.deepEqual(read, { ok: false, code: action === 'close' ? 'closed' : 'owner-revoked' })
+    // Use a second owner to hold initial creation in an empty context.
+    await page.evaluate(async () => {
+      window.store = await window.stateModule.initializeConfidentialState(window.ownerB)
+      window.holdCrypto('encrypt')
+      window.creating = window.captured(() => window.store.createUniqueDeviceVault(
+        window.scope('device-vault', window.roomA, window.ownerB), window.vaultState(2)))
+    })
+    await page.waitForFunction(() => window.cryptoEntered)
+    if (action === 'close') await page.evaluate(() => window.store.close())
+    else await peer.evaluate(() => window.stateModule.deleteConfidentialOwner(window.ownerB))
+    const creation = await page.evaluate(async () => { window.releaseCrypto(); return window.creating })
+    assert.deepEqual(creation, { ok: false, code: action === 'close' ? 'closed' : 'owner-revoked' })
+    const remaining = await peer.evaluate(async () => {
+      const count = await window.raw((db) => window.idbRequest(db.transaction('records').objectStore('records').index('ownerId').count(window.ownerB)))
+      const initialize = await window.captured(() => window.stateModule.initializeConfidentialState(window.ownerB))
+      return { count, initialize: initialize.ok ? 'active' : initialize.code }
+    })
+    assert.equal(remaining.count, 0); assert.equal(remaining.initialize, action === 'delete' ? 'owner-revoked' : 'active')
+  })
+}
+
+check('unique creation refuses weaker durability, malformed inputs and database capacity without writes', async (page) => {
+  const result = await page.evaluate(async () => {
+    const store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    const transaction = IDBDatabase.prototype.transaction, weaker = []
+    for (const mode of ['ignored', 'unsupported']) {
+      let calls = 0
+      IDBDatabase.prototype.transaction = function (...args) {
+        if (args[1] !== 'readwrite') return transaction.apply(this, args)
+        calls++
+        if (mode === 'unsupported') throw new TypeError('synthetic unsupported strict')
+        return transaction.call(this, args[0], args[1], { durability: 'relaxed' })
+      }
+      const failure = await window.captured(() => store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(1)))
+      IDBDatabase.prototype.transaction = transaction
+      weaker.push({ failure, calls, empty: await store.readUniqueDeviceVault(window.deviceContext()) })
+    }
+    const invalid = []
+    for (const scope of [window.scope(), { ...window.scope('device-vault'), ownerId: window.ownerB },
+      { ...window.scope('device-vault'), devicePublicKey: 'AB'.repeat(32) }]) {
+      invalid.push(await window.captured(() => store.createUniqueDeviceVault(scope, window.vaultState(1))))
+    }
+    invalid.push(await window.captured(() => store.createUniqueDeviceVault(window.scope('device-vault'), window.payload(1))))
+    invalid.push(await window.captured(() => store.readUniqueDeviceVault({ ...window.deviceContext(), membershipId: 'invalid' })))
+    const oversized = await window.captured(() => store.createUniqueDeviceVault(window.scope('device-vault'), {
+      checkpoint: new Uint8Array(17 * 1024 * 1024 + 1), pendingSends: [],
+    }))
+    await window.rawUpdate(['metadata'], (tx) => tx.objectStore('metadata').put({ id: 'capacity', bytes: 128 * 1024 * 1024 }))
+    const capacity = await window.captured(() => store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(1)))
+    return { weaker, invalid, oversized, capacity, empty: await store.readUniqueDeviceVault(window.deviceContext()) }
+  })
+  for (const item of result.weaker) {
+    assert.deepEqual(item.failure, { ok: false, code: 'unavailable' }); assert.equal(item.calls, 1); assert.equal(item.empty, null)
+  }
+  for (const item of result.invalid) assert.deepEqual(item, { ok: false, code: 'invalid-input' })
+  assert.deepEqual(result.oversized, { ok: false, code: 'capacity' })
+  assert.deepEqual(result.capacity, { ok: false, code: 'capacity' }); assert.equal(result.empty, null)
 })
