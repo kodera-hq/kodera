@@ -87,3 +87,19 @@ def tenant_status_matches(*, tenant_id: UUID, organisation_id: UUID, status: str
     return Tenant.objects.filter(
         id=tenant_id, organisation_id=organisation_id, status=status
     ).exists()
+
+
+def organisation_tenant_urls(*, organisation_ids: tuple[UUID, ...]) -> dict[UUID, dict[str, str]]:
+    """Map each organisation to its newest live tenant's default application URLs."""
+    if not organisation_ids:
+        return {}
+    result: dict[UUID, dict[str, str]] = {}
+    rows = (
+        Tenant.objects.filter(organisation_id__in=organisation_ids)
+        .exclude(status="deleted")
+        .order_by("organisation_id", "-created_at", "-id")
+    )
+    for row in rows:
+        if row.organisation_id not in result:
+            result[row.organisation_id] = default_urls(row)
+    return result

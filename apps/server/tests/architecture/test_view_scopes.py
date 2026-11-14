@@ -65,6 +65,7 @@ from rest_framework.viewsets import ViewSet
 from core.api.scopes import Operation, declares
 from dev.served_operations import (
     API_PREFIX,
+    ROUTE_ALIASES,
     Route,
     contract_path as _contract_path,
     declared as _declared,
@@ -248,7 +249,13 @@ def _agent_operation_failures(where: str, route: str, op: Operation, ref: Refere
     return failures
 
 
-def _operation_failures(where: str, route: str, op: Operation, ref: Reference) -> list[str]:
+def _operation_failures(
+    where: str,
+    route: str,
+    op: Operation,
+    ref: Reference,
+    aliases: Mapping[tuple[str, str], str] = ROUTE_ALIASES,
+) -> list[str]:
     if route.startswith(AGENT_PREFIX):
         return _agent_operation_failures(where, route, op, ref)
     shape = re.fullmatch(r"([a-z][a-z_]*):([a-z]+)", op.scope)
@@ -278,7 +285,8 @@ def _operation_failures(where: str, route: str, op: Operation, ref: Reference) -
             f"{where} declares scope {op.scope!r} for {op.operation_id}; the contract's "
             f"x-kodera-scope is {contract.scope!r}"
         )
-    served = (op.method.upper(), _contract_path(route))
+    expected_at = aliases.get((route, op.operation_id), _contract_path(route))
+    served = (op.method.upper(), expected_at)
     if served != (contract.method, contract.path):
         failures.append(
             f"{where} serves {op.operation_id} as {op.method.upper()} "
@@ -289,7 +297,10 @@ def _operation_failures(where: str, route: str, op: Operation, ref: Reference) -
 
 
 def scope_failures(
-    found: list[Route], ref: Reference, exempt: Mapping[tuple[str, str], str] = EXEMPT
+    found: list[Route],
+    ref: Reference,
+    exempt: Mapping[tuple[str, str], str] = EXEMPT,
+    aliases: Mapping[tuple[str, str], str] = ROUTE_ALIASES,
 ) -> list[str]:
     """Every way a routed view fails to declare its contract scope, one line each."""
     if not found:
@@ -312,7 +323,7 @@ def scope_failures(
         for method in sorted({m for m in methods if methods.count(m) > 1}):
             failures.append(f"{where} declares {method} more than once")
         for op in operations:
-            failures += _operation_failures(where, route.route, op, ref)
+            failures += _operation_failures(where, route.route, op, ref, aliases)
         accepted = _accepted_methods(route.callback)
         for method in sorted((accepted or set()) - set(methods)):
             failures.append(f"{where} accepts {method} but declares no operation for it")
@@ -320,6 +331,16 @@ def scope_failures(
     for at, name in sorted(set(exempt) - routed):
         failures.append(
             f"exempt view {name} is not routed at {at} by any urlconf; remove it from EXEMPT"
+        )
+    routed_ops = {
+        (route.route, op.operation_id)
+        for route in found
+        for op in (_declared(route.callback) or ())
+    }
+    for at, op_id in sorted(set(aliases) - routed_ops):
+        failures.append(
+            f"route alias ({at!r}, {op_id!r}) is not routed by any urlconf; "
+            "remove it from ROUTE_ALIASES"
         )
     return failures
 
@@ -511,9 +532,18 @@ def agent_route_serving_a_customer_operation(request: HttpRequest) -> HttpRespon
     return HttpResponse()
 
 
-def _check(*patterns: Any, exempt: Mapping[tuple[str, str], str] | None = None) -> list[str]:
+def _check(
+    *patterns: Any,
+    exempt: Mapping[tuple[str, str], str] | None = None,
+    aliases: Mapping[tuple[str, str], str] | None = None,
+) -> list[str]:
     found, unreadable = routes({"fixture": list(patterns)})
-    return unreadable + scope_failures(found, reference(), {} if exempt is None else exempt)
+    return unreadable + scope_failures(
+        found,
+        reference(),
+        {} if exempt is None else exempt,
+        {} if aliases is None else aliases,
+    )
 
 
 HERE = __name__
@@ -631,7 +661,7 @@ def test_an_agent_operation_the_contract_does_not_admit_the_agent_to_fails() -> 
     closed = {**ref.agent_operations}
     closed["getCommands"] = closed["getCommands"]._replace(roles=frozenset({"staff"}))
     found, _ = routes({"fixture": [path("agent/v1/commands", agent_commands)]})
-    assert scope_failures(found, ref._replace(agent_operations=closed), {}) == [
+    assert scope_failures(found, ref._replace(agent_operations=closed), {}, {}) == [
         f"fixture: agent/v1/commands -> {HERE}.agent_commands serves getCommands, whose "
         "x-kodera-authz does not admit the agent"
     ]
@@ -775,4 +805,23 @@ def test_the_check_refuses_a_regex_route_and_an_empty_urlconf() -> None:
         "fixture: ^api/v1/me$ is a regex route; routes are path() so their contract path "
         "can be read",
         "no routed view found; the check would pass on an empty urlconf",
+    ]
+
+
+def test_a_declared_route_alias_passes_only_for_its_mapped_operation_and_dead_alias_fails() -> None:
+    aliases = {("api/v1/whoami", "getMe"): "/me"}
+    assert _check(path("api/v1/whoami", scoped), aliases=aliases) == []
+    assert _check(
+        path("api/v1/me", scoped),
+        aliases={("api/v1/whoami", "getMe"): "/me"},
+    ) == [
+        "route alias ('api/v1/whoami', 'getMe') is not routed by any urlconf; "
+        "remove it from ROUTE_ALIASES"
+    ]
+    assert _check(
+        path("api/v1/whoami", scoped),
+        aliases={("api/v1/whoami", "getMe"): "/wrong"},
+    ) == [
+        f"fixture: api/v1/whoami -> {HERE}.scoped serves getMe as GET /wrong; "
+        "the contract has it at GET /me"
     ]

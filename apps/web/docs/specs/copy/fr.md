@@ -2060,3 +2060,30 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.invitation.join.sign-in` | Connectez-vous à Kodera, puis rouvrez le lien d’invitation. |
 | `console.invitation.join.gone` | Ce lien d’invitation a expiré, a été révoqué ou a déjà servi autant de fois que prévu. Demandez-en un nouveau. |
 | `console.invitation.join.failed` | Le lien n’a pas pu être vérifié. Réessayez dans un instant. |
+
+## Kodera Passport
+
+| Key | Text |
+|---|---|
+| `console.login.passport.title` | Connexion Kodera Passport |
+| `console.login.passport.subtitle` | Recevez un lien à usage unique pour retrouver l’ensemble de vos espaces. |
+| `console.login.passport.field-email` | Adresse e-mail professionnelle |
+| `console.login.passport.action-send` | Recevoir le lien de connexion |
+| `console.login.passport.action-sending` | Envoi en cours… |
+| `console.login.passport.sent` | Si un compte correspond à cette adresse, un lien valable 10 minutes vient d’être envoyé. |
+| `console.login.passport.verifying` | Vérification du lien Kodera Passport… |
+| `console.login.passport.problem-email` | Saisissez une adresse e-mail valide. |
+| `console.login.passport.problem-rate-limited` | Trop de tentatives récentes. Patientez quelques instants avant de réessayer. |
+| `console.login.passport.problem-expired` | Ce lien de connexion a expiré ou a déjà été utilisé. Demandez un nouveau lien. |
+| `console.login.passport.problem-network` | Le service Kodera Passport est temporairement injoignable. Réessayez dans un instant. |
+| `console.shell.passport.title` | Vos espaces Kodera |
+| `console.shell.passport.empty` | Aucun espace actif n’est rattaché à votre compte. |
+| `console.shell.passport.badge-active` | Actif |
+| `console.shell.passport.action-switch` | Ouvrir cet espace |
+| `console.shell.passport.action-switching` | Changement d’espace… |
+| `console.shell.passport.role-owner` | Propriétaire |
+| `console.shell.passport.role-admin` | Administrateur |
+| `console.shell.passport.role-billing` | Facturation |
+| `console.shell.passport.role-member` | Membre |
+| `console.shell.passport.problem-forbidden` | Vous n’êtes plus membre actif de cet espace. |
+| `console.shell.passport.problem-switch` | Le changement d’espace n’a pas abouti. Réessayez. |

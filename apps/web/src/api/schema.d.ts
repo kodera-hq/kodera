@@ -40,6 +40,114 @@ export interface paths {
         patch: operations["patchMe"];
         trace?: never;
     };
+    "/auth/passport/magic-link/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a single-use Kodera Passport magic-link sign-in token
+         * @description Issues a single-use, 10-minute CSPRNG magic-link token bound to the normalized email
+         *     address and RFC 7636 S256 PKCE challenge (plus optional device challenge). The response
+         *     shape (`202 Accepted`) is constant whether or not an account exists so account enumeration
+         *     is impossible; raw token material never appears in the HTTP response or logs.
+         */
+        post: operations["requestPassportMagicLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passport/magic-link/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify and burn a single-use Kodera Passport magic-link token
+         * @description Atomically consumes the single-use magic-link token under row lock, verifies expiry and
+         *     the S256 PKCE verifier (plus optional device verifier), establishes a short-lived signed
+         *     Passport session token, and returns the verified person with their active workspaces across
+         *     organisations (one realm per organisation). Any replay or expired token returns `401`.
+         */
+        post: operations["verifyPassportMagicLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passport/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the authenticated person's eligible workspaces across organisations */
+        get: operations["listPassportWorkspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/passport/switch-workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch the caller's active workspace context across organisations
+         * @description Verifies active membership in the target organisation (`403 forbidden` with `authz.denied`
+         *     audit event when the caller is not an active member), updates the person's active workspace
+         *     context, records `auth.login_succeeded`, and returns the refreshed Passport session token.
+         */
+        post: operations["switchPassportWorkspace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/billing/webhooks/stripe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive a signed Stripe webhook event for idempotent billing reconciliation
+         * @description Public webhook endpoint exempt from OIDC bearer tokens and authenticated strictly via
+         *     `Stripe-Signature` HMAC-SHA256 (`t=...,v1=...`) within a 300-second replay window.
+         *     Deduplicates events by `stripe_event_id` so re-delivered events return `200` without
+         *     re-applying subscription, payment, or workspace quota changes.
+         */
+        post: operations["receiveStripeWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/discover": {
         parameters: {
             query?: never;
@@ -10559,6 +10667,244 @@ export interface components {
             /** @enum {string|null} */
             failureCode: "build_failed" | "storage_unavailable" | "identity_conflict" | "legal_hold" | null;
         };
+        /**
+         * @example {
+         *       "email": "camille.laurent@acme.fr",
+         *       "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+         *       "code_challenge_method": "S256",
+         *       "device_challenge": null
+         *     }
+         */
+        PassportMagicLinkRequest: {
+            email: string;
+            code_challenge: string;
+            /**
+             * @default S256
+             * @enum {string}
+             */
+            code_challenge_method: "S256";
+            device_challenge?: string | null;
+        };
+        /**
+         * @example {
+         *       "status": "accepted",
+         *       "expires_in_seconds": 600
+         *     }
+         */
+        PassportMagicLinkAccepted: {
+            /** @constant */
+            status: "accepted";
+            /** @constant */
+            expires_in_seconds: 600;
+        };
+        /**
+         * @example {
+         *       "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+         *       "code_verifier": "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv",
+         *       "device_verifier": null
+         *     }
+         */
+        PassportMagicLinkVerifyRequest: {
+            token: string;
+            code_verifier: string;
+            device_verifier?: string | null;
+        };
+        /**
+         * @example {
+         *       "id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab784",
+         *       "email": "camille.laurent@acme.fr",
+         *       "display_name": "Camille Laurent"
+         *     }
+         */
+        PassportPerson: {
+            /** Format: uuid */
+            id: string;
+            email: string;
+            display_name: string | null;
+        };
+        /**
+         * @example {
+         *       "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *       "organisation_slug": "acme-org",
+         *       "organisation_name": "Acme SAS",
+         *       "realm": "acme-org",
+         *       "issuer": "https://id.kodera.io/realms/acme-org",
+         *       "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+         *       "role": "org_owner",
+         *       "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *       "default_urls": {},
+         *       "active": true
+         *     }
+         */
+        PassportWorkspaceEntry: {
+            /** Format: uuid */
+            organisation_id: string;
+            organisation_slug: string;
+            organisation_name: string;
+            realm: string;
+            /** Format: uri */
+            issuer: string;
+            /** Format: uuid */
+            membership_id: string;
+            role: components["schemas"]["OrganisationRole"];
+            /** Format: uuid */
+            workspace_id: string | null;
+            default_urls: {
+                [key: string]: string;
+            };
+            active: boolean;
+        };
+        /**
+         * @example {
+         *       "user": {
+         *         "id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab784",
+         *         "email": "camille.laurent@acme.fr",
+         *         "display_name": "Camille Laurent"
+         *       },
+         *       "active_organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *       "active_workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *       "workspaces": [
+         *         {
+         *           "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *           "organisation_slug": "acme-org",
+         *           "organisation_name": "Acme SAS",
+         *           "realm": "acme-org",
+         *           "issuer": "https://id.kodera.io/realms/acme-org",
+         *           "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+         *           "role": "org_owner",
+         *           "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *           "default_urls": {},
+         *           "active": true
+         *         }
+         *       ]
+         *     }
+         */
+        PassportWorkspaceDirectory: {
+            user: components["schemas"]["PassportPerson"];
+            /** Format: uuid */
+            active_organisation_id: string | null;
+            /** Format: uuid */
+            active_workspace_id: string | null;
+            workspaces: components["schemas"]["PassportWorkspaceEntry"][];
+        };
+        /**
+         * @example {
+         *       "user": {
+         *         "id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab784",
+         *         "email": "camille.laurent@acme.fr",
+         *         "display_name": "Camille Laurent"
+         *       },
+         *       "active_organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *       "active_workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *       "workspaces": [
+         *         {
+         *           "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *           "organisation_slug": "acme-org",
+         *           "organisation_name": "Acme SAS",
+         *           "realm": "acme-org",
+         *           "issuer": "https://id.kodera.io/realms/acme-org",
+         *           "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+         *           "role": "org_owner",
+         *           "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *           "default_urls": {},
+         *           "active": true
+         *         }
+         *       ],
+         *       "session_token": "kp1.eyJleHAiOjE3NjMxNDAwMDAsImlhdCI6MTc2MzEzNjQwMCwib3JnIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg1Iiwic3ViIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg0IiwidiI6MX0.synthetic_signature",
+         *       "expires_in_seconds": 3600
+         *     }
+         */
+        PassportVerifiedSession: {
+            user: components["schemas"]["PassportPerson"];
+            /** Format: uuid */
+            active_organisation_id: string | null;
+            /** Format: uuid */
+            active_workspace_id: string | null;
+            workspaces: components["schemas"]["PassportWorkspaceEntry"][];
+            session_token: string;
+            expires_in_seconds: number;
+        };
+        /**
+         * @example {
+         *       "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785"
+         *     }
+         */
+        PassportSwitchWorkspaceRequest: {
+            /** Format: uuid */
+            organisation_id: string;
+        };
+        /**
+         * @example {
+         *       "active_organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *       "active_workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *       "workspace": {
+         *         "organisation_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab785",
+         *         "organisation_slug": "acme-org",
+         *         "organisation_name": "Acme SAS",
+         *         "realm": "acme-org",
+         *         "issuer": "https://id.kodera.io/realms/acme-org",
+         *         "membership_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab786",
+         *         "role": "org_owner",
+         *         "workspace_id": "019467a3-0f9d-7eb5-b9e4-3bc6a04ab787",
+         *         "default_urls": {},
+         *         "active": true
+         *       },
+         *       "session_token": "kp1.eyJleHAiOjE3NjMxNDAwMDAsImlhdCI6MTc2MzEzNjQwMCwib3JnIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg1Iiwic3ViIjoiMDE5NDY3YTMtMGY5ZC03ZWI1LWI5ZTQtM2JjNmEwNGFiNzg0IiwidiI6MX0.synthetic_signature",
+         *       "expires_in_seconds": 3600
+         *     }
+         */
+        PassportSwitchedWorkspace: {
+            /** Format: uuid */
+            active_organisation_id: string;
+            /** Format: uuid */
+            active_workspace_id: string | null;
+            workspace: components["schemas"]["PassportWorkspaceEntry"];
+            session_token: string;
+            expires_in_seconds: number;
+        };
+        /**
+         * @example {
+         *       "id": "evt_synthetic_0001",
+         *       "type": "checkout.session.completed",
+         *       "created": 1763136400,
+         *       "livemode": false,
+         *       "data": {
+         *         "object": {
+         *           "id": "cs_test_synthetic_0001",
+         *           "payment_status": "paid"
+         *         }
+         *       }
+         *     }
+         */
+        StripeWebhookEvent: {
+            id: string;
+            type: string;
+            created: number;
+            livemode?: boolean;
+            data: {
+                object: {
+                    [key: string]: unknown;
+                };
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * @example {
+         *       "received": true,
+         *       "event_id": "evt_synthetic_0001",
+         *       "event_type": "checkout.session.completed",
+         *       "status": "applied"
+         *     }
+         */
+        StripeWebhookReceipt: {
+            /** @constant */
+            received: true;
+            event_id: string;
+            event_type: string;
+            /** @enum {string} */
+            status: "applied" | "duplicate" | "ignored" | "unmatched" | "stale" | "deferred" | "mismatch";
+        };
     };
     responses: {
         /** @description The request body or its parameters are malformed. */
@@ -10927,6 +11273,153 @@ export interface operations {
             422: components["responses"]["ValidationError"];
             428: components["responses"]["PreconditionRequired"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    requestPassportMagicLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PassportMagicLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Magic-link request accepted with constant enumerator-safe shape. */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PassportMagicLinkAccepted"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    verifyPassportMagicLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PassportMagicLinkVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Verified person, Passport session token, and eligible workspaces. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PassportVerifiedSession"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationError"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listPassportWorkspaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active workspace context and eligible workspaces across realms. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PassportWorkspaceDirectory"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    switchPassportWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PassportSwitchWorkspaceRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated active workspace context and refreshed Passport session token. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PassportSwitchedWorkspace"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationError"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    receiveStripeWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StripeWebhookEvent"];
+            };
+        };
+        responses: {
+            /** @description Webhook verified and processed (or acknowledged as a duplicate). */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StripeWebhookReceipt"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["UpstreamUnavailable"];
         };
     };
     discoverRealm: {

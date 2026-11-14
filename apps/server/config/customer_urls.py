@@ -11,8 +11,15 @@ from apps.billing.api.help_context import help_context
 from apps.billing.api.membership_count import membership_count
 from apps.billing.api.slug_availability import slug_availability
 from apps.billing.api.vat_status import billing_vat
+from apps.billing.api.webhooks import stripe_webhook
 from apps.engine_intents.api.views import ack, commands, result
 from apps.identity.api.discovery import discovery
+from apps.identity.api.passport import (
+    passport_magic_link_request,
+    passport_magic_link_verify,
+    passport_switch_workspace,
+    passport_workspaces,
+)
 from apps.identity.api.views import me
 from apps.legal.api import views as legal
 from apps.orgs.api.bootstrap import organisation_bootstrap
@@ -48,6 +55,12 @@ urlpatterns = [
     path("api/v1/me", me),
     path("api/v1/workspaces/instant-claim", instant_claim),
     path("api/v1/auth/discover", discovery),
+    path("api/v1/auth/passport/magic-link/request", passport_magic_link_request),
+    path("api/v1/auth/passport/magic-link/verify", passport_magic_link_verify),
+    path("api/v1/auth/passport/workspaces", passport_workspaces),
+    path("api/v1/auth/passport/switch-workspace", passport_switch_workspace),
+    path("api/v1/billing/webhooks/stripe", stripe_webhook),
+    path("api/v1/webhooks/stripe", stripe_webhook),
     path("api/v1/organisations", organisations),
     path("api/v1/organisations/<uuid:organisation_id>", organisation_detail),
     path("api/v1/organisations/<uuid:organisation_id>/bootstrap", organisation_bootstrap),

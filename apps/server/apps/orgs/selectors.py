@@ -228,3 +228,54 @@ def digest_member(*, membership_id: UUID) -> MembershipContact | None:
     return MembershipContact(
         row.id, row.user_id, row.organisation_id, row.user.email, row.organisation.name
     )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PassportMembershipRow:
+    membership_id: UUID
+    organisation_id: UUID
+    organisation_slug: str
+    organisation_name: str
+    realm: str
+    issuer: str
+    role: str
+
+
+def passport_memberships(*, user_id: UUID) -> tuple[PassportMembershipRow, ...]:
+    """Eligible active memberships of a person across organisations (one realm per organisation)."""
+    rows = (
+        Membership.objects.select_related("organisation")
+        .filter(
+            user_id=user_id,
+            deleted_at__isnull=True,
+            state=Membership.State.ACTIVE,
+            accepted_at__isnull=False,
+            role__in=Membership.Role.values,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+            organisation__state=Organisation.State.ACTIVE,
+            organisation__deleted_at__isnull=True,
+        )
+        .order_by("organisation__slug", "id")
+    )
+    return tuple(
+        PassportMembershipRow(
+            membership_id=row.id,
+            organisation_id=row.organisation_id,
+            organisation_slug=row.organisation.slug,
+            organisation_name=row.organisation.name,
+            realm=row.organisation.realm,
+            issuer=row.organisation.issuer,
+            role=row.role,
+        )
+        for row in rows
+    )
+
+
+def organisation_slug_or_none(*, organisation_id: UUID) -> str | None:
+    """Return an undeleted organisation's slug for internal audit target naming, or None."""
+    return (
+        Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+        .values_list("slug", flat=True)
+        .first()
+    )

@@ -2046,3 +2046,30 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.invitation.join.sign-in` | Sign in to Kodera, then open the invite link again. |
 | `console.invitation.join.gone` | This invite link has expired, was revoked or has been used as many times as allowed. Ask for a new one. |
 | `console.invitation.join.failed` | The link could not be checked. Try again in a moment. |
+
+## Kodera Passport
+
+| Key | Text |
+|---|---|
+| `console.login.passport.title` | Kodera Passport sign-in |
+| `console.login.passport.subtitle` | Receive a single-use link to reach all of your workspaces. |
+| `console.login.passport.field-email` | Work email address |
+| `console.login.passport.action-send` | Send sign-in link |
+| `console.login.passport.action-sending` | Sending… |
+| `console.login.passport.sent` | If an account matches this address, a link valid for 10 minutes has been sent. |
+| `console.login.passport.verifying` | Checking Kodera Passport link… |
+| `console.login.passport.problem-email` | Enter a valid email address. |
+| `console.login.passport.problem-rate-limited` | Too many recent attempts. Wait a moment before trying again. |
+| `console.login.passport.problem-expired` | This sign-in link has expired or was already used. Request a new link. |
+| `console.login.passport.problem-network` | Kodera Passport cannot be reached right now. Try again in a moment. |
+| `console.shell.passport.title` | Your Kodera workspaces |
+| `console.shell.passport.empty` | No active workspace is linked to your account. |
+| `console.shell.passport.badge-active` | Active |
+| `console.shell.passport.action-switch` | Switch workspace |
+| `console.shell.passport.action-switching` | Switching workspace… |
+| `console.shell.passport.role-owner` | Owner |
+| `console.shell.passport.role-admin` | Administrator |
+| `console.shell.passport.role-billing` | Billing |
+| `console.shell.passport.role-member` | Member |
+| `console.shell.passport.problem-forbidden` | You are no longer an active member of this workspace. |
+| `console.shell.passport.problem-switch` | Workspace switch could not be completed. Try again. |
