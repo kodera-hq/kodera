@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  APPROVED_CONNECT_SOURCES,
+  REQUIRED_BUNDLE_ICONS,
+  validateTauriSecurityInvariants,
+} from '../src/security-policy.mjs';
+import { buildIconFiles } from './generate-icons.mjs';
 
-const tauriDir = join(import.meta.dirname, '..', 'src-tauri');
-const requiredIcons = [
-  'icons/32x32.png',
-  'icons/128x128.png',
-  'icons/128x128@2x.png',
-  'icons/icon.png',
-];
+const desktopDir = join(import.meta.dirname, '..');
+const tauriDir = join(desktopDir, 'src-tauri');
+const srcDir = join(desktopDir, 'src');
+const requiredIcons = [...REQUIRED_BUNDLE_ICONS];
 const requiredFiles = ['build.rs', 'src/main.rs', 'capabilities/default.json', ...requiredIcons];
 const conf = JSON.parse(readFileSync(join(tauriDir, 'tauri.conf.json'), 'utf8'));
 const files = new Set(requiredFiles.filter((path) => existsSync(join(tauriDir, path))));
@@ -16,7 +19,7 @@ const capability = files.has('capabilities/default.json')
   ? JSON.parse(readFileSync(join(tauriDir, 'capabilities/default.json'), 'utf8'))
   : null;
 
-// The desktop preview is a companion surface: it sells nothing. No pricing, plan, upgrade or
+// The desktop shell is a companion surface: it sells nothing. No pricing, plan, upgrade or
 // checkout wording, no billing SDK and no address that can reach a payment page may appear in its
 // sources or configuration. `plan` alone is not listed: here it names the self-host deployment plan.
 // Stems that mean commerce wherever they stand, inside an identifier included (`open_checkout`,
@@ -44,97 +47,72 @@ const COMPANION_RULES = [
 
 function companionSurface() {
   const surface = new Map();
-  const add = (path) => surface.set(path, readFileSync(join(tauriDir, path), 'utf8'));
-  for (const name of readdirSync(join(tauriDir, 'src')).sort()) if (name.endsWith('.rs')) add(`src/${name}`);
-  for (const name of readdirSync(join(tauriDir, 'capabilities')).sort()) add(`capabilities/${name}`);
-  for (const path of ['tauri.conf.json', 'Cargo.toml', 'build.rs', '../package.json']) add(path);
+  const addTauri = (path) => surface.set(path, readFileSync(join(tauriDir, path), 'utf8'));
+  for (const name of readdirSync(join(tauriDir, 'src')).sort()) {
+    if (name.endsWith('.rs')) addTauri(`src/${name}`);
+  }
+  for (const name of readdirSync(join(tauriDir, 'capabilities')).sort()) {
+    addTauri(`capabilities/${name}`);
+  }
+  if (existsSync(srcDir)) {
+    for (const name of readdirSync(srcDir).sort()) {
+      if (name.endsWith('.mjs') || name.endsWith('.d.ts')) {
+        surface.set(`../src/${name}`, readFileSync(join(srcDir, name), 'utf8'));
+      }
+    }
+  }
+  for (const path of ['tauri.conf.json', 'Cargo.toml', 'build.rs', '../package.json']) {
+    addTauri(path);
+  }
   return surface;
 }
 
 function verifyCompanionSurface(surface) {
-  assert.ok(surface.size >= 7 && surface.has('src/commands.rs'), 'companion surface must include the desktop sources');
+  assert.ok(
+    surface.size >= 10 && surface.has('src/commands.rs') && surface.has('../src/bridge.mjs'),
+    'companion surface must include the desktop Rust and TypeScript sources',
+  );
   for (const [path, text] of surface) {
     for (const [pattern, finding] of COMPANION_RULES) {
       const match = pattern.exec(text);
-      assert.equal(match, null, `${path} ${finding}: ${JSON.stringify(match?.[0])}; the desktop preview sells nothing`);
+      assert.equal(match, null, `${path} ${finding}: ${JSON.stringify(match?.[0])}; the desktop shell sells nothing`);
     }
   }
 }
 
-function verifyConfiguration(config, availableFiles, defaultCapability) {
-  assert.equal(config.identifier, 'io.kodera.desktop', 'identifier must match the desktop app');
-  assert.equal(config.productName, 'Kodera', 'productName must be Kodera');
-  assert.equal(config.build?.frontendDist, '../../web/dist', 'frontendDist must use the web bundle');
-  const csp = config.app?.security?.csp;
-  assert.equal(typeof csp, 'string', 'CSP must be present');
-  const directives = csp.split(';').map((part) => part.trim()).filter(Boolean).map((part) => part.split(/\s+/u));
-  // Script loading falls back to default-src. Keep the complete source policy closed,
-  // rather than proving two blob directives while overlooking an expanded script policy.
-  const expectedSources = new Map([
-    ['default-src', ["'self'"]],
-    ['connect-src', ["'self'"]],
-    ['img-src', ["'self'", 'data:', 'blob:']],
-    ['media-src', ["'self'", 'blob:']],
-    ['worker-src', ["'self'", 'blob:']],
-    ['style-src', ["'self'"]],
-    ['style-src-attr', ["'unsafe-inline'"]],
-    ['font-src', ["'self'", 'data:']],
-    ['object-src', ["'none'"]],
-    ['base-uri', ["'none'"]],
-    ['form-action', ["'self'"]],
-    ['frame-ancestors', ["'none'"]],
-  ]);
-  for (const [name, sources] of expectedSources) {
-    const matches = directives.filter(([directive]) => directive === name);
-    assert.equal(matches.length, 1, `${name} must be present exactly once`);
-    assert.deepEqual(matches[0].slice(1).sort(), [...sources].sort(), `${name} must use only approved sources`);
+function verifyBundleIconBinaries() {
+  const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  for (const rel of ['icons/32x32.png', 'icons/128x128.png', 'icons/128x128@2x.png', 'icons/icon.png']) {
+    const bytes = readFileSync(join(tauriDir, rel));
+    assert.ok(bytes.length > 32 && bytes.subarray(0, 8).equals(pngSig), `${rel} must have a valid PNG header`);
   }
-  assert.equal(directives.length, expectedSources.size, 'CSP must contain only approved directives');
-  assert.ok(config.app?.security?.dangerousDisableAssetCspModification === undefined
-    || config.app.security.dangerousDisableAssetCspModification === false,
-  'CSP asset modification must not be disabled');
-  assert.deepEqual(config.app?.security?.capabilities, ['default'], 'default capability must be selected');
-  const plugins = config.plugins;
-  assert.ok(plugins !== null && typeof plugins === 'object' && !Array.isArray(plugins),
-    'plugins configuration must be present');
-  assert.deepEqual(Object.keys(plugins), ['deep-link'],
-    'plugins must contain only the approved deep-link handler');
-  const deepLink = plugins['deep-link'];
-  assert.ok(deepLink !== null && typeof deepLink === 'object' && !Array.isArray(deepLink),
-    'deep-link plugin configuration must be an object');
-  assert.deepEqual(Object.keys(deepLink), ['desktop'],
-    'deep-link configuration must scope to desktop only');
-  const desktopDeepLink = deepLink.desktop;
-  assert.ok(desktopDeepLink !== null && typeof desktopDeepLink === 'object' && !Array.isArray(desktopDeepLink),
-    'deep-link desktop configuration must be an object');
-  assert.deepEqual(Object.keys(desktopDeepLink), ['schemes'],
-    'deep-link desktop configuration must contain only schemes');
-  const schemes = desktopDeepLink.schemes;
-  assert.ok(Array.isArray(schemes), 'deep-link schemes must be an array');
-  assert.ok(schemes.every((scheme) => typeof scheme === 'string' && /^[a-z][a-z0-9+.-]*$/u.test(scheme)),
-    'deep-link schemes must be canonical lowercase RFC 3986 scheme names');
-  assert.equal(new Set(schemes).size, schemes.length, 'deep-link schemes must not contain duplicates');
-  assert.deepEqual([...schemes].sort(), ['kodera', 'matrix'],
-    'deep-link schemes must register exactly kodera and matrix');
-  assert.deepEqual(config.bundle?.icon, requiredIcons, 'all bundled icons must be selected');
+  const expected = buildIconFiles();
+  const icnsDisk = readFileSync(join(tauriDir, 'icons/icon.icns'));
+  assert.equal(icnsDisk.subarray(0, 4).toString('ascii'), 'icns', 'icons/icon.icns must have an Apple ICNS header');
+  assert.equal(icnsDisk.readUInt32BE(4), icnsDisk.length, 'icons/icon.icns length field must match file size');
+  assert.ok(icnsDisk.equals(expected.icns), 'icons/icon.icns must match deterministic generator output');
+
+  const icoDisk = readFileSync(join(tauriDir, 'icons/icon.ico'));
+  assert.deepEqual([...icoDisk.subarray(0, 4)], [0x00, 0x00, 0x01, 0x00], 'icons/icon.ico must have a Windows ICO header');
+  assert.ok(icoDisk.readUInt16LE(4) >= 1, 'icons/icon.ico must contain at least one icon directory entry');
+  assert.ok(icoDisk.equals(expected.ico), 'icons/icon.ico must match deterministic generator output');
+}
+
+function verifyConfiguration(config, availableFiles, defaultCapability) {
+  validateTauriSecurityInvariants(config, defaultCapability);
   for (const path of requiredFiles) {
     assert.ok(availableFiles.has(path), `required file missing: ${path}`);
   }
-  assert.equal(defaultCapability?.identifier, 'default', 'capability identifier must be default');
-  assert.deepEqual(defaultCapability?.windows, ['main'], 'capability must bind only the main window');
-  assert.deepEqual(defaultCapability?.permissions, ['core:default'], 'capability must remain least privilege');
-  assert.equal(defaultCapability?.remote, undefined, 'capability must not grant remote origins');
-  assert.ok(defaultCapability?.local === undefined || defaultCapability.local === true,
-    'capability must remain local');
-  const capabilityKeys = new Set(['$schema', 'identifier', 'description', 'windows', 'permissions', 'local']);
-  assert.deepEqual(Object.keys(defaultCapability).filter((key) => !capabilityKeys.has(key)), [],
-    'capability must contain only approved keys');
 }
 
 function selftest() {
   verifyConfiguration(conf, files, capability);
+  verifyBundleIconBinaries();
+  const connectFirst = APPROVED_CONNECT_SOURCES[0];
   const mutations = [
     ['wrong identifier', /identifier must match/u, (config) => { config.identifier = 'io.invalid.desktop'; }],
+    ['missing tray icon', /trayIcon must configure kodera-tray/u, (config) => { delete config.app.trayIcon; }],
+    ['wrong tray icon path', /trayIcon must configure kodera-tray/u, (config) => { config.app.trayIcon.iconPath = 'icons/missing.png'; }],
     ['missing media directive', /media-src must be present/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("media-src 'self' blob:;", '');
     }],
@@ -147,11 +125,23 @@ function selftest() {
       availableFiles.delete('capabilities/default.json');
     }],
     ['missing icon selection', /all bundled icons must be selected/u, (config) => { config.bundle.icon = []; }],
-    ['missing icon file', /required file missing: icons\/icon.png/u, (_config, availableFiles) => {
+    ['missing png icon file', /required file missing: icons\/icon\.png/u, (_config, availableFiles) => {
       availableFiles.delete('icons/icon.png');
     }],
-    ['expanded capability permissions', /capability must remain least privilege/u, (_config, _files, defaultCapability) => {
+    ['missing icns icon file', /required file missing: icons\/icon\.icns/u, (_config, availableFiles) => {
+      availableFiles.delete('icons/icon.icns');
+    }],
+    ['missing ico icon file', /required file missing: icons\/icon\.ico/u, (_config, availableFiles) => {
+      availableFiles.delete('icons/icon.ico');
+    }],
+    ['expanded capability shell permission', /capability must remain least privilege/u, (_config, _files, defaultCapability) => {
       defaultCapability.permissions.push('shell:allow-execute');
+    }],
+    ['expanded capability fs permission', /capability must remain least privilege/u, (_config, _files, defaultCapability) => {
+      defaultCapability.permissions.push('fs:allow-write-file');
+    }],
+    ['duplicate capability permission', /capability must remain least privilege/u, (_config, _files, defaultCapability) => {
+      defaultCapability.permissions.push('core:default');
     }],
     ['wildcard default source', /default-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("default-src 'self'", 'default-src *');
@@ -162,17 +152,23 @@ function selftest() {
     ['duplicate default directive', /default-src must be present exactly once/u, (config) => {
       config.app.security.csp += "; default-src 'self'";
     }],
-    ['unsafe script evaluation', /CSP must contain only approved directives/u, (config) => {
+    ['unsafe script evaluation', /CSP must forbid 'unsafe-eval'/u, (config) => {
       config.app.security.csp += "; script-src 'self' 'unsafe-eval'";
     }],
     ['external script source', /CSP must contain only approved directives/u, (config) => {
       config.app.security.csp += '; script-src https://scripts.example.org';
     }],
     ['wildcard connections', /connect-src must use only approved sources/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("connect-src 'self'", 'connect-src *');
+      config.app.security.csp = config.app.security.csp.replace(`connect-src ${connectFirst}`, 'connect-src *');
+    }],
+    ['bare host wildcard connection without path', /connect-src must use only approved sources/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace(
+        'https://*.kodera.io/_matrix/',
+        'https://*.kodera.io',
+      );
     }],
     ['insecure connections', /connect-src must use only approved sources/u, (config) => {
-      config.app.security.csp = config.app.security.csp.replace("connect-src 'self'", "connect-src 'self' http: ws:");
+      config.app.security.csp = config.app.security.csp.replace(`connect-src ${connectFirst}`, `connect-src ${connectFirst} http: ws:`);
     }],
     ['external workers', /worker-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace("worker-src 'self' blob:", "worker-src 'self' blob: https:");
@@ -264,7 +260,7 @@ function selftest() {
     assert.throws(() => verifyConfiguration(mutated, availableFiles, defaultCapability), diagnostic,
       `selftest failed to reject ${name} for its own diagnostic`);
   }
-  // Directive and source order have no policy meaning; equivalent policies remain admitted.
+  // Directive, source, permission, and scheme order have no policy meaning; equivalent policies remain admitted.
   const reordered = structuredClone(conf);
   reordered.app.security.csp = conf.app.security.csp.split(';').map((part) => part.trim()).filter(Boolean)
     .map((part) => {
@@ -272,7 +268,9 @@ function selftest() {
       return [name, ...sources.reverse()].join(' ');
     }).reverse().join('; ');
   reordered.plugins['deep-link'].desktop.schemes = [...conf.plugins['deep-link'].desktop.schemes].reverse();
-  verifyConfiguration(reordered, files, capability);
+  const reorderedCap = structuredClone(capability);
+  reorderedCap.permissions = [...capability.permissions].reverse();
+  verifyConfiguration(reordered, files, reorderedCap);
   console.log(`OK — ${mutations.length} in-memory desktop configuration mutations refused.`);
 
   // The same discipline for the companion rule: each reintroduction is refused for its own reason.
@@ -280,6 +278,7 @@ function selftest() {
   verifyCompanionSurface(surface);
   const commercial = [
     ['an upgrade prompt', /src\/commands\.rs carries commercial wording: "Upgrade"/u, 'src/commands.rs', '\n// Upgrade to unlock more seats\n'],
+    ['a bridge commercial label', /\.\.\/src\/bridge\.mjs carries commercial wording: "pricing"/u, '../src/bridge.mjs', '\nconst LABEL = "See pricing";\n'],
     ['a pricing label', /src\/lib\.rs carries commercial wording: "pricing"/u, 'src/lib.rs', '\nconst LABEL: &str = "See pricing";\n'],
     ['a checkout route', /src\/commands\.rs carries commercial wording: "checkout"/u, 'src/commands.rs', '\n"open_checkout" => todo!(),\n'],
     ['a subscription notice', /tauri\.conf\.json carries commercial wording: "subscription"/u, 'tauri.conf.json', '\n"note": "Your subscription ends soon"\n'],
@@ -314,5 +313,6 @@ const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--selftest'), 'usage: verify-config.mjs [--selftest]');
 if (args[0] === '--selftest') selftest();
 verifyConfiguration(conf, files, capability);
+verifyBundleIconBinaries();
 verifyCompanionSurface(companionSurface());
 console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified; no commercial wording or billing destination.');

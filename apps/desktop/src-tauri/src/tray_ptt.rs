@@ -22,11 +22,12 @@ pub const MAX_TRAY_BADGE_DIRECT: u32 = 99;
 /// Maximum UTF-8 byte length of a raw Push-to-Talk key-chord expression.
 pub const MAX_PTT_CHORD_BYTES: usize = 64;
 
-/// Closed refusal codes for native tray and Push-to-Talk operations.
+/// Closed error codes for native tray and Push-to-Talk operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayPttError {
     UnreadCountOutOfRange,
     InvalidCallState,
+    InvalidMenuAction,
     PttNotOptedIn,
     PttBindingNotConfigured,
     InvalidKeyChord,
@@ -42,6 +43,7 @@ impl fmt::Display for TrayPttError {
         let code = match self {
             Self::UnreadCountOutOfRange => "unread_count_out_of_range",
             Self::InvalidCallState => "invalid_call_state",
+            Self::InvalidMenuAction => "invalid_menu_action",
             Self::PttNotOptedIn => "ptt_not_opted_in",
             Self::PttBindingNotConfigured => "ptt_binding_not_configured",
             Self::InvalidKeyChord => "invalid_key_chord",
@@ -140,6 +142,19 @@ impl TrayController {
         self.muted = muted;
     }
 
+    pub fn toggle_mute(&mut self) -> bool {
+        self.muted = !self.muted;
+        self.muted
+    }
+
+    pub const fn unread_count(&self) -> u32 {
+        self.unread_count
+    }
+
+    pub const fn is_muted(&self) -> bool {
+        self.muted
+    }
+
     pub fn set_self_host_degraded(&mut self, degraded: bool) {
         self.self_host_degraded = degraded;
     }
@@ -213,6 +228,150 @@ impl TrayController {
             tooltip,
         }
     }
+
+    /// Builds the deterministic native system tray menu (*Open Kodera*, *Toggle Mute*,
+    /// *Unread Badge indicator*, *Quit*) synchronized with the current tray snapshot.
+    pub fn menu_model(&self, ptt_transmitting: bool) -> TrayMenuModel {
+        let snapshot = self.snapshot(ptt_transmitting);
+        let mute_label = if snapshot.muted {
+            "Toggle Mute (Muted - Unmute Microphone)".to_owned()
+        } else {
+            "Toggle Mute (Mute Microphone)".to_owned()
+        };
+        let unread_label = match &snapshot.unread_badge {
+            Some(badge) => format!("Unread Messages: {badge}"),
+            None => "Unread Messages: None".to_owned(),
+        };
+        let entries = vec![
+            TrayMenuEntry {
+                id: TrayMenuItemId::OpenKodera,
+                label: "Open Kodera".to_owned(),
+                enabled: true,
+                checked: false,
+            },
+            TrayMenuEntry {
+                id: TrayMenuItemId::ToggleMute,
+                label: mute_label,
+                enabled: true,
+                checked: snapshot.muted,
+            },
+            TrayMenuEntry {
+                id: TrayMenuItemId::UnreadIndicator,
+                label: unread_label,
+                enabled: false,
+                checked: false,
+            },
+            TrayMenuEntry {
+                id: TrayMenuItemId::Quit,
+                label: "Quit Kodera".to_owned(),
+                enabled: true,
+                checked: false,
+            },
+        ];
+        TrayMenuModel {
+            entries,
+            tooltip: snapshot.tooltip,
+            indicator: snapshot.indicator,
+            unread_badge: snapshot.unread_badge,
+            muted: snapshot.muted,
+        }
+    }
+
+    /// Executes a validated system tray menu action against the tray controller.
+    pub fn handle_menu_action(
+        &mut self,
+        action: TrayMenuItemId,
+        ptt_transmitting: bool,
+    ) -> TrayMenuActionOutcome {
+        match action {
+            TrayMenuItemId::OpenKodera => TrayMenuActionOutcome::ShowAndFocusMainWindow {
+                tray: self.snapshot(ptt_transmitting),
+            },
+            TrayMenuItemId::ToggleMute => {
+                let muted = self.toggle_mute();
+                TrayMenuActionOutcome::MuteToggled {
+                    muted,
+                    tray: self.snapshot(ptt_transmitting),
+                }
+            }
+            TrayMenuItemId::UnreadIndicator => {
+                let tray = self.snapshot(ptt_transmitting);
+                TrayMenuActionOutcome::UnreadIndicatorStatus {
+                    unread_count: tray.unread_count,
+                    unread_badge: tray.unread_badge.clone(),
+                    tray,
+                }
+            }
+            TrayMenuItemId::Quit => TrayMenuActionOutcome::QuitRequested,
+        }
+    }
+}
+
+/// Canonical identifiers for the four system tray context-menu items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayMenuItemId {
+    OpenKodera,
+    ToggleMute,
+    UnreadIndicator,
+    Quit,
+}
+
+impl TrayMenuItemId {
+    pub fn parse(raw: &str) -> Result<Self, TrayPttError> {
+        match raw {
+            "open_kodera" => Ok(Self::OpenKodera),
+            "toggle_mute" => Ok(Self::ToggleMute),
+            "unread_indicator" => Ok(Self::UnreadIndicator),
+            "quit" => Ok(Self::Quit),
+            _ => Err(TrayPttError::InvalidMenuAction),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenKodera => "open_kodera",
+            Self::ToggleMute => "toggle_mute",
+            Self::UnreadIndicator => "unread_indicator",
+            Self::Quit => "quit",
+        }
+    }
+}
+
+/// Single rendered row in the native system tray menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayMenuEntry {
+    pub id: TrayMenuItemId,
+    pub label: String,
+    pub enabled: bool,
+    pub checked: bool,
+}
+
+/// Complete native system tray menu model synchronized with live call/unread state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayMenuModel {
+    pub entries: Vec<TrayMenuEntry>,
+    pub tooltip: String,
+    pub indicator: TrayIndicator,
+    pub unread_badge: Option<String>,
+    pub muted: bool,
+}
+
+/// Deterministic host action emitted when a user selects a system tray menu item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayMenuActionOutcome {
+    ShowAndFocusMainWindow {
+        tray: TrayStateSnapshot,
+    },
+    MuteToggled {
+        muted: bool,
+        tray: TrayStateSnapshot,
+    },
+    UnreadIndicatorStatus {
+        unread_count: u32,
+        unread_badge: Option<String>,
+        tray: TrayStateSnapshot,
+    },
+    QuitRequested,
 }
 
 fn format_unread_badge(unread_count: u32) -> Option<String> {
@@ -801,5 +960,59 @@ mod tests {
         assert!(!disabled.opt_in_enabled);
         assert!(disabled.binding.is_none());
         assert_eq!(disabled.transmission, PttTransmissionState::Inactive);
+    }
+
+    #[test]
+    fn tray_menu_exposes_open_toggle_mute_unread_badge_and_quit_actions() {
+        let mut tray = TrayController::new();
+        let initial_menu = tray.menu_model(false);
+        assert_eq!(initial_menu.entries.len(), 4);
+        assert_eq!(initial_menu.entries[0].id, TrayMenuItemId::OpenKodera);
+        assert_eq!(initial_menu.entries[0].label, "Open Kodera");
+        assert!(initial_menu.entries[0].enabled);
+        assert_eq!(initial_menu.entries[1].id, TrayMenuItemId::ToggleMute);
+        assert!(!initial_menu.entries[1].checked);
+        assert_eq!(initial_menu.entries[2].id, TrayMenuItemId::UnreadIndicator);
+        assert_eq!(initial_menu.entries[2].label, "Unread Messages: None");
+        assert!(!initial_menu.entries[2].enabled);
+        assert_eq!(initial_menu.entries[3].id, TrayMenuItemId::Quit);
+        assert_eq!(initial_menu.entries[3].label, "Quit Kodera");
+
+        tray.set_unread_count(125).unwrap();
+        let badge_menu = tray.menu_model(false);
+        assert_eq!(badge_menu.unread_badge.as_deref(), Some("99+"));
+        assert_eq!(badge_menu.entries[2].label, "Unread Messages: 99+");
+
+        assert!(matches!(
+            tray.handle_menu_action(TrayMenuItemId::OpenKodera, false),
+            TrayMenuActionOutcome::ShowAndFocusMainWindow { .. }
+        ));
+        let TrayMenuActionOutcome::MuteToggled { muted, tray: snap } =
+            tray.handle_menu_action(TrayMenuItemId::ToggleMute, false)
+        else {
+            panic!("expected MuteToggled");
+        };
+        assert!(muted && snap.muted);
+        assert!(tray.menu_model(false).entries[1].checked);
+
+        let TrayMenuActionOutcome::UnreadIndicatorStatus {
+            unread_count,
+            unread_badge,
+            ..
+        } = tray.handle_menu_action(TrayMenuItemId::UnreadIndicator, false)
+        else {
+            panic!("expected UnreadIndicatorStatus");
+        };
+        assert_eq!(unread_count, 125);
+        assert_eq!(unread_badge.as_deref(), Some("99+"));
+
+        assert_eq!(
+            tray.handle_menu_action(TrayMenuItemId::Quit, false),
+            TrayMenuActionOutcome::QuitRequested
+        );
+        assert_eq!(
+            TrayMenuItemId::parse("invalid"),
+            Err(TrayPttError::InvalidMenuAction)
+        );
     }
 }

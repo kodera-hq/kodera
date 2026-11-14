@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-description = "Kodera desktop developer preview: Rust backend seams and a local-only self-host preflight"
+description = "Kodera Tauri v2 native desktop shell, system tray, deep-link router, keychain bridge, and local self-host inspector"
 
 [lib]
 name = "kodera_desktop"
