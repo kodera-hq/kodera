@@ -4480,6 +4480,358 @@
           }
         }
       }
+    },
+    "proximity.voluntary_title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Radar #proximité volontaire"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voluntary #proximity radar"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_pledge": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activation volontaire sur écran actif · jeton radio et réseau local rotatif (15 min) · aucune coordonnée GPS · expiration automatique."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voluntary foreground opt-in · 15-minute rotating radio and LAN token · zero GPS coordinates · automatic expiry."
+          }
+        }
+      }
+    },
+    "proximity.voluntary_duration_label": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Durée de visibilité"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visibility duration"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_duration_15m": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15 min"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "15 min"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_duration_30m": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 min"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 min"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_duration_1h": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 h"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 h"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_duration_2h": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2 h"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2 h"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_note_label": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Note de présence (facultative)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Presence note (optional)"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_note_placeholder": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salle B · café"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Room B · coffee"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_consent_grant": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser la radio locale sur écran actif"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow foreground local radio"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_start": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rejoindre #proximité"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Join #proximity"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_leave": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter la proximité"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leave proximity"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_active_badge": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balise éphémère active"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ephemeral beacon active"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_inactive_badge": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Radio locale coupée"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local radio off"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_peers_heading": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pairs à proximité"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nearby peers"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_peers_empty": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun pair détecté dans ce périmètre pour le moment."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No nearby peers detected in this scope yet."
+          }
+        }
+      }
+    },
+    "proximity.voluntary_band_immediate": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Très proche (BLE)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Immediate (BLE)"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_band_near": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Proche (BLE)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Near (BLE)"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_band_ambient": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alentours (BLE)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ambient (BLE)"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_lan_badge": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LAN mDNS/QUIC"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "LAN mDNS/QUIC"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_open_thread": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fil éphémère"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ephemeral thread"
+          }
+        }
+      }
+    },
+    "proximity.voluntary_start_call": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appel direct"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct call"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
