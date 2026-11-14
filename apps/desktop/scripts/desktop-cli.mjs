@@ -16,9 +16,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(__dirname, '..');
@@ -245,6 +245,13 @@ export function runCli(argv = process.argv.slice(2)) {
   return 64;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isDirectExecution(metaUrl, argv1 = process.argv[1]) {
+  if (typeof argv1 !== 'string' || argv1.length === 0) {
+    return false;
+  }
+  return pathToFileURL(realpathSync(resolve(argv1))).href === metaUrl;
+}
+
+if (isDirectExecution(import.meta.url)) {
   process.exit(runCli());
 }

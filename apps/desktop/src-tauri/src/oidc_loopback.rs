@@ -598,7 +598,15 @@ impl OidcLoopbackListener {
                 break;
             }
             if let Some((name, val)) = line.split_once(':') {
+                if name.trim_end() != name {
+                    let _ = write_loopback_http_response(&mut stream, 400, "Malformed Header");
+                    return Err(OidcLoopbackError::CallbackMalformed);
+                }
                 if name.eq_ignore_ascii_case("host") {
+                    if saw_valid_host {
+                        let _ = write_loopback_http_response(&mut stream, 400, "Duplicate Host");
+                        return Err(OidcLoopbackError::UntrustedCallbackHost);
+                    }
                     if val.trim() != expected_host {
                         let _ = write_loopback_http_response(&mut stream, 400, "Invalid Host");
                         return Err(OidcLoopbackError::UntrustedCallbackHost);
@@ -870,5 +878,37 @@ mod tests {
         let attacker_resp = attacker.join().unwrap();
         assert_eq!(rebind_err, OidcLoopbackError::UntrustedCallbackHost);
         assert!(attacker_resp.starts_with("HTTP/1.1 400 Bad Request"));
+
+        // 3. RFC 9112 §3.2 duplicate Host header smuggling (`Host: 127.0.0.1:<port>` x2) is refused with 400.
+        let listener_dup = OidcLoopbackListener::bind_ephemeral().unwrap();
+        let dup_port = listener_dup.port();
+        let (session_dup, _) = OidcPkceSession::start(
+            &allowlist,
+            "https://auth.kodera.io",
+            "kodera-desktop",
+            RFC7636_VERIFIER,
+            FIXTURE_STATE,
+            dup_port,
+        )
+        .unwrap();
+
+        let dup_client = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", dup_port)).unwrap();
+            let req = format!(
+                "GET /auth/callback?code={FIXTURE_AUTH_CODE}&state={FIXTURE_STATE} HTTP/1.1\r\nHost: 127.0.0.1:{dup_port}\r\nHost: 127.0.0.1:{dup_port}\r\n\r\n"
+            );
+            stream.write_all(req.as_bytes()).unwrap();
+            let mut resp = String::new();
+            let _ = stream.read_to_string(&mut resp);
+            resp
+        });
+
+        let dup_err = listener_dup
+            .accept_once(session_dup, &policy, 2000)
+            .unwrap_err();
+        let dup_resp = dup_client.join().unwrap();
+        assert_eq!(dup_err, OidcLoopbackError::UntrustedCallbackHost);
+        assert!(dup_resp.starts_with("HTTP/1.1 400 Bad Request"));
+        assert!(dup_resp.contains("Duplicate Host"));
     }
 }

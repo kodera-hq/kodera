@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   APPROVED_CONNECT_SOURCES,
   REQUIRED_BUNDLE_ICONS,
@@ -309,10 +310,19 @@ function selftest() {
   console.log(`OK — ${commercial.length + 1} in-memory commercial-surface mutations refused.`);
 }
 
-const args = process.argv.slice(2);
-assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--selftest'), 'usage: verify-config.mjs [--selftest]');
-if (args[0] === '--selftest') selftest();
-verifyConfiguration(conf, files, capability);
-verifyBundleIconBinaries();
-verifyCompanionSurface(companionSurface());
-console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified; no commercial wording or billing destination.');
+function isDirectExecution(metaUrl, argv1 = process.argv[1]) {
+  if (typeof argv1 !== 'string' || argv1.length === 0) {
+    return false;
+  }
+  return pathToFileURL(realpathSync(resolve(argv1))).href === metaUrl;
+}
+
+if (isDirectExecution(import.meta.url)) {
+  const args = process.argv.slice(2);
+  assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--selftest'), 'usage: verify-config.mjs [--selftest]');
+  if (args[0] === '--selftest') selftest();
+  verifyConfiguration(conf, files, capability);
+  verifyBundleIconBinaries();
+  verifyCompanionSurface(companionSurface());
+  console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified; no commercial wording or billing destination.');
+}

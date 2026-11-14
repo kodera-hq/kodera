@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const iconsDir = join(import.meta.dirname, '..', 'src-tauri', 'icons');
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -116,6 +117,13 @@ function runCli() {
   console.log('OK — all PNG, ICNS, and ICO bundle icons verified deterministically.');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isDirectExecution(metaUrl, argv1 = process.argv[1]) {
+  if (typeof argv1 !== 'string' || argv1.length === 0) {
+    return false;
+  }
+  return pathToFileURL(realpathSync(resolve(argv1))).href === metaUrl;
+}
+
+if (isDirectExecution(import.meta.url)) {
   runCli();
 }

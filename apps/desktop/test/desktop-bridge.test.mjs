@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -474,4 +475,38 @@ test('.env.example documents code-signing variables with blank/safe values and C
 
   assert.equal(runDesktopCli(['dev', '--dry-run']), 0);
   assert.equal(runDesktopCli(['build', '--dry-run']), 0);
+
+  // Real child-process CLI execution: direct path + symlinked path containing spaces.
+  const cliScript = join(desktopDir, 'scripts', 'desktop-cli.mjs');
+  const directRun = spawnSync(
+    process.execPath,
+    [cliScript, 'package', '--target', 'windows', '--dry-run'],
+    { cwd: desktopDir, encoding: 'utf8' },
+  );
+  assert.equal(directRun.status, 0, directRun.stderr);
+  const directLines = directRun.stdout.trim().split('\n');
+  const jsonStartIdx = directLines.findIndex((line) => line.startsWith('{'));
+  assert.ok(jsonStartIdx >= 0, 'desktop-cli.mjs must emit packaging plan JSON');
+  const parsedPlan = JSON.parse(directLines.slice(jsonStartIdx).join('\n'));
+  assert.equal(parsedPlan.targetOs, 'windows');
+  assert.deepEqual(parsedPlan.bundles, ['msi', 'nsis']);
+
+  if (process.platform !== 'win32') {
+    const scratch = mkdtempSync(join(tmpdir(), 'kodera desktop cli-'));
+    try {
+      const spacedDir = join(scratch, 'nested dir with spaces');
+      mkdirSync(spacedDir, { recursive: true });
+      const linkedCli = join(spacedDir, 'desktop-cli-link.mjs');
+      symlinkSync(cliScript, linkedCli);
+      const symlinkRun = spawnSync(
+        process.execPath,
+        [linkedCli, 'package', '--target', 'windows', '--dry-run'],
+        { cwd: desktopDir, encoding: 'utf8' },
+      );
+      assert.equal(symlinkRun.status, 0, symlinkRun.stderr);
+      assert.ok(symlinkRun.stdout.includes('"targetOs": "windows"'));
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
 });
