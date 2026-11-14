@@ -299,6 +299,24 @@ impl DesktopShellHost {
         Ok(())
     }
 
+    /// Replaces the local `docker` CLI runner on the active workspace session (used by
+    /// deterministic adapter/integration tests). Returns `false` if no session is active or
+    /// `organisation_id` mismatches.
+    pub fn configure_community_runner(
+        &mut self,
+        organisation_id: &str,
+        runner: std::sync::Arc<dyn crate::CommunityCommandRunner>,
+    ) -> bool {
+        self.session
+            .as_mut()
+            .and_then(|session| {
+                session
+                    .configure_community_runner(organisation_id, runner)
+                    .ok()
+            })
+            .is_some()
+    }
+
     /// Processes a single JSON line from `--ipc-stdio`. Returns `(json_reply, should_quit)`.
     pub fn handle_stdio_line(&mut self, raw_line: &str) -> (String, bool) {
         let trimmed = raw_line.trim();
@@ -530,6 +548,71 @@ fn serialize_command_response(response: DesktopCommandResponse) -> (String, bool
             ),
             false,
         ),
+        DesktopCommandResponse::CommunityPreflight(r) => (
+            format!(
+                r#"{{"ok":true,"type":"community_preflight","docker_version":"{}","compose_version":"{}","compose_file_present":{},"stack_dir_writable":{},"normalized_domain":"{}","matrix_base_domain":"{}","tls_mode":"{}","http_port":{},"https_port":{}}}"#,
+                json_escape(&r.docker_version),
+                json_escape(&r.compose_version),
+                r.compose_file_present,
+                r.stack_dir_writable,
+                json_escape(&r.normalized_domain),
+                json_escape(&r.matrix_base_domain),
+                r.tls_mode.as_str(),
+                r.http_port,
+                r.https_port,
+            ),
+            false,
+        ),
+        DesktopCommandResponse::CommunityPrepare(r) => {
+            let keys_json = r
+                .generated_secret_keys
+                .iter()
+                .map(|k| format!(r#""{}""#, json_escape(k)))
+                .collect::<Vec<_>>()
+                .join(",");
+            (
+                format!(
+                    r#"{{"ok":true,"type":"community_prepare","env_file_written":{},"unix_file_mode":{},"compose_config_valid":{},"generated_secret_keys":[{}],"normalized_domain":"{}","matrix_base_domain":"{}","oidc_issuer":"{}","tls_mode":"{}","http_port":{},"https_port":{}}}"#,
+                    r.env_file_written,
+                    r.unix_file_mode,
+                    r.compose_config_valid,
+                    keys_json,
+                    json_escape(&r.normalized_domain),
+                    json_escape(&r.matrix_base_domain),
+                    json_escape(&r.oidc_issuer),
+                    r.tls_mode.as_str(),
+                    r.http_port,
+                    r.https_port,
+                ),
+                false,
+            )
+        }
+        DesktopCommandResponse::CommunityDeploy(r) => {
+            let services_json = r
+                .core_services
+                .iter()
+                .map(|item| {
+                    format!(
+                        r#"{{"service":"{}","readiness":"{}","external_oidc":{}}}"#,
+                        item.service.slug(),
+                        item.readiness.as_str(),
+                        item.external_oidc,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            (
+                format!(
+                    r#"{{"ok":true,"type":"community_deploy","stack_healthy":{},"poll_attempts":{},"state":"{}","observed_memory_mib":{},"core_services":[{}]}}"#,
+                    r.stack_healthy,
+                    r.poll_attempts,
+                    r.health_report.state.as_str(),
+                    r.health_report.observed_memory_mib,
+                    services_json,
+                ),
+                false,
+            )
+        }
         DesktopCommandResponse::WorkspaceSessionCleared => (
             r#"{"ok":true,"type":"workspace_session_cleared"}"#.to_owned(),
             false,
@@ -571,6 +654,7 @@ fn command_error_slug(err: &DesktopCommandError) -> String {
         DesktopCommandError::WindowState(w) => format!("window_state:{w}"),
         DesktopCommandError::Notification(n) => format!("notification:{n}"),
         DesktopCommandError::OidcLoopback(o) => format!("oidc_loopback:{o}"),
+        DesktopCommandError::CommunityDeploy(c) => format!("community_deploy:{c}"),
     }
 }
 
