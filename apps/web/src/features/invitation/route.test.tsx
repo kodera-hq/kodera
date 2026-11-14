@@ -8,6 +8,7 @@ import i18n from '@/i18n'
 import { rootRoute } from '../../app/root-route'
 import { forgetInvitationEntry, holdInvitationEntry, readInvitationEntry } from './entry'
 import { invitationRoute } from './route'
+import type * as InvitationRouteModule from './InvitationRoute'
 
 const chunk = vi.hoisted(() => {
   let release!: () => void
@@ -20,7 +21,7 @@ const chunk = vi.hoisted(() => {
 vi.mock('./InvitationRoute', async (original) => {
   chunk.requested = true
   await chunk.pending
-  return original<typeof import('./InvitationRoute')>()
+  return original<typeof InvitationRouteModule>()
 })
 
 const ORGANISATION_ID = '6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f'
