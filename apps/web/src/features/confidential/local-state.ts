@@ -296,7 +296,7 @@ export class ConfidentialStateStore {
       return { ...decode(plaintext), generation: loaded.generation }
     } catch (error) {
       if (error instanceof ConfidentialStateError) throw error
-      fail('corrupt')
+      throw new ConfidentialStateError('corrupt')
     } finally { plaintext?.fill(0) }
   }
   async compareAndSwap(changes: readonly StateMutation[]): Promise<readonly number[]> {
