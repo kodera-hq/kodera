@@ -1,13 +1,15 @@
 //! Typed local backend operations. This is not registered Tauri IPC or an authentication layer.
 
 use super::{
-    AdmittedDeepLink, CloudProvider, DeepLinkError, DeployValidationError,
-    DesktopNotificationRequest, DesktopWorkspaceSession, DispatchedNotification, DockBadgeSnapshot,
-    KeychainCredentialStatus, KeychainError, KeychainSecretKind, KeychainSessionMetadata,
-    NotificationError, OidcCallbackOutcome, OidcLoopbackError, OidcLoopbackSessionReady,
-    PttStateSnapshot, RestoredWindowPlacement, SelfHostDeploymentPlan, SelfHostDeploymentSpec,
-    SelfHostHealthError, SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId,
-    TrayPttError, TrayStateSnapshot, WindowStateError,
+    AdmittedDeepLink, CloudProvider, CommunityDeployError, CommunityDeployReport,
+    CommunityPreflightReport, CommunityPreflightSpec, CommunityPrepareReport, CommunityPrepareSpec,
+    CommunityTlsMode, DeepLinkError, DeployValidationError, DesktopNotificationRequest,
+    DesktopWorkspaceSession, DispatchedNotification, DockBadgeSnapshot, KeychainCredentialStatus,
+    KeychainError, KeychainSecretKind, KeychainSessionMetadata, NotificationError,
+    OidcCallbackOutcome, OidcLoopbackError, OidcLoopbackSessionReady, PttStateSnapshot,
+    RestoredWindowPlacement, SelfHostDeploymentPlan, SelfHostDeploymentSpec, SelfHostHealthError,
+    SelfHostHealthReport, TrayCallKind, TrayMenuActionOutcome, TrayMenuItemId, TrayPttError,
+    TrayStateSnapshot, WindowStateError,
 };
 use kodera_rs::{
     encode_hex, ChannelAccessDecision, ChannelPermissionPolicy, ChannelPollSnapshot, CoreError,
@@ -21,7 +23,7 @@ use std::{collections::BTreeMap, fmt};
 pub const MAX_IPC_COMMAND_BYTES: usize = 16_384;
 
 /// Canonical desktop command names admitted by the dispatcher.
-pub const REGISTERED_DESKTOP_COMMANDS: [&str; 37] = [
+pub const REGISTERED_DESKTOP_COMMANDS: [&str; 40] = [
     "plan_self_host",
     "validate_docs_pad_url",
     "proximity_current_beacon",
@@ -59,6 +61,9 @@ pub const REGISTERED_DESKTOP_COMMANDS: [&str; 37] = [
     "delete_keychain_credential",
     "begin_oidc_pkce_loopback",
     "complete_oidc_pkce_callback",
+    "self_host_preflight_community",
+    "self_host_prepare_community",
+    "self_host_deploy_community",
 ];
 
 /// The proximity routes answer under two names, permanently. The channel was first called
@@ -266,6 +271,30 @@ pub enum DesktopCommandRequest {
     CompleteOidcPkceCallback {
         organisation_id: String,
         callback_uri: String,
+    },
+    SelfHostPreflightCommunity {
+        organisation_id: String,
+        stack_dir: String,
+        domain: String,
+        acme_email: String,
+        tls_mode: String,
+        http_port: u64,
+        https_port: u64,
+    },
+    SelfHostPrepareCommunity {
+        organisation_id: String,
+        stack_dir: String,
+        domain: String,
+        acme_email: String,
+        oidc_provider_origin: String,
+        tls_mode: String,
+        http_port: u64,
+        https_port: u64,
+    },
+    SelfHostDeployCommunity {
+        organisation_id: String,
+        stack_dir: String,
+        timeout_ms: Option<u64>,
     },
 }
 
@@ -524,6 +553,30 @@ impl DesktopCommandRequest {
                 organisation_id,
                 callback_uri: take_string(&mut fields, "callback_uri")?,
             },
+            "self_host_preflight_community" => Self::SelfHostPreflightCommunity {
+                organisation_id,
+                stack_dir: take_string(&mut fields, "stack_dir")?,
+                domain: take_string(&mut fields, "domain")?,
+                acme_email: take_string(&mut fields, "acme_email")?,
+                tls_mode: take_string(&mut fields, "tls_mode")?,
+                http_port: take_integer(&mut fields, "http_port")?,
+                https_port: take_integer(&mut fields, "https_port")?,
+            },
+            "self_host_prepare_community" => Self::SelfHostPrepareCommunity {
+                organisation_id,
+                stack_dir: take_string(&mut fields, "stack_dir")?,
+                domain: take_string(&mut fields, "domain")?,
+                acme_email: take_string(&mut fields, "acme_email")?,
+                oidc_provider_origin: take_string(&mut fields, "oidc_provider_origin")?,
+                tls_mode: take_string(&mut fields, "tls_mode")?,
+                http_port: take_integer(&mut fields, "http_port")?,
+                https_port: take_integer(&mut fields, "https_port")?,
+            },
+            "self_host_deploy_community" => Self::SelfHostDeployCommunity {
+                organisation_id,
+                stack_dir: take_string(&mut fields, "stack_dir")?,
+                timeout_ms: take_optional_integer(&mut fields, "timeout_ms")?,
+            },
             _ => return Err(DesktopCommandError::InvalidRequest),
         };
         if !fields.is_empty() {
@@ -631,6 +684,15 @@ impl DesktopCommandRequest {
                 organisation_id, ..
             }
             | Self::CompleteOidcPkceCallback {
+                organisation_id, ..
+            }
+            | Self::SelfHostPreflightCommunity {
+                organisation_id, ..
+            }
+            | Self::SelfHostPrepareCommunity {
+                organisation_id, ..
+            }
+            | Self::SelfHostDeployCommunity {
                 organisation_id, ..
             } => organisation_id,
         }
@@ -952,6 +1014,7 @@ pub enum DesktopCommandError {
     WindowState(WindowStateError),
     Notification(NotificationError),
     OidcLoopback(OidcLoopbackError),
+    CommunityDeploy(CommunityDeployError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -989,6 +1052,9 @@ pub enum DesktopCommandResponse {
     Notification(DispatchedNotification),
     OidcLoopbackReady(OidcLoopbackSessionReady),
     OidcCallback(OidcCallbackOutcome),
+    CommunityPreflight(CommunityPreflightReport),
+    CommunityPrepare(CommunityPrepareReport),
+    CommunityDeploy(CommunityDeployReport),
     WorkspaceSessionCleared,
     Error(DesktopCommandError),
 }
@@ -1434,6 +1500,71 @@ impl DesktopWorkspaceSession {
             } => self
                 .complete_oidc_pkce_callback(&organisation_id, &callback_uri)
                 .map(DesktopCommandResponse::OidcCallback),
+            DesktopCommandRequest::SelfHostPreflightCommunity {
+                organisation_id,
+                stack_dir,
+                domain,
+                acme_email,
+                tls_mode,
+                http_port,
+                https_port,
+            } => (|| {
+                let mode = CommunityTlsMode::parse(&tls_mode)
+                    .map_err(DesktopCommandError::CommunityDeploy)?;
+                let http = u16::try_from(http_port).map_err(|_| {
+                    DesktopCommandError::CommunityDeploy(CommunityDeployError::InvalidPort)
+                })?;
+                let https = u16::try_from(https_port).map_err(|_| {
+                    DesktopCommandError::CommunityDeploy(CommunityDeployError::InvalidPort)
+                })?;
+                let spec = CommunityPreflightSpec {
+                    stack_dir: &stack_dir,
+                    domain: &domain,
+                    acme_email: &acme_email,
+                    tls_mode: mode,
+                    http_port: http,
+                    https_port: https,
+                };
+                self.preflight_community_deploy(&organisation_id, &spec)
+                    .map(DesktopCommandResponse::CommunityPreflight)
+            })(),
+            DesktopCommandRequest::SelfHostPrepareCommunity {
+                organisation_id,
+                stack_dir,
+                domain,
+                acme_email,
+                oidc_provider_origin,
+                tls_mode,
+                http_port,
+                https_port,
+            } => (|| {
+                let mode = CommunityTlsMode::parse(&tls_mode)
+                    .map_err(DesktopCommandError::CommunityDeploy)?;
+                let http = u16::try_from(http_port).map_err(|_| {
+                    DesktopCommandError::CommunityDeploy(CommunityDeployError::InvalidPort)
+                })?;
+                let https = u16::try_from(https_port).map_err(|_| {
+                    DesktopCommandError::CommunityDeploy(CommunityDeployError::InvalidPort)
+                })?;
+                let spec = CommunityPrepareSpec {
+                    stack_dir: &stack_dir,
+                    domain: &domain,
+                    acme_email: &acme_email,
+                    oidc_provider_origin: &oidc_provider_origin,
+                    tls_mode: mode,
+                    http_port: http,
+                    https_port: https,
+                };
+                self.prepare_community_deploy(&organisation_id, &spec)
+                    .map(DesktopCommandResponse::CommunityPrepare)
+            })(),
+            DesktopCommandRequest::SelfHostDeployCommunity {
+                organisation_id,
+                stack_dir,
+                timeout_ms,
+            } => self
+                .deploy_community_stack(&organisation_id, &stack_dir, timeout_ms)
+                .map(DesktopCommandResponse::CommunityDeploy),
         };
         result.unwrap_or_else(DesktopCommandResponse::Error)
     }
@@ -1628,6 +1759,31 @@ pub fn complete_desktop_oidc_pkce_callback(
     callback_uri: &str,
 ) -> Result<OidcCallbackOutcome, DesktopCommandError> {
     session.complete_oidc_pkce_callback(organisation_id, callback_uri)
+}
+
+pub fn preflight_desktop_community_stack(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+    spec: &CommunityPreflightSpec<'_>,
+) -> Result<CommunityPreflightReport, DesktopCommandError> {
+    session.preflight_community_deploy(organisation_id, spec)
+}
+
+pub fn prepare_desktop_community_stack(
+    session: &DesktopWorkspaceSession,
+    organisation_id: &str,
+    spec: &CommunityPrepareSpec<'_>,
+) -> Result<CommunityPrepareReport, DesktopCommandError> {
+    session.prepare_community_deploy(organisation_id, spec)
+}
+
+pub fn deploy_desktop_community_stack(
+    session: &mut DesktopWorkspaceSession,
+    organisation_id: &str,
+    stack_dir: &str,
+    timeout_ms: Option<u64>,
+) -> Result<CommunityDeployReport, DesktopCommandError> {
+    session.deploy_community_stack(organisation_id, stack_dir, timeout_ms)
 }
 
 #[cfg(test)]
@@ -2672,11 +2828,79 @@ mod tests {
         assert!(state.export_shareable_theme(ORG).is_err());
     }
 
+    struct AuditMockCommunityRunner;
+
+    impl crate::CommunityCommandRunner for AuditMockCommunityRunner {
+        fn run_argv(
+            &self,
+            program: &str,
+            args: &[String],
+            _working_dir: Option<&std::path::Path>,
+            _timeout: std::time::Duration,
+        ) -> Result<crate::CommandExecOutput, crate::DockerUnavailableReason> {
+            assert_eq!(program, "docker");
+            let stdout = if args == ["--version"] {
+                "Docker version 28.1.0, build 4d8c241\n"
+            } else if args == ["compose", "version"] {
+                "Docker Compose version v2.36.0\n"
+            } else if args.ends_with(&["ps".to_owned(), "--format".to_owned(), "json".to_owned()]) {
+                r#"[{"Service":"keycloak","State":"running","Health":"healthy","MemoryMiB":256},{"Service":"db","State":"running","Health":"healthy","MemoryMiB":192},{"Service":"synapse","State":"running","Health":"healthy","KoderaPolicy":"0.1.4","MemoryMiB":420},{"Service":"server","State":"running","Health":"healthy","MemoryMiB":220},{"Service":"web","State":"running","Health":"healthy","MemoryMiB":64},{"Service":"livekit","State":"running","Health":"healthy","MemoryMiB":128}]"#
+            } else {
+                ""
+            };
+            Ok(crate::CommandExecOutput {
+                status_code: Some(0),
+                stdout: stdout.to_owned(),
+                stderr: String::new(),
+                timed_out: false,
+            })
+        }
+
+        fn poll_backoff(&self) -> std::time::Duration {
+            std::time::Duration::ZERO
+        }
+    }
+
+    fn audit_community_stack_dir() -> &'static str {
+        static STACK_DIR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        STACK_DIR
+            .get_or_init(|| {
+                let raw_dir = std::env::temp_dir().join(format!(
+                    "kodera-desktop-audit-community-{}",
+                    std::process::id()
+                ));
+                std::fs::create_dir_all(&raw_dir).unwrap();
+                let canonical = std::fs::canonicalize(&raw_dir).unwrap();
+                std::fs::write(
+                    canonical.join("docker-compose.yml"),
+                    "services:\n  db:\n    image: postgres:17.6-alpine\n",
+                )
+                .unwrap();
+                let env_path = canonical.join(".env");
+                std::fs::write(
+                    &env_path,
+                    "KODERA_OIDC_PROVIDER_ORIGIN=https://id.example.org\n",
+                )
+                .unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&env_path, std::fs::Permissions::from_mode(0o600))
+                        .unwrap();
+                }
+                canonical.to_str().unwrap().to_owned()
+            })
+            .as_str()
+    }
+
     fn audit_workspace() -> DesktopWorkspaceSession {
         let mut state = session();
         populate(&mut state, 1, 1);
         state
             .configure_docs_host(ORG, Some("docs.example.org"))
+            .unwrap();
+        state
+            .configure_community_runner(ORG, std::sync::Arc::new(AuditMockCommunityRunner))
             .unwrap();
         state
             .create_channel_poll(
@@ -2914,6 +3138,36 @@ mod tests {
                     r#","callback_uri":"http://127.0.0.1:49152/auth/callback?code=oidc_code_fixture_0001&state=audit_pkce_state_fixture_01""#,
                 ),
             ),
+            (
+                "self_host_preflight_community",
+                json(
+                    "self_host_preflight_community",
+                    &format!(
+                        r#","stack_dir":"{}","domain":"chat.example.org","acme_email":"ops@example.org","tls_mode":"acme","http_port":80,"https_port":443"#,
+                        audit_community_stack_dir()
+                    ),
+                ),
+            ),
+            (
+                "self_host_prepare_community",
+                json(
+                    "self_host_prepare_community",
+                    &format!(
+                        r#","stack_dir":"{}","domain":"chat.example.org","acme_email":"ops@example.org","oidc_provider_origin":"https://id.example.org","tls_mode":"acme","http_port":80,"https_port":443"#,
+                        audit_community_stack_dir()
+                    ),
+                ),
+            ),
+            (
+                "self_host_deploy_community",
+                json(
+                    "self_host_deploy_community",
+                    &format!(
+                        r#","stack_dir":"{}","timeout_ms":15000"#,
+                        audit_community_stack_dir()
+                    ),
+                ),
+            ),
         ]
     }
 
@@ -3120,6 +3374,30 @@ mod tests {
                         outcome.authorization_code.expose_for_token_exchange(),
                         "oidc_code_fixture_0001"
                     );
+                }
+                (
+                    "self_host_preflight_community",
+                    DesktopCommandResponse::CommunityPreflight(report),
+                ) => {
+                    assert!(report.compose_file_present && report.stack_dir_writable);
+                    assert_eq!(report.normalized_domain, "chat.example.org");
+                    assert_eq!(report.matrix_base_domain, "example.org");
+                }
+                (
+                    "self_host_prepare_community",
+                    DesktopCommandResponse::CommunityPrepare(report),
+                ) => {
+                    assert!(report.env_file_written && report.compose_config_valid);
+                    assert_eq!(report.generated_secret_keys.len(), 16);
+                    assert_eq!(
+                        report.oidc_issuer,
+                        "https://id.example.org/realms/community"
+                    );
+                }
+                ("self_host_deploy_community", DesktopCommandResponse::CommunityDeploy(report)) => {
+                    assert!(report.stack_healthy);
+                    assert_eq!(report.core_services.len(), 4);
+                    assert!(report.health_report.is_healthy());
                 }
                 (route, unexpected) => {
                     panic!("{route} produced unexpected response: {unexpected:?}")
@@ -3773,5 +4051,99 @@ mod tests {
             .present
         );
         assert_eq!(state.dock_badge(OTHER_ORG).unwrap().unread_count, 0);
+    }
+
+    #[test]
+    fn w9_wizard_community_deploy_commands_enforce_org_fencing_and_sync_tray_health() {
+        struct UnhealthyDeployRunner;
+        impl crate::CommunityCommandRunner for UnhealthyDeployRunner {
+            fn run_argv(
+                &self,
+                _program: &str,
+                args: &[String],
+                _working_dir: Option<&std::path::Path>,
+                _timeout: std::time::Duration,
+            ) -> Result<crate::CommandExecOutput, crate::DockerUnavailableReason> {
+                let stdout = if args.ends_with(&[
+                    "ps".to_owned(),
+                    "--format".to_owned(),
+                    "json".to_owned(),
+                ]) {
+                    r#"[{"Service":"keycloak","State":"running","Health":"unhealthy"},{"Service":"db","State":"running","Health":"healthy"},{"Service":"synapse","State":"running","Health":"healthy"},{"Service":"server","State":"running","Health":"healthy"},{"Service":"web","State":"running","Health":"healthy"},{"Service":"livekit","State":"running","Health":"healthy"}]"#
+                } else {
+                    ""
+                };
+                Ok(crate::CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: stdout.to_owned(),
+                    stderr: String::new(),
+                    timed_out: false,
+                })
+            }
+            fn poll_backoff(&self) -> std::time::Duration {
+                std::time::Duration::ZERO
+            }
+        }
+
+        let mut state = audit_workspace();
+        let stack_dir = audit_community_stack_dir();
+
+        let preflight = preflight_desktop_community_stack(
+            &state,
+            ORG,
+            &CommunityPreflightSpec {
+                stack_dir,
+                domain: "chat.example.org",
+                acme_email: "ops@example.org",
+                tls_mode: CommunityTlsMode::Acme,
+                http_port: 80,
+                https_port: 443,
+            },
+        )
+        .unwrap();
+        assert_eq!(preflight.normalized_domain, "chat.example.org");
+
+        let prepared = prepare_desktop_community_stack(
+            &state,
+            ORG,
+            &CommunityPrepareSpec {
+                stack_dir,
+                domain: "chat.example.org",
+                acme_email: "ops@example.org",
+                oidc_provider_origin: "https://id.example.org",
+                tls_mode: CommunityTlsMode::Acme,
+                http_port: 80,
+                https_port: 443,
+            },
+        )
+        .unwrap();
+        assert!(prepared.env_file_written);
+
+        // Unhealthy deploy marks tray indicator SelfHostDegraded.
+        state
+            .configure_community_runner(ORG, std::sync::Arc::new(UnhealthyDeployRunner))
+            .unwrap();
+        assert_eq!(
+            deploy_desktop_community_stack(&mut state, ORG, stack_dir, Some(5_000)),
+            Err(DesktopCommandError::CommunityDeploy(
+                CommunityDeployError::StackUnhealthy
+            ))
+        );
+        assert_eq!(
+            get_desktop_tray_state(&state, ORG).unwrap().indicator,
+            crate::TrayIndicator::SelfHostDegraded
+        );
+
+        // Healthy deploy clears SelfHostDegraded back to Idle.
+        state
+            .configure_community_runner(ORG, std::sync::Arc::new(AuditMockCommunityRunner))
+            .unwrap();
+        let deployed =
+            deploy_desktop_community_stack(&mut state, ORG, stack_dir, Some(5_000)).unwrap();
+        assert!(deployed.stack_healthy);
+        assert_eq!(
+            get_desktop_tray_state(&state, ORG).unwrap().indicator,
+            crate::TrayIndicator::Idle
+        );
     }
 }

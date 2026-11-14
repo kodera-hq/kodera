@@ -17,6 +17,7 @@ export {
 } from './security-policy.mjs';
 
 export {
+  COMMUNITY_TLS_MODES,
   MAX_DIRECT_BADGE_COUNT,
   MAX_UNREAD_BADGE_COUNT,
   REDACTED_NOTIFICATION_PREVIEW,

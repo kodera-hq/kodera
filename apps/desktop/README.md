@@ -20,10 +20,11 @@ Status: Active native Tauri v2 desktop host, typed IPC client, and multi-OS inst
   - Enforces `default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, zero `'unsafe-eval'`, and explicit path-scoped HTTPS/WSS `connect-src` origins (`https://api.kodera.io`, `https://staging-api.kodera.io`, `https://auth.kodera.io/realms/`, `https://matrix.kodera.io/_matrix/`, `https://*.kodera.io/_matrix/`, `wss://livekit.kodera.io`, `wss://collab.kodera.io`).
   - `capabilities/default.json` binds only the `main` window on local assets (`local: true`) to `core:default`, `core:window:allow-show`, `core:window:allow-hide`, `core:window:allow-set-focus`, `core:window:allow-unminimize`, and `deep-link:default` — zero shell, filesystem, or wildcard permissions.
   - `build.rs` verifies `tauri.conf.json`, `capabilities/default.json`, and the binary headers of all 6 icon files (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`, `icon.icns`, `icon.ico`) at compile time.
-- **Proximity mesh, self-host planner & health inspector (`src/lib.rs`, `src/self_host_health.rs`)**:
+- **Proximity mesh, self-host planner, automated `deploy/community` wizard & health inspector (`src/lib.rs`, `src/self_host_deploy.rs`, `src/self_host_health.rs`)**:
   - `DesktopProximityNode` coordinates signed 129-byte proximity check-ins (`kodera-rs`), replay suppression, and priority relay queues within one provisioned organisation session.
   - `#proximity` is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service: it does not reach emergency services, and delivery is never guaranteed. It was first named `#urgence`. The 129-byte public frame and every other v1 wire byte are frozen under their historical values (magic `KE`, signed label `kodera-emergency-v1:`); only names in code, routes and copy changed.
-  - `SelfHostDeploymentPlan` validates self-host domain/provider inputs with redacted tokens, and `inspect_community_compose_ps` / `probe_local_community_stack` monitor the `< 1.5 GiB` (`1536 MiB`) single-node Community Compose profile (`postgres`, `synapse`, `coturn`).
+  - `SelfHostDeploymentPlan` validates self-host domain/provider inputs with redacted tokens, and `inspect_community_compose_ps` / `probe_local_community_stack` monitor the `< 1.5 GiB` (`1536 MiB`) single-node Community Compose profile (`postgres`, `synapse`, `coturn` / `livekit`).
+  - `self_host_deploy.rs` automates local Docker Engine `deploy/community` deployment without shell interpolation: `self_host_preflight_community` validates `docker --version`, `docker compose version`, directory permissions, regular `docker-compose.yml` presence, and domain/email/TLS/port inputs; `self_host_prepare_community` generates 16 distinct OS CSPRNG secrets (`getrandom::fill`), writes `.env` atomically with `0600` Unix permissions, and validates via `docker compose config --quiet`; `self_host_deploy_community` runs `docker compose up -d --wait` and polls `self_host_health` until Keycloak, Server, Web, LiveKit, PostgreSQL, and Synapse report healthy.
 
 ### 2. TypeScript IPC Bridge & Browser Fallback (`apps/desktop/src/`)
 
@@ -40,9 +41,9 @@ if (desktop.isNativeDesktop()) {
 ```
 
 - Detects `window.__TAURI_INTERNALS__.invoke` (`isTauriDesktopRuntime`) and falls back to deterministic no-ops outside Tauri without touching `localStorage` or `sessionStorage`, while still enforcing client-side scheme/origin/character validation.
-- Exposes `getAppMetadata()`, `checkForAppUpdates()`, `routeDeepLink(rawUri)`, `listenDeepLinks(listener)`, `setUnreadCount(unreadCount)`, `updateTrayState(state)`, `triggerTrayAction(action)`, `listenTrayActions(listener)`, `sendNotification(request)`, `storeSecureCredential(input)`, `loadSecureCredentialStatus(secretKind, matrixUserId)`, `deleteSecureCredential(secretKind, matrixUserId)`, `beginOidcPkceLoopback(input)`, `completeOidcPkceCallback(callbackUri)`, and `restoreWindowBounds(savedStateJson)`.
+- Exposes `getAppMetadata()`, `checkForAppUpdates()`, `routeDeepLink(rawUri)`, `listenDeepLinks(listener)`, `setUnreadCount(unreadCount)`, `updateTrayState(state)`, `triggerTrayAction(action)`, `listenTrayActions(listener)`, `sendNotification(request)`, `storeSecureCredential(input)`, `loadSecureCredentialStatus(secretKind, matrixUserId)`, `deleteSecureCredential(secretKind, matrixUserId)`, `beginOidcPkceLoopback(input)`, `completeOidcPkceCallback(callbackUri)`, `restoreWindowBounds(savedStateJson)`, `preflightCommunityDeploy(input)`, `prepareCommunityDeploy(input)`, and `deployCommunityStack(input)`.
 
-## Bounded JSON Command Seam (37 Routes + 3 Permanent Aliases)
+## Bounded JSON Command Seam (40 Routes + 3 Permanent Aliases)
 
 `DesktopWorkspaceSession::dispatch_command(&str)` accepts flat JSON objects up to 16,384 UTF-8 bytes with `command` (or `op` on the 6 workspace preference routes) and active canonical non-nil `organisation_id`. Unknown fields, duplicate keys (including Unicode-escaped duplicates), nested objects, trailing bytes, and wrong-organisation calls fail closed without side effects.
 
@@ -78,6 +79,9 @@ if (desktop.isNativeDesktop()) {
 | `begin_oidc_pkce_loopback` | `issuer_origin`, `client_id`, `code_verifier`, `state`, `loopback_port` |
 | `complete_oidc_pkce_callback` | `callback_uri` |
 | `inspect_self_host_health` | `compose_ps_json` |
+| `self_host_preflight_community` | `stack_dir`, `domain`, `acme_email`, `tls_mode` (`acme`, `internal`, `off`), `http_port`, `https_port` |
+| `self_host_prepare_community` | `stack_dir`, `domain`, `acme_email`, `oidc_provider_origin`, `tls_mode`, `http_port`, `https_port` |
+| `self_host_deploy_community` | `stack_dir`; optional `timeout_ms` (`1000`–`300000`) |
 
 ## Local Development, Code Signing & Multi-OS Packaging
 

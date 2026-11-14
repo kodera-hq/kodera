@@ -82,7 +82,7 @@ impl CommunityServiceRole {
         match name {
             "postgres" | "synapse-db" | "db" => Some(Self::Postgres),
             "synapse" => Some(Self::Synapse),
-            "coturn" | "turn" => Some(Self::Coturn),
+            "coturn" | "turn" | "livekit" => Some(Self::Coturn),
             _ => None,
         }
     }
@@ -123,6 +123,18 @@ pub enum ServiceReadiness {
 }
 
 impl ServiceReadiness {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Starting => "starting",
+            Self::Restarting => "restarting",
+            Self::Unhealthy => "unhealthy",
+            Self::Stopped => "stopped",
+            Self::PolicyDegraded => "policy_degraded",
+            Self::Missing => "missing",
+        }
+    }
+
     const fn severity_rank(self) -> u8 {
         match self {
             Self::Ready => 0,
@@ -167,6 +179,19 @@ pub enum StackHealthState {
     Restarting,
     Degraded,
     DockerUnavailable { reason: DockerUnavailableReason },
+}
+
+impl StackHealthState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Starting => "starting",
+            Self::OverBudget => "over_budget",
+            Self::Restarting => "restarting",
+            Self::Degraded => "degraded",
+            Self::DockerUnavailable { .. } => "docker_unavailable",
+        }
+    }
 }
 
 /// Complete diagnostic report for the single-node Community self-host stack.
