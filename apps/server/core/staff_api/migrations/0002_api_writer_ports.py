@@ -6,6 +6,87 @@ FORWARD = r"""
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
 
+CREATE FUNCTION staff_fence_caller(
+  p_identity_id uuid,
+  p_user_id uuid,
+  p_issuer text,
+  p_subject text,
+  p_allowed_roles text[]
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE
+  v_role text;
+  v_roles text[] := ARRAY[]::text[];
+BEGIN
+  IF p_identity_id IS NULL
+     OR p_user_id IS NULL
+     OR coalesce(p_issuer, '') = ''
+     OR coalesce(p_subject, '') = ''
+     OR p_allowed_roles IS NULL
+     OR coalesce(array_length(p_allowed_roles, 1), 0) = 0 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'staff_identity_missing');
+  END IF;
+
+  PERFORM 1
+    FROM public.identity_user u
+    WHERE u.id = p_user_id
+      AND u.enabled = TRUE
+      AND u.deleted_at IS NULL
+    FOR SHARE OF u;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'staff_identity_missing');
+  END IF;
+
+  PERFORM 1
+    FROM public.identity_identity i
+    WHERE i.id = p_identity_id
+      AND i.user_id = p_user_id
+      AND i.organisation_id IS NULL
+      AND i.realm = 'kodera-staff'
+      AND i.issuer = p_issuer
+      AND i.subject = p_subject
+      AND i.enabled = TRUE
+      AND i.deleted_at IS NULL
+    FOR SHARE OF i;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'staff_identity_missing');
+  END IF;
+
+  FOR v_role IN
+    SELECT g.role
+      FROM public.staff_api_role_grant g
+      WHERE g.identity_id = p_identity_id
+        AND g.realm = 'kodera-staff'
+        AND g.revoked_at IS NULL
+      ORDER BY g.id
+      FOR SHARE OF g
+  LOOP
+    IF NOT (v_role = ANY(v_roles)) THEN
+      v_roles := array_append(v_roles, v_role);
+    END IF;
+  END LOOP;
+
+  FOR v_role IN
+    SELECT r.role
+      FROM public.identity_staffrole r
+      WHERE r.identity_id = p_identity_id
+        AND r.realm = 'kodera-staff'
+        AND r.revoked_at IS NULL
+      ORDER BY r.id
+      FOR SHARE OF r
+  LOOP
+    IF NOT (v_role = ANY(v_roles)) THEN
+      v_roles := array_append(v_roles, v_role);
+    END IF;
+  END LOOP;
+
+  IF NOT (v_roles && p_allowed_roles) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'insufficient_staff_role');
+  END IF;
+
+  RETURN jsonb_build_object('ok', true, 'roles', to_jsonb(v_roles));
+END $$;
+REVOKE ALL ON FUNCTION staff_fence_caller(uuid, uuid, text, text, text[]) FROM PUBLIC;
+
 CREATE FUNCTION staff_read_outbox_sre_summary(p_actor_identity uuid)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE
@@ -17,6 +98,7 @@ BEGIN
     FROM public.identity_identity i
     JOIN public.identity_user u ON u.id = i.user_id
     WHERE i.id = p_actor_identity
+      AND i.organisation_id IS NULL
       AND i.realm = 'kodera-staff'
       AND i.enabled = TRUE
       AND i.deleted_at IS NULL
@@ -88,6 +170,7 @@ CREATE FUNCTION staff_sync_identity_bridge_role(
 DECLARE
   v_remaining bigint;
   v_existing uuid;
+  v_actor_authorized boolean := FALSE;
 BEGIN
   IF p_actor_identity IS NULL
      OR p_target_identity IS NULL
@@ -99,33 +182,48 @@ BEGIN
     RAISE EXCEPTION 'staff bridge role sync refused' USING ERRCODE = '23514';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1
-    FROM public.identity_identity i
-    JOIN public.identity_user u ON u.id = i.user_id
+  PERFORM 1
+    FROM public.identity_user u
+    JOIN public.identity_identity i ON i.user_id = u.id
     WHERE i.id = p_actor_identity
+      AND i.organisation_id IS NULL
       AND i.realm = 'kodera-staff'
       AND i.enabled = TRUE
       AND i.deleted_at IS NULL
       AND u.enabled = TRUE
       AND u.deleted_at IS NULL
-      AND (
-        EXISTS (
-          SELECT 1 FROM public.staff_api_role_grant g
-          WHERE g.identity_id = i.id
-            AND g.realm = 'kodera-staff'
-            AND g.revoked_at IS NULL
-            AND g.role IN ('staff_owner', 'staff_operator')
-        )
-        OR EXISTS (
-          SELECT 1 FROM public.identity_staffrole r
-          WHERE r.identity_id = i.id
-            AND r.realm = 'kodera-staff'
-            AND r.revoked_at IS NULL
-            AND r.role IN ('staff_owner', 'staff_operator')
-        )
-      )
-  ) THEN
+    FOR SHARE OF u, i;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'staff bridge actor unauthorized' USING ERRCODE = '42501';
+  END IF;
+
+  PERFORM 1
+    FROM public.staff_api_role_grant g
+    WHERE g.identity_id = p_actor_identity
+      AND g.realm = 'kodera-staff'
+      AND g.revoked_at IS NULL
+      AND g.role IN ('staff_owner', 'staff_operator')
+    ORDER BY g.id
+    LIMIT 1
+    FOR SHARE OF g;
+  IF FOUND THEN
+    v_actor_authorized := TRUE;
+  END IF;
+
+  PERFORM 1
+    FROM public.identity_staffrole r
+    WHERE r.identity_id = p_actor_identity
+      AND r.realm = 'kodera-staff'
+      AND r.revoked_at IS NULL
+      AND r.role IN ('staff_owner', 'staff_operator')
+    ORDER BY r.id
+    LIMIT 1
+    FOR SHARE OF r;
+  IF FOUND THEN
+    v_actor_authorized := TRUE;
+  END IF;
+
+  IF NOT v_actor_authorized THEN
     RAISE EXCEPTION 'staff bridge actor unauthorized' USING ERRCODE = '42501';
   END IF;
 
@@ -134,15 +232,16 @@ BEGIN
       RAISE EXCEPTION 'staff bridge grant id required' USING ERRCODE = '23514';
     END IF;
     PERFORM 1
-      FROM public.identity_identity i
-      JOIN public.identity_user u ON u.id = i.user_id
+      FROM public.identity_user u
+      JOIN public.identity_identity i ON i.user_id = u.id
       WHERE i.id = p_target_identity
+        AND i.organisation_id IS NULL
         AND i.realm = 'kodera-staff'
         AND i.enabled = TRUE
         AND i.deleted_at IS NULL
         AND u.enabled = TRUE
         AND u.deleted_at IS NULL
-      FOR SHARE OF i, u;
+      FOR SHARE OF u, i;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'staff bridge target disabled or missing' USING ERRCODE = '23514';
     END IF;
@@ -605,6 +704,7 @@ DROP FUNCTION staff_reconcile_delivery(uuid, uuid, jsonb, text);
 DROP FUNCTION staff_reconcile_job(uuid, uuid, jsonb, text);
 DROP FUNCTION staff_sync_identity_bridge_role(uuid, uuid, text, text, uuid);
 DROP FUNCTION staff_read_outbox_sre_summary(uuid);
+DROP FUNCTION staff_fence_caller(uuid, uuid, text, text, text[]);
 """
 
 

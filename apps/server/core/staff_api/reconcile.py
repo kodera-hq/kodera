@@ -13,7 +13,7 @@ from django.db import connection, transaction
 from core.db.ids import new_uuid7
 
 from .audit import append_staff_audit_entry
-from .auth import VerifiedStaffRequest
+from .auth import SRE_WRITE_ROLES, VerifiedStaffRequest, fence_staff_caller
 from .errors import StaffApiError
 from .models import RECONCILE_EXITS, RECONCILE_OUTCOMES
 
@@ -251,6 +251,7 @@ def reconcile_staff_job(
     parsed = _parse_decision_body(body)
     decision_id, decision_json = _decision_payload_json(parsed, include_step_audit=True)
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=SRE_WRITE_ROLES, required_plane="ops")
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT staff_reconcile_job(%s, %s, %s::jsonb, %s)",
@@ -299,6 +300,7 @@ def reconcile_staff_delivery(
     parsed = _parse_decision_body(body)
     decision_id, decision_json = _decision_payload_json(parsed, include_step_audit=False)
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=SRE_WRITE_ROLES, required_plane="ops")
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT staff_reconcile_delivery(%s, %s, %s::jsonb, %s)",

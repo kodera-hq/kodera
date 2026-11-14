@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.db import DatabaseError, connection
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 from test_intake_writer_role import INSUFFICIENT_PRIVILEGE, acting_as, current_user, refused
 from test_staff_admin_api import (
     _RSA_PUBLIC_JWK,
@@ -38,7 +38,10 @@ from apps.jobs.models import Job
 from apps.outbox.models import OutboxDelivery
 from core.db.api_database_boundary import assert_writer_grants
 from core.db.api_writer_role import grant_statements
-from core.staff_api.models import StaffAuditEntry, StaffFeedbackItem
+from core.staff_api import services as staff_services
+from core.staff_api.auth import ROLE_ADMIN_ROLES, authenticate_staff_request
+from core.staff_api.errors import StaffApiError
+from core.staff_api.models import StaffAuditEntry, StaffFeedbackItem, StaffRoleGrant
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -288,7 +291,7 @@ def test_writer_role_serves_staff_v1_read_triage_ops_and_hash_chained_audit(writ
             )
             assert r_finops_snap.status_code == 201
 
-            for role_name in ("staff_security", "staff_growth"):
+            for role_name in ("staff_owner", "staff_security", "staff_growth"):
                 r_grant = client.post(
                     "/staff/v1/ops/staff-roles/grant",
                     data=json.dumps({"identity_id": str(candidate.id), "role": role_name}),
@@ -486,3 +489,61 @@ def test_writer_role_cannot_update_or_delete_audit_entries_or_exceed_staff_grant
             cursor.execute(
                 "TRUNCATE staff_api_audit_entry, staff_api_role_grant, staff_api_deal_card CASCADE"
             )
+
+
+def test_writer_role_enforces_for_share_caller_fence_against_stale_caller(writer: str) -> None:
+    owner_a = _seed_staff_member(roles=("staff_owner",))
+    owner_b = _seed_staff_member(roles=("staff_owner",))
+    candidate = _seed_staff_member(roles=())
+    now_epoch = int(time.time())
+    factory = RequestFactory()
+
+    try:
+        with override_settings(**STAFF_PLANE_SETTINGS), acting_as(writer):
+            assert current_user() == writer
+            req_a = factory.post(
+                "/staff/v1/ops/staff-roles/grant",
+                **_auth_headers(
+                    _mint_staff_jwt(owner_a.subject, amr=["hwk"], auth_time=now_epoch),
+                    host=OPS_HOST,
+                ),
+            )
+            caller_a = authenticate_staff_request(
+                req_a, plane="ops", allowed_roles=ROLE_ADMIN_ROLES
+            )
+
+            req_b = factory.post(
+                "/staff/v1/ops/staff-roles/revoke",
+                **_auth_headers(
+                    _mint_staff_jwt(owner_b.subject, amr=["hwk"], auth_time=now_epoch),
+                    host=OPS_HOST,
+                ),
+            )
+            caller_b = authenticate_staff_request(
+                req_b, plane="ops", allowed_roles=ROLE_ADMIN_ROLES
+            )
+
+            revoked = staff_services.revoke_staff_role_mutation(
+                caller=caller_b,
+                body={"identity_id": str(owner_a.id), "role": "staff_owner"},
+                request_id="req-writer-revoke-a",
+            )
+            assert revoked["status"] == "revoked"
+
+            with pytest.raises(StaffApiError) as exc_info:
+                staff_services.grant_staff_role_mutation(
+                    caller=caller_a,
+                    body={"identity_id": str(candidate.id), "role": "staff_owner"},
+                    request_id="req-writer-stale-a",
+                )
+            assert exc_info.value.status == 403
+            assert exc_info.value.code == "insufficient_staff_role"
+
+        assert (
+            StaffRoleGrant.objects.filter(identity_id=candidate.id, revoked_at__isnull=True).count()
+            == 0
+        )
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("TRUNCATE staff_api_audit_entry, staff_api_role_grant CASCADE")
+

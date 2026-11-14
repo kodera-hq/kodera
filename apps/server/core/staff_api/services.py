@@ -14,7 +14,17 @@ from django.db import connection, transaction
 from core.db.ids import new_uuid7
 
 from .audit import append_staff_audit_entry, verify_staff_audit_chain
-from .auth import VerifiedStaffRequest
+from .auth import (
+    AUDIT_VERIFY_ROLES,
+    FINOPS_WRITE_ROLES,
+    ISSUER_SNAPSHOT_ROLES,
+    PIPELINE_WRITE_ROLES,
+    ROLE_ADMIN_ROLES,
+    SAR_ROLES,
+    TRIAGE_ROLES,
+    VerifiedStaffRequest,
+    fence_staff_caller,
+)
 from .errors import StaffApiError
 from .models import (
     CANONICAL_SEATS,
@@ -658,6 +668,7 @@ def triage_feedback_item(
         )
 
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=TRIAGE_ROLES, required_plane="triage")
         item = StaffFeedbackItem.objects.select_for_update().filter(id=feedback_id).first()
         if item is None:
             raise StaffApiError(404, "feedback_not_found", "Feedback item not found")
@@ -714,6 +725,7 @@ def create_feedback_github_draft(
     milestone = scrub_c1_text(milestone_raw.strip())
 
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=TRIAGE_ROLES, required_plane="triage")
         item = StaffFeedbackItem.objects.select_for_update().filter(id=feedback_id).first()
         if item is None:
             raise StaffApiError(404, "feedback_not_found", "Feedback item not found")
@@ -813,6 +825,9 @@ def upsert_deal_card(
 
     scrubbed_next_step = scrub_c1_text(next_step_code.strip())
     with transaction.atomic():
+        caller = fence_staff_caller(
+            caller, allowed_roles=PIPELINE_WRITE_ROLES, required_plane="triage"
+        )
         deal = StaffDealCard.objects.select_for_update().filter(prospect_slug=prospect_slug).first()
         if deal is None:
             deal = StaffDealCard.objects.create(
@@ -908,6 +923,9 @@ def open_waitlist_cohort(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 [f"staff_waitlist_cohort:{cohort_code}"],
             )
+        caller = fence_staff_caller(
+            caller, allowed_roles=PIPELINE_WRITE_ROLES, required_plane="triage"
+        )
         existing = StaffWaitlistCohort.objects.filter(cohort_code=cohort_code).first()
         if existing is not None:
             if int(existing.limit_count) != limit_count:
@@ -984,6 +1002,7 @@ def create_sar_record(
     now = datetime.now(UTC)
     due_at = now + timedelta(days=30)
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=SAR_ROLES, required_plane="triage")
         sar = StaffSarRecord.objects.create(
             request_kind=str(request_kind),
             status="open",
@@ -1037,6 +1056,7 @@ def complete_sar_record(
     evidence_ref = validate_sar_evidence_ref(body.get("evidence_ref"))
 
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=SAR_ROLES, required_plane="triage")
         sar = StaffSarRecord.objects.select_for_update().filter(id=sar_id).first()
         if sar is None:
             raise StaffApiError(404, "sar_not_found", "SAR record not found")
@@ -1133,12 +1153,19 @@ def grant_staff_role_mutation(
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtext('staff_roles_mutation'))")
+            caller = fence_staff_caller(
+                caller, allowed_roles=ROLE_ADMIN_ROLES, required_plane="ops"
+            )
             cursor.execute(
                 """
                 SELECT i.enabled AND u.enabled
                 FROM identity_identity i
                 JOIN identity_user u ON u.id = i.user_id
-                WHERE i.id = %s AND i.realm = %s AND i.deleted_at IS NULL AND u.deleted_at IS NULL
+                WHERE i.id = %s
+                  AND i.organisation_id IS NULL
+                  AND i.realm = %s
+                  AND i.deleted_at IS NULL
+                  AND u.deleted_at IS NULL
                 FOR SHARE OF u
                 """,
                 [target_identity_id, STAFF_REALM],
@@ -1218,8 +1245,11 @@ def revoke_staff_role_mutation(
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SELECT pg_advisory_xact_lock(hashtext('staff_roles_mutation'))")
+            caller = fence_staff_caller(
+                caller, allowed_roles=ROLE_ADMIN_ROLES, required_plane="ops"
+            )
             cursor.execute(
-                "SELECT id FROM identity_identity WHERE id = %s AND realm = %s AND deleted_at IS NULL",
+                "SELECT id FROM identity_identity WHERE id = %s AND organisation_id IS NULL AND realm = %s AND deleted_at IS NULL",
                 [target_identity_id, STAFF_REALM],
             )
             if cursor.fetchone() is None:
@@ -1325,6 +1355,9 @@ def register_issuer_snapshot_mutation(
     public_jwks = validate_public_jwks(body.get("public_jwks"))
 
     with transaction.atomic():
+        caller = fence_staff_caller(
+            caller, allowed_roles=ISSUER_SNAPSHOT_ROLES, required_plane="ops"
+        )
         with connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -1466,6 +1499,7 @@ def record_finops_snapshot_mutation(
     gross_margin_alert = gross_margin_bps is not None and gross_margin_bps < GROSS_MARGIN_FLOOR_BPS
 
     with transaction.atomic():
+        caller = fence_staff_caller(caller, allowed_roles=FINOPS_WRITE_ROLES, required_plane="ops")
         snap = StaffFinopsSnapshot.objects.create(
             period_month=period_month,
             environment_code=str(env_code),
@@ -1520,11 +1554,17 @@ def record_finops_snapshot_mutation(
     }
 
 
-def verify_audit_chain_endpoint(body: dict[str, Any]) -> dict[str, object]:
+def verify_audit_chain_endpoint(
+    *,
+    caller: VerifiedStaffRequest,
+    body: dict[str, Any],
+) -> dict[str, object]:
     org_slug_raw = body.get("organisation_slug")
     scope_key = "fleet"
     if org_slug_raw is not None and org_slug_raw != "":
         if not isinstance(org_slug_raw, str) or SLUG_RE.fullmatch(org_slug_raw.strip()) is None:
             raise StaffApiError(400, "invalid_organisation_slug", "Invalid organisation_slug")
         scope_key = f"org:{org_slug_raw.strip()}"
-    return verify_staff_audit_chain(scope_key)
+    with transaction.atomic():
+        fence_staff_caller(caller, allowed_roles=AUDIT_VERIFY_ROLES, required_plane="ops")
+        return verify_staff_audit_chain(scope_key)

@@ -19,7 +19,7 @@ import pytest
 import yaml
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, connections, transaction
 from django.test import Client, RequestFactory, override_settings
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
@@ -32,10 +32,18 @@ from apps.outbox.models import OutboxDelivery
 from apps.tenancy.models import Tenant
 from config.environment import staff_oidc_issuer, staff_oidc_jwks_url, staff_ops_hosts
 from core.api.scopes import ATTRIBUTE as DECLARED_OPS_ATTR
-from core.staff_api import views as staff_views
-from core.staff_api.auth import clear_jwks_cache, register_test_jwks
+from core.staff_api import services as staff_services, views as staff_views
+from core.staff_api.audit import append_staff_audit_entry
+from core.staff_api.auth import (
+    PIPELINE_WRITE_ROLES,
+    ROLE_ADMIN_ROLES,
+    authenticate_staff_request,
+    clear_jwks_cache,
+    register_test_jwks,
+)
 from core.staff_api.errors import (
     REQUEST_ID_RE,
+    StaffApiError,
     request_correlation_id,
     staff_json_response,
     staff_problem_response,
@@ -44,6 +52,7 @@ from core.staff_api.models import (
     GROSS_MARGIN_FLOOR_BPS,
     OPS_STEP_UP_MAX_AGE_SEC,
     StaffAuditEntry,
+    StaffDealCard,
     StaffFeedbackItem,
     StaffRoleGrant,
 )
@@ -1299,3 +1308,379 @@ def test_staff_jwks_fetch_refuses_http_redirects_with_503(redirect_status: int) 
         server.shutdown()
         server.server_close()
         thread.join(timeout=2.0)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_revoked_or_disabled_caller_after_pre_auth_cannot_grant_owner_or_mutate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-authenticated caller revoked or disabled before command admission is rejected (403)."""
+    owner_a = _seed_staff_member(roles=("staff_owner",))
+    owner_b = _seed_staff_member(roles=("staff_owner",))
+    owner_user_disabled = _seed_staff_member(roles=("staff_owner",))
+    growth_ident_disabled = _seed_staff_member(roles=("staff_growth",))
+    candidate_c = _seed_staff_member(roles=())
+
+    now_epoch = int(time.time())
+    factory = RequestFactory()
+
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        # 1. Held VerifiedStaffRequest -> Connection B revokes owner_a -> Connection A attempts non-bridge staff_owner grant
+        req_a = factory.post(
+            "/staff/v1/ops/staff-roles/grant",
+            **_auth_headers(
+                _mint_staff_jwt(owner_a.subject, amr=["hwk"], auth_time=now_epoch),
+                host=OPS_HOST,
+            ),
+        )
+        caller_a = authenticate_staff_request(req_a, plane="ops", allowed_roles=ROLE_ADMIN_ROLES)
+
+        req_b = factory.post(
+            "/staff/v1/ops/staff-roles/revoke",
+            **_auth_headers(
+                _mint_staff_jwt(owner_b.subject, amr=["hwk"], auth_time=now_epoch),
+                host=OPS_HOST,
+            ),
+        )
+        caller_b = authenticate_staff_request(req_b, plane="ops", allowed_roles=ROLE_ADMIN_ROLES)
+
+        revoke_err: list[BaseException] = []
+
+        def _revoke_owner_a_on_conn_b() -> None:
+            try:
+                staff_services.revoke_staff_role_mutation(
+                    caller=caller_b,
+                    body={"identity_id": str(owner_a.id), "role": "staff_owner"},
+                    request_id="req-conn-b-revoke-a",
+                )
+            except BaseException as exc:  # noqa: BLE001
+                revoke_err.append(exc)
+            finally:
+                connections.close_all()
+
+        t_revoker = threading.Thread(target=_revoke_owner_a_on_conn_b, daemon=True)
+        t_revoker.start()
+        t_revoker.join(timeout=10.0)
+        assert not t_revoker.is_alive()
+        assert revoke_err == []
+
+        with pytest.raises(StaffApiError) as exc_info:
+            staff_services.grant_staff_role_mutation(
+                caller=caller_a,
+                body={"identity_id": str(candidate_c.id), "role": "staff_owner"},
+                request_id="req-stale-caller-a-grant",
+            )
+        assert exc_info.value.status == 403
+        assert exc_info.value.code == "insufficient_staff_role"
+        assert (
+            StaffRoleGrant.objects.filter(
+                identity_id=candidate_c.id, revoked_at__isnull=True
+            ).count()
+            == 0
+        )
+        assert StaffAuditEntry.objects.filter(action="staff.role.granted").count() == 0
+
+        # 2. Full HTTP view interleave: pause right after authenticate_staff_request, revoke on Connection B, resume HTTP
+        owner_http = _seed_staff_member(roles=("staff_owner",))
+        t_owner_http = _mint_staff_jwt(owner_http.subject, amr=["hwk"], auth_time=now_epoch)
+        pre_auth_done = threading.Event()
+        resume_http = threading.Event()
+        orig_auth = authenticate_staff_request
+
+        def _paused_auth(*args: Any, **kwargs: Any) -> Any:
+            verified = orig_auth(*args, **kwargs)
+            pre_auth_done.set()
+            assert resume_http.wait(timeout=10.0)
+            return verified
+
+        monkeypatch.setattr(staff_views, "authenticate_staff_request", _paused_auth)
+        http_result: dict[str, Any] = {}
+
+        def _run_http_grant() -> None:
+            try:
+                client = Client()
+                resp = client.post(
+                    "/staff/v1/ops/staff-roles/grant",
+                    data=json.dumps({"identity_id": str(candidate_c.id), "role": "staff_owner"}),
+                    content_type="application/json",
+                    **_auth_headers(t_owner_http, host=OPS_HOST),
+                )
+                http_result["status"] = resp.status_code
+                http_result["body"] = resp.json()
+            except BaseException as exc:  # noqa: BLE001
+                http_result["error"] = exc
+            finally:
+                connections.close_all()
+
+        t_http = threading.Thread(target=_run_http_grant, daemon=True)
+        t_http.start()
+        assert pre_auth_done.wait(timeout=10.0)
+        monkeypatch.setattr(staff_views, "authenticate_staff_request", orig_auth)
+
+        staff_services.revoke_staff_role_mutation(
+            caller=caller_b,
+            body={"identity_id": str(owner_http.id), "role": "staff_owner"},
+            request_id="req-revoke-http-owner",
+        )
+        resume_http.set()
+        t_http.join(timeout=10.0)
+        assert not t_http.is_alive()
+        assert "error" not in http_result, http_result
+        assert http_result["status"] == 403
+        assert http_result["body"]["code"] == "insufficient_staff_role"
+        assert (
+            StaffRoleGrant.objects.filter(
+                identity_id=candidate_c.id, revoked_at__isnull=True
+            ).count()
+            == 0
+        )
+        assert StaffAuditEntry.objects.filter(action="staff.role.granted").count() == 0
+
+        # 3. Concurrent caller disable (User.enabled=False & Identity.enabled=False) on non-bridge roles
+        req_u_dis = factory.post(
+            "/staff/v1/ops/staff-roles/grant",
+            **_auth_headers(
+                _mint_staff_jwt(owner_user_disabled.subject, amr=["hwk"], auth_time=now_epoch),
+                host=OPS_HOST,
+            ),
+        )
+        caller_u_dis = authenticate_staff_request(
+            req_u_dis, plane="ops", allowed_roles=ROLE_ADMIN_ROLES
+        )
+
+        req_i_dis = factory.post(
+            "/staff/v1/triage/deals",
+            **_auth_headers(
+                _mint_staff_jwt(growth_ident_disabled.subject, amr=["otp"]),
+                host=ADMIN_HOST,
+            ),
+        )
+        caller_i_dis = authenticate_staff_request(
+            req_i_dis, plane="triage", allowed_roles=PIPELINE_WRITE_ROLES
+        )
+
+        disable_err: list[BaseException] = []
+
+        def _disable_callers_on_conn_b() -> None:
+            try:
+                User.objects.filter(pk=owner_user_disabled.user_id).update(enabled=False)
+                Identity.objects.filter(pk=growth_ident_disabled.pk).update(enabled=False)
+            except BaseException as exc:  # noqa: BLE001
+                disable_err.append(exc)
+            finally:
+                connections.close_all()
+
+        t_disabler = threading.Thread(target=_disable_callers_on_conn_b, daemon=True)
+        t_disabler.start()
+        t_disabler.join(timeout=10.0)
+        assert not t_disabler.is_alive()
+        assert disable_err == []
+
+        with pytest.raises(StaffApiError) as exc_u:
+            staff_services.grant_staff_role_mutation(
+                caller=caller_u_dis,
+                body={"identity_id": str(candidate_c.id), "role": "staff_owner"},
+                request_id="req-disabled-user-grant",
+            )
+        assert exc_u.value.status == 403
+        assert exc_u.value.code == "staff_identity_missing"
+
+        with pytest.raises(StaffApiError) as exc_i:
+            staff_services.upsert_deal_card(
+                caller=caller_i_dis,
+                body={
+                    "prospect_slug": "disabled-growth-org",
+                    "stage": "lead",
+                    "pack_code": "suite-territoriale",
+                    "capacity_tier_code": "S",
+                    "estimated_mrr_cents": 40_000,
+                    "owner_seat": "Product seat",
+                    "next_step_code": "blocked",
+                },
+                request_id="req-disabled-ident-deal",
+            )
+        assert exc_i.value.status == 403
+        assert exc_i.value.code == "staff_identity_missing"
+        assert StaffDealCard.objects.filter(prospect_slug="disabled-growth-org").count() == 0
+        assert (
+            StaffRoleGrant.objects.filter(
+                identity_id=candidate_c.id, revoked_at__isnull=True
+            ).count()
+            == 0
+        )
+        assert StaffAuditEntry.objects.filter(action="staff.role.granted").count() == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_admitted_mutation_for_share_caller_fence_blocks_concurrent_revocation_and_disable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While an admitted staff mutation holds its FOR SHARE caller fence, revocation/disable blocks."""
+    owner_a = _seed_staff_member(roles=("staff_owner",))
+    owner_b = _seed_staff_member(roles=("staff_owner",))
+    now_epoch = int(time.time())
+    factory = RequestFactory()
+
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        req_a = factory.post(
+            "/staff/v1/triage/deals",
+            **_auth_headers(
+                _mint_staff_jwt(owner_a.subject, amr=["hwk"], auth_time=now_epoch),
+                host=ADMIN_HOST,
+            ),
+        )
+        caller_a = authenticate_staff_request(
+            req_a, plane="triage", allowed_roles=PIPELINE_WRITE_ROLES
+        )
+
+        req_b = factory.post(
+            "/staff/v1/ops/staff-roles/revoke",
+            **_auth_headers(
+                _mint_staff_jwt(owner_b.subject, amr=["hwk"], auth_time=now_epoch),
+                host=OPS_HOST,
+            ),
+        )
+        caller_b = authenticate_staff_request(req_b, plane="ops", allowed_roles=ROLE_ADMIN_ROLES)
+
+        fence_held = threading.Event()
+        release_mutation = threading.Event()
+        orig_append_audit = append_staff_audit_entry
+
+        def _paused_append_audit(**kwargs: Any) -> Any:
+            row = orig_append_audit(**kwargs)
+            fence_held.set()
+            assert release_mutation.wait(timeout=10.0)
+            return row
+
+        monkeypatch.setattr(staff_services, "append_staff_audit_entry", _paused_append_audit)
+
+        mutation_state: dict[str, Any] = {}
+
+        def _run_admitted_mutation() -> None:
+            try:
+                mutation_state["result"] = staff_services.upsert_deal_card(
+                    caller=caller_a,
+                    body={
+                        "prospect_slug": "fenced-prospect",
+                        "stage": "lead",
+                        "pack_code": "suite-territoriale",
+                        "capacity_tier_code": "M",
+                        "estimated_mrr_cents": 95_000,
+                        "owner_seat": "Product seat",
+                        "next_step_code": "fenced-write",
+                    },
+                    request_id="req-fenced-deal-a",
+                )
+            except BaseException as exc:  # noqa: BLE001
+                mutation_state["error"] = exc
+            finally:
+                connections.close_all()
+
+        t_mut = threading.Thread(target=_run_admitted_mutation, daemon=True)
+        t_mut.start()
+        assert fence_held.wait(timeout=10.0)
+        monkeypatch.setattr(staff_services, "append_staff_audit_entry", orig_append_audit)
+
+        # 1. Short lock_timeout probe proves PostgreSQL 55P03 (LockNotAvailable) on grant, identity, and user rows
+        probe_sqlstates: list[str] = []
+
+        def _probe_short_lock_timeout() -> None:
+            try:
+                for sql, params in (
+                    (
+                        "SELECT id FROM staff_api_role_grant WHERE identity_id = %s AND revoked_at IS NULL FOR UPDATE",
+                        [owner_a.id],
+                    ),
+                    ("UPDATE identity_identity SET enabled = FALSE WHERE id = %s", [owner_a.id]),
+                    ("UPDATE identity_user SET enabled = FALSE WHERE id = %s", [owner_a.user_id]),
+                ):
+                    with pytest.raises(DatabaseError) as db_exc, transaction.atomic():
+                        with connection.cursor() as cursor:
+                            cursor.execute("SET LOCAL lock_timeout = '120ms'")
+                            cursor.execute(sql, params)
+                    cause = db_exc.value.__cause__
+                    sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", "")
+                    probe_sqlstates.append(str(sqlstate))
+            finally:
+                connections.close_all()
+
+        t_probe = threading.Thread(target=_probe_short_lock_timeout, daemon=True)
+        t_probe.start()
+        t_probe.join(timeout=10.0)
+        assert not t_probe.is_alive()
+        assert probe_sqlstates == ["55P03", "55P03", "55P03"]
+
+        # 2. Concurrent revoke_staff_role_mutation blocks on wait_event_type='Lock' until t_mut commits
+        revoker_ready = threading.Event()
+        revoker_done = threading.Event()
+        revoker_state: dict[str, Any] = {}
+
+        def _run_concurrent_revoke() -> None:
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET statement_timeout = '8s'")
+                    cursor.execute("SELECT pg_backend_pid()")
+                    pid_row = cursor.fetchone()
+                    assert pid_row is not None
+                    revoker_state["pid"] = int(pid_row[0])
+                revoker_ready.set()
+                revoker_state["result"] = staff_services.revoke_staff_role_mutation(
+                    caller=caller_b,
+                    body={"identity_id": str(owner_a.id), "role": "staff_owner"},
+                    request_id="req-blocking-revoke-a",
+                )
+            except BaseException as exc:  # noqa: BLE001
+                revoker_state["error"] = exc
+            finally:
+                revoker_done.set()
+                connections.close_all()
+
+        t_rev = threading.Thread(target=_run_concurrent_revoke, daemon=True)
+        try:
+            t_rev.start()
+            assert revoker_ready.wait(timeout=5.0)
+            waiting_on_lock = False
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not revoker_done.is_set():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                        [revoker_state["pid"]],
+                    )
+                    act_row = cursor.fetchone()
+                if act_row and act_row[0] == "Lock":
+                    waiting_on_lock = True
+                    break
+                time.sleep(0.02)
+            assert waiting_on_lock, "revoke_staff_role_mutation did not block on FOR SHARE caller fence"
+            assert not revoker_done.is_set()
+        finally:
+            release_mutation.set()
+            t_mut.join(timeout=10.0)
+            t_rev.join(timeout=10.0)
+
+        assert not t_mut.is_alive()
+        assert not t_rev.is_alive()
+        assert "error" not in mutation_state, mutation_state
+        assert "error" not in revoker_state, revoker_state
+        assert mutation_state["result"]["prospect_slug"] == "fenced-prospect"
+        assert revoker_state["result"]["status"] == "revoked"
+
+        # Subsequent mutation using caller_a's pre-built VerifiedStaffRequest now fails with 403
+        with pytest.raises(StaffApiError) as post_rev_exc:
+            staff_services.upsert_deal_card(
+                caller=caller_a,
+                body={
+                    "prospect_slug": "fenced-prospect",
+                    "stage": "qualified",
+                    "pack_code": "suite-territoriale",
+                    "capacity_tier_code": "M",
+                    "estimated_mrr_cents": 95_000,
+                    "owner_seat": "Product seat",
+                    "next_step_code": "after-revoke",
+                },
+                request_id="req-after-revoke-a",
+            )
+        assert post_rev_exc.value.status == 403
+        assert post_rev_exc.value.code == "insufficient_staff_role"
+

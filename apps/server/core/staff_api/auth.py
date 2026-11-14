@@ -32,6 +32,33 @@ MAX_BEARER_TOKEN_BYTES = 8192
 MAX_JWKS_BYTES = 65536
 JWKS_CACHE_TTL_SEC = 300.0
 
+ORGANISATIONS_ROLES = (
+    "staff_owner",
+    "staff_operator",
+    "staff_security",
+    "staff_support",
+    "staff_backend",
+    "staff_frontend",
+)
+PIPELINE_READ_ROLES = ("staff_owner", "staff_operator", "staff_growth")
+PIPELINE_WRITE_ROLES = ("staff_owner", "staff_growth")
+TRIAGE_ROLES = (
+    "staff_owner",
+    "staff_operator",
+    "staff_support",
+    "staff_backend",
+    "staff_frontend",
+)
+FINOPS_READ_ROLES = ("staff_owner", "staff_operator", "staff_growth")
+FINOPS_WRITE_ROLES = ("staff_owner", "staff_operator")
+SRE_READ_ROLES = ("staff_owner", "staff_operator", "staff_security", "staff_backend")
+SRE_WRITE_ROLES = ("staff_operator",)
+SECURITY_READ_ROLES = ("staff_owner", "staff_operator", "staff_security", "staff_support")
+SAR_ROLES = ("staff_owner", "staff_operator", "staff_security", "staff_support")
+ROLE_ADMIN_ROLES = ("staff_owner", "staff_operator")
+ISSUER_SNAPSHOT_ROLES = ("staff_operator",)
+AUDIT_VERIFY_ROLES = ("staff_owner", "staff_operator", "staff_security")
+
 PublicKey = rsa.RSAPublicKey | ec.EllipticCurvePublicKey
 
 
@@ -415,7 +442,8 @@ def _resolve_db_staff_identity_and_roles(issuer: str, subject: str) -> tuple[UUI
             SELECT i.id, i.user_id
             FROM identity_identity i
             JOIN identity_user u ON u.id = i.user_id
-            WHERE i.realm = %s
+            WHERE i.organisation_id IS NULL
+              AND i.realm = %s
               AND i.issuer = %s
               AND i.subject = %s
               AND i.enabled = TRUE
@@ -540,4 +568,128 @@ def authenticate_staff_request(
         amr=amr_list,
         auth_time=auth_time,
         plane=plane,
+    )
+
+
+def fence_staff_caller(
+    caller: VerifiedStaffRequest,
+    *,
+    allowed_roles: Sequence[str],
+    required_plane: str = "triage",
+    clock: Callable[[], int] | None = None,
+) -> VerifiedStaffRequest:
+    """Re-verify and lock (`FOR SHARE`) the caller's live User, StaffIdentity, and active grants.
+
+    Must execute inside an active `transaction.atomic()` block so PostgreSQL holds `FOR SHARE`
+    row locks on `identity_user`, `identity_identity`, `staff_api_role_grant`, and
+    `identity_staffrole` until the mutation and its `StaffAuditEntry` commit or roll back.
+    """
+    if not connection.in_atomic_block:
+        raise RuntimeError("fence_staff_caller must run inside transaction.atomic()")
+
+    amr_set = set(caller.amr)
+    now_epoch = clock() if clock is not None else int(time.time())
+    if required_plane == "ops":
+        if caller.plane != "ops":
+            raise StaffApiError(
+                403,
+                "ops_ingress_required",
+                "Dedicated ops-admin ingress required",
+                "Refused /staff/v1/ops/* mutation outside verified ops plane",
+                type_slug="ops-ingress-required",
+            )
+        if OPS_REQUIRED_AMR not in amr_set:
+            raise StaffApiError(
+                403,
+                "hwk_required",
+                "Hardware-key step-up required",
+                "WebAuthn hardware-key (hwk) authentication is mandatory for /staff/v1/ops/*; OTP-only tokens are refused",
+                type_slug="hwk-required",
+            )
+        if (
+            caller.auth_time is None
+            or caller.auth_time > now_epoch
+            or (now_epoch - caller.auth_time) > OPS_STEP_UP_MAX_AGE_SEC
+        ):
+            raise StaffApiError(
+                403,
+                "step_up_expired",
+                "Step-up authentication expired",
+                f"WebAuthn auth_time must be within {OPS_STEP_UP_MAX_AGE_SEC} seconds for /staff/v1/ops/*",
+                type_slug="step-up-expired",
+            )
+    else:
+        if not amr_set.intersection(READ_TRIAGE_AMR):
+            raise StaffApiError(
+                403,
+                "mfa_required",
+                "Multi-factor authentication required",
+                "Token amr must include hwk or otp for /staff/v1/{read,triage}/*",
+            )
+
+    admitted_roles = [str(r) for r in allowed_roles if r in STAFF_ROLES]
+    if not admitted_roles:
+        raise StaffApiError(
+            403,
+            "insufficient_staff_role",
+            "Forbidden",
+            "No valid staff roles configured for this command",
+        )
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT staff_fence_caller(%s, %s, %s, %s, %s::text[])",
+            [
+                caller.identity_id,
+                caller.user_id,
+                caller.issuer,
+                caller.subject,
+                admitted_roles,
+            ],
+        )
+        row = cursor.fetchone()
+
+    if row is None or row[0] is None:
+        raise RuntimeError("staff_fence_caller returned an empty payload")
+    payload = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        err_code = str(payload.get("error", "")) if isinstance(payload, dict) else ""
+        if err_code == "staff_identity_missing":
+            raise StaffApiError(
+                403,
+                "staff_identity_missing",
+                "Forbidden",
+                "Caller staff identity or user is disabled, erased, or missing in PostgreSQL",
+            )
+        raise StaffApiError(
+            403,
+            "insufficient_staff_role",
+            "Forbidden",
+            "Caller lacks an active unrevoked StaffRole grant in PostgreSQL for this command",
+        )
+
+    raw_live_roles = payload.get("roles")
+    live_role_set = (
+        {str(item) for item in raw_live_roles if isinstance(item, str)}
+        if isinstance(raw_live_roles, list)
+        else set()
+    )
+    ordered_live_roles = tuple(role for role in STAFF_ROLES if role in live_role_set)
+    if not set(ordered_live_roles).intersection(admitted_roles):
+        raise StaffApiError(
+            403,
+            "insufficient_staff_role",
+            "Forbidden",
+            "Caller lacks an active unrevoked StaffRole grant in PostgreSQL for this command",
+        )
+
+    return VerifiedStaffRequest(
+        identity_id=caller.identity_id,
+        user_id=caller.user_id,
+        issuer=caller.issuer,
+        subject=caller.subject,
+        roles=ordered_live_roles,
+        amr=caller.amr,
+        auth_time=caller.auth_time,
+        plane=caller.plane,
     )

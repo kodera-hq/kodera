@@ -12,7 +12,22 @@ from rest_framework.permissions import AllowAny
 
 from core.api.scopes import Operation, declares
 
-from .auth import authenticate_staff_request
+from .auth import (
+    AUDIT_VERIFY_ROLES,
+    FINOPS_READ_ROLES,
+    FINOPS_WRITE_ROLES,
+    ISSUER_SNAPSHOT_ROLES,
+    ORGANISATIONS_ROLES,
+    PIPELINE_READ_ROLES,
+    PIPELINE_WRITE_ROLES,
+    ROLE_ADMIN_ROLES,
+    SAR_ROLES,
+    SECURITY_READ_ROLES,
+    SRE_READ_ROLES,
+    SRE_WRITE_ROLES,
+    TRIAGE_ROLES,
+    authenticate_staff_request,
+)
 from .errors import StaffApiError, error_to_response, request_correlation_id, staff_json_response
 from .models import STAFF_ROLES
 from .reconcile import reconcile_staff_delivery, reconcile_staff_job
@@ -39,27 +54,6 @@ from .services import (
 
 STAFF_SCOPE = "staff"
 MAX_JSON_BODY_BYTES = 65536
-
-ORGANISATIONS_ROLES = (
-    "staff_owner",
-    "staff_operator",
-    "staff_security",
-    "staff_support",
-    "staff_backend",
-    "staff_frontend",
-)
-PIPELINE_READ_ROLES = ("staff_owner", "staff_operator", "staff_growth")
-PIPELINE_WRITE_ROLES = ("staff_owner", "staff_growth")
-TRIAGE_ROLES = ("staff_owner", "staff_operator", "staff_support", "staff_backend", "staff_frontend")
-FINOPS_READ_ROLES = ("staff_owner", "staff_operator", "staff_growth")
-FINOPS_WRITE_ROLES = ("staff_owner", "staff_operator")
-SRE_READ_ROLES = ("staff_owner", "staff_operator", "staff_security", "staff_backend")
-SRE_WRITE_ROLES = ("staff_operator",)
-SECURITY_READ_ROLES = ("staff_owner", "staff_operator", "staff_security", "staff_support")
-SAR_ROLES = ("staff_owner", "staff_operator", "staff_security", "staff_support")
-ROLE_ADMIN_ROLES = ("staff_owner", "staff_operator")
-ISSUER_SNAPSHOT_ROLES = ("staff_operator",)
-AUDIT_VERIFY_ROLES = ("staff_owner", "staff_operator", "staff_security")
 
 
 def _json_body(request: HttpRequest, *, allow_empty: bool = False) -> dict[str, Any]:
@@ -430,8 +424,10 @@ def record_finops_snapshot_view(request: HttpRequest) -> HttpResponse:
 @permission_classes([AllowAny])
 def verify_audit_chain_view(request: HttpRequest) -> HttpResponse:
     try:
-        authenticate_staff_request(request, plane="ops", allowed_roles=AUDIT_VERIFY_ROLES)
-        payload = verify_audit_chain_endpoint(_json_body(request, allow_empty=True))
+        caller = authenticate_staff_request(request, plane="ops", allowed_roles=AUDIT_VERIFY_ROLES)
+        payload = verify_audit_chain_endpoint(
+            caller=caller, body=_json_body(request, allow_empty=True)
+        )
         return staff_json_response(request, payload)
     except StaffApiError as err:
         return error_to_response(request, err)

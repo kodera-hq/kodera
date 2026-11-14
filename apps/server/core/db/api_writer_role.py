@@ -405,6 +405,7 @@ EXECUTE_FUNCTIONS = (
     "workspace_quota_usage(uuid)",
     "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
     "docs_document_role(uuid, uuid, uuid, uuid, text, text)",
+    "staff_fence_caller(uuid, uuid, text, text, text[])",
     "staff_read_outbox_sre_summary(uuid)",
     "staff_sync_identity_bridge_role(uuid, uuid, text, text, uuid)",
     "staff_reconcile_job(uuid, uuid, jsonb, text)",
