@@ -285,9 +285,9 @@ def test_scim_okta_and_entra_user_group_lifecycle_and_instant_deprovisioning(
         assert okta_deprov.json()["active"] is False
         assert default_scim_service.active_sessions("acme-corp", u1_id) == frozenset()
 
-        # Verify PostgreSQL Django User and Membership were suspended immediately!
+        # Verify global User person root remains enabled while tenant Membership + realm access are suspended!
         ident_u1 = Identity.objects.get(organisation=org, subject="alice.martin@acme.fr")
-        assert User.objects.get(id=ident_u1.user_id).enabled is False
+        assert User.objects.get(id=ident_u1.user_id).enabled is True
         assert (
             Membership.objects.get(organisation=org, user_id=ident_u1.user_id).state
             == Membership.State.SUSPENDED

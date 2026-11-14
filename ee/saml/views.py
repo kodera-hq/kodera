@@ -41,6 +41,7 @@ _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("insufficient_role", 403, "Organisation owner or admin role is required"),
     ("tenant_cutoff_fenced", 403, "Organisation is closed or under privacy erasure cutoff"),
     ("account_cutoff_fenced", 403, "Account is under privacy erasure cutoff"),
+    ("user_disabled", 403, "User account is disabled"),
     (
         "authority_fenced",
         409,

@@ -1147,24 +1147,24 @@ def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_
     _seed_ee_for_org(
         org_id=target_org.id,
         slug=target_org.slug,
-        user_a_id=members[0].user_id,
-        user_a_email=members[0].user.email,
+        user_a_id=members[2].user_id,
+        user_a_email=members[2].user.email,
         user_b_id=members[1].user_id,
         user_b_email=members[1].user.email,
     )
     _seed_ee_for_org(
         org_id=sibling_owner.organisation_id,
         slug="sibling-corp",
-        user_a_id=sibling_owner.user_id,
-        user_a_email=sibling_owner.email,
-        user_b_id=sibling_second.user_id,
-        user_b_email=sibling_second.email,
+        user_a_id=sibling_second.user_id,
+        user_a_email=sibling_second.email,
+        user_b_id=sibling_owner.user_id,
+        user_b_email=sibling_owner.email,
     )
 
-    # --- PART A: Individual Account Erasure for `members[0]` ---
-    erased_person_id = members[0].user_id
+    # --- PART A: Individual Account Erasure for `members[2]` (`org_member`) ---
+    erased_person_id = members[2].user_id
     acct_row = begin_account_erasure(
-        verified=replace(tokens[0], auth_time=int(database_now().timestamp())),
+        verified=replace(tokens[2], auth_time=int(database_now().timestamp())),
         confirmation="delete",
         instruction_ref="DEL-201",
         instruction_sha256="7" * 64,
@@ -1472,3 +1472,645 @@ def test_p2_ee_audit_signing_seed_validation_and_historical_key_rotation_verific
         )
         assert forged_ver.status_code == 422
         assert forged_ver.json()["verified"] is False
+
+
+def test_p1_4_scim_and_saml_never_mutate_global_user_enabled_across_sibling_tenants(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
+    oidc_signing_keys: tuple[rsa.RSAPrivateKey, rsa.RSAPrivateKey, dict[str, Any]],
+    tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
+) -> None:
+    """Verify under restricted `kodera_api` writer role (`SET ROLE`) that:
+    1. Shared `User` in Tenant A + Tenant B: Tenant A SCIM `create` -> `PATCH active:false` ->
+       `PATCH active:true` -> `DELETE` -> re-`POST active:false` -> `PUT active:true` never
+       mutates global `User.enabled` and leaves Tenant B's `Identity.enabled`, `Membership.state`,
+       and `resolve_member_authority` active throughout while transitioning Tenant A atomically.
+    2. Globally disabled `User` (`User.enabled = False`) and tenant-disabled `Identity`: Tenant A
+       SCIM `POST` (`active:true` and `active:false`), `PATCH` (`active:true`), and `PUT`
+       (`active:true`) plus SAML ACS login all refuse (`403`) with atomic rollback and never flip
+       `User.enabled` or `Identity.enabled` back to `True`.
+    3. Tenant A `org_owner` protection: SCIM `POST active:false`, `PATCH active:false`,
+       `PUT active:false`, and `DELETE` all refuse (`403`) with atomic rollback while keeping
+       `User.enabled == True`, owner `Identity.enabled == True`, owner `Membership` active, and
+       SCIM user state consistent.
+    """
+    import jwt
+    from apps.identity.models import Identity, User
+    from apps.orgs.authority_selectors import (
+        MemberAuthorityNotFoundError,
+        resolve_member_authority,
+    )
+    from apps.orgs.models import Membership, Organisation
+    from django.utils import timezone
+
+    from core.db.api_database_boundary import assert_authority, assert_writer_grants
+    from core.db.api_writer_role import grant_statements
+    from services.identity.access_tokens import VerifiedAccessToken
+
+    monkeypatch.setenv("KODERA_EDITION", "enterprise")
+    client = Client(raise_request_exception=False, HTTP_HOST="127.0.0.1")
+    saml_priv_key, _, saml_cert_pem = rsa_idp_keypair
+    oidc_trusted_priv, _, _ = oidc_signing_keys
+
+    owner_a = tenant_principal_factory(
+        "scim-tenant-a",
+        role="org_owner",
+        email="owner@scim-a.fr",
+    )
+    owner_b = tenant_principal_factory(
+        "scim-tenant-b",
+        role="org_owner",
+        email="owner@scim-b.fr",
+    )
+    org_a = Organisation.objects.get(id=owner_a.organisation_id)
+    org_b = Organisation.objects.get(id=owner_b.organisation_id)
+
+    # Seed one shared global `User` initially active in Tenant B (`scim-tenant-b`), plus a second
+    # globally-disabled `User` (`enabled=False`) to test global security disable enforcement.
+    with transaction.atomic():
+        shared_user = User.objects.create(
+            email="shared.claire@corp.fr",
+            display_name="Claire Shared",
+            enabled=True,
+        )
+        ident_b = Identity.objects.create(
+            user=shared_user,
+            organisation=org_b,
+            realm=org_b.realm,
+            issuer=org_b.issuer,
+            subject="shared.claire@corp.fr",
+            email="shared.claire@corp.fr",
+            enabled=True,
+        )
+        memb_b = Membership.objects.create(
+            organisation=org_b,
+            user=shared_user,
+            role=Membership.Role.MEMBER,
+            state=Membership.State.ACTIVE,
+            accepted_at=timezone.now(),
+        )
+        globally_disabled_user = User.objects.create(
+            email="disabled.sec@corp.fr",
+            display_name="Security Disabled Person",
+            enabled=False,
+        )
+
+    def _mint_verified_and_bearer(
+        issuer: str, subject: str, email: str
+    ) -> tuple[VerifiedAccessToken, str]:
+        now_epoch = int(datetime.now(UTC).timestamp())
+        raw_jwt = jwt.encode(
+            {
+                "iss": issuer,
+                "sub": subject,
+                "aud": "kodera-api",
+                "iat": now_epoch - 5,
+                "exp": now_epoch + 900,
+                "email": email,
+                "email_verified": True,
+                "azp": "kodera-console",
+                "amr": ["pwd", "otp"],
+            },
+            oidc_trusted_priv,
+            algorithm="RS256",
+            headers={"kid": "ee-test-oidc-k1", "typ": "JWT"},
+        )
+        verified = VerifiedAccessToken(
+            issuer=issuer,
+            subject=subject,
+            audience=("kodera-server",),
+            issued_at=now_epoch - 5,
+            expires_at=now_epoch + 900,
+            not_before=None,
+            amr=("pwd", "otp"),
+            acr=None,
+            auth_time=now_epoch - 5,
+            email_verified=True,
+            authorized_party="kodera-console",
+            email=email,
+        )
+        return verified, raw_jwt
+
+    verified_b, _bearer_b = _mint_verified_and_bearer(
+        org_b.issuer,
+        "shared.claire@corp.fr",
+        "shared.claire@corp.fr",
+    )
+    verified_a, bearer_a = _mint_verified_and_bearer(
+        org_a.issuer,
+        "shared.claire@corp.fr",
+        "shared.claire@corp.fr",
+    )
+
+    role = f"ee_scim_iso_{uuid4().hex[:12]}"
+    with connection.cursor() as cur:
+        cur.execute(f'CREATE ROLE "{role}" NOLOGIN NOINHERIT')
+        for stmt in grant_statements(role):
+            cur.execute(stmt)
+        assert_authority(cur, role)
+        assert_writer_grants(cur, role)
+
+    def _count_outbox_deliveries(target_org_id: UUID) -> int:
+        with connection.cursor() as cur:
+            cur.execute("RESET ROLE")
+            try:
+                cur.execute(
+                    "SELECT count(*) FROM public.outbox_outboxdelivery WHERE organisation_id = %s",
+                    [target_org_id],
+                )
+                row = cur.fetchone()
+                return int(row[0]) if row is not None else 0
+            finally:
+                cur.execute(f'SET ROLE "{role}"')
+
+    try:
+        with _acting_as(role):
+            raw_scim_a, _ = default_scim_service.tokens.issue_token(
+                tenant_slug="scim-tenant-a",
+                description="Tenant A SCIM Token",
+                organisation_id=org_a.id,
+            )
+            scim_a_headers = {"Authorization": f"Bearer {raw_scim_a}"}
+
+            # Register SAML IdP on Tenant A (verifies SAML ACS also respects global User.enabled=False)
+            reg_saml = client.post(
+                "/api/v1/ee/sso/saml/scim-tenant-a/providers",
+                data=json.dumps(
+                    {
+                        "idp_id": "okta-a",
+                        "idp_entity_id": "https://idp.scim-a.test/saml2",
+                        "idp_sso_url": "https://idp.scim-a.test/sso",
+                        "public_key_pem": saml_cert_pem,
+                        "verified_domains": ["corp.fr"],
+                        "default_role": "org_member",
+                    }
+                ),
+                content_type="application/json",
+                headers=owner_a.headers,
+            )
+            assert reg_saml.status_code == 201, reg_saml.content
+
+            # --- Scenario 1: Shared User across Tenant A and Tenant B ---
+            # 1a. Provision shared Claire into Tenant A via HTTP POST /Users (active=True)
+            create_shared = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "shared.claire@corp.fr",
+                        "displayName": "Claire Shared",
+                        "active": True,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert create_shared.status_code == 201, create_shared.content
+            scim_claire_id = str(create_shared.json()["id"])
+
+            assert User.objects.filter(email__iexact="shared.claire@corp.fr").count() == 1
+            shared_user.refresh_from_db()
+            assert shared_user.enabled is True
+
+            ident_a = Identity.objects.get(organisation=org_a, user=shared_user)
+            memb_a = Membership.objects.get(organisation=org_a, user=shared_user)
+            assert ident_a.enabled is True
+            assert memb_a.state == Membership.State.ACTIVE
+            assert resolve_member_authority(verified=verified_a).membership_id == memb_a.id
+            assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
+
+            rev_a_before = Organisation.objects.values_list("authority_revision", flat=True).get(
+                id=org_a.id
+            )
+
+            # 1b. Deprovision Claire in Tenant A (`PATCH active: false`)
+            patch_off = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": False}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert patch_off.status_code == 200, patch_off.content
+            assert patch_off.json()["active"] is False
+
+            shared_user.refresh_from_db()
+            ident_b.refresh_from_db()
+            memb_b.refresh_from_db()
+            memb_a.refresh_from_db()
+            rev_a_after_off = Organisation.objects.values_list("authority_revision", flat=True).get(
+                id=org_a.id
+            )
+
+            assert shared_user.enabled is True, (
+                "Tenant A SCIM deprovision must NEVER disable global User!"
+            )
+            assert memb_a.state == Membership.State.SUSPENDED
+            assert rev_a_after_off > rev_a_before
+            with pytest.raises(MemberAuthorityNotFoundError):
+                resolve_member_authority(verified=verified_a)
+
+            # Sibling Tenant B authority, Identity, and Membership MUST remain 100% active!
+            assert ident_b.enabled is True
+            assert memb_b.state == Membership.State.ACTIVE
+            facts_b = resolve_member_authority(verified=verified_b)
+            assert facts_b.organisation_id == org_b.id
+            assert facts_b.membership_id == memb_b.id
+
+            # SAML ACS login on Tenant A while Tenant A membership is suspended must also refuse 403!
+            login_susp = client.get(
+                "/api/v1/ee/sso/saml/scim-tenant-a/login",
+                {"idp_id": "okta-a"},
+            ).json()
+            xml_susp = _build_signed_saml_response(
+                in_response_to=str(login_susp["request_id"]),
+                tenant_slug="scim-tenant-a",
+                idp_entity_id="https://idp.scim-a.test/saml2",
+                email="shared.claire@corp.fr",
+                sign_key=saml_priv_key,
+                groups=(),
+            )
+            acs_susp = client.post(
+                "/api/v1/ee/sso/saml/scim-tenant-a/acs",
+                data={
+                    "SAMLResponse": base64.b64encode(xml_susp.encode("utf-8")).decode("ascii"),
+                    "RelayState": str(login_susp["relay_state"]),
+                },
+            )
+            assert acs_susp.status_code == 403
+            assert acs_susp.json()["code"] == "user_disabled"
+
+            # 1c. Reactivate Claire in Tenant A (`PATCH active: true`)
+            patch_on = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": True}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert patch_on.status_code == 200, patch_on.content
+            assert patch_on.json()["active"] is True
+            memb_a.refresh_from_db()
+            assert memb_a.state == Membership.State.ACTIVE
+            assert resolve_member_authority(verified=verified_a).membership_id == memb_a.id
+            assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
+
+            # 1d. DELETE Claire from Tenant A SCIM (`DELETE /Users/{id}`)
+            del_claire = client.delete(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                headers=scim_a_headers,
+            )
+            assert del_claire.status_code == 204
+            shared_user.refresh_from_db()
+            ident_b.refresh_from_db()
+            memb_b.refresh_from_db()
+            memb_a.refresh_from_db()
+            assert shared_user.enabled is True
+            assert memb_a.state == Membership.State.REMOVED
+            with pytest.raises(MemberAuthorityNotFoundError):
+                resolve_member_authority(verified=verified_a)
+            assert ident_b.enabled is True
+            assert memb_b.state == Membership.State.ACTIVE
+            assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
+
+            # 1e. Re-provision Claire in Tenant A as `active: false`, then `PUT active: true`
+            recreate_claire = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "shared.claire@corp.fr",
+                        "displayName": "Claire Shared",
+                        "active": False,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert recreate_claire.status_code == 201, recreate_claire.content
+            scim_claire_id = str(recreate_claire.json()["id"])
+            shared_user.refresh_from_db()
+            assert shared_user.enabled is True
+            assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
+
+            put_on = client.put(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "shared.claire@corp.fr",
+                        "displayName": "Claire Reactivated",
+                        "active": True,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert put_on.status_code == 200, put_on.content
+            memb_a.refresh_from_db()
+            assert memb_a.state == Membership.State.ACTIVE
+            assert resolve_member_authority(verified=verified_a).membership_id == memb_a.id
+            assert resolve_member_authority(verified=verified_b).membership_id == memb_b.id
+
+            # Brand-new person created via SCIM with `active: false` still creates `User(enabled=True)`!
+            brand_new_inactive = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "newhire.staged@corp.fr",
+                        "displayName": "Staged Hire",
+                        "active": False,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert brand_new_inactive.status_code == 201, brand_new_inactive.content
+            staged_user = User.objects.get(email="newhire.staged@corp.fr")
+            assert staged_user.enabled is True
+            assert (
+                Membership.objects.get(organisation=org_a, user=staged_user).state
+                == Membership.State.SUSPENDED
+            )
+
+            # Deactivate Claire in Tenant A before testing global security disable refusal
+            assert (
+                client.patch(
+                    f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                    data=json.dumps(
+                        {
+                            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                            "Operations": [{"op": "replace", "path": "active", "value": False}],
+                        }
+                    ),
+                    content_type="application/scim+json",
+                    headers=scim_a_headers,
+                ).status_code
+                == 200
+            )
+
+        # --- Scenario 2: Globally disabled User (`User.enabled = False`) & disabled Identity ---
+        # Platform security disables `shared_user` globally and disables Tenant A's `ident_a`.
+        User.objects.filter(id=shared_user.id).update(enabled=False)
+        Identity.objects.filter(id=ident_a.id).update(enabled=False)
+
+        with _acting_as(role):
+            # 2a. SCIM POST /Users (`active: true` AND `active: false`) on existing globally-disabled User refuses 403!
+            for active_flag in (True, False):
+                prov_disabled = client.post(
+                    "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                    data=json.dumps(
+                        {
+                            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                            "userName": "disabled.sec@corp.fr",
+                            "displayName": "Security Disabled Person",
+                            "active": active_flag,
+                        }
+                    ),
+                    content_type="application/scim+json",
+                    headers=scim_a_headers,
+                )
+                assert prov_disabled.status_code == 403, prov_disabled.content
+                assert prov_disabled.json()["scimType"] == "mutability"
+
+            globally_disabled_user.refresh_from_db()
+            assert globally_disabled_user.enabled is False
+            assert not Membership.objects.filter(
+                organisation=org_a, user=globally_disabled_user
+            ).exists()
+            list_check = client.get(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                {"filter": 'userName eq "disabled.sec@corp.fr"'},
+                headers=scim_a_headers,
+            )
+            assert list_check.status_code == 200
+            assert list_check.json()["totalResults"] == 0
+
+            # 2b. SCIM PATCH `active: true` and PUT `active: true` on globally-disabled Claire refuse 403
+            # with 100% atomic rollback (zero revision, outbox, or deprovision-log drift)!
+            rev_a_pre_dis = Organisation.objects.values_list("authority_revision", flat=True).get(
+                id=org_a.id
+            )
+            rev_b_pre_dis = Organisation.objects.values_list("authority_revision", flat=True).get(
+                id=org_b.id
+            )
+            outbox_a_pre_dis = _count_outbox_deliveries(org_a.id)
+
+            patch_disabled = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": True}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert patch_disabled.status_code == 403, patch_disabled.content
+            assert patch_disabled.json()["scimType"] == "mutability"
+
+            put_disabled = client.put(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "shared.claire@corp.fr",
+                        "displayName": "Attempt Unfreeze",
+                        "active": True,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert put_disabled.status_code == 403, put_disabled.content
+            assert put_disabled.json()["scimType"] == "mutability"
+
+            shared_user.refresh_from_db()
+            ident_a.refresh_from_db()
+            memb_a.refresh_from_db()
+            assert shared_user.enabled is False
+            assert ident_a.enabled is False
+            assert memb_a.state == Membership.State.SUSPENDED
+            assert (
+                Organisation.objects.values_list("authority_revision", flat=True).get(id=org_a.id)
+                == rev_a_pre_dis
+            )
+            assert (
+                Organisation.objects.values_list("authority_revision", flat=True).get(id=org_b.id)
+                == rev_b_pre_dis
+            )
+            assert _count_outbox_deliveries(org_a.id) == outbox_a_pre_dis
+            claire_scim_state = client.get(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                headers=scim_a_headers,
+            ).json()
+            assert claire_scim_state["active"] is False
+            assert claire_scim_state["displayName"] != "Attempt Unfreeze"
+
+            # 2c. SAML ACS login for globally-disabled user refuses 403 without flipping User.enabled!
+            login_dis = client.get(
+                "/api/v1/ee/sso/saml/scim-tenant-a/login",
+                {"idp_id": "okta-a"},
+            ).json()
+            xml_dis = _build_signed_saml_response(
+                in_response_to=str(login_dis["request_id"]),
+                tenant_slug="scim-tenant-a",
+                idp_entity_id="https://idp.scim-a.test/saml2",
+                email="disabled.sec@corp.fr",
+                sign_key=saml_priv_key,
+                groups=(),
+            )
+            acs_dis = client.post(
+                "/api/v1/ee/sso/saml/scim-tenant-a/acs",
+                data={
+                    "SAMLResponse": base64.b64encode(xml_dis.encode("utf-8")).decode("ascii"),
+                    "RelayState": str(login_dis["relay_state"]),
+                },
+            )
+            assert acs_dis.status_code == 403, acs_dis.content
+            assert acs_dis.json()["code"] == "user_disabled"
+            globally_disabled_user.refresh_from_db()
+            assert globally_disabled_user.enabled is False
+
+        # Restore global `shared_user.enabled = True` while keeping `ident_a.enabled = False`:
+        # SCIM reactivation must STILL refuse 403 while `ident_a.enabled == False`!
+        User.objects.filter(id=shared_user.id).update(enabled=True)
+        with _acting_as(role):
+            patch_ident_dis = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{scim_claire_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": True}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert patch_ident_dis.status_code == 403
+            ident_a.refresh_from_db()
+            assert ident_a.enabled is False
+
+            # --- Scenario 3: Tenant A `org_owner` protection on SCIM deactivate & DELETE ---
+            # 3a. Direct `POST /Users` with `active: false` for Tenant A's `org_owner` refuses 403!
+            post_owner_off = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "owner@scim-a.fr",
+                        "displayName": "Tenant A Owner",
+                        "active": False,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert post_owner_off.status_code == 403, post_owner_off.content
+            assert post_owner_off.json()["scimType"] == "mutability"
+
+            # 3b. Provision SCIM entry for Tenant A's `org_owner` with `active: true`, then attempt
+            # `PATCH active: false`, `PUT active: false`, and `DELETE` — all MUST refuse 403 atomically!
+            post_owner_on = client.post(
+                "/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "owner@scim-a.fr",
+                        "displayName": "Tenant A Owner",
+                        "active": True,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert post_owner_on.status_code == 201, post_owner_on.content
+            owner_scim_id = str(post_owner_on.json()["id"])
+            rev_owner_pre = Organisation.objects.values_list("authority_revision", flat=True).get(
+                id=org_a.id
+            )
+            outbox_owner_pre = _count_outbox_deliveries(org_a.id)
+            deprov_owner_pre = len(default_scim_service.deprovision_events("scim-tenant-a"))
+
+            patch_owner_off = client.patch(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{owner_scim_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": False}],
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert patch_owner_off.status_code == 403, patch_owner_off.content
+            assert patch_owner_off.json()["scimType"] == "mutability"
+
+            put_owner_off = client.put(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{owner_scim_id}",
+                data=json.dumps(
+                    {
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": "owner@scim-a.fr",
+                        "displayName": "Tenant A Owner Mutated",
+                        "active": False,
+                    }
+                ),
+                content_type="application/scim+json",
+                headers=scim_a_headers,
+            )
+            assert put_owner_off.status_code == 403, put_owner_off.content
+            assert put_owner_off.json()["scimType"] == "mutability"
+
+            del_owner = client.delete(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{owner_scim_id}",
+                headers=scim_a_headers,
+            )
+            assert del_owner.status_code == 403, del_owner.content
+            assert del_owner.json()["scimType"] == "mutability"
+
+            owner_user = User.objects.get(id=owner_a.user_id)
+            owner_ident = Identity.objects.get(id=owner_a.identity_id)
+            owner_memb = Membership.objects.get(id=owner_a.membership_id)
+            assert owner_user.enabled is True
+            assert owner_ident.enabled is True
+            assert owner_memb.state == Membership.State.ACTIVE
+            assert owner_memb.role == Membership.Role.OWNER
+            assert (
+                Organisation.objects.values_list("authority_revision", flat=True).get(id=org_a.id)
+                == rev_owner_pre
+            )
+            assert _count_outbox_deliveries(org_a.id) == outbox_owner_pre
+            assert len(default_scim_service.deprovision_events("scim-tenant-a")) == deprov_owner_pre
+            verified_owner_a, _ = _mint_verified_and_bearer(
+                owner_a.issuer,
+                owner_a.subject,
+                owner_a.email,
+            )
+            assert (
+                resolve_member_authority(verified=verified_owner_a).stored_role
+                == Membership.Role.OWNER
+            )
+            owner_scim_get = client.get(
+                f"/api/v1/ee/scim/v2/tenants/scim-tenant-a/Users/{owner_scim_id}",
+                headers=scim_a_headers,
+            )
+            assert owner_scim_get.status_code == 200
+            assert owner_scim_get.json()["active"] is True
+            assert owner_scim_get.json()["displayName"] == "Tenant A Owner"
+            assert bearer_a  # sanity check minted JWT non-empty
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("RESET ROLE")
+            cur.execute(f'DROP OWNED BY "{role}"')
+            cur.execute(f'DROP ROLE "{role}"')

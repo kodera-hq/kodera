@@ -1080,7 +1080,20 @@ def _deprovision_user(
     reason: str,
     organisation_id: UUID | None,
     now: datetime,
+    sync_core: bool = True,
 ) -> None:
+    effective_org_id = organisation_id or state.organisation_id
+    if (
+        sync_core
+        and effective_org_id is not None
+        and user.django_user_id is not None
+        and can_use_postgres()
+    ):
+        _sync_django_scim_deprovision(
+            effective_org_id,
+            UUID(user.django_user_id),
+            remove_membership=(reason == "delete_user"),
+        )
     revoked = tuple(sorted(state.sessions.pop(user.id, set())))
     user.active = False
     user.member_state = "deprovisioned"
@@ -1096,9 +1109,6 @@ def _deprovision_user(
     )
     state.deprovision_log.append(evt)
     state.new_deprovision_events.append(evt)
-    effective_org_id = organisation_id or state.organisation_id
-    if effective_org_id is not None and user.django_user_id is not None:
-        _sync_django_scim_deprovision(effective_org_id, UUID(user.django_user_id))
 
 
 def _extract_member_ids(state: _TenantScimState, raw_members: object) -> list[str]:
@@ -1202,6 +1212,11 @@ class ScimService:
                             status=409,
                             code="authority_fenced",
                         ) from exc
+                    raise
+                except Exception as exc:
+                    from apps.orgs import member_set_hooks
+
+                    member_set_hooks.after_rollback(exc)
                     raise
 
             with connection.cursor() as cur:
@@ -1397,6 +1412,7 @@ class ScimService:
                     reason="created_inactive",
                     organisation_id=effective_org_id,
                     now=timestamp,
+                    sync_core=False,
                 )
             groups = _groups_for_user(state, user_id)
             return user.to_scim_dict(base_url, groups)
@@ -1522,6 +1538,16 @@ class ScimService:
             user.version += 1
             user.updated_at = timestamp
             effective_org_id = organisation_id or state.organisation_id
+            if (
+                effective_org_id is not None
+                and user.django_user_id is not None
+                and can_use_postgres()
+            ):
+                _verify_django_scim_person_usable(
+                    effective_org_id,
+                    UUID(user.django_user_id),
+                    require_globally_enabled=new_active,
+                )
             if not new_active:
                 _deprovision_user(
                     state,
@@ -1530,9 +1556,10 @@ class ScimService:
                     organisation_id=effective_org_id,
                     now=timestamp,
                 )
-            elif not was_active and new_active:
-                user.member_state = "active"
-                user.deprovisioned_at = None
+            else:
+                if not was_active:
+                    user.member_state = "active"
+                    user.deprovisioned_at = None
                 if (
                     effective_org_id is not None
                     and user.django_user_id is not None
@@ -1579,6 +1606,7 @@ class ScimService:
 
             deprovision_triggered = False
             reactivate_triggered = False
+            active_true_requested = False
 
             for op_entry in operations:
                 if not isinstance(op_entry, dict) or not isinstance(op_entry.get("op"), str):
@@ -1612,12 +1640,16 @@ class ScimService:
                         )
                         deprovision_triggered = deprovision_triggered or deprov
                         reactivate_triggered = reactivate_triggered or reactiv
+                        if k.lower() == "active" and user.active:
+                            active_true_requested = True
                 else:
                     deprov, reactiv = self._apply_user_field_op(
                         state, user, op=op, path=path, value=value
                     )
                     deprovision_triggered = deprovision_triggered or deprov
                     reactivate_triggered = reactivate_triggered or reactiv
+                    if path.lower() == "active" and user.active:
+                        active_true_requested = True
 
             user.version += 1
             user.updated_at = timestamp
@@ -1630,7 +1662,7 @@ class ScimService:
                     organisation_id=effective_org_id,
                     now=timestamp,
                 )
-            elif reactivate_triggered and user.active:
+            elif (reactivate_triggered or active_true_requested) and user.active:
                 user.member_state = "active"
                 user.deprovisioned_at = None
                 if (
@@ -1639,6 +1671,16 @@ class ScimService:
                     and can_use_postgres()
                 ):
                     _sync_django_scim_reactivate(effective_org_id, UUID(user.django_user_id))
+            elif (
+                effective_org_id is not None
+                and user.django_user_id is not None
+                and can_use_postgres()
+            ):
+                _verify_django_scim_person_usable(
+                    effective_org_id,
+                    UUID(user.django_user_id),
+                    require_globally_enabled=user.active,
+                )
 
             groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
@@ -2058,6 +2100,91 @@ class ScimService:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
 
 
+def _lock_and_verify_scim_person(
+    cur: Any,
+    *,
+    organisation_id: UUID,
+    user_uuid: UUID,
+    require_globally_enabled: bool,
+) -> None:
+    """Lock global `identity_user` (`FOR SHARE`) and verify cutoff/global-disable invariants.
+
+    Never mutates `identity_user.enabled`: global person enable/disable belongs exclusively to
+    platform account/security writers. Also verifies that any bound tenant `Identity` in
+    `organisation_id` remains enabled when `require_globally_enabled` is True (`kodera_api` holds
+    `SELECT` + `INSERT` only on `identity_identity`, as enforced by Core writer-role gates).
+    """
+    cur.execute(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+        [str(user_uuid)],
+    )
+    cur.execute(
+        """
+        SELECT u.email, u.enabled, u.deleted_at
+        FROM public.identity_user u
+        WHERE u.id = %s
+        FOR SHARE OF u NOWAIT
+        """,
+        [user_uuid],
+    )
+    u_row = cur.fetchone()
+    if u_row is None or u_row[2] is not None or str(u_row[0]).startswith("erased:"):
+        raise TenantCutoffError("account_cutoff_fenced", status=403)
+    if require_globally_enabled and not bool(u_row[1]):
+        raise ScimError(
+            "Target user account is globally disabled",
+            status=403,
+            scim_type="mutability",
+            code="user_globally_disabled",
+        )
+
+    cur.execute(
+        """
+        SELECT i.email, i.enabled, i.deleted_at
+        FROM public.identity_identity i
+        WHERE i.organisation_id = %s AND i.user_id = %s
+        ORDER BY i.created_at ASC, i.id ASC
+        """,
+        [organisation_id, user_uuid],
+    )
+    ident_rows = cur.fetchall()
+    if ident_rows:
+        for i_email, _i_enabled, i_deleted in ident_rows:
+            if str(i_email).startswith("erased:") or i_deleted is not None:
+                raise TenantCutoffError("account_cutoff_fenced", status=403)
+        if require_globally_enabled and not any(bool(r[1]) and r[2] is None for r in ident_rows):
+            raise ScimError(
+                "Target tenant identity is disabled",
+                status=403,
+                scim_type="mutability",
+                code="user_globally_disabled",
+            )
+
+
+def _verify_django_scim_person_usable(
+    organisation_id: UUID,
+    user_uuid: UUID,
+    *,
+    require_globally_enabled: bool,
+) -> None:
+    try:
+        with transaction.atomic(), connection.cursor() as cur:
+            _lock_and_verify_scim_person(
+                cur,
+                organisation_id=organisation_id,
+                user_uuid=user_uuid,
+                require_globally_enabled=require_globally_enabled,
+            )
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise ScimError(
+                "Organisation authority changed concurrently; retry request",
+                status=409,
+                code="authority_fenced",
+            ) from exc
+        raise
+
+
 def _sync_django_scim_provision(
     *,
     organisation_id: UUID,
@@ -2067,7 +2194,9 @@ def _sync_django_scim_provision(
     active: bool,
 ) -> str:
     from apps.identity.models import Identity, User
+    from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership, Organisation
+    from apps.outbox.realm_enqueue import ACCESS_OFF, ACCESS_ON, enqueue_realm_access
     from django.db.models import Q
     from django.utils import timezone
 
@@ -2085,41 +2214,66 @@ def _sync_django_scim_provision(
                 Identity.objects.select_related("user")
                 .filter(organisation=org, issuer=org.issuer)
                 .filter(Q(subject=subj) | Q(email__iexact=email))
-                .order_by("created_at")
+                .order_by("created_at", "id")
                 .first()
             )
-            if identity is None:
-                user = User.objects.create(
-                    email=email,
-                    display_name=display_name[:200] if display_name else None,
-                    enabled=active,
-                )
-                Identity.objects.create(
-                    user=user,
-                    organisation=org,
-                    realm=org.realm,
-                    issuer=org.issuer,
-                    subject=subj,
-                    email=email,
-                    enabled=active,
-                )
-            else:
-                user = identity.user
+            if identity is not None:
                 with connection.cursor() as cur:
-                    cur.execute(
-                        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                        [str(user.id)],
+                    _lock_and_verify_scim_person(
+                        cur,
+                        organisation_id=org.id,
+                        user_uuid=identity.user_id,
+                        require_globally_enabled=True,
                     )
-                refreshed = User.objects.filter(id=user.id).first()
-                if (
-                    refreshed is None
-                    or refreshed.deleted_at is not None
-                    or refreshed.email.startswith("erased:")
-                ):
-                    raise TenantCutoffError("account_cutoff_fenced", status=403)
-                user = refreshed
-                if user.enabled != active:
-                    User.objects.filter(id=user.id).update(enabled=active)
+                user = identity.user
+            else:
+                existing_user = (
+                    User.objects.filter(
+                        Q(email__iexact=email) | Q(email__iexact=user_name),
+                        deleted_at__isnull=True,
+                    )
+                    .order_by("created_at", "id")
+                    .first()
+                )
+                if existing_user is not None:
+                    with connection.cursor() as cur:
+                        _lock_and_verify_scim_person(
+                            cur,
+                            organisation_id=org.id,
+                            user_uuid=existing_user.id,
+                            require_globally_enabled=True,
+                        )
+                    user = existing_user
+                    existing_org_identity = (
+                        Identity.objects.filter(organisation=org, issuer=org.issuer, user=user)
+                        .order_by("created_at", "id")
+                        .first()
+                    )
+                    if existing_org_identity is None:
+                        Identity.objects.create(
+                            user=user,
+                            organisation=org,
+                            realm=org.realm,
+                            issuer=org.issuer,
+                            subject=subj,
+                            email=email,
+                            enabled=True,
+                        )
+                else:
+                    user = User.objects.create(
+                        email=email,
+                        display_name=display_name[:200] if display_name else None,
+                        enabled=True,
+                    )
+                    Identity.objects.create(
+                        user=user,
+                        organisation=org,
+                        realm=org.realm,
+                        issuer=org.issuer,
+                        subject=subj,
+                        email=email,
+                        enabled=True,
+                    )
 
             now_ts = timezone.now()
             target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
@@ -2129,19 +2283,54 @@ def _sync_django_scim_provision(
                 .first()
             )
             if membership is None:
-                Membership.objects.create(
+                created_membership = Membership.objects.create(
                     organisation=org,
                     user=user,
                     role=Membership.Role.MEMBER,
                     state=target_state,
                     accepted_at=now_ts,
                 )
-            elif not (membership.role == Membership.Role.OWNER and not active):
-                Membership.objects.filter(id=membership.id).update(
-                    state=target_state,
-                    accepted_at=membership.accepted_at or now_ts,
-                    updated_at=now_ts,
-                )
+                if not active:
+                    enqueue_realm_access(
+                        organisation_id=org.id,
+                        membership_id=created_membership.id,
+                        user_id=user.id,
+                        operation=ACCESS_OFF,
+                    )
+            else:
+                if membership.deleted_at is not None:
+                    raise TenantCutoffError("tenant_cutoff_fenced", status=403)
+                if membership.role == Membership.Role.OWNER and not active:
+                    raise ScimError(
+                        "Organisation owner cannot be deactivated or deleted via SCIM",
+                        status=403,
+                        scim_type="mutability",
+                        code="owner_deprovision_forbidden",
+                    )
+                prev_state = membership.state
+                if prev_state != target_state or membership.accepted_at is None:
+                    Membership.objects.filter(id=membership.id, organisation_id=org.id).update(
+                        state=target_state,
+                        accepted_at=membership.accepted_at or now_ts,
+                        updated_at=now_ts,
+                    )
+                    if prev_state != target_state:
+                        enqueue_realm_access(
+                            organisation_id=org.id,
+                            membership_id=membership.id,
+                            user_id=user.id,
+                            operation=ACCESS_ON if active else ACCESS_OFF,
+                        )
+                        if not active and prev_state == Membership.State.ACTIVE:
+                            refreshed_m = Membership.objects.get(id=membership.id)
+                            member_set_hooks.member_left(
+                                refreshed_m, reason=member_set_hooks.MEMBER_SUSPENDED
+                            )
+                        elif active:
+                            member_set_hooks.member_set_changed(
+                                organisation_id=org.id,
+                                reason=member_set_hooks.MEMBER_REACTIVATED,
+                            )
             return str(user.id)
     except DatabaseError as exc:
         if is_retriable_lock_contention(exc):
@@ -2153,33 +2342,71 @@ def _sync_django_scim_provision(
         raise
 
 
-def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> None:
-    from apps.identity.models import User
+def _sync_django_scim_deprovision(
+    organisation_id: UUID,
+    user_uuid: UUID,
+    *,
+    remove_membership: bool = False,
+) -> None:
+    from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership
+    from apps.outbox.realm_enqueue import ACCESS_OFF, enqueue_realm_access
     from django.utils import timezone
 
     try:
         with transaction.atomic():
             with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                    [str(user_uuid)],
+                _lock_and_verify_scim_person(
+                    cur,
+                    organisation_id=organisation_id,
+                    user_uuid=user_uuid,
+                    require_globally_enabled=False,
                 )
-            user = User.objects.filter(id=user_uuid).first()
-            if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
-                raise TenantCutoffError("account_cutoff_fenced", status=403)
-            User.objects.filter(id=user_uuid).update(enabled=False)
-            target_memberships = list(
+            memberships = list(
                 Membership.objects.select_for_update(nowait=True)
-                .filter(organisation_id=organisation_id, user_id=user_uuid)
-                .exclude(role=Membership.Role.OWNER)
-                .values_list("id", flat=True)
-            )
-            if target_memberships:
-                Membership.objects.filter(id__in=target_memberships).update(
-                    state=Membership.State.SUSPENDED,
-                    updated_at=timezone.now(),
+                .filter(
+                    organisation_id=organisation_id,
+                    user_id=user_uuid,
+                    deleted_at__isnull=True,
                 )
+                .order_by("id")
+            )
+            for m in memberships:
+                if m.role == Membership.Role.OWNER and m.state != Membership.State.REMOVED:
+                    raise ScimError(
+                        "Organisation owner cannot be deactivated or deleted via SCIM",
+                        status=403,
+                        scim_type="mutability",
+                        code="owner_deprovision_forbidden",
+                    )
+
+            target_state = (
+                Membership.State.REMOVED if remove_membership else Membership.State.SUSPENDED
+            )
+            now_ts = timezone.now()
+            for m in memberships:
+                prev_state = m.state
+                if prev_state != target_state:
+                    Membership.objects.filter(id=m.id, organisation_id=organisation_id).update(
+                        state=target_state,
+                        updated_at=now_ts,
+                    )
+                    enqueue_realm_access(
+                        organisation_id=organisation_id,
+                        membership_id=m.id,
+                        user_id=user_uuid,
+                        operation=ACCESS_OFF,
+                    )
+                    if prev_state == Membership.State.ACTIVE:
+                        refreshed_m = Membership.objects.get(id=m.id)
+                        member_set_hooks.member_left(
+                            refreshed_m,
+                            reason=(
+                                member_set_hooks.MEMBER_REMOVED
+                                if remove_membership
+                                else member_set_hooks.MEMBER_SUSPENDED
+                            ),
+                        )
     except DatabaseError as exc:
         if is_retriable_lock_contention(exc):
             raise ScimError(
@@ -2191,30 +2418,51 @@ def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> Non
 
 
 def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None:
-    from apps.identity.models import User
+    from apps.orgs import member_set_hooks
     from apps.orgs.models import Membership
+    from apps.outbox.realm_enqueue import ACCESS_ON, enqueue_realm_access
     from django.utils import timezone
 
     try:
         with transaction.atomic():
             with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                    [str(user_uuid)],
+                _lock_and_verify_scim_person(
+                    cur,
+                    organisation_id=organisation_id,
+                    user_uuid=user_uuid,
+                    require_globally_enabled=True,
                 )
-            user = User.objects.filter(id=user_uuid).first()
-            if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
-                raise TenantCutoffError("account_cutoff_fenced", status=403)
-            User.objects.filter(id=user_uuid).update(enabled=True)
-            target_memberships = list(
+            memberships = list(
                 Membership.objects.select_for_update(nowait=True)
-                .filter(organisation_id=organisation_id, user_id=user_uuid)
-                .values_list("id", flat=True)
+                .filter(
+                    organisation_id=organisation_id,
+                    user_id=user_uuid,
+                    deleted_at__isnull=True,
+                )
+                .order_by("id")
             )
-            if target_memberships:
-                Membership.objects.filter(id__in=target_memberships).update(
-                    state=Membership.State.ACTIVE,
-                    updated_at=timezone.now(),
+            now_ts = timezone.now()
+            reactivated_any = False
+            for m in memberships:
+                if m.state != Membership.State.ACTIVE or m.accepted_at is None:
+                    was_non_active = m.state != Membership.State.ACTIVE
+                    Membership.objects.filter(id=m.id, organisation_id=organisation_id).update(
+                        state=Membership.State.ACTIVE,
+                        accepted_at=m.accepted_at or now_ts,
+                        updated_at=now_ts,
+                    )
+                    if was_non_active:
+                        enqueue_realm_access(
+                            organisation_id=organisation_id,
+                            membership_id=m.id,
+                            user_id=user_uuid,
+                            operation=ACCESS_ON,
+                        )
+                        reactivated_any = True
+            if reactivated_any:
+                member_set_hooks.member_set_changed(
+                    organisation_id=organisation_id,
+                    reason=member_set_hooks.MEMBER_REACTIVATED,
                 )
     except DatabaseError as exc:
         if is_retriable_lock_contention(exc):

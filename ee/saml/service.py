@@ -21,6 +21,7 @@ from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 from django.db import DatabaseError, IntegrityError, connection, transaction
@@ -1101,36 +1102,20 @@ class SamlService:
         principal_ref = existing.user_id if existing is not None else str(uuid4())
         linked_person_id: UUID | None = None
 
-        if idp.organisation_id is not None:
-            linked_person_id = _sync_django_organisation_member(
-                organisation_id=idp.organisation_id,
-                idp_id=idp.idp_id,
-                subject=subject_name_id,
-                email=email_low,
-                display_name=display_name,
-                role=role,
-            )
-            principal_ref = str(linked_person_id)
-
-        record = ProvisionedSamlPrincipal(
-            user_id=principal_ref,
-            tenant_slug=idp.tenant_slug,
-            idp_id=idp.idp_id,
-            idp_entity_id=idp.idp_entity_id,
-            assertion_id=assertion_id,
-            subject_name_id=subject_name_id,
-            email=email_low,
-            display_name=display_name,
-            groups=groups,
-            role=role,
-            return_path=return_path,
-            authenticated_at=authenticated_at,
-        )
         if can_use_postgres():
-            groups_json = json.dumps(list(record.groups), separators=(",", ":"))
             try:
                 with transaction.atomic(), connection.cursor() as cur:
-                    if linked_person_id is None:
+                    if idp.organisation_id is not None:
+                        linked_person_id = _sync_django_organisation_member(
+                            organisation_id=idp.organisation_id,
+                            idp_id=idp.idp_id,
+                            subject=subject_name_id,
+                            email=email_low,
+                            display_name=display_name,
+                            role=role,
+                        )
+                        principal_ref = str(linked_person_id)
+                    else:
                         org_lookup = resolve_tenant_organisation(
                             cur,
                             tenant_slug=idp.tenant_slug,
@@ -1156,6 +1141,21 @@ class SamlService:
                                 linked_person_id = (
                                     raw_uid if isinstance(raw_uid, UUID) else UUID(str(raw_uid))
                                 )
+                    record = ProvisionedSamlPrincipal(
+                        user_id=principal_ref,
+                        tenant_slug=idp.tenant_slug,
+                        idp_id=idp.idp_id,
+                        idp_entity_id=idp.idp_entity_id,
+                        assertion_id=assertion_id,
+                        subject_name_id=subject_name_id,
+                        email=email_low,
+                        display_name=display_name,
+                        groups=groups,
+                        role=role,
+                        return_path=return_path,
+                        authenticated_at=authenticated_at,
+                    )
+                    groups_json = json.dumps(list(record.groups), separators=(",", ":"))
                     org_id, resolved_slug = acquire_active_tenant_fence(
                         cur,
                         tenant_slug=idp.tenant_slug,
@@ -1227,8 +1227,41 @@ class SamlService:
                     "SAML principal write refused by privacy cutoff",
                     status=403,
                 ) from exc
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise SamlError(
+                        "authority_fenced",
+                        "Organisation authority changed concurrently; retry request",
+                        status=409,
+                    ) from exc
+                raise
             return record
 
+        if idp.organisation_id is not None:
+            linked_person_id = _sync_django_organisation_member(
+                organisation_id=idp.organisation_id,
+                idp_id=idp.idp_id,
+                subject=subject_name_id,
+                email=email_low,
+                display_name=display_name,
+                role=role,
+            )
+            principal_ref = str(linked_person_id)
+
+        record = ProvisionedSamlPrincipal(
+            user_id=principal_ref,
+            tenant_slug=idp.tenant_slug,
+            idp_id=idp.idp_id,
+            idp_entity_id=idp.idp_entity_id,
+            assertion_id=assertion_id,
+            subject_name_id=subject_name_id,
+            email=email_low,
+            display_name=display_name,
+            groups=groups,
+            role=role,
+            return_path=return_path,
+            authenticated_at=authenticated_at,
+        )
         with self._lock:
             self._provisioned_users[(idp.tenant_slug, email_low)] = record
         return record
@@ -1375,6 +1408,40 @@ def _resolve_mapped_role(
     return best_role
 
 
+def _lock_and_verify_saml_person(cur: Any, *, user_id: UUID) -> None:
+    """Lock global `identity_user` (`FOR SHARE`) and refuse cutoff or globally disabled users.
+
+    Never mutates `identity_user.enabled`: a tenant SAML IdP must never clear a global security
+    disable.
+    """
+    cur.execute(
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+        [str(user_id)],
+    )
+    cur.execute(
+        """
+        SELECT u.email, u.enabled, u.deleted_at
+        FROM public.identity_user u
+        WHERE u.id = %s
+        FOR SHARE OF u NOWAIT
+        """,
+        [user_id],
+    )
+    u_row = cur.fetchone()
+    if u_row is None or u_row[2] is not None or str(u_row[0]).startswith("erased:"):
+        raise SamlError(
+            "account_cutoff_fenced",
+            "Account is under privacy erasure cutoff",
+            status=403,
+        )
+    if not bool(u_row[1]):
+        raise SamlError(
+            "user_disabled",
+            "User account is disabled",
+            status=403,
+        )
+
+
 def _sync_django_organisation_member(
     *,
     organisation_id: UUID,
@@ -1386,8 +1453,8 @@ def _sync_django_organisation_member(
 ) -> UUID:
     """Sync federated SAML login into Core `User`/`Identity`/`Membership` under `kodera_api` grants.
 
-    Never locks or updates `identity_identity` (`kodera_api` holds `SELECT` + `INSERT` only on
-    `identity_identity`), and fences against organisation/account erasure cutoffs.
+    Never mutates `identity_user.enabled` or `identity_identity`, refuses globally disabled or
+    tenant-suspended/removed principals (`403`), and fences against organisation/account cutoffs.
     """
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership, Organisation
@@ -1414,7 +1481,6 @@ def _sync_django_organisation_member(
                     organisation=org,
                     issuer=org.issuer,
                     subject=subject_key,
-                    deleted_at__isnull=True,
                 )
                 .first()
             )
@@ -1425,36 +1491,83 @@ def _sync_django_organisation_member(
                         organisation=org,
                         issuer=org.issuer,
                         email__iexact=email,
-                        deleted_at__isnull=True,
                     )
+                    .order_by("created_at", "id")
                     .first()
                 )
 
-            if identity is None:
-                user = User.objects.create(
-                    email=email,
-                    display_name=display_name[:200] if display_name else None,
-                    enabled=True,
-                )
-                Identity.objects.create(
-                    user=user,
-                    organisation=org,
-                    realm=org.realm,
-                    issuer=org.issuer,
-                    subject=subject_key,
-                    email=email,
-                    enabled=True,
-                )
-            else:
-                user = identity.user
-                if user.deleted_at is not None or user.email.startswith("erased:"):
+            if identity is not None:
+                if identity.deleted_at is not None or identity.email.startswith("erased:"):
                     raise SamlError(
                         "account_cutoff_fenced",
                         "Account is under privacy erasure cutoff",
                         status=403,
                     )
-                if not user.enabled:
-                    User.objects.filter(id=user.id).update(enabled=True)
+                if not identity.enabled:
+                    raise SamlError(
+                        "user_disabled",
+                        "User account is disabled",
+                        status=403,
+                    )
+                with connection.cursor() as cur:
+                    _lock_and_verify_saml_person(cur, user_id=identity.user_id)
+                user = identity.user
+            else:
+                existing_user = (
+                    User.objects.filter(email__iexact=email, deleted_at__isnull=True)
+                    .order_by("created_at", "id")
+                    .first()
+                )
+                if existing_user is not None:
+                    with connection.cursor() as cur:
+                        _lock_and_verify_saml_person(cur, user_id=existing_user.id)
+                    user = existing_user
+                    existing_org_identity = (
+                        Identity.objects.filter(organisation=org, issuer=org.issuer, user=user)
+                        .order_by("created_at", "id")
+                        .first()
+                    )
+                    if existing_org_identity is not None:
+                        if (
+                            existing_org_identity.deleted_at is not None
+                            or existing_org_identity.email.startswith("erased:")
+                        ):
+                            raise SamlError(
+                                "account_cutoff_fenced",
+                                "Account is under privacy erasure cutoff",
+                                status=403,
+                            )
+                        if not existing_org_identity.enabled:
+                            raise SamlError(
+                                "user_disabled",
+                                "User account is disabled",
+                                status=403,
+                            )
+                    else:
+                        Identity.objects.create(
+                            user=user,
+                            organisation=org,
+                            realm=org.realm,
+                            issuer=org.issuer,
+                            subject=subject_key,
+                            email=email,
+                            enabled=True,
+                        )
+                else:
+                    user = User.objects.create(
+                        email=email,
+                        display_name=display_name[:200] if display_name else None,
+                        enabled=True,
+                    )
+                    Identity.objects.create(
+                        user=user,
+                        organisation=org,
+                        realm=org.realm,
+                        issuer=org.issuer,
+                        subject=subject_key,
+                        email=email,
+                        enabled=True,
+                    )
 
             now_ts = timezone.now()
             membership = (
@@ -1471,15 +1584,32 @@ def _sync_django_organisation_member(
                     accepted_at=now_ts,
                 )
             else:
+                if membership.deleted_at is not None:
+                    raise SamlError(
+                        "tenant_cutoff_fenced",
+                        "Tenant membership is under erasure cutoff",
+                        status=403,
+                    )
+                if membership.state in {Membership.State.SUSPENDED, Membership.State.REMOVED}:
+                    raise SamlError(
+                        "user_disabled",
+                        "Tenant membership is suspended or removed",
+                        status=403,
+                    )
                 effective_role = (
                     membership.role if membership.role == Membership.Role.OWNER else role
                 )
-                Membership.objects.filter(id=membership.id).update(
-                    role=effective_role,
-                    state=Membership.State.ACTIVE,
-                    accepted_at=membership.accepted_at or now_ts,
-                    updated_at=now_ts,
-                )
+                if (
+                    membership.role != effective_role
+                    or membership.state != Membership.State.ACTIVE
+                    or membership.accepted_at is None
+                ):
+                    Membership.objects.filter(id=membership.id, organisation_id=org.id).update(
+                        role=effective_role,
+                        state=Membership.State.ACTIVE,
+                        accepted_at=membership.accepted_at or now_ts,
+                        updated_at=now_ts,
+                    )
             return user.id
     except IntegrityError as exc:
         msg = str(exc)

@@ -239,6 +239,7 @@ def fence_authenticated_ee_operation(
                     WHERE i.id = %s
                       AND i.organisation_id = %s
                       AND i.user_id = %s
+                      AND i.enabled
                       AND i.deleted_at IS NULL
                     """,
                     [principal.identity_id, principal.organisation_id, principal.user_id],

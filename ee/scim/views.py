@@ -38,6 +38,18 @@ _SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
         "mutability",
         "Target account is under privacy erasure cutoff",
     ),
+    (
+        "user_globally_disabled",
+        403,
+        "mutability",
+        "Target user account is globally disabled",
+    ),
+    (
+        "owner_deprovision_forbidden",
+        403,
+        "mutability",
+        "Organisation owner cannot be deactivated or deleted via SCIM",
+    ),
     ("organisation_not_found", 404, None, "Target organisation was not found"),
     (
         "authority_fenced",
