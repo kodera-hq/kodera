@@ -5,7 +5,7 @@
 // measurable signal the screen has for "this is taking longer than
 // expected" — this overlay is what exercises that reading.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { sixStepsAt, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 
 const BASE = '*/api/v1'

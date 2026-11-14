@@ -1,5 +1,5 @@
 // Existing Order catalogue failure: the contract declares internal-error.
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { PROBLEM_TYPES } from '../generated/problems'
 import { problem } from '../problem'
 

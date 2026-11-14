@@ -2,7 +2,7 @@
 // the contract card and the invitations banner are absent, capacity and
 // applications stay visible. Compose over `home.default`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES } from '../generated/examples'

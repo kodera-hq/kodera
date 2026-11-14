@@ -4,7 +4,7 @@
 // 200 ... not a 404"), so the console shows one neutral message regardless
 // of which field was submitted.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 const BASE = '*/api/v1'
 

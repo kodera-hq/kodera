@@ -18,7 +18,7 @@ const BASE = 'https://core.test/api/v1'
 const fill = (path: string): string => path.replace(/\{[^{}]+\}/g, 'fixture-id')
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
 })
 afterEach(() => {
   server.resetHandlers()

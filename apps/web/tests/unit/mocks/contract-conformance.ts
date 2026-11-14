@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Ajv2020 from '@redocly/ajv/dist/2020'
 import type { ValidateFunction } from '@redocly/ajv/dist/2020'
-import type { HttpHandler } from 'msw'
+import type { HttpHandler } from 'msw/http'
+import { getResponse } from 'msw'
 import { parse } from 'yaml'
 
 type JsonObject = Record<string, unknown>
@@ -319,9 +320,5 @@ export async function runHandler(
     headers,
     ...(body === undefined ? {} : { body }),
   })
-  const result = await handler.run({
-    request: request as Parameters<HttpHandler['run']>[0]['request'],
-    requestId: crypto.randomUUID(),
-  })
-  return result?.response
+  return getResponse([handler], request)
 }

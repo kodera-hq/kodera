@@ -1,7 +1,7 @@
 // §7: "`vat_regime: eu_reverse_charge`, `vat_amount.amount_minor: 0`." Total
 // incl. tax equals total excl. tax, per AT3.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { baseInvoice, INVOICE_ID, invoicesPage, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 
 const BASE = '*/api/v1'

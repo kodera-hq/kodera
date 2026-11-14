@@ -2,7 +2,7 @@
 // `upgrade_prompt: true`, `suggested_capacity_tier_code: 'L'`. §12
 // acceptance test 3.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { operationalComponents, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 
 const BASE = '*/api/v1'

@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { communityMe } from '../demo/community'
 
 /** The interactive community demo with ordinary member authority for settings acceptance. */

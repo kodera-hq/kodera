@@ -7,7 +7,7 @@
 // `src/auth/mock-idp.tsx` — an app-local route these handlers point to
 // instead of Keycloak's own hosted login page.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { isDemoActive } from '../app/interactiveDemo'
 import { keycloakUrl, oidcClientId } from '../config'
 

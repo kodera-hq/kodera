@@ -2,7 +2,7 @@
 // and `custom_domain` with `enabled: false` and
 // `required_pack_code: visio-docs-pro`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 
 const BASE = '*/api/v1'

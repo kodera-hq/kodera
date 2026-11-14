@@ -48,7 +48,7 @@ import {
 // something upstream hands the console a different one, and it does so by
 // silently falling through to the base handler rather than by failing.
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { isTenantSlug } from '@/api/tenantSlug'
 import * as seed from '../demo/seed'

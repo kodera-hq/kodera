@@ -2,7 +2,7 @@
 // import read back after its personal staging data is gone — `filename:
 // null`, `rows: []`, no detected sample, durable counts only.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { ORG_ID } from './support/people'
 

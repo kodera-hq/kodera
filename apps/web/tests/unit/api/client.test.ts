@@ -5,7 +5,7 @@
 // as a duplicate order in production, and a non-2xx returned instead of thrown means
 // every caller has to remember to check — and one of them will not.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiProblem, NetworkError, coreApi, lastRequestId, setTokenProvider } from '@/api/client'
 import { concurrencyToken, mutate } from '@/api/mutations'
@@ -19,7 +19,7 @@ const AN_ETAG = '"000000000000000000000000000000000000000000000000000000000000e7
 const BASE = 'https://core.test/api/v1'
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
 })
 beforeEach(() => {
   vi.stubEnv('VITE_CORE_API_URL', BASE)

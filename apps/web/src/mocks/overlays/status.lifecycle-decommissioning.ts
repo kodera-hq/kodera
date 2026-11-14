@@ -1,5 +1,5 @@
 // Synthetic lifecycle acceptance.
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 export const handlers = [
   http.get('*/api/v1/organisations/:organisation_id/tenants', () =>

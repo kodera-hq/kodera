@@ -18,7 +18,7 @@ describe('resolveOverlays', () => {
     // by array-append order (which would let the first-named scenario win
     // silently); the one named LAST is the one a test meant to take effect.
     const server = setupServer()
-    beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+    beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
     afterEach(() => server.resetHandlers())
     afterAll(() => server.close())
 
