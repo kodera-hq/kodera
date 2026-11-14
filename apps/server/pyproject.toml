@@ -40,7 +40,7 @@ dev = [
   # Validates the workspace operations' responses against the contract's schemas
   # (tests/test_workspace_onboarding.py, WS-14). Already locked through schemathesis;
   # declared because a test imports it.
-  "jsonschema-rs==0.60.3",
+  "jsonschema-rs==0.61.1",
   "ruff>=0.6",
   "mypy>=1.11",
   "pytest>=8.3",
