@@ -59,6 +59,11 @@ class LegalDocument(StoredModel):
 
 
 class Dpa(StoredModel):
+    contract_ended_at = models.DateTimeField(null=True, blank=True)
+    purge_after = models.DateTimeField(null=True, blank=True)
+    close_reason = models.TextField(null=True, blank=True)  # noqa: DJ001
+    close_evidence_ref = models.TextField(null=True, blank=True)  # noqa: DJ001
+
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
     )
@@ -116,6 +121,11 @@ class Dpa(StoredModel):
 
 
 class Acceptance(StoredModel):
+    contract_ended_at = models.DateTimeField(null=True, blank=True)
+    purge_after = models.DateTimeField(null=True, blank=True)
+    close_reason = models.TextField(null=True, blank=True)  # noqa: DJ001
+    close_evidence_ref = models.TextField(null=True, blank=True)  # noqa: DJ001
+
     """One person's acceptance of one document version for one organisation, either in one order
     (`order_id`) or, on a deployment that does not bill, for the one tenant it was created with
     (`tenant_id`, docs/specs/QUICK_WORKSPACE.md §3): exactly one of the two, never both, and a

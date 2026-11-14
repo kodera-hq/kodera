@@ -37,6 +37,75 @@ def _in(field: str, values: tuple[str, ...]) -> Q:
     return Q(**{f"{field}__in": values})
 
 
+class AccountingRetention(models.Model):
+    """Frozen accounting clock; null only before issuance or legacy qualification."""
+
+    document_number_snapshot = models.TextField(null=True, blank=True)  # noqa: DJ001
+    accounting_event_at = models.DateTimeField(null=True, blank=True)
+    financial_year_closed_at = models.DateTimeField(null=True, blank=True)
+    purge_after = models.DateTimeField(null=True, blank=True)
+    retention_authority_ref = models.TextField(null=True, blank=True)  # noqa: DJ001
+
+    class Meta:
+        abstract = True
+
+
+class ContractRetention(models.Model):
+    contract_ended_at = models.DateTimeField(null=True, blank=True)
+    purge_after = models.DateTimeField(null=True, blank=True)
+    close_reason = models.TextField(null=True, blank=True)  # noqa: DJ001
+    close_evidence_ref = models.TextField(null=True, blank=True)  # noqa: DJ001
+
+    class Meta:
+        abstract = True
+
+
+class FiscalPeriod(StoredModel):
+    """Explicit legal-issuer authority; there is no calendar-year fallback."""
+
+    issuer_siren = models.TextField()
+    starts_at = models.DateTimeField()
+    closed_at = models.DateTimeField()
+    timezone = models.TextField()
+    authority_ref = models.TextField(unique=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=Q(closed_at__gt=F("starts_at")), name="fiscal_window"),
+            models.CheckConstraint(
+                condition=Q(issuer_siren__regex=r"^[0-9]{9}$"), name="fiscal_issuer"
+            ),
+        ]
+
+
+class StatutoryRecord(StoredModel):
+    """Detached immutable evidence: UUID references, never tenant/person foreign keys."""
+
+    source_table = models.TextField()
+    source_id = models.UUIDField()
+    organisation_reference = models.UUIDField()
+    basis = models.TextField()
+    event_at = models.DateTimeField()
+    financial_year_closed_at = models.DateTimeField(null=True, blank=True)
+    purge_after = models.DateTimeField()
+    authority_ref = models.TextField()
+    qualification_evidence_ref = models.TextField(null=True, blank=True)  # noqa: DJ001
+    payload = models.JSONField()
+    payload_sha256 = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["source_table", "source_id"], name="statutory_source"),
+            models.CheckConstraint(
+                condition=Q(basis__in=["accounting", "contract"]), name="statutory_basis"
+            ),
+            models.CheckConstraint(
+                condition=Q(payload_sha256__regex=r"^[0-9a-f]{64}$"), name="statutory_digest"
+            ),
+        ]
+        indexes = [models.Index(fields=["purge_after", "id"], name="statutory_due")]
+
+
 class Plan(StoredModel):
     """The commercial envelope, keyed `(code, version)`."""
 
@@ -429,7 +498,7 @@ class DunningDispute(StoredModel):
         ]
 
 
-class Order(StoredModel, PriceSnapshot):
+class Order(StoredModel, PriceSnapshot, ContractRetention):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
     )
@@ -489,7 +558,7 @@ class Order(StoredModel, PriceSnapshot):
         return f"order {self.id} {self.state}"
 
 
-class Subscription(StoredModel, PriceSnapshot):
+class Subscription(StoredModel, PriceSnapshot, ContractRetention):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
     )
@@ -549,7 +618,7 @@ class InvoiceNumberCounter(models.Model):
         return f"{self.series}-{self.year} at {self.last_number}"
 
 
-class Invoice(StoredModel):
+class Invoice(StoredModel, AccountingRetention):
     """An invoice and the snapshot of both parties, taken at issue: docs/domain/BILLING_MODEL.md
     §§4, 8. Issued by Core, which allocates its number; the payment provider only collects."""
 
@@ -642,7 +711,7 @@ class Invoice(StoredModel):
         return f"invoice {self.number or self.id} {self.state}"
 
 
-class InvoiceLine(models.Model):
+class InvoiceLine(AccountingRetention):
     """One billed line, with its own copy of the price snapshot and its own VAT."""
 
     id = models.UUIDField(primary_key=True, default=new_uuid7, editable=False)
@@ -687,7 +756,7 @@ CREDIT_NOTE_REASONS = ("customer_cancellation", "unpaid_lapse", "complimentary")
 CREDIT_NOTE_NUMBER = r"^AV-[A-Z]{2,8}(-[A-Z]{2,8})?-[0-9]{4}-[0-9]{5}$"
 
 
-class CreditNote(StoredModel):
+class CreditNote(StoredModel, AccountingRetention):
     """The only correction of an issued invoice (docs/domain/BILLING_MODEL.md §4): numbered from a
     series of its own (`AV-<series>`), dated, with the invoice's VAT treatment and both parties'
     snapshot copied from it, and never changed or deleted. For now a credit note credits its
@@ -760,7 +829,7 @@ class CreditNote(StoredModel):
         return f"credit note {self.number} of invoice {self.invoice_id}"
 
 
-class CreditNoteLine(models.Model):
+class CreditNoteLine(AccountingRetention):
     """One credited line: a copy of the invoice line it credits, with its own VAT."""
 
     id = models.UUIDField(primary_key=True, default=new_uuid7, editable=False)
@@ -835,7 +904,7 @@ class PaymentLink(StoredModel):
         return f"payment link {self.provider}:{self.provider_ref} {self.state}"
 
 
-class Payment(StoredModel):
+class Payment(StoredModel, AccountingRetention):
     """One payment at the provider, as reconciled from its events."""
 
     organisation = models.ForeignKey(

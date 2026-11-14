@@ -29,8 +29,12 @@ APPS = [
     "apps.docs",
     "apps.extensions",
     "apps.media",
+    "apps.notifications",
 ]
 COMMANDS = [
+    "erase_core_workspace",
+    "manage_statutory_retention",
+    "dispatch_push",
     "dispatch_extensions",
     "purge_extension_payloads",
     "import_workspace",

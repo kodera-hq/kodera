@@ -64,8 +64,12 @@ def verified(issuer, subject):
     )
 
 
-def world(*, state="active", profile=True, **profile_values):
+def world(*, state="active", profile=True, fiscal_authority=True, **profile_values):
     """An organisation, its owner's identity and token, and (by default) a French profile."""
+    if fiscal_authority:
+        from billing_fiscal_fixtures import register_test_fiscal_periods
+
+        register_test_fiscal_periods()
     models = anchor_models()
     slug = f"billing{next(_slugs):04d}"
     organisation, _, owners = anchor(models, slug=slug, state=state)

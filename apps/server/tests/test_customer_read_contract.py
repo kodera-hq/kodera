@@ -983,7 +983,7 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.40.0: instant claim and the reserved Community host; N4 remains unchanged.
 # Rebound at 0.42.0: directory privacy, proximity and the theme vocabulary; N4 remains unchanged.
 # Rebound for additive workspace surfaces; existing assurance guards are unchanged.
-N4_VERSION = "0.44.1"
+N4_VERSION = "0.44.2"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1029,7 +1029,7 @@ N4_VERSION = "0.44.1"
 # Rebound at 0.39.0: the staff actor of three examples is the demo crew's; no N4 bytes changed.
 # Rebound at 0.42.0: Membership's private member facts, WorkspaceTemplateId, ThemeId and its
 # aliases, and the reserved proximity check-in schemas; no N4 bytes changed.
-N4_OLD_CONTRACT = "a5081fc9957325cef5bef211f13072c7c55bae19ec5fd5e792d1e4563693d316"
+N4_OLD_CONTRACT = "cd43f8634eb66c137a36d805f4aa9048d85a58834b3644ad3e09e6e6418f848a"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.
