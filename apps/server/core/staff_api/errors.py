@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 
 from django.http import HttpRequest, HttpResponse
 
 from core.db.ids import new_uuid7
+
+REQUEST_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 
 
 class StaffApiError(Exception):
@@ -33,7 +36,7 @@ class StaffApiError(Exception):
 
 def request_correlation_id(request: HttpRequest) -> str:
     existing = request.META.get("HTTP_X_REQUEST_ID")
-    if isinstance(existing, str) and existing:
+    if isinstance(existing, str) and REQUEST_ID_RE.fullmatch(existing) is not None:
         return existing
     generated = str(new_uuid7())
     request.META["HTTP_X_REQUEST_ID"] = generated
