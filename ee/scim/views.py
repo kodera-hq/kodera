@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from typing import Final
 
+from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponse
 
 from ee.scim.auth import ScimAuthError, ScimTokenRecord
@@ -19,6 +20,7 @@ from ee.scim.schemas import (
     build_service_provider_config,
 )
 from ee.scim.service import DEFAULT_PAGE_SIZE, ScimError, default_scim_service
+from ee.store import is_retriable_lock_contention
 
 _SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
     # Authentication & tenant authorization rejections
@@ -37,6 +39,12 @@ _SCIM_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str | None, str], ...]] = (
         "Target account is under privacy erasure cutoff",
     ),
     ("organisation_not_found", 404, None, "Target organisation was not found"),
+    (
+        "authority_fenced",
+        409,
+        None,
+        "Organisation authority changed concurrently; retry request",
+    ),
     ("insufficient_scope", 403, None, "SCIM Bearer token lacks required scope"),
     ("conflicting_tenant", 403, None, "Conflicting tenant path and X-Kodera-Tenant header"),
     # RFC 7644 resource & protocol rejections
@@ -191,6 +199,10 @@ def service_provider_config_view(
             _authenticate_scim_request(request, required_scope="scim:read", tenant_slug=tenant_slug)
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
     return _scim_response(build_service_provider_config(_scim_base_url(request, tenant_slug)))
 
 
@@ -205,6 +217,10 @@ def schemas_view(
         _authenticate_scim_request(request, required_scope="scim:read", tenant_slug=tenant_slug)
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
     items = build_schemas(_scim_base_url(request, tenant_slug))
     if schema_id is not None:
@@ -234,6 +250,10 @@ def resource_types_view(
         _authenticate_scim_request(request, required_scope="scim:read", tenant_slug=tenant_slug)
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
     items = build_resource_types(_scim_base_url(request, tenant_slug))
     if resource_type_id is not None:
@@ -268,6 +288,10 @@ def users_collection_view(
         )
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -295,6 +319,10 @@ def users_collection_view(
         return _scim_response(created, status=201, location=loc, etag=etag)
     except ScimError as exc:
         return _scim_error_from_code(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
 
 def user_detail_view(
@@ -314,6 +342,10 @@ def user_detail_view(
         )
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -359,6 +391,10 @@ def user_detail_view(
         return _scim_response(None, status=204)
     except ScimError as exc:
         return _scim_error_from_code(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
 
 def groups_collection_view(
@@ -377,6 +413,10 @@ def groups_collection_view(
         )
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -404,6 +444,10 @@ def groups_collection_view(
         return _scim_response(created, status=201, location=loc, etag=etag)
     except ScimError as exc:
         return _scim_error_from_code(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
 
 def group_detail_view(
@@ -423,6 +467,10 @@ def group_detail_view(
         )
     except ScimAuthError as exc:
         return _scim_error_from_code(exc.code, default_status=401)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise
 
     base_url = _scim_base_url(request, token.tenant_slug)
     try:
@@ -468,3 +516,7 @@ def group_detail_view(
         return _scim_response(None, status=204)
     except ScimError as exc:
         return _scim_error_from_code(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _scim_error_from_code("authority_fenced")
+        raise

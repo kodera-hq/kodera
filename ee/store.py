@@ -24,15 +24,29 @@ from django.db import connection, transaction
 
 _PROCESS_FALLBACK_SEED: Final[bytes] = secrets.token_bytes(32)
 _HKDF_SALT: Final[bytes] = b"kodera-ee-hkdf-salt-v1"
+RETRIABLE_CONTENTION_SQLSTATES: Final[frozenset[str]] = frozenset({"55P03", "40P01", "40001"})
 
 
 class TenantCutoffError(PermissionError):
-    """Raised when an organisation or person is absent, inactive, or fenced by privacy erasure."""
+    """Raised when an organisation or person is absent, inactive, or fenced by privacy/lock contention."""
 
     def __init__(self, code: str, *, status: int = 403) -> None:
         super().__init__(code)
         self.code = code
         self.status = status
+
+
+def is_retriable_lock_contention(exc: BaseException) -> bool:
+    """Return True when `exc` wraps PostgreSQL `NOWAIT`/lock-timeout, deadlock, or serialization contention."""
+    current: BaseException | None = exc
+    visited = 0
+    while current is not None and visited < 6:
+        sqlstate = getattr(current, "sqlstate", None)
+        if isinstance(sqlstate, str) and sqlstate in RETRIABLE_CONTENTION_SQLSTATES:
+            return True
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        visited += 1
+    return False
 
 
 def is_postgres_configured() -> bool:
@@ -187,7 +201,7 @@ def acquire_active_tenant_fence(
         WHERE o.id = %s
           AND o.state <> 'closed'
           AND o.deleted_at IS NULL
-        FOR SHARE OF o
+        FOR SHARE OF o NOWAIT
         """,
         [resolved_org_id],
     )

@@ -25,10 +25,11 @@ from apps.orgs.authority_selectors import (
 )
 from apps.orgs.models import Membership
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest
 
 from core.api import lanes
+from ee.store import is_retriable_lock_contention
 from services.identity.access_tokens import MAX_TOKEN, TokenVerificationError
 from services.identity.trusted_issuers import TrustedIssuer, verify_configured_token
 
@@ -148,109 +149,114 @@ def fence_authenticated_ee_operation(
     """Execute a privileged EE read/export/write inside a cutoff- and revision-fenced transaction.
 
     Acquires shared privacy-erasure advisory locks (`privacy_account_cutoff` and
-    `privacy_erasure_cutoff`), locks `identity_user` before `orgs_organisation` and
-    `orgs_membership` with `FOR SHARE` (conflicting with `FOR NO KEY UPDATE` authority mutations,
-    user disables, and membership role/state updates until commit), and re-verifies live
-    `enabled`, `authority_revision`, active `identity_identity`, qualifying `orgs_membership`
-    role, and absence of erasure cutoffs before yielding.
+    `privacy_erasure_cutoff`), locks `identity_user` with `FOR SHARE`, and locks dependent
+    `orgs_organisation` and `orgs_membership` rows with `FOR SHARE ... NOWAIT` so reverse-order
+    membership tuple writes never stall in a lock cycle or surface HTTP 500s. Any PostgreSQL
+    `55P03`/`40P01`/`40001` contention rolls back `transaction.atomic()` first and translates
+    outside the aborted transaction into a retriable `EeAuthError("authority_fenced", status=409)`.
     """
     if target_tenant_slug is not None and target_tenant_slug != principal.tenant_slug:
         raise EeAuthError("cross_tenant_forbidden", status=403)
 
-    with transaction.atomic():
-        with connection.cursor() as cur:
-            cur.execute(
-                "SELECT pg_advisory_xact_lock_shared("
-                "hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                [str(principal.user_id)],
-            )
-            cur.execute(
-                "SELECT pg_advisory_xact_lock_shared("
-                "hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
-                [str(principal.organisation_id)],
-            )
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock_shared("
+                    "hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                    [str(principal.user_id)],
+                )
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock_shared("
+                    "hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+                    [str(principal.organisation_id)],
+                )
 
-            # Global lock order (member-authority-revision.md): User first, then Organisation,
-            # then Membership. `FOR SHARE` conflicts with `FOR NO KEY UPDATE` taken by Core's
-            # `member_authority_user_touch` / `user_authority_fanout` triggers and direct
-            # `identity_user.enabled` or `orgs_membership.role`/`state` updates.
-            cur.execute(
-                """
-                SELECT u.email, u.enabled, u.deleted_at
-                FROM public.identity_user u
-                WHERE u.id = %s
-                FOR SHARE OF u
-                """,
-                [principal.user_id],
-            )
-            u_row = cur.fetchone()
-            if u_row is None or u_row[2] is not None or str(u_row[0]).startswith("erased:"):
-                raise EeAuthError("account_cutoff_fenced", status=403)
-            if not bool(u_row[1]):
-                raise EeAuthError("authority_fenced", status=409)
-            actor_email = str(u_row[0])
+                # Root lock: User (`FOR SHARE`). Dependent Organisation and Membership locks use
+                # `FOR SHARE ... NOWAIT` so an in-flight `membership_lifecycle` update holding the
+                # Membership tuple lock while waiting for User inside its BEFORE trigger fails fast
+                # with `55P03`, rolls back immediately, and returns a typed `409 authority_fenced`.
+                cur.execute(
+                    """
+                    SELECT u.email, u.enabled, u.deleted_at
+                    FROM public.identity_user u
+                    WHERE u.id = %s
+                    FOR SHARE OF u
+                    """,
+                    [principal.user_id],
+                )
+                u_row = cur.fetchone()
+                if u_row is None or u_row[2] is not None or str(u_row[0]).startswith("erased:"):
+                    raise EeAuthError("account_cutoff_fenced", status=403)
+                if not bool(u_row[1]):
+                    raise EeAuthError("authority_fenced", status=409)
+                actor_email = str(u_row[0])
 
-            cur.execute(
-                """
-                SELECT o.slug, o.state, o.deleted_at, o.authority_revision
-                FROM public.orgs_organisation o
-                WHERE o.id = %s
-                FOR SHARE OF o
-                """,
-                [principal.organisation_id],
-            )
-            o_row = cur.fetchone()
-            if o_row is None or str(o_row[1]) != "active" or o_row[2] is not None:
-                raise EeAuthError("tenant_cutoff_fenced", status=403)
-            live_authority_revision = int(o_row[3])
-            if (
-                str(o_row[0]) != principal.tenant_slug
-                or live_authority_revision != principal.authority_revision
-            ):
-                raise EeAuthError("authority_fenced", status=409)
+                cur.execute(
+                    """
+                    SELECT o.slug, o.state, o.deleted_at, o.authority_revision
+                    FROM public.orgs_organisation o
+                    WHERE o.id = %s
+                    FOR SHARE OF o NOWAIT
+                    """,
+                    [principal.organisation_id],
+                )
+                o_row = cur.fetchone()
+                if o_row is None or str(o_row[1]) != "active" or o_row[2] is not None:
+                    raise EeAuthError("tenant_cutoff_fenced", status=403)
+                live_authority_revision = int(o_row[3])
+                if (
+                    str(o_row[0]) != principal.tenant_slug
+                    or live_authority_revision != principal.authority_revision
+                ):
+                    raise EeAuthError("authority_fenced", status=409)
 
-            cur.execute(
-                """
-                SELECT m.role
-                FROM public.orgs_membership m
-                WHERE m.id = %s
-                  AND m.organisation_id = %s
-                  AND m.user_id = %s
-                  AND m.state = 'active'
-                  AND m.accepted_at IS NOT NULL
-                  AND m.deleted_at IS NULL
-                FOR SHARE OF m
-                """,
-                [principal.membership_id, principal.organisation_id, principal.user_id],
-            )
-            m_row = cur.fetchone()
-            if m_row is None:
-                raise EeAuthError("authority_fenced", status=409)
-            live_role = str(m_row[0])
-            if live_role != principal.role or live_role not in required_roles:
-                raise EeAuthError("authority_fenced", status=409)
+                cur.execute(
+                    """
+                    SELECT m.role
+                    FROM public.orgs_membership m
+                    WHERE m.id = %s
+                      AND m.organisation_id = %s
+                      AND m.user_id = %s
+                      AND m.state = 'active'
+                      AND m.accepted_at IS NOT NULL
+                      AND m.deleted_at IS NULL
+                    FOR SHARE OF m NOWAIT
+                    """,
+                    [principal.membership_id, principal.organisation_id, principal.user_id],
+                )
+                m_row = cur.fetchone()
+                if m_row is None:
+                    raise EeAuthError("authority_fenced", status=409)
+                live_role = str(m_row[0])
+                if live_role != principal.role or live_role not in required_roles:
+                    raise EeAuthError("authority_fenced", status=409)
 
-            cur.execute(
-                """
-                SELECT 1
-                FROM public.identity_identity i
-                WHERE i.id = %s
-                  AND i.organisation_id = %s
-                  AND i.user_id = %s
-                  AND i.deleted_at IS NULL
-                """,
-                [principal.identity_id, principal.organisation_id, principal.user_id],
-            )
-            if cur.fetchone() is None:
-                raise EeAuthError("authority_fenced", status=409)
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM public.identity_identity i
+                    WHERE i.id = %s
+                      AND i.organisation_id = %s
+                      AND i.user_id = %s
+                      AND i.deleted_at IS NULL
+                    """,
+                    [principal.identity_id, principal.organisation_id, principal.user_id],
+                )
+                if cur.fetchone() is None:
+                    raise EeAuthError("authority_fenced", status=409)
 
-        yield FencedTenantOperation(
-            organisation_id=principal.organisation_id,
-            tenant_slug=principal.tenant_slug,
-            user_id=principal.user_id,
-            identity_id=principal.identity_id,
-            membership_id=principal.membership_id,
-            role=live_role,
-            authority_revision=live_authority_revision,
-            actor_email=actor_email,
-        )
+            yield FencedTenantOperation(
+                organisation_id=principal.organisation_id,
+                tenant_slug=principal.tenant_slug,
+                user_id=principal.user_id,
+                identity_id=principal.identity_id,
+                membership_id=principal.membership_id,
+                role=live_role,
+                authority_revision=live_authority_revision,
+                actor_email=actor_email,
+            )
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise EeAuthError("authority_fenced", status=409) from exc
+        raise

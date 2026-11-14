@@ -769,6 +769,196 @@ def test_p1_2_single_snapshot_authority_and_two_connection_interleave_fence(
             cur.execute(f'DROP ROLE "{writer_role}"')
 
 
+def test_p2_reverse_order_membership_mutation_vs_ee_fence_returns_typed_409_and_unblocks_writer(
+    monkeypatch: pytest.MonkeyPatch,
+    tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
+) -> None:
+    """Reproduce reverse-order schedule (`u -> m NOWAIT` vs `membership_lifecycle` `m -> u`).
+
+    1. Owner A acquires `FOR SHARE OF u` (and `FOR SHARE OF o NOWAIT`) and pauses before
+       `FOR SHARE OF m NOWAIT` inside a real HTTP `GET /api/v1/ee/compliance/audit-exports`.
+    2. Owner B invokes Core's normal `change_membership` on A's membership, holding A's
+       `orgs_membership` tuple lock while waiting for A's `identity_user` lock in
+       `member_authority_user_touch` (verified directly via `pg_locks`).
+    3. Resuming A hits `FOR SHARE OF m NOWAIT` (`55P03`), rolls back A's atomic block (releasing
+       `FOR SHARE OF u` so B's `change_membership` immediately commits!), returns a typed HTTP
+       `409` JSON refusal (`authority_fenced`), and permits a clean subsequent retry.
+    """
+    import time
+
+    from apps.orgs.membership_lifecycle import change_membership, read_membership
+
+    from core.api import lanes
+    from core.db.api_database_boundary import assert_authority, assert_writer_grants
+    from core.db.api_writer_role import grant_statements
+    from services.identity.trusted_issuers import verify_configured_token
+
+    monkeypatch.setenv("KODERA_EDITION", "enterprise")
+    owner_a = tenant_principal_factory("reverse-fence-corp", role="org_owner")
+    owner_b = tenant_principal_factory("reverse-fence-corp", role="org_owner")
+    assert owner_a.organisation_id == owner_b.organisation_id
+
+    writer_role = f"ee_reverse_writer_{uuid4().hex[:12]}"
+    with connection.cursor() as cur:
+        cur.execute(f'CREATE ROLE "{writer_role}" NOLOGIN NOINHERIT')
+        for stmt in grant_statements(writer_role):
+            cur.execute(stmt)
+        assert_authority(cur, writer_role)
+        assert_writer_grants(cur, writer_role)
+
+    trusted = getattr(settings, "KODERA_AUTH_TRUST", ())
+    verified_b, lane_b = lanes.admit(*verify_configured_token(owner_b.token, trusted=trusted))
+    assert lane_b == "customer"
+
+    intercepted = [False]
+    b_blocked_observed = [False]
+    b_outcomes: list[tuple[str, str]] = []
+    b_errors: list[BaseException] = []
+    spawned_workers: list[threading.Thread] = []
+
+    try:
+        client = Client(raise_request_exception=False, HTTP_HOST="127.0.0.1")
+        with _acting_as(writer_role):
+            seed_resp = client.post(
+                "/api/v1/ee/compliance/audit-exports/events",
+                data=json.dumps(
+                    {
+                        "action": "sso.idp.registered",
+                        "target_urn": "urn:kodera:idp:reverse-test",
+                    }
+                ),
+                content_type="application/json",
+                headers=owner_a.headers,
+            )
+            assert seed_resp.status_code == 201, seed_resp.content
+
+            _detail_a, etag_a = read_membership(
+                verified=verified_b,
+                organisation_id=owner_a.organisation_id,
+                membership_id=owner_a.membership_id,
+            )
+
+            def _run_owner_b_membership_change() -> None:
+                connections.close_all()
+                try:
+                    with _acting_as(writer_role):
+                        changed, next_etag = change_membership(
+                            verified=verified_b,
+                            organisation_id=owner_a.organisation_id,
+                            membership_id=owner_a.membership_id,
+                            patch={"role": "org_admin"},
+                            if_match=etag_a,
+                            request_id=str(uuid4()),
+                        )
+                        b_outcomes.append((changed.role, next_etag))
+                except BaseException as exc:  # noqa: BLE001
+                    b_errors.append(exc)
+                finally:
+                    connections.close_all()
+
+            def _pause_before_membership_lock(
+                execute: Any,
+                sql_text: Any,
+                params: Any,
+                many: bool,
+                context: dict[str, Any],
+            ) -> Any:
+                if (
+                    not intercepted[0]
+                    and isinstance(sql_text, str)
+                    and "FROM public.orgs_membership m" in sql_text
+                    and "FOR SHARE OF m NOWAIT" in sql_text
+                ):
+                    intercepted[0] = True
+                    worker_b = threading.Thread(
+                        target=_run_owner_b_membership_change,
+                        daemon=True,
+                    )
+                    spawned_workers.append(worker_b)
+                    worker_b.start()
+
+                    with _open_secondary_pg_connection() as conn_probe:
+                        conn_probe.autocommit = True
+                        deadline = time.monotonic() + 3.0
+                        while time.monotonic() < deadline:
+                            with conn_probe.cursor() as probe_cur:
+                                probe_cur.execute(
+                                    """
+                                    SELECT COUNT(*)
+                                    FROM pg_locks wait_l
+                                    WHERE NOT wait_l.granted
+                                      AND EXISTS (
+                                          SELECT 1
+                                          FROM pg_locks held_m
+                                          WHERE held_m.pid = wait_l.pid
+                                            AND held_m.granted
+                                            AND held_m.relation = 'public.orgs_membership'::regclass
+                                            AND held_m.mode = 'RowExclusiveLock'
+                                      )
+                                      AND EXISTS (
+                                          SELECT 1
+                                          FROM pg_locks held_u
+                                          WHERE held_u.pid = wait_l.pid
+                                            AND held_u.granted
+                                            AND held_u.relation = 'public.identity_user'::regclass
+                                      )
+                                    """
+                                )
+                                row = probe_cur.fetchone()
+                                if row is not None and int(row[0]) >= 1:
+                                    b_blocked_observed[0] = True
+                                    break
+                            time.sleep(0.015)
+
+                return execute(sql_text, params, many, context)
+
+            with connection.execute_wrapper(_pause_before_membership_lock):
+                contended_resp = client.get(
+                    "/api/v1/ee/compliance/audit-exports",
+                    {"redact_pii": "false"},
+                    headers=owner_a.headers,
+                )
+
+            assert intercepted[0] is True
+            assert b_blocked_observed[0] is True, (
+                "Owner B must hold orgs_membership tuple lock and block on identity_user before A resumes"
+            )
+            assert contended_resp.status_code == 409, contended_resp.content
+            assert contended_resp["Content-Type"] == "application/json"
+            assert contended_resp.json()["code"] == "authority_fenced"
+            assert not connection.in_atomic_block
+            assert not connection.needs_rollback
+
+            assert len(spawned_workers) == 1
+            spawned_workers[0].join(timeout=5.0)
+            assert not spawned_workers[0].is_alive()
+            assert b_errors == []
+            assert len(b_outcomes) == 1
+            assert b_outcomes[0][0] == "org_admin"
+
+            # Clean subsequent retry on the same connection succeeds for redacted admin export
+            # (`200`) and enforces the committed demotion on unredacted export (`403`).
+            retry_redacted = client.get(
+                "/api/v1/ee/compliance/audit-exports",
+                headers=owner_a.headers,
+            )
+            assert retry_redacted.status_code == 200, retry_redacted.content
+            assert "bundle_id" in retry_redacted.json()
+
+            retry_unredacted = client.get(
+                "/api/v1/ee/compliance/audit-exports",
+                {"redact_pii": "false"},
+                headers=owner_a.headers,
+            )
+            assert retry_unredacted.status_code == 403
+            assert retry_unredacted.json()["code"] == "owner_required_for_unredacted_export"
+    finally:
+        with connection.cursor() as cur:
+            cur.execute("RESET ROLE")
+            cur.execute(f'DROP OWNED BY "{writer_role}"')
+            cur.execute(f'DROP ROLE "{writer_role}"')
+
+
 def test_p1_3_organisation_and_account_erasure_cutoff_purge_scrub_and_migration_roundtrip(
     monkeypatch: pytest.MonkeyPatch,
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],

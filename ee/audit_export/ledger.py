@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from django.db import IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from uuid6 import uuid7
 
 from ee.audit_export.crypto import (
@@ -39,6 +39,7 @@ from ee.store import (
     TenantCutoffError,
     acquire_active_tenant_fence,
     can_use_postgres,
+    is_retriable_lock_contention,
     reset_ee_tables,
 )
 
@@ -246,6 +247,10 @@ class ComplianceAuditLedger:
                         )
             except IntegrityError as exc:
                 raise TenantCutoffError("tenant_cutoff_fenced", status=403) from exc
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise TenantCutoffError("authority_fenced", status=409) from exc
+                raise
             return
 
         with self._lock:
@@ -434,6 +439,10 @@ class ComplianceAuditLedger:
                     raise TenantCutoffError("account_cutoff_fenced", status=403) from exc
                 if "erasure cutoff refuses write" in msg:
                     raise TenantCutoffError("tenant_cutoff_fenced", status=403) from exc
+                raise
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise TenantCutoffError("authority_fenced", status=409) from exc
                 raise
 
             return ComplianceAuditEvent(

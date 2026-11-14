@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
-from django.db import IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from uuid6 import uuid7
 
 from ee.edition import require_enterprise_edition
@@ -35,6 +35,7 @@ from ee.store import (
     TenantCutoffError,
     acquire_active_tenant_fence,
     can_use_postgres,
+    is_retriable_lock_contention,
     reset_ee_tables,
     resolve_tenant_organisation,
 )
@@ -1194,6 +1195,14 @@ class ScimService:
                             code="tenant_cutoff_fenced",
                         ) from exc
                     raise
+                except DatabaseError as exc:
+                    if is_retriable_lock_contention(exc):
+                        raise ScimError(
+                            "Organisation authority changed concurrently; retry request",
+                            status=409,
+                            code="authority_fenced",
+                        ) from exc
+                    raise
 
             with connection.cursor() as cur:
                 resolved_org_id_ro = _resolve_scim_org_id(
@@ -2062,75 +2071,86 @@ def _sync_django_scim_provision(
     from django.db.models import Q
     from django.utils import timezone
 
-    with transaction.atomic():
-        org = (
-            Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
-            .exclude(state="closed")
-            .first()
-        )
-        if org is None:
-            raise TenantCutoffError("tenant_cutoff_fenced", status=403)
-        subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
-        identity = (
-            Identity.objects.select_related("user")
-            .filter(organisation=org, issuer=org.issuer)
-            .filter(Q(subject=subj) | Q(email__iexact=email))
-            .order_by("created_at")
-            .first()
-        )
-        if identity is None:
-            user = User.objects.create(
-                email=email,
-                display_name=display_name[:200] if display_name else None,
-                enabled=active,
+    try:
+        with transaction.atomic():
+            org = (
+                Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+                .exclude(state="closed")
+                .first()
             )
-            Identity.objects.create(
-                user=user,
-                organisation=org,
-                realm=org.realm,
-                issuer=org.issuer,
-                subject=subj,
-                email=email,
-                enabled=active,
+            if org is None:
+                raise TenantCutoffError("tenant_cutoff_fenced", status=403)
+            subj = "".join(ch if "!" <= ch <= "~" else "_" for ch in user_name.lower())[:255]
+            identity = (
+                Identity.objects.select_related("user")
+                .filter(organisation=org, issuer=org.issuer)
+                .filter(Q(subject=subj) | Q(email__iexact=email))
+                .order_by("created_at")
+                .first()
             )
-        else:
-            user = identity.user
-            with connection.cursor() as cur:
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                    [str(user.id)],
+            if identity is None:
+                user = User.objects.create(
+                    email=email,
+                    display_name=display_name[:200] if display_name else None,
+                    enabled=active,
                 )
-            refreshed = User.objects.filter(id=user.id).first()
-            if (
-                refreshed is None
-                or refreshed.deleted_at is not None
-                or refreshed.email.startswith("erased:")
-            ):
-                raise TenantCutoffError("account_cutoff_fenced", status=403)
-            user = refreshed
-            if user.enabled != active:
-                User.objects.filter(id=user.id).update(enabled=active)
+                Identity.objects.create(
+                    user=user,
+                    organisation=org,
+                    realm=org.realm,
+                    issuer=org.issuer,
+                    subject=subj,
+                    email=email,
+                    enabled=active,
+                )
+            else:
+                user = identity.user
+                with connection.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                        [str(user.id)],
+                    )
+                refreshed = User.objects.filter(id=user.id).first()
+                if (
+                    refreshed is None
+                    or refreshed.deleted_at is not None
+                    or refreshed.email.startswith("erased:")
+                ):
+                    raise TenantCutoffError("account_cutoff_fenced", status=403)
+                user = refreshed
+                if user.enabled != active:
+                    User.objects.filter(id=user.id).update(enabled=active)
 
-        now_ts = timezone.now()
-        target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
-        membership = (
-            Membership.objects.select_for_update().filter(organisation=org, user=user).first()
-        )
-        if membership is None:
-            Membership.objects.create(
-                organisation=org,
-                user=user,
-                role=Membership.Role.MEMBER,
-                state=target_state,
-                accepted_at=now_ts,
+            now_ts = timezone.now()
+            target_state = Membership.State.ACTIVE if active else Membership.State.SUSPENDED
+            membership = (
+                Membership.objects.select_for_update(nowait=True)
+                .filter(organisation=org, user=user)
+                .first()
             )
-        elif not (membership.role == Membership.Role.OWNER and not active):
-            Membership.objects.filter(id=membership.id).update(
-                state=target_state,
-                accepted_at=membership.accepted_at or now_ts,
-                updated_at=now_ts,
-            )
-        return str(user.id)
+            if membership is None:
+                Membership.objects.create(
+                    organisation=org,
+                    user=user,
+                    role=Membership.Role.MEMBER,
+                    state=target_state,
+                    accepted_at=now_ts,
+                )
+            elif not (membership.role == Membership.Role.OWNER and not active):
+                Membership.objects.filter(id=membership.id).update(
+                    state=target_state,
+                    accepted_at=membership.accepted_at or now_ts,
+                    updated_at=now_ts,
+                )
+            return str(user.id)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise ScimError(
+                "Organisation authority changed concurrently; retry request",
+                status=409,
+                code="authority_fenced",
+            ) from exc
+        raise
 
 
 def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> None:
@@ -2138,22 +2158,36 @@ def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> Non
     from apps.orgs.models import Membership
     from django.utils import timezone
 
-    with transaction.atomic():
-        with connection.cursor() as cur:
-            cur.execute(
-                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                [str(user_uuid)],
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                    [str(user_uuid)],
+                )
+            user = User.objects.filter(id=user_uuid).first()
+            if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
+                raise TenantCutoffError("account_cutoff_fenced", status=403)
+            User.objects.filter(id=user_uuid).update(enabled=False)
+            target_memberships = list(
+                Membership.objects.select_for_update(nowait=True)
+                .filter(organisation_id=organisation_id, user_id=user_uuid)
+                .exclude(role=Membership.Role.OWNER)
+                .values_list("id", flat=True)
             )
-        user = User.objects.filter(id=user_uuid).first()
-        if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
-            raise TenantCutoffError("account_cutoff_fenced", status=403)
-        User.objects.filter(id=user_uuid).update(enabled=False)
-        Membership.objects.filter(organisation_id=organisation_id, user_id=user_uuid).exclude(
-            role=Membership.Role.OWNER
-        ).update(
-            state=Membership.State.SUSPENDED,
-            updated_at=timezone.now(),
-        )
+            if target_memberships:
+                Membership.objects.filter(id__in=target_memberships).update(
+                    state=Membership.State.SUSPENDED,
+                    updated_at=timezone.now(),
+                )
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise ScimError(
+                "Organisation authority changed concurrently; retry request",
+                status=409,
+                code="authority_fenced",
+            ) from exc
+        raise
 
 
 def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None:
@@ -2161,20 +2195,35 @@ def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None
     from apps.orgs.models import Membership
     from django.utils import timezone
 
-    with transaction.atomic():
-        with connection.cursor() as cur:
-            cur.execute(
-                "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
-                [str(user_uuid)],
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0))",
+                    [str(user_uuid)],
+                )
+            user = User.objects.filter(id=user_uuid).first()
+            if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
+                raise TenantCutoffError("account_cutoff_fenced", status=403)
+            User.objects.filter(id=user_uuid).update(enabled=True)
+            target_memberships = list(
+                Membership.objects.select_for_update(nowait=True)
+                .filter(organisation_id=organisation_id, user_id=user_uuid)
+                .values_list("id", flat=True)
             )
-        user = User.objects.filter(id=user_uuid).first()
-        if user is None or user.deleted_at is not None or user.email.startswith("erased:"):
-            raise TenantCutoffError("account_cutoff_fenced", status=403)
-        User.objects.filter(id=user_uuid).update(enabled=True)
-        Membership.objects.filter(organisation_id=organisation_id, user_id=user_uuid).update(
-            state=Membership.State.ACTIVE,
-            updated_at=timezone.now(),
-        )
+            if target_memberships:
+                Membership.objects.filter(id__in=target_memberships).update(
+                    state=Membership.State.ACTIVE,
+                    updated_at=timezone.now(),
+                )
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise ScimError(
+                "Organisation authority changed concurrently; retry request",
+                status=409,
+                code="authority_fenced",
+            ) from exc
+        raise
 
 
 default_scim_service = ScimService()

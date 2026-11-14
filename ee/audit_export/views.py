@@ -22,6 +22,7 @@ import base64
 import json
 from typing import Final
 
+from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponse, StreamingHttpResponse
 
 from ee.audit_export.crypto import AuditSigner, canonical_json_bytes
@@ -40,7 +41,7 @@ from ee.auth import (
     authenticate_tenant_request,
     fence_authenticated_ee_operation,
 )
-from ee.store import TenantCutoffError
+from ee.store import TenantCutoffError, is_retriable_lock_contention
 
 _AUDIT_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     # Authentication, tenant authorization & cutoff/revision fence rejections
@@ -240,6 +241,10 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
         return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _audit_error_response("authority_fenced")
+        raise
     except ValueError:
         return _audit_error_response("invalid_event")
 
@@ -326,6 +331,10 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
         return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _audit_error_response("authority_fenced")
+        raise
     except ValueError:
         return _audit_error_response("invalid_export_request")
 
@@ -380,6 +389,10 @@ def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
         return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _audit_error_response("authority_fenced")
+        raise
 
     payload = body.get("payload")
     manifest = body.get("manifest")
@@ -427,5 +440,9 @@ def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
         return _audit_error_response(exc.code)
     except TenantCutoffError as exc:
         return _audit_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _audit_error_response("authority_fenced")
+        raise
 
     return _json_response(result.to_dict(), status=200 if result.verified else 422)

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from django.db import IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from uuid6 import uuid7
 
 from ee.edition import require_enterprise_edition
@@ -45,6 +45,7 @@ from ee.store import (
     acquire_active_tenant_fence,
     can_use_postgres,
     derive_ee_hkdf_bytes,
+    is_retriable_lock_contention,
     reset_ee_tables,
     resolve_tenant_organisation,
 )
@@ -1457,7 +1458,9 @@ def _sync_django_organisation_member(
 
             now_ts = timezone.now()
             membership = (
-                Membership.objects.select_for_update().filter(organisation=org, user=user).first()
+                Membership.objects.select_for_update(nowait=True)
+                .filter(organisation=org, user=user)
+                .first()
             )
             if membership is None:
                 Membership.objects.create(
@@ -1491,6 +1494,14 @@ def _sync_django_organisation_member(
             "SAML provisioning refused by privacy cutoff",
             status=403,
         ) from exc
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            raise SamlError(
+                "authority_fenced",
+                "Organisation authority changed concurrently; retry request",
+                status=409,
+            ) from exc
+        raise
 
 
 default_saml_service = SamlService()

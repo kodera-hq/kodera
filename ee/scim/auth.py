@@ -22,13 +22,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from django.db import IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 
 from ee.edition import require_enterprise_edition
 from ee.store import (
     TenantCutoffError,
     acquire_active_tenant_fence,
     can_use_postgres,
+    is_retriable_lock_contention,
     reset_ee_tables,
 )
 
@@ -242,6 +243,14 @@ class ScimTokenManager:
                         status=403,
                     ) from exc
                 raise
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise ScimAuthError(
+                        "Organisation authority changed concurrently; retry request",
+                        code="authority_fenced",
+                        status=409,
+                    ) from exc
+                raise
         else:
             with self._lock:
                 self._tokens[token_id] = record
@@ -269,6 +278,14 @@ class ScimTokenManager:
                         "Target tenant is under privacy erasure cutoff",
                         code="tenant_cutoff_fenced",
                         status=403,
+                    ) from exc
+                raise
+            except DatabaseError as exc:
+                if is_retriable_lock_contention(exc):
+                    raise ScimAuthError(
+                        "Organisation authority changed concurrently; retry request",
+                        code="authority_fenced",
+                        status=409,
                     ) from exc
                 raise
 

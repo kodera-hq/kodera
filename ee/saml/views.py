@@ -19,6 +19,7 @@ from typing import Final
 from urllib.parse import parse_qs
 
 from django.conf import settings
+from django.db import DatabaseError
 from django.http import HttpRequest, HttpResponse
 
 from ee.auth import (
@@ -28,6 +29,7 @@ from ee.auth import (
     fence_authenticated_ee_operation,
 )
 from ee.saml.service import SamlError, SamlIdpConfig, default_saml_service
+from ee.store import is_retriable_lock_contention
 
 _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     # Authentication, tenant admin authorization & cutoff/revision fence rejections
@@ -208,6 +210,10 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         )
     except EeAuthError as exc:
         return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
 
     if request.method == "POST":
         if not request.body or len(request.body) > 65_536:
@@ -266,6 +272,10 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
             return _saml_error_response(exc.code)
         except SamlError as exc:
             return _saml_error_response(exc.code)
+        except DatabaseError as exc:
+            if is_retriable_lock_contention(exc):
+                return _saml_error_response("authority_fenced")
+            raise
 
         return _json(
             {
@@ -285,6 +295,10 @@ def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         return _saml_error_response(exc.code)
     except SamlError as exc:
         return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
 
     return _json(
         {
@@ -360,6 +374,10 @@ def login_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         )
     except SamlError as exc:
         return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
 
     if want_redirect:
         redirect_resp = HttpResponse(status=302)
@@ -429,6 +447,10 @@ def acs_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
         )
     except SamlError as exc:
         return _saml_error_response(exc.code)
+    except DatabaseError as exc:
+        if is_retriable_lock_contention(exc):
+            return _saml_error_response("authority_fenced")
+        raise
 
     return _json(
         {
