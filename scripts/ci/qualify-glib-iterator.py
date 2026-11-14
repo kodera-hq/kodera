@@ -180,6 +180,13 @@ def qualify(revision: str, evidence_path: Path) -> None:
             artifact = verifier.optimized_artifact(messages, target)
             evidence['glib_rlib'] = str(artifact)
             evidence['glib_rlib_sha256'] = verifier.sha(artifact.read_bytes())
+            # Cargo can report the top-level libglib.rlib while its transitive
+            # Rust libraries are emitted in release/deps. rustc needs that
+            # dependency directory even when --extern names the exact artifact.
+            dependency_directory = target / 'release' / 'deps'
+            if not dependency_directory.is_dir():
+                raise ValueError('optimized Cargo dependency directory is absent')
+            evidence['rust_dependency_directory'] = str(dependency_directory)
             native_search_paths = sorted({path for line in stdout.splitlines()
                 for item in [json.loads(line)] if item.get('reason') == 'build-script-executed'
                 for path in item.get('linked_paths', []) if path.startswith('native=')})
@@ -190,7 +197,7 @@ def qualify(revision: str, evidence_path: Path) -> None:
             for label, path, expected in [('positive', source, positive_result), ('wrong-value-oracle', oracle, oracle_result)]:
                 binary = scratch / label
                 args = ['rustc', '--edition=2021', '--test', str(path), '-C', 'opt-level=3',
-                        '-L', 'dependency=' + str(artifact.parent), '--extern', 'glib=' + str(artifact), '-o', str(binary)]
+                        '-L', 'dependency=' + str(dependency_directory), '--extern', 'glib=' + str(artifact), '-o', str(binary)]
                 for search_path in native_search_paths:
                     args.extend(['-L', search_path])
                 code, stdout, stderr, _ = run(label + '-compile', args, COMPILE_SECONDS)
