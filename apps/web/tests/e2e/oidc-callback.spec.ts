@@ -64,10 +64,19 @@ test('silent callback renews only the parent and preserves its destination', asy
   refusal.searchParams.set('state', request.searchParams.get('state')!)
   refusal.searchParams.set('error', 'login_required')
   await frame.goto(refusal.href)
+  // The 120-second expiry warning can already be visible before this renewal
+  // settles. The SDK retires its iframe after processing the callback; wait for
+  // that observable completion so the click tests a fresh renewal, not coalescing.
+  await expect.poll(() => frame.isDetached()).toBe(true)
+  expect(await page.evaluate(() => window.__callbackTokenRequests?.length)).toBe(0)
+  expect(await page.evaluate(() => sessionStorage.getItem('kodera.web.auth.returnTo'))).toBe(
+    '/acme-sa/home?preserve=1'
+  )
   await expect(page.getByRole('button', { name: 'Garder la session ouverte' })).toBeVisible()
   await page.getByRole('button', { name: 'Garder la session ouverte' }).click()
   frame = await silentFrame(page)
   expect(new URL(frame.url()).searchParams.get('prompt')).toBe('none')
+  expect(new URL(frame.url()).searchParams.get('state')).not.toBe(request.searchParams.get('state'))
   // The iframe is intentionally hidden; the test controls its synthetic IdP.
   await frame
     .getByRole('button', { name: 'Continuer' })
