@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.44.0
+  version: 0.44.1
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -8488,6 +8488,7 @@ components:
       - invoice.paid
       - invoice.overdue
       - invoice.voided
+      - invoice.download_requested
       - credit_note.issued
       - credit_note.notice_enqueued
       - payment.received
@@ -8502,7 +8503,9 @@ components:
       - dunning.suspension_notice_sent
       - dunning.suspended
       - dunning.terminated
+      - dunning.proposal_prepared
       - dunning.cleared
+      - dunning.dispute_recorded
       - vat.vies_checked
       - vat.regime_changed
       - workspace.initialised

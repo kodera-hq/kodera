@@ -258,6 +258,177 @@ class BillingProfile(StoredModel):
         return f"billing profile of {self.organisation_id}"
 
 
+class ViesConsultation(StoredModel):
+    """Append-only evidence, including unavailable outcomes; never a client validation claim."""
+
+    organisation = models.ForeignKey("orgs.Organisation", on_delete=models.RESTRICT)
+    country_code = models.TextField()
+    vat_number = models.TextField()
+    status = models.TextField()
+    checked_at = models.DateTimeField()
+    next_check_at = models.DateTimeField()
+    consultation_ref = models.TextField(null=True, blank=True)  # noqa: DJ001 - unavailable
+    response_sha256 = models.TextField()
+    evidence = models.JSONField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_vies_status",
+                condition=Q(status__in=("valid", "invalid", "unavailable")),
+            ),
+            models.CheckConstraint(
+                name="billing_vies_digest", condition=Q(response_sha256__regex=r"^[0-9a-f]{64}$")
+            ),
+            models.CheckConstraint(
+                name="billing_vies_window", condition=Q(next_check_at__gt=F("checked_at"))
+            ),
+            models.CheckConstraint(
+                name="billing_vies_valid_ref",
+                condition=~Q(status="valid") | Q(consultation_ref__isnull=False),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["organisation", "-checked_at", "-id"], name="billing_vies_latest")
+        ]
+
+
+class BillingArtifact(StoredModel):
+    """A validated immutable PDF/XML pair bound to exactly one frozen accounting snapshot."""
+
+    invoice = models.OneToOneField("Invoice", on_delete=models.RESTRICT, null=True, blank=True)
+    credit_note = models.OneToOneField(
+        "CreditNote", on_delete=models.RESTRICT, null=True, blank=True
+    )
+    snapshot_sha256 = models.TextField()
+    pdf_sha256 = models.TextField()
+    xml_sha256 = models.TextField()
+    pdf = models.BinaryField()
+    xml = models.BinaryField()
+    validator_ref = models.TextField()
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_artifact_parent",
+                condition=Q(invoice__isnull=False, credit_note__isnull=True)
+                | Q(invoice__isnull=True, credit_note__isnull=False),
+            ),
+            *[
+                models.CheckConstraint(
+                    name=f"billing_artifact_{field}",
+                    condition=Q(**{f"{field}__regex": r"^[0-9a-f]{64}$"}),
+                )
+                for field in ("snapshot_sha256", "pdf_sha256", "xml_sha256")
+            ],
+        ]
+
+
+class DunningCase(StoredModel):
+    """One serialized collection ladder per subscription; clearing starts a new episode."""
+
+    subscription = models.OneToOneField("Subscription", on_delete=models.RESTRICT)
+    episode = models.UUIDField(default=new_uuid7)
+    state = models.TextField(default="current")
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_dunning_case_state",
+                condition=Q(
+                    state__in=(
+                        "current",
+                        "past_due",
+                        "notice",
+                        "formal_notice",
+                        "suspension_notice",
+                        "suspended",
+                        "terminated",
+                    )
+                ),
+            )
+        ]
+
+
+class DunningAction(StoredModel):
+    """Durable proposals; a delivered/legal transition is confirmed from explicit evidence."""
+
+    case = models.ForeignKey(DunningCase, on_delete=models.RESTRICT)
+    episode = models.UUIDField()
+    invoice = models.ForeignKey("Invoice", on_delete=models.RESTRICT)
+    step = models.TextField()
+    state = models.TextField(default="prepared")
+    idempotency_key = models.TextField(unique=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    receipt_at = models.DateTimeField(null=True, blank=True)
+    evidence_ref = models.TextField(null=True, blank=True)  # noqa: DJ001 - prepared has no evidence
+    confirmed_by = models.ForeignKey(
+        "identity.Identity", on_delete=models.RESTRICT, null=True, blank=True
+    )
+    job_id = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_dunning_action_step",
+                condition=Q(
+                    step__in=(
+                        "reminder_1",
+                        "reminder_2",
+                        "formal_notice",
+                        "suspension_notice",
+                        "suspended",
+                        "terminated",
+                    )
+                ),
+            ),
+            models.CheckConstraint(
+                name="billing_dunning_action_state",
+                condition=Q(state__in=("prepared", "confirmed", "cancelled")),
+            ),
+            models.CheckConstraint(
+                name="billing_dunning_action_key",
+                condition=Q(idempotency_key__regex=r"^[a-f0-9]{64}$"),
+            ),
+            models.CheckConstraint(
+                name="billing_dunning_action_proof",
+                condition=~Q(state="confirmed")
+                | Q(
+                    delivered_at__isnull=False,
+                    evidence_ref__isnull=False,
+                    confirmed_by__isnull=False,
+                ),
+            ),
+            models.CheckConstraint(
+                name="billing_dunning_receipt_date",
+                condition=Q(receipt_at__isnull=True)
+                | Q(delivered_at__isnull=False, receipt_at__gte=F("delivered_at")),
+            ),
+            models.UniqueConstraint(
+                fields=["case", "episode", "step"],
+                condition=Q(state="confirmed"),
+                name="billing_dunning_confirmed_step",
+            ),
+        ]
+
+
+class DunningDispute(StoredModel):
+    """A bounded amount disputed in a linked support ticket; the undisputed balance still ages."""
+
+    invoice = models.ForeignKey("Invoice", on_delete=models.RESTRICT)
+    ticket = models.ForeignKey("support.SupportTicket", on_delete=models.RESTRICT)
+    amount_minor = models.BigIntegerField()
+    hold_until = models.DateTimeField()
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                name="billing_dunning_dispute_amount", condition=Q(amount_minor__gt=0)
+            )
+        ]
+
+
 class Order(StoredModel, PriceSnapshot):
     organisation = models.ForeignKey(
         "orgs.Organisation", on_delete=models.RESTRICT, related_name="+"
@@ -398,6 +569,7 @@ class Invoice(StoredModel):
     vat_mention = models.TextField(null=True, blank=True)  # noqa: DJ001 - no mention under fr_standard
     issuer_legal_name = models.TextField()
     issuer_address = models.TextField()
+    issuer_country = models.TextField(null=True, blank=True)  # noqa: DJ001 - legacy snapshot absent
     issuer_siren = models.TextField()
     issuer_vat_number = models.TextField()
     customer_legal_name = models.TextField()
@@ -533,6 +705,7 @@ class CreditNote(StoredModel):
     vat_mention = models.TextField(null=True, blank=True)  # noqa: DJ001 - as on the invoice
     issuer_legal_name = models.TextField()
     issuer_address = models.TextField()
+    issuer_country = models.TextField(null=True, blank=True)  # noqa: DJ001 - legacy snapshot absent
     issuer_siren = models.TextField()
     issuer_vat_number = models.TextField()
     customer_legal_name = models.TextField()

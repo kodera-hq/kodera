@@ -12,6 +12,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunSQL(
+            "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='PushSubscription',
             fields=[
@@ -86,5 +90,9 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='pushoutbox',
             constraint=models.CheckConstraint(condition=models.Q(models.Q(('lease_expires_at__isnull', False), ('lease_id__isnull', False), ('state', 'in_flight')), models.Q(models.Q(('state', 'in_flight'), _negated=True), ('lease_expires_at__isnull', True), ('lease_id__isnull', True)), _connector='OR'), name='push_outbox_lease_valid'),
+        ),
+        migrations.RunSQL(
+            migrations.RunSQL.noop,
+            reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
         ),
     ]

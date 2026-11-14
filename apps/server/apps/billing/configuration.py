@@ -33,6 +33,8 @@ class Issuer:
     address: str
     siren: str
     vat_number: str
+    # Kept separately: a VAT registration prefix does not establish legal address country.
+    country: str | None = None
 
 
 def _text(name: str, value: str, limit: int) -> str:
@@ -48,6 +50,9 @@ def issuer_from_environment(environ: Mapping[str, str]) -> Issuer | None:
     if not all(values):
         raise ValueError("the billing issuer is configured with all four variables or none")
     name, address, siren, vat_number = values
+    country = environ.get("KODERA_BILLING_ISSUER_COUNTRY", "").strip() or None
+    if country is not None and re.fullmatch(r"[A-Z]{2}", country) is None:
+        raise ValueError("KODERA_BILLING_ISSUER_COUNTRY is an explicit ISO alpha-2 country")
     if not SIREN.match(siren):
         raise ValueError("KODERA_BILLING_ISSUER_SIREN is nine digits")
     if not VAT_NUMBER.match(vat_number):
@@ -57,6 +62,7 @@ def issuer_from_environment(environ: Mapping[str, str]) -> Issuer | None:
         address=_text(ISSUER_VARIABLES[1], address, 400),
         siren=siren,
         vat_number=vat_number,
+        country=country,
     )
 
 

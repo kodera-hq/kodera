@@ -28,9 +28,10 @@ WORKSPACE = {
     ("business-plus", "workspace", "L"): (400, 4_320),
     ("enterprise", "workspace", "XL"): (None, 9_600),
 }
-NOW = datetime(2026, 11, 5, 9, tzinfo=UTC)
+UNIFIED = {(plan, "workspace-v2", tier): amounts for (plan, _, tier), amounts in WORKSPACE.items()}
+NOW = datetime(2026, 11, 14, 9, tzinfo=UTC)
 # Counts in the file: 3 packs, 4 tiers, 4 plans, 14 grid prices and 7 workspace prices.
-ROWS = 3 + 4 + 4 + 14 + 7
+ROWS = 4 + 4 + 8 + 14 + 7 + 7
 
 
 @pytest.fixture
@@ -70,7 +71,7 @@ def test_the_offer_is_not_a_placeholder_and_loads_once():
 
 def test_the_offer_prices_are_the_grid(offer):
     expected = {}
-    for (plan, pack, tier), (monthly, yearly) in (GRID | WORKSPACE).items():
+    for (plan, pack, tier), (monthly, yearly) in (GRID | WORKSPACE | UNIFIED).items():
         expected[plan, pack, tier, "yearly"] = yearly * 100
         if monthly is not None:
             expected[plan, pack, tier, "monthly"] = monthly * 100
@@ -81,7 +82,7 @@ def test_the_offer_prices_are_the_grid(offer):
 
 
 def test_only_the_workspace_is_orderable_and_at_the_visio_grid(offer):
-    for (plan, pack, tier), (monthly, yearly) in (GRID | WORKSPACE).items():
+    for (plan, pack, tier), (monthly, yearly) in (GRID | WORKSPACE | UNIFIED).items():
         for period, amount in (("monthly", monthly), ("yearly", yearly)):
             # `current_price` reads the codes only: the tenant and the agreements play no part.
             request = OrderRequest(
@@ -91,10 +92,10 @@ def test_only_the_workspace_is_orderable_and_at_the_visio_grid(offer):
                 tenant=None,
                 agreements=None,
             )
-            if pack != "workspace" or amount is None:
+            if pack != "workspace-v2" or amount is None:
                 with pytest.raises(BillingValidationError) as refused:
                     current_price(request=request, now=NOW)
-                reason = "unavailable" if pack != "workspace" else "not_offered"
+                reason = "unavailable" if pack != "workspace-v2" else "not_offered"
                 assert refused.value.reason == reason, (plan, pack, period)
             else:
                 price = current_price(request=request, now=NOW)
@@ -103,7 +104,7 @@ def test_only_the_workspace_is_orderable_and_at_the_visio_grid(offer):
 
 def test_the_public_catalogue_offers_only_what_can_be_ordered(offer):
     offered = {(p.pack.code, p.billing_period) for p in selectors._offered_prices()}
-    assert offered == {("workspace", "monthly"), ("workspace", "yearly")}
+    assert offered == {("workspace-v2", "monthly"), ("workspace-v2", "yearly")}
     _pack(offer, "visio-docs")["available"] = True
     catalogue.load(offer, allow_placeholder=False)
     assert len(selectors._offered_prices().filter(pack__code="visio-docs")) == 7
@@ -173,9 +174,9 @@ def test_a_pack_goes_on_and_off_sale_and_a_description_is_written_once(offer):
 def test_the_offer_carries_the_design_lanes_copy(offer):
     plans = dict(Plan.objects.values_list("code", "description"))
     assert all(plans[code] for code in ("team", "business", "business-plus", "enterprise"))
-    assert "Docs inclus" in plans["business-plus"]
+    assert "documents included" in Plan.objects.get(code="business-plus", version=2).description
     packs = dict(Pack.objects.values_list("code", "description"))
-    assert all("hébergée dans l’Union européenne" in text for text in packs.values())
+    assert "hosted in the European Union" in packs["workspace-v2"]
     assert "Docs" not in packs["workspace"]
     assert set(CapacityTier.objects.values_list("description", flat=True)) == {None}
 
@@ -185,16 +186,25 @@ def test_the_workspace_pack_is_visio_and_espace_and_names_no_other_pack(offer):
     assert (workspace.apps, workspace.profile_ref, workspace.available) == (
         ["visio", "messaging"],
         "workspace/1.0",
-        True,
+        False,
     )
-    assert set(Pack.objects.filter(available=True).values_list("code", flat=True)) == {"workspace"}
+    current = Pack.objects.get(code="workspace-v2")
+    assert (current.apps, current.profile_ref) == (["messaging", "visio", "docs"], "workspace/2.0")
+    assert set(Pack.objects.filter(available=True).values_list("code", flat=True)) == {
+        "workspace-v2"
+    }
 
 
 def _before_the_workspace(document):
     """Earlier catalogue state without the workspace pack, with Visio on sale."""
     earlier = copy.deepcopy(document)
-    earlier["packs"] = [p for p in earlier["packs"] if p["code"] != "workspace"]
-    earlier["prices"] = [p for p in earlier["prices"] if p["pack"] != "workspace"]
+    earlier["packs"] = [
+        p for p in earlier["packs"] if p["code"] not in {"workspace", "workspace-v2"}
+    ]
+    earlier["prices"] = [
+        p for p in earlier["prices"] if p["pack"] not in {"workspace", "workspace-v2"}
+    ]
+    earlier["plans"] = [plan for plan in earlier["plans"] if plan["version"] == 1]
     del _pack(earlier, "visio")["available"]
     return earlier
 
@@ -209,6 +219,13 @@ def test_loading_over_the_catalogue_already_loaded_adds_the_workspace_and_closes
     assert sorted(report.created) == sorted(
         [
             "pack workspace",
+            "pack workspace-v2",
+            *(f"plan {plan} v2" for plan in ("team", "business", "business-plus", "enterprise")),
+            *(
+                f"price {plan} v2 workspace-v2 {tier} {period}"
+                for (plan, _, tier), (monthly, _) in WORKSPACE.items()
+                for period in (("monthly", "yearly") if monthly is not None else ("yearly",))
+            ),
             *(
                 f"price {plan} v1 workspace {tier} {period}"
                 for (plan, _, tier), (monthly, _) in WORKSPACE.items()

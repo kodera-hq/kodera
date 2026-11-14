@@ -282,25 +282,29 @@ def test_an_order_writes_its_snapshot_its_pending_subscription_and_its_issued_in
     ]
 
 
-def test_an_order_for_the_offers_workspace_gives_its_tenant_visio_and_espace():
+def test_unified_workspace_order_snapshots_docs_with_messaging_and_calls():
     # The offer as loaded on an environment, and the one pack it sells: what kodera-team orders.
     catalogue.load(catalogue.read(catalogue.OFFER), allow_placeholder=False)
     price = Price.objects.get(
-        plan__code="team", pack__code="workspace", capacity_tier__code="S", billing_period="yearly"
+        plan__code="team",
+        plan__version=2,
+        pack__code="workspace-v2",
+        capacity_tier__code="S",
+        billing_period="yearly",
     )
     w = world()
     placed = place(w, price)
     tenant = Tenant.objects.get(id=placed.order.tenant_id)
     assert (tenant.status, tenant.pack_code, tenant.apps, tenant.profile_ref) == (
         "ordered",
-        "workspace",
-        ["visio", "messaging"],
-        "workspace/1.0",
+        "workspace-v2",
+        ["messaging", "visio", "docs"],
+        "workspace/2.0",
     )
     for row in (placed.order, placed.subscription):
         assert (row.pack_code, row.apps, row.unit_amount_minor) == (
-            "workspace",
-            ["visio", "messaging"],
+            "workspace-v2",
+            ["messaging", "visio", "docs"],
             108_000,
         )
 
@@ -325,6 +329,23 @@ def test_an_order_for_the_offers_workspace_gives_its_tenant_visio_and_espace():
 )
 def test_the_regime_comes_from_the_billing_profile(profile, regime, vat):
     w = world(**profile)
+    if profile.get("country") == "DE" and profile.get("vat_number"):
+        import hashlib
+
+        from apps.billing.vies import Answer, record_consultation
+
+        status = "valid" if regime == "eu_reverse_charge" else "invalid"
+        record_consultation(
+            organisation_id=w.organisation.id,
+            country_code="DE",
+            vat_number=profile["vat_number"],
+            answer=Answer(
+                status,
+                "synthetic-vat-check",
+                {"outcome": status},
+                hashlib.sha256(status.encode()).hexdigest(),
+            ),
+        )
     invoice = place(w, offer()).invoice
     assert (invoice.vat_regime, invoice.vat_amount_minor) == (regime, vat)
     assert (invoice.vat_mention is None) == (regime == "fr_standard")

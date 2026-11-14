@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/kodera-hq/kodera",
   "versions": {
-    "core": "0.44.0",
+    "core": "0.44.1",
     "agent": "0.6.0",
     "policy": "0.1.6",
     "sdk": "0.1.0"
@@ -240,7 +240,7 @@
             "id": "contracts",
             "title": "Two separate API boundaries",
             "paragraphs": [
-              "Core API 0.44.0 is the customer-console contract. Agent API 0.6.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.",
+              "Core API 0.44.1 is the customer-console contract. Agent API 0.6.0 is the tenant-agent contract; its authentication and operations are a separate boundary. Both use OpenAPI 3.1.",
               "The console uses its authenticated Core transport. It does not call identity providers, infrastructure providers or tenant control endpoints directly."
             ],
             "callout": "Configure KODERA_CORE_API_BASE to the real Core base ending in /api/v1. Supply an authorized token through your own terminal session. The example is copied, never executed here.",
@@ -454,7 +454,7 @@
             "id": "contracts",
             "title": "Deux frontières API distinctes",
             "paragraphs": [
-              "Core API 0.44.0 est le contrat de la console client. Agent API 0.6.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.",
+              "Core API 0.44.1 est le contrat de la console client. Agent API 0.6.0 est celui de l’agent locataire ; ses opérations et son authentification constituent une frontière distincte. Les deux utilisent OpenAPI 3.1.",
               "La console utilise son transport Core authentifié. Elle n’appelle pas directement les fournisseurs d’identité, d’infrastructure ou les endpoints de contrôle locataires."
             ],
             "callout": "Renseignez KODERA_CORE_API_BASE avec la vraie base Core terminant par /api/v1. Fournissez un token autorisé via votre propre session terminal. Cet exemple est copié, jamais exécuté ici.",
