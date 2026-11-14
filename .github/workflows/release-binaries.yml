@@ -38,11 +38,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify release workflow policy gate
+      - name: Verify release workflow policy gate and bundler selftests
         if: matrix.target == 'linux'
         run: |
           python3 scripts/ci/check-release-workflow.py --selftest
           python3 scripts/ci/check-release-workflow.py
+          python3 scripts/ci/package-android-release.py --selftest
+          python3 scripts/ci/assemble-release-sbom.py --selftest
+          node scripts/ci/package-desktop-release.mjs --selftest
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -107,7 +110,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
-      - name: Build paired release APKs via Gradle assembleRelease
+      - name: Build paired release APKs and export resolved runtime Maven artifacts
         working-directory: apps/android
         run: |
           set -euo pipefail
@@ -123,8 +126,14 @@ jobs:
           second_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           test -n "$second_apk"
           cp "$second_apk" "$RUNNER_TEMP/second-release.apk"
+          ./gradlew --init-script ../../scripts/ci/export-android-runtime.init.gradle.kts \
+            :app:exportReleaseRuntimeArtifacts \
+            -PkoderaRuntimeArtifactsOut="$RUNNER_TEMP/android-runtime-artifacts.json" \
+            --no-configuration-cache \
+            --no-daemon
+          test -s "$RUNNER_TEMP/android-runtime-artifacts.json"
 
-      - name: Stage native packaging evidence and verify kodera-android.apk
+      - name: Stage native packaging evidence and verify reproducible unsigned candidate APKs
         env:
           EXPECTED_REVISION: ${{ github.sha }}
         run: |
@@ -132,8 +141,8 @@ jobs:
           python3 scripts/ci/package-android-release.py \
             --first-raw "$RUNNER_TEMP/first-release.apk" \
             --second-raw "$RUNNER_TEMP/second-release.apk" \
+            --resolved-artifacts-json "$RUNNER_TEMP/android-runtime-artifacts.json" \
             --candidate-dir candidate \
-            --out-apk dist-release/kodera-android.apk \
             --revision "$EXPECTED_REVISION"
           python3 scripts/ci/check-native-packaging.py \
             --first candidate/first/package.zip \
@@ -143,12 +152,86 @@ jobs:
             --toolchain candidate/toolchain-lock.json \
             --revision "$EXPECTED_REVISION" \
             --target android-apk
+
+      - name: Align, cryptographically sign, and verify kodera-android.apk
+        env:
+          ANDROID_SIGNING_KEYSTORE_B64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_B64 }}
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_FULL: ${{ github.ref }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/kodera-release.p12" "$RUNNER_TEMP/aligned.apk"' EXIT
+
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT/build-tools" ]; then
+            echo "::error::ANDROID_HOME/build-tools directory is missing on runner"
+            exit 1
+          fi
+          BUILD_TOOLS_DIR="$(find "$SDK_ROOT/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          if [ -z "$BUILD_TOOLS_DIR" ] || [ ! -x "$BUILD_TOOLS_DIR/zipalign" ] || [ ! -x "$BUILD_TOOLS_DIR/apksigner" ]; then
+            echo "::error::zipalign or apksigner missing under ANDROID_HOME/build-tools"
+            exit 1
+          fi
+          export PATH="$BUILD_TOOLS_DIR:$PATH"
+
+          if [ -n "${ANDROID_SIGNING_KEYSTORE_B64:-}" ]; then
+            if [ -z "${ANDROID_SIGNING_KEY_ALIAS:-}" ] || [ -z "${ANDROID_SIGNING_STORE_PASSWORD:-}" ]; then
+              echo "::error::ANDROID_SIGNING_KEY_ALIAS and ANDROID_SIGNING_STORE_PASSWORD must be configured alongside ANDROID_SIGNING_KEYSTORE_B64"
+              exit 1
+            fi
+            printf '%s' "$ANDROID_SIGNING_KEYSTORE_B64" | tr -d ' \t\r\n' | base64 --decode > "$RUNNER_TEMP/kodera-release.p12"
+            chmod 600 "$RUNNER_TEMP/kodera-release.p12"
+          else
+            if [ "$REF_TYPE" = "tag" ] || [ "$PUBLISH_RELEASE" = "true" ] || [[ "$REF_FULL" == refs/tags/* ]]; then
+              echo "::error::ANDROID_SIGNING_KEYSTORE_B64 is required for release tags and published releases"
+              exit 1
+            fi
+            export ANDROID_SIGNING_KEY_ALIAS="kodera-ci-dryrun"
+            export ANDROID_SIGNING_STORE_PASSWORD="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+            keytool -genkeypair \
+              -keystore "$RUNNER_TEMP/kodera-release.p12" \
+              -storetype PKCS12 \
+              -storepass:env ANDROID_SIGNING_STORE_PASSWORD \
+              -keypass:env ANDROID_SIGNING_STORE_PASSWORD \
+              -alias "$ANDROID_SIGNING_KEY_ALIAS" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 1 \
+              -dname "CN=Kodera CI Dry Run,O=Kodera"
+            chmod 600 "$RUNNER_TEMP/kodera-release.p12"
+          fi
+
+          mkdir -p dist-release
+          zipalign -p -f 4 candidate/first/package.zip "$RUNNER_TEMP/aligned.apk"
+          apksigner sign \
+            --ks "$RUNNER_TEMP/kodera-release.p12" \
+            --ks-type PKCS12 \
+            --ks-key-alias "$ANDROID_SIGNING_KEY_ALIAS" \
+            --ks-pass env:ANDROID_SIGNING_STORE_PASSWORD \
+            --key-pass env:ANDROID_SIGNING_STORE_PASSWORD \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --out dist-release/kodera-android.apk \
+            "$RUNNER_TEMP/aligned.apk"
+          apksigner verify --verbose --print-certs dist-release/kodera-android.apk
           test -s dist-release/kodera-android.apk
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-android
           path: dist-release/kodera-android.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-android-sbom
+          path: candidate/sbom.cdx.json
           if-no-files-found: error
           retention-days: 14
 
@@ -211,6 +294,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -236,7 +320,14 @@ jobs:
           name: release-android
           path: release-staging/android
 
-      - name: Normalize release asset filenames, generate CycloneDX SBOM and SHA256SUMS.txt
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-android-sbom
+          path: release-staging/android-sbom
+
+      - name: Normalize release asset filenames, assemble multi-ecosystem CycloneDX SBOM and SHA256SUMS.txt
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           mkdir -p release-bundle
@@ -249,8 +340,19 @@ jobs:
           cp release-staging/android/kodera-android.apk release-bundle/kodera-android.apk
 
           npm sbom --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root \
-            > release-bundle/sbom-cyclonedx.json
-          python3 -c 'import json; d = json.load(open("release-bundle/sbom-cyclonedx.json")); assert d.get("bomFormat") == "CycloneDX"; assert len(d.get("components", [])) > 0'
+            > "$RUNNER_TEMP/npm-sbom.cdx.json"
+          if ! command -v cargo >/dev/null 2>&1; then
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+          fi
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          python3 scripts/ci/assemble-release-sbom.py \
+            --npm-sbom "$RUNNER_TEMP/npm-sbom.cdx.json" \
+            --cargo-lock Cargo.lock \
+            --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" \
+            --android-sbom release-staging/android-sbom/sbom.cdx.json \
+            --revision "$EXPECTED_REVISION" \
+            --out release-bundle/sbom-cyclonedx.json
 
           (
             cd release-bundle

@@ -843,6 +843,16 @@ impl DesktopWebViewBridge {
         self.host.clear_active_session();
     }
 
+    /// Replaces the local `docker` CLI runner on the active host session (deterministic test seam).
+    pub fn configure_community_runner(
+        &mut self,
+        organisation_id: &str,
+        runner: std::sync::Arc<dyn crate::CommunityCommandRunner>,
+    ) -> bool {
+        self.host
+            .configure_community_runner(organisation_id, runner)
+    }
+
     /// Dispatches an admitted `kodera://` or `matrix:` deep link to active WebView listeners, or
     /// buffers it (bounded) until the web shell registers its `'kodera://deep-link'` listener.
     pub fn enqueue_deep_link(&mut self, admitted: AdmittedDeepLink) -> Vec<String> {
@@ -2221,5 +2231,311 @@ mod tests {
                 &payload
             )]
         );
+    }
+
+    #[test]
+    fn webview_ipc_bridge_routes_community_wizard_deploy_lifecycle_without_leaking_secrets() {
+        use crate::{CommandExecOutput, CommunityCommandRunner, DockerUnavailableReason};
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        struct ScriptedRunner {
+            outputs: Mutex<VecDeque<CommandExecOutput>>,
+        }
+
+        impl CommunityCommandRunner for ScriptedRunner {
+            fn run_argv(
+                &self,
+                program: &str,
+                _args: &[String],
+                _working_dir: Option<&Path>,
+                _timeout: Duration,
+            ) -> Result<CommandExecOutput, DockerUnavailableReason> {
+                assert_eq!(program, "docker");
+                Ok(self
+                    .outputs
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or(CommandExecOutput {
+                        status_code: Some(0),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        timed_out: false,
+                    }))
+            }
+
+            fn poll_backoff(&self) -> Duration {
+                Duration::ZERO
+            }
+        }
+
+        let scratch = ScopedTempDir::new("wizard-webview-ipc");
+        let stack_dir = scratch.path().join("community");
+        fs::create_dir_all(&stack_dir).unwrap();
+        fs::write(
+            stack_dir.join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:17.6-alpine\n",
+        )
+        .unwrap();
+        let stack_dir_str = stack_dir.to_str().unwrap();
+
+        let healthy_ps = r#"[
+            {"Service":"keycloak","State":"running","Health":"healthy","MemoryMiB":256},
+            {"Service":"db","State":"running","Health":"healthy","MemoryMiB":192},
+            {"Service":"synapse","State":"running","Health":"healthy","KoderaPolicy":"0.1.4","MemoryMiB":420},
+            {"Service":"server","State":"running","Health":"healthy","MemoryMiB":220},
+            {"Service":"web","State":"running","Health":"healthy","MemoryMiB":64},
+            {"Service":"livekit","State":"running","Health":"healthy","MemoryMiB":128}
+        ]"#;
+
+        let runner = Arc::new(ScriptedRunner {
+            outputs: Mutex::new(VecDeque::from([
+                CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: "Docker version 28.1.0, build 4d8c241\n".to_owned(),
+                    stderr: String::new(),
+                    timed_out: false,
+                },
+                CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: "Docker Compose version v2.36.0\n".to_owned(),
+                    stderr: String::new(),
+                    timed_out: false,
+                },
+                CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    timed_out: false,
+                },
+                CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    timed_out: false,
+                },
+                CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: healthy_ps.to_owned(),
+                    stderr: String::new(),
+                    timed_out: false,
+                },
+            ])),
+        });
+
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        let doc_id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let cap = bridge.document_capability.clone().unwrap();
+
+        // Untrusted and auth-realm sender frames are refused before touching disk or session state.
+        let untrusted_prepare = format!(
+            "{doc_id}:0:{cap}:1\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        for refused_sender in [
+            "https://evil.example/wizard",
+            "https://auth.kodera.io/realms/kodera-staff/account",
+        ] {
+            assert_eq!(
+                bridge.handle_ipc_request(refused_sender, &untrusted_prepare),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
+        assert!(!stack_dir.join(".env").exists());
+
+        // Initialize session and attach deterministic mock runner.
+        let init_msg = format!("{doc_id}:0:{cap}:2\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
+        let init_out = bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &init_msg)
+            .unwrap();
+        assert!(init_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(2, true,"));
+        assert!(bridge.configure_community_runner(ORG, runner));
+
+        // 1. Preflight
+        let preflight_msg = format!(
+            "{doc_id}:0:{cap}:3\tself_host_preflight_community\n{{\"command\":\"self_host_preflight_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"Chat.Example.org\",\"acme_email\":\"ops@example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        let preflight_out = bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &preflight_msg)
+            .unwrap();
+        assert!(preflight_out.eval_scripts[0].contains("__KODERA_IPC_RESOLVE__(3, true,"));
+        assert!(preflight_out.eval_scripts[0].contains(r#""type":"community_preflight""#));
+        assert!(preflight_out.eval_scripts[0].contains(r#""normalized_domain":"chat.example.org""#));
+        assert!(preflight_out.eval_scripts[0].contains(r#""matrix_base_domain":"example.org""#));
+
+        // 2. Prepare (.env rendered with CSPRNG secrets; zero secret values returned over WebView IPC)
+        let prepare_msg = format!(
+            "{doc_id}:0:{cap}:4\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"Chat.Example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        let prepare_out = bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &prepare_msg)
+            .unwrap();
+        let prepare_js = &prepare_out.eval_scripts[0];
+        assert!(prepare_js.contains("__KODERA_IPC_RESOLVE__(4, true,"));
+        assert!(prepare_js.contains(r#""type":"community_prepare""#));
+        assert!(prepare_js.contains(r#""env_file_written":true"#));
+        assert!(prepare_js.contains(r#""compose_config_valid":true"#));
+
+        let env_raw = fs::read_to_string(stack_dir.join(".env")).unwrap();
+        for expected_key in [
+            "POSTGRES_PASSWORD=",
+            "DJANGO_SECRET_KEY=",
+            "LIVEKIT_API_SECRET=",
+            "KEYCLOAK_ADMIN_PASSWORD=",
+        ] {
+            let generated_val = env_raw
+                .lines()
+                .find_map(|line| line.strip_prefix(expected_key))
+                .expect("expected generated entry in .env");
+            assert!(generated_val.len() >= 32);
+            assert!(
+                !prepare_js.contains(generated_val),
+                "WebView IPC reply must never include generated .env value"
+            );
+        }
+
+        // 3. Deploy & verify readiness
+        let deploy_msg = format!(
+            "{doc_id}:0:{cap}:5\tself_host_deploy_community\n{{\"command\":\"self_host_deploy_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"timeout_ms\":5000}}"
+        );
+        let deploy_out = bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &deploy_msg)
+            .unwrap();
+        let deploy_js = &deploy_out.eval_scripts[0];
+        assert!(deploy_js.contains("__KODERA_IPC_RESOLVE__(5, true,"));
+        assert!(deploy_js.contains(r#""type":"community_deploy""#));
+        assert!(deploy_js.contains(r#""stack_healthy":true"#));
+        assert!(deploy_js.contains(r#""state":"healthy""#));
+    }
+
+    #[test]
+    fn departing_same_origin_document_envelope_after_navigation_cannot_invoke_community_deploy_or_resolve(
+    ) {
+        use crate::{CommandExecOutput, CommunityCommandRunner, DockerUnavailableReason};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use std::time::Duration;
+
+        struct CountingRunner {
+            invocations: AtomicUsize,
+        }
+
+        impl CommunityCommandRunner for CountingRunner {
+            fn run_argv(
+                &self,
+                program: &str,
+                _args: &[String],
+                _working_dir: Option<&Path>,
+                _timeout: Duration,
+            ) -> Result<CommandExecOutput, DockerUnavailableReason> {
+                assert_eq!(program, "docker");
+                self.invocations.fetch_add(1, Ordering::SeqCst);
+                Ok(CommandExecOutput {
+                    status_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    timed_out: false,
+                })
+            }
+
+            fn poll_backoff(&self) -> Duration {
+                Duration::ZERO
+            }
+        }
+
+        let scratch = ScopedTempDir::new("departing-doc-community");
+        let stack_dir = scratch.path().join("community");
+        fs::create_dir_all(&stack_dir).unwrap();
+        fs::write(
+            stack_dir.join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:17.6-alpine\n",
+        )
+        .unwrap();
+        let stack_dir_str = stack_dir.to_str().unwrap();
+
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.begin_document(1);
+        let old_doc = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let old_cap = bridge.document_capability.clone().unwrap();
+
+        // Departing Document A initializes its session on https://app.kodera.io/self-host.
+        let init_old =
+            format!("{old_doc}:1:{old_cap}:1\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
+        bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &init_old)
+            .unwrap();
+
+        // Envelopes prepared by Document A before navigation (including a forged/sampled gen=2 case).
+        let stale_prepare_gen1 = format!(
+            "{old_doc}:1:{old_cap}:2\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        let stale_prepare_gen2 = format!(
+            "{old_doc}:2:{old_cap}:2\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        let stale_deploy_gen2 = format!(
+            "{old_doc}:2:{old_cap}:3\tself_host_deploy_community\n{{\"command\":\"self_host_deploy_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"timeout_ms\":5000}}"
+        );
+
+        // Same-origin reload/navigation advances to generation 2 and rotates the 256-bit capability.
+        bridge.begin_document(2);
+        let new_doc = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let new_cap = bridge.document_capability.clone().unwrap();
+        assert_ne!(new_cap, old_cap);
+
+        // Late delivery from Document A BEFORE Document B binds `document_id` must be refused with zero side effects.
+        for late_msg in [&stale_prepare_gen1, &stale_prepare_gen2, &stale_deploy_gen2] {
+            assert_eq!(
+                bridge.handle_ipc_request("https://app.kodera.io/self-host", late_msg),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
+        assert!(bridge.document_id.is_none());
+        assert!(!stack_dir.join(".env").exists());
+
+        // Document B activates on the same admitted origin and provisions an active session + runner.
+        let hello_new = bridge
+            .handle_ipc_request(
+                "https://app.kodera.io/self-host",
+                &format!("{new_doc}:hello\t__document_generation\n{{}}"),
+            )
+            .unwrap();
+        assert!(hello_new.eval_scripts[0].contains(&format!(
+            "if (window.__KODERA_DOCUMENT_ID__ === \"{new_doc}\")"
+        )));
+        let init_new =
+            format!("{new_doc}:2:{new_cap}:1\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
+        bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &init_new)
+            .unwrap();
+        let counting_runner = Arc::new(CountingRunner {
+            invocations: AtomicUsize::new(0),
+        });
+        assert!(bridge.configure_community_runner(ORG, counting_runner.clone()));
+
+        // Late delivery from Document A AFTER Document B's session is live must STILL be refused without running docker or writing .env.
+        for late_msg in [&stale_prepare_gen1, &stale_prepare_gen2, &stale_deploy_gen2] {
+            assert_eq!(
+                bridge.handle_ipc_request("https://app.kodera.io/self-host", late_msg),
+                Err(WebViewIpcError::UntrustedSenderOrigin)
+            );
+        }
+        assert_eq!(counting_runner.invocations.load(Ordering::SeqCst), 0);
+        assert!(!stack_dir.join(".env").exists());
+
+        // Document B's own `self_host_prepare_community` succeeds and scopes its reply strictly to `new_doc`.
+        let valid_prepare = format!(
+            "{new_doc}:2:{new_cap}:2\tself_host_prepare_community\n{{\"command\":\"self_host_prepare_community\",\"organisation_id\":\"{ORG}\",\"stack_dir\":\"{stack_dir_str}\",\"domain\":\"chat.example.org\",\"acme_email\":\"ops@example.org\",\"oidc_provider_origin\":\"https://auth.example.org\",\"tls_mode\":\"acme\",\"http_port\":80,\"https_port\":443}}"
+        );
+        let valid_out = bridge
+            .handle_ipc_request("https://app.kodera.io/self-host", &valid_prepare)
+            .unwrap();
+        assert_eq!(counting_runner.invocations.load(Ordering::SeqCst), 1);
+        assert!(stack_dir.join(".env").exists());
+        assert!(valid_out.eval_scripts[0].starts_with(&format!(
+            "if (window.__KODERA_DOCUMENT_ID__ === \"{new_doc}\") {{"
+        )));
+        assert!(!valid_out.eval_scripts[0].contains(old_doc));
     }
 }

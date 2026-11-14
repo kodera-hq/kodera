@@ -299,6 +299,24 @@ impl DesktopShellHost {
         Ok(())
     }
 
+    /// Replaces the local `docker` CLI runner on the active workspace session (used by
+    /// deterministic adapter/integration tests). Returns `false` if no session is active or
+    /// `organisation_id` mismatches.
+    pub fn configure_community_runner(
+        &mut self,
+        organisation_id: &str,
+        runner: std::sync::Arc<dyn crate::CommunityCommandRunner>,
+    ) -> bool {
+        self.session
+            .as_mut()
+            .and_then(|session| {
+                session
+                    .configure_community_runner(organisation_id, runner)
+                    .ok()
+            })
+            .is_some()
+    }
+
     /// Processes a single JSON line from `--ipc-stdio`. Returns `(json_reply, should_quit)`.
     pub fn handle_stdio_line(&mut self, raw_line: &str) -> (String, bool) {
         let trimmed = raw_line.trim();
