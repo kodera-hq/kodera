@@ -120,6 +120,20 @@ def check(orchestrator: dict, area_docs: dict[str, dict]) -> list[str]:
             for step in http_job.get("steps", [])
         ):
             problems.append("server HTTP image acceptance must run both unmasked proofs")
+    coldstart = ((area_docs.get("ci-server.yml") or {}).get("jobs") or {}).get("community-coldstart")
+    if not isinstance(coldstart, dict):
+        problems.append("Community cold-start acceptance job is missing")
+    else:
+        if "if" in coldstart or coldstart.get("continue-on-error", False) is not False:
+            problems.append("Community cold-start acceptance must be mandatory")
+        required = {
+            "uv run --no-project --python 3.12 python -m unittest discover -s deploy/community -p test_coldstart_acceptance.py",
+            "uv run --no-project --python 3.12 python deploy/community/accept_coldstart.py",
+        }
+        admitted = {step.get("run") for step in coldstart.get("steps", [])
+                    if "if" not in step and step.get("continue-on-error", False) is False}
+        if not required <= admitted:
+            problems.append("Community cold-start acceptance requires both unmasked controller proofs")
     return problems
 
 
@@ -187,6 +201,18 @@ def selftest(root: Path) -> None:
     def skipped_http_job(o, a):
         a["ci-server.yml"]["jobs"]["http-image-acceptance"]["if"] = "false"
 
+    def missing_coldstart(o, a):
+        a["ci-server.yml"]["jobs"].pop("community-coldstart")
+
+    def soft_coldstart(o, a):
+        a["ci-server.yml"]["jobs"]["community-coldstart"]["continue-on-error"] = True
+
+    def skipped_coldstart(o, a):
+        a["ci-server.yml"]["jobs"]["community-coldstart"]["if"] = "false"
+
+    def masked_coldstart(o, a):
+        a["ci-server.yml"]["jobs"]["community-coldstart"]["steps"][-1]["run"] += " || true"
+
     def native_proof_step(o):
         return next(step for step in o["jobs"]["plan"]["steps"]
                     if "check-native-packaging.selftest.py" in str(step.get("run", "")))
@@ -203,6 +229,10 @@ def selftest(root: Path) -> None:
         native_proof_step(o)["if"] = "false"
 
     cases = [
+        (missing_coldstart, "Community cold-start acceptance job is missing"),
+        (soft_coldstart, "Community cold-start acceptance must be mandatory"),
+        (skipped_coldstart, "Community cold-start acceptance must be mandatory"),
+        (masked_coldstart, "Community cold-start acceptance requires both unmasked controller proofs"),
         (missing_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
         (masked_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
         (skipped_native_proof, "native packaging and workflow refusal proofs must be mandatory"),
