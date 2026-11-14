@@ -49,10 +49,11 @@ pub use deeplink::{
 };
 pub use gui::{
     build_ipc_init_script, launch_desktop_gui, resolve_asset_response, validate_navigation_url,
-    AssetHttpPayload, DesktopGuiOptions, DesktopWebViewBridge, GuiWindowAction, NavigationDecision,
-    NavigationGuardError, WebViewIpcError, WebViewIpcOutcome, APPROVED_AUTH_ORIGIN_PREFIX,
-    APPROVED_DEV_ORIGINS, APPROVED_WEB_APP_ORIGINS, CUSTOM_ASSET_SCHEME, DESKTOP_WINDOW_TITLE,
-    GUI_DEFAULT_HEIGHT, GUI_DEFAULT_WIDTH, GUI_MIN_HEIGHT, GUI_MIN_WIDTH,
+    validate_privileged_ipc_sender, AssetHttpPayload, DesktopGuiOptions, DesktopWebViewBridge,
+    GuiWindowAction, NavigationDecision, NavigationGuardError, WebViewIpcError, WebViewIpcOutcome,
+    APPROVED_AUTH_ORIGIN_PREFIX, APPROVED_DEV_ORIGINS, APPROVED_STAGING_AUTH_ORIGIN_PREFIX,
+    APPROVED_WEB_APP_ORIGINS, CUSTOM_ASSET_SCHEME, DESKTOP_WINDOW_TITLE, GUI_DEFAULT_HEIGHT,
+    GUI_DEFAULT_WIDTH, GUI_MIN_HEIGHT, GUI_MIN_WIDTH,
 };
 pub use keychain::{
     build_keychain_slot, metadata_exposes_secret, validate_keychain_account_id,

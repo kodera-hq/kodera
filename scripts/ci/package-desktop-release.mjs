@@ -38,6 +38,10 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  WEB_RESOURCE_STAGE_PATHS,
+  stagePackagedWebAssets,
+} from '../../apps/desktop/scripts/desktop-cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..', '..');
@@ -460,9 +464,7 @@ function packageMacosHost(conf, outDir) {
 
     writeFileSync(join(appDir, 'Contents', 'Info.plist'), renderMacosInfoPlist(conf), 'utf8');
     copyFileSync(join(tauriDir, 'icons', 'icon.icns'), join(resourcesDir, 'icon.icns'));
-    if (existsSync(webDistDir)) {
-      cpSync(webDistDir, join(resourcesDir, 'web'), { recursive: true });
-    }
+    stagePackagedWebAssets('macos', appDir, webDistDir);
 
     const appTarGz = join(outDir, 'kodera-desktop-macos-universal.app.tar.gz');
     runChecked('tar', ['-czf', appTarGz, '-C', scratch, 'Kodera.app']);
@@ -539,11 +541,7 @@ function packageLinuxHost(conf, outDir) {
       join(tauriDir, 'icons', '128x128.png'),
       join(debRoot, 'usr', 'share', 'icons', 'hicolor', '128x128', 'apps', 'kodera-desktop.png'),
     );
-    if (existsSync(webDistDir)) {
-      cpSync(webDistDir, join(debRoot, 'usr', 'share', 'kodera-desktop', 'web'), {
-        recursive: true,
-      });
-    }
+    stagePackagedWebAssets('linux', debRoot, webDistDir);
 
     const debOut = join(outDir, 'kodera-desktop-linux-amd64.deb');
     runChecked('dpkg-deb', ['--root-owner-group', '--build', debRoot, debOut]);
@@ -571,11 +569,7 @@ function packageLinuxHost(conf, outDir) {
     chmodSync(join(appDir, 'AppRun'), 0o755);
     writeFileSync(join(appDir, 'kodera-desktop.desktop'), desktopEntry, 'utf8');
     copyFileSync(join(tauriDir, 'icons', '128x128.png'), join(appDir, 'kodera-desktop.png'));
-    if (existsSync(webDistDir)) {
-      cpSync(webDistDir, join(appDir, 'usr', 'share', 'kodera-desktop', 'web'), {
-        recursive: true,
-      });
-    }
+    stagePackagedWebAssets('linux', appDir, webDistDir);
 
     const appDirArchive = join(scratch, 'appdir.tar.gz');
     runChecked('tar', ['-czf', appDirArchive, '-C', appDir, '.']);
@@ -789,24 +783,69 @@ function runSelftest() {
 
   const scratch = mkdtempSync(join(tmpdir(), 'kodera-pkg-selftest-'));
   try {
-    // 1. Verify miniature AppImage execution & guaranteed $TMPDIR cleanup on both 0 and non-zero exits.
+    // Prepare realistic built SPA fixture with hashed JS/CSS assets outside the repo checkout.
+    const spaSource = join(scratch, 'spa-dist-fixture');
+    mkdirSync(join(spaSource, 'assets'), { recursive: true });
+    const fixtureHtml =
+      '<!doctype html><html><head><link rel="stylesheet" href="/assets/index-C4p1L8nR.css"><script type="module" src="/assets/index-B7x9K2mQ.js"></script></head><body><div id="root"></div></body></html>';
+    const fixtureJs = 'export const KODERA_SPA_BUNDLE = "hashed-release-module-ok";\n';
+    const fixtureCss = ':root { color: var(--text-primary); }\n';
+    writeFileSync(join(spaSource, 'index.html'), fixtureHtml, 'utf8');
+    writeFileSync(join(spaSource, 'assets', 'index-B7x9K2mQ.js'), fixtureJs, 'utf8');
+    writeFileSync(join(spaSource, 'assets', 'index-C4p1L8nR.css'), fixtureCss, 'utf8');
+
+    // Verify `stagePackagedWebAssets` across macOS, Linux, and Windows bundle layouts without
+    // any checkout fallback or KODERA_DESKTOP_DIST_DIR override.
+    const guiRelCandidates = [
+      '../Resources/web',
+      '../Resources/dist',
+      '../share/kodera-desktop/web',
+      '../share/kodera-desktop/dist',
+      '../lib/Kodera/web',
+      '../lib/kodera-desktop/web',
+      'web',
+      'dist',
+    ];
+    for (const target of /** @type {const} */ (['macos', 'linux', 'windows'])) {
+      const bundleStage = join(scratch, `bundle-${target}`, WEB_RESOURCE_STAGE_PATHS[target].bundleRoot);
+      const staged = stagePackagedWebAssets(target, bundleStage, spaSource);
+      mkdirSync(dirname(staged.executablePath), { recursive: true });
+      writeFileSync(staged.executablePath, 'binary-stub', 'utf8');
+
+      const exeDir = dirname(staged.executablePath);
+      const discovered = guiRelCandidates
+        .map((rel) => resolve(exeDir, rel))
+        .find((candidate) => existsSync(join(candidate, 'index.html')));
+      assert.ok(discovered, `gui.rs relative lookup failed to discover staged web dir for ${target}`);
+      assert.equal(realpathSync(discovered), realpathSync(staged.stagedWebDir));
+      assert.equal(readFileSync(join(discovered, 'index.html'), 'utf8'), fixtureHtml);
+      assert.equal(
+        readFileSync(join(discovered, 'assets', 'index-B7x9K2mQ.js'), 'utf8'),
+        fixtureJs,
+      );
+      // SPA route resolution (`/channels/general` -> no extension -> `index.html`) + missing hashed chunk 404.
+      const spaRouteSeg = '/channels/general'.split('/').pop() ?? '';
+      assert.equal(spaRouteSeg.includes('.'), false);
+      assert.equal(existsSync(join(discovered, 'index.html')), true);
+      assert.equal(existsSync(join(discovered, 'assets', 'absent-0000.js')), false);
+    }
+
+    // 1. Verify miniature AppImage execution from outside the checkout & guaranteed $TMPDIR cleanup.
     if (process.platform !== 'win32') {
       const isolatedTmp = join(scratch, 'isolated-tmp');
       mkdirSync(isolatedTmp, { recursive: true });
       const miniAppDir = join(scratch, 'Mini.AppDir');
       mkdirSync(join(miniAppDir, 'usr', 'bin'), { recursive: true });
-      mkdirSync(join(miniAppDir, 'usr', 'share', 'kodera-desktop', 'web'), { recursive: true });
-      writeFileSync(
-        join(miniAppDir, 'usr', 'share', 'kodera-desktop', 'web', 'index.html'),
-        '<!doctype html><title>Kodera</title>',
-        'utf8',
-      );
+      stagePackagedWebAssets('linux', miniAppDir, spaSource);
       const dummyBin = join(miniAppDir, 'usr', 'bin', 'kodera-desktop');
       writeFileSync(
         dummyBin,
         [
           '#!/bin/sh',
-          'printf "%s|%s|%s" "$APPDIR" "$KODERA_DESKTOP_DIST_DIR" "${1:-none}"',
+          'set -eu',
+          'test -f "$APPDIR/usr/share/kodera-desktop/web/index.html"',
+          'JS_CONTENT="$(cat "$APPDIR/usr/share/kodera-desktop/web/assets/index-B7x9K2mQ.js")"',
+          'printf "%s|%s|%s|%s" "$APPDIR" "$KODERA_DESKTOP_DIST_DIR" "$JS_CONTENT" "${1:-none}"',
           'if [ "${1:-}" = "fail-7" ]; then exit 7; fi',
           'exit 0',
           '',
@@ -821,12 +860,17 @@ function runSelftest() {
       writeFileSync(miniAppImage, buildSelfExtractingAppImage(readFileSync(miniTarGz)));
       chmodSync(miniAppImage, 0o755);
 
+      const cleanEnv = { ...process.env, TMPDIR: isolatedTmp };
+      delete cleanEnv.KODERA_DESKTOP_DIST_DIR;
+
       const okRun = spawnSync(miniAppImage, ['hello-ok'], {
-        env: { ...process.env, TMPDIR: isolatedTmp, KODERA_DESKTOP_DIST_DIR: '' },
+        cwd: isolatedTmp,
+        env: cleanEnv,
         encoding: 'utf8',
       });
       assert.equal(okRun.status, 0, `expected exit 0, got ${String(okRun.status)}: ${okRun.stderr}`);
-      assert.match(okRun.stdout, /kodera-appimage\..*\|.*\/usr\/share\/kodera-desktop\/web\|hello-ok/u);
+      assert.match(okRun.stdout, /kodera-appimage\..*\|.*\/usr\/share\/kodera-desktop\/web\|/u);
+      assert.match(okRun.stdout, /hashed-release-module-ok/u);
       assert.deepEqual(
         readdirSync(isolatedTmp).filter((name) => name.startsWith('kodera-appimage.')),
         [],
@@ -834,7 +878,8 @@ function runSelftest() {
       );
 
       const failRun = spawnSync(miniAppImage, ['fail-7'], {
-        env: { ...process.env, TMPDIR: isolatedTmp, KODERA_DESKTOP_DIST_DIR: '' },
+        cwd: isolatedTmp,
+        env: cleanEnv,
         encoding: 'utf8',
       });
       assert.equal(failRun.status, 7, 'AppImage launcher must preserve child non-zero exit status');

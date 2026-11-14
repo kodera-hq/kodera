@@ -81,6 +81,72 @@ function verifyCompanionSurface(surface) {
   }
 }
 
+function extractRustCssLiterals(prodRustSource) {
+  const blocks = [];
+  const rawNamedCss = /const\s+[A-Z0-9_]*CSS[A-Z0-9_]*\s*:\s*&str\s*=\s*r(#*)"([\s\S]*?)"\1\s*;/gu;
+  for (const match of prodRustSource.matchAll(rawNamedCss)) {
+    blocks.push(match[2]);
+  }
+  const quotedNamedCss = /const\s+[A-Z0-9_]*CSS[A-Z0-9_]*\s*:\s*&str\s*=\s*"((?:\\.|[^"\\])*)"\s*;/gu;
+  for (const match of prodRustSource.matchAll(quotedNamedCss)) {
+    blocks.push(match[1]);
+  }
+  const genericRawStrings = /r(#+)"([\s\S]*?)"\1/gu;
+  for (const match of prodRustSource.matchAll(genericRawStrings)) {
+    const candidate = match[2];
+    if (
+      !blocks.includes(candidate)
+      && /(?:^|\n)\s*(?::root|body|\.[a-z][\w-]*)\s*\{[\s\S]*?(?:background|color|font-family|padding|border-radius)\s*:/iu.test(candidate)
+    ) {
+      blocks.push(candidate);
+    }
+  }
+  return blocks;
+}
+
+const EMBEDDED_STYLE_RULES = [
+  [/#[0-9a-f]{3,8}\b/iu, 'embedded CSS contains raw hex color literal'],
+  [/\b(?:rgba?|hsla?|oklch|oklab|color-mix)\s*\(/iu, 'embedded CSS contains raw color function'],
+  [/font-family\s*:(?!\s*var\(--)\s*[^;}]+/iu, 'embedded CSS contains hardcoded font-family'],
+  [/\b\d+(?:\.\d+)?px\b/iu, 'embedded CSS contains raw px literal instead of design token'],
+];
+
+function verifyRustEmbeddedUiStyles(surface) {
+  const guiSource = surface.get('src/gui.rs');
+  assert.equal(typeof guiSource, 'string', 'src/gui.rs must be present in desktop surface');
+  assert.match(
+    guiSource,
+    /include_str!\(\s*"\.\.\/\.\.\/\.\.\/\.\.\/packages\/design-tokens\/dist\/tokens\.css"\s*\)/u,
+    'src/gui.rs must embed @kodera/design-tokens dist/tokens.css',
+  );
+
+  let inspectedStylesheets = 0;
+  for (const [path, text] of surface) {
+    if (!path.startsWith('src/') || !path.endsWith('.rs')) {
+      continue;
+    }
+    const prodText = text.split('\n#[cfg(test)]')[0];
+    const inlineStyleTag = /<style\b/iu.exec(prodText);
+    assert.equal(
+      inlineStyleTag,
+      null,
+      `${path} contains inline <style> element; preserve style-src 'self' CSP`,
+    );
+    for (const css of extractRustCssLiterals(prodText)) {
+      inspectedStylesheets += 1;
+      for (const [pattern, diagnostic] of EMBEDDED_STYLE_RULES) {
+        const violation = pattern.exec(css);
+        assert.equal(
+          violation,
+          null,
+          `${path} ${diagnostic}: ${JSON.stringify(violation?.[0])}`,
+        );
+      }
+    }
+  }
+  assert.ok(inspectedStylesheets >= 1, 'must inspect at least one Rust-embedded UI stylesheet');
+}
+
 function verifyBundleIconBinaries() {
   const pngSig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   for (const rel of ['icons/32x32.png', 'icons/128x128.png', 'icons/128x128@2x.png', 'icons/icon.png']) {
@@ -121,6 +187,9 @@ function selftest() {
       config.app.security.csp = config.app.security.csp.replace("worker-src 'self' blob:;", '');
     }],
     ['invalid frontend distribution', /frontendDist must use/u, (config) => { config.build.frontendDist = '../untrusted'; }],
+    ['missing bundle resources', /bundle resources must stage/u, (config) => { delete config.bundle.resources; }],
+    ['wrong bundle resources target', /bundle resources must stage/u, (config) => { config.bundle.resources = { '../../web/dist/': 'wrong/' }; }],
+    ['extra unreviewed bundle resource', /bundle resources must stage/u, (config) => { config.bundle.resources['../../README.md'] = 'README.md'; }],
     ['missing capability selection', /default capability must be selected/u, (config) => { config.app.security.capabilities = []; }],
     ['missing capability file', /required file missing: capabilities\/default.json/u, (_config, availableFiles) => {
       availableFiles.delete('capabilities/default.json');
@@ -308,6 +377,50 @@ function selftest() {
   assert.throws(() => verifyCompanionSurface(new Map([['src/lib.rs', '']])), /companion surface must include/u,
     'selftest failed to reject an emptied companion surface');
   console.log(`OK — ${commercial.length + 1} in-memory commercial-surface mutations refused.`);
+
+  verifyRustEmbeddedUiStyles(surface);
+  const styleMutations = [
+    [
+      'raw hex color in BOOTSTRAP_CSS',
+      /src\/gui\.rs embedded CSS contains raw hex color literal: "#2563eb"/u,
+      (src) => src.replace('var(--action-primary)', '#2563eb'),
+    ],
+    [
+      'raw rgba color function in BOOTSTRAP_CSS',
+      /src\/gui\.rs embedded CSS contains raw color function: "rgba\("/u,
+      (src) => src.replace('var(--shadow-card)', '0 8px 20px rgba(15, 23, 42, 0.06)'),
+    ],
+    [
+      'hardcoded font-family in BOOTSTRAP_CSS',
+      /src\/gui\.rs embedded CSS contains hardcoded font-family/u,
+      (src) => src.replace('font-family: var(--font-sans);', 'font-family: "Plus Jakarta Sans", sans-serif;'),
+    ],
+    [
+      'raw px spacing literal in BOOTSTRAP_CSS',
+      /src\/gui\.rs embedded CSS contains raw px literal instead of design token: "32px"/u,
+      (src) => src.replace('padding: var(--sp-8);', 'padding: 32px;'),
+    ],
+    [
+      'inline <style> tag in BOOTSTRAP_INDEX_HTML',
+      /src\/gui\.rs contains inline <style> element/u,
+      (src) => src.replace('<link rel="stylesheet" href="/tokens.css" />', '<style>body{}</style>'),
+    ],
+    [
+      'missing @kodera/design-tokens include',
+      /src\/gui\.rs must embed @kodera\/design-tokens dist\/tokens\.css/u,
+      (src) => src.replace('../../../../packages/design-tokens/dist/tokens.css', './untracked.css'),
+    ],
+  ];
+  for (const [name, diagnostic, transform] of styleMutations) {
+    const mutated = new Map(surface);
+    mutated.set('src/gui.rs', transform(mutated.get('src/gui.rs')));
+    assert.throws(
+      () => verifyRustEmbeddedUiStyles(mutated),
+      diagnostic,
+      `selftest failed to reject ${name} for its own diagnostic`,
+    );
+  }
+  console.log(`OK — ${styleMutations.length} in-memory Rust UI style mutations refused.`);
 }
 
 function isDirectExecution(metaUrl, argv1 = process.argv[1]) {
@@ -321,8 +434,10 @@ if (isDirectExecution(import.meta.url)) {
   const args = process.argv.slice(2);
   assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--selftest'), 'usage: verify-config.mjs [--selftest]');
   if (args[0] === '--selftest') selftest();
+  const surface = companionSurface();
   verifyConfiguration(conf, files, capability);
   verifyBundleIconBinaries();
-  verifyCompanionSurface(companionSurface());
-  console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified; no commercial wording or billing destination.');
+  verifyCompanionSurface(surface);
+  verifyRustEmbeddedUiStyles(surface);
+  console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, design-token UI styles, and icons verified; no commercial wording or billing destination.');
 }

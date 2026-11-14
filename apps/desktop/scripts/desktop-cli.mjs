@@ -16,7 +16,16 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -24,6 +33,28 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(__dirname, '..');
 const tauriDir = join(desktopDir, 'src-tauri');
 const repoRoot = resolve(desktopDir, '..', '..');
+const defaultWebDistDir = join(repoRoot, 'apps', 'web', 'dist');
+
+export const WEB_RESOURCE_STAGE_PATHS = Object.freeze({
+  macos: Object.freeze({
+    bundleRoot: 'Kodera.app',
+    executableRelPath: 'Contents/MacOS/kodera-desktop',
+    webResourceRelPath: 'Contents/Resources/web',
+    guiLookupFromExeDir: '../Resources/web',
+  }),
+  linux: Object.freeze({
+    bundleRoot: 'linux-bundle',
+    executableRelPath: 'usr/bin/kodera-desktop',
+    webResourceRelPath: 'usr/share/kodera-desktop/web',
+    guiLookupFromExeDir: '../share/kodera-desktop/web',
+  }),
+  windows: Object.freeze({
+    bundleRoot: 'Kodera',
+    executableRelPath: 'kodera-desktop.exe',
+    webResourceRelPath: 'web',
+    guiLookupFromExeDir: 'web',
+  }),
+});
 
 const OS_TARGETS = Object.freeze({
   macos: {
@@ -96,6 +127,11 @@ export function buildPackagingPlan(target, env = process.env) {
     expectedArtifacts: spec.expectedArtifacts.map((item) =>
       item.replaceAll('0.1.0', String(conf.version)),
     ),
+    webResourceStage: {
+      sourceFrontendDist: conf.build?.frontendDist ?? null,
+      tauriBundleResources: conf.bundle?.resources ?? null,
+      ...WEB_RESOURCE_STAGE_PATHS[target],
+    },
     signing: {
       fullyConfigured: missingKeys.length === 0,
       presentEnvKeys: presentKeys,
@@ -151,6 +187,66 @@ function runSecurityPreflight() {
   });
   if (confCheck.status !== 0) {
     process.exit(confCheck.status ?? 1);
+  }
+}
+
+function resolveCargoTargetDir(env = process.env) {
+  if (typeof env.CARGO_TARGET_DIR === 'string' && env.CARGO_TARGET_DIR.trim().length > 0) {
+    return resolve(repoRoot, env.CARGO_TARGET_DIR.trim());
+  }
+  return join(repoRoot, 'target');
+}
+
+/**
+ * Stages built `@kodera/web` frontend assets (`index.html` + hashed JS/CSS chunks) into the exact
+ * OS bundle filesystem location expected by `apps/desktop/src-tauri/src/gui.rs`.
+ *
+ * @param {'macos' | 'linux' | 'windows'} target
+ * @param {string} bundleStageDir
+ * @param {string} [sourceWebDistDir]
+ */
+export function stagePackagedWebAssets(
+  target,
+  bundleStageDir,
+  sourceWebDistDir = defaultWebDistDir,
+) {
+  if (!Object.hasOwn(WEB_RESOURCE_STAGE_PATHS, target)) {
+    throw new RangeError(`unsupported_package_target:${target}`);
+  }
+  const indexHtml = join(sourceWebDistDir, 'index.html');
+  if (!existsSync(indexHtml)) {
+    throw new Error('missing_web_dist_index_html');
+  }
+  const layout = WEB_RESOURCE_STAGE_PATHS[target];
+  const stagedWebDir = join(bundleStageDir, layout.webResourceRelPath);
+  rmSync(stagedWebDir, { recursive: true, force: true });
+  mkdirSync(dirname(stagedWebDir), { recursive: true });
+  cpSync(sourceWebDistDir, stagedWebDir, { recursive: true });
+  if (!existsSync(join(stagedWebDir, 'index.html'))) {
+    throw new Error('failed_to_stage_web_dist_index_html');
+  }
+  return {
+    target,
+    bundleStageDir,
+    stagedWebDir,
+    webResourceRelPath: layout.webResourceRelPath,
+    executablePath: join(bundleStageDir, layout.executableRelPath),
+    guiLookupFromExeDir: layout.guiLookupFromExeDir,
+  };
+}
+
+function ensureWebFrontendBuilt(sourceWebDistDir = defaultWebDistDir) {
+  if (existsSync(join(sourceWebDistDir, 'index.html'))) {
+    return;
+  }
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const buildRes = spawnSync(npmCmd, ['--workspace', '@kodera/web', 'run', 'build'], {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    env: process.env,
+  });
+  if (buildRes.status !== 0 || !existsSync(join(sourceWebDistDir, 'index.html'))) {
+    process.exit(buildRes.status || 1);
   }
 }
 
@@ -227,6 +323,7 @@ export function runCli(argv = process.argv.slice(2)) {
       console.log(JSON.stringify(plan, null, 2));
       return 0;
     }
+    ensureWebFrontendBuilt();
     const tauriBin = resolveTauriBinary();
     if (tauriBin) {
       const res = spawnSync(tauriBin, ['build', '--bundles', plan.bundles.join(',')], {
@@ -237,7 +334,30 @@ export function runCli(argv = process.argv.slice(2)) {
       return res.status ?? 0;
     }
     runCargoCommand(plan.commands.hostCargoBuild.slice(1));
-    console.log(JSON.stringify({ stagedHostBinary: true, plan }, null, 2));
+    const targetDir = resolveCargoTargetDir(process.env);
+    const builtExeName = process.platform === 'win32' ? 'kodera-desktop.exe' : 'kodera-desktop';
+    const builtBinPath = join(targetDir, 'release', builtExeName);
+    const layout = WEB_RESOURCE_STAGE_PATHS[rawTarget];
+    const bundleStageDir = join(targetDir, 'desktop-stage', rawTarget, layout.bundleRoot);
+    const stagedExePath = join(bundleStageDir, layout.executableRelPath);
+    mkdirSync(dirname(stagedExePath), { recursive: true });
+    copyFileSync(builtBinPath, stagedExePath);
+    if (process.platform !== 'win32') {
+      chmodSync(stagedExePath, 0o755);
+    }
+    const staged = stagePackagedWebAssets(rawTarget, bundleStageDir);
+    console.log(
+      JSON.stringify(
+        {
+          stagedHostBinary: true,
+          executablePath: staged.executablePath,
+          stagedWebDir: staged.stagedWebDir,
+          plan,
+        },
+        null,
+        2,
+      ),
+    );
     return 0;
   }
 

@@ -365,7 +365,7 @@ export function createDesktopClient(options = {}) {
         await internals.invoke('check_app_updates', {})
       );
       return {
-        supported: true,
+        supported: Boolean(response?.supported),
         updateAvailable: Boolean(response?.updateAvailable),
         currentVersion: typeof response?.currentVersion === 'string' ? response.currentVersion : DESKTOP_APP_VERSION,
         latestVersion: typeof response?.latestVersion === 'string' ? response.latestVersion : null,

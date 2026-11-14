@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 
 import {
   APPROVED_CAPABILITY_PERMISSIONS,
@@ -20,7 +29,11 @@ import {
   validateClientDeepLinkUri,
   validateTauriSecurityInvariants,
 } from '../src/index.mjs';
-import { buildPackagingPlan, runCli as runDesktopCli } from '../scripts/desktop-cli.mjs';
+import {
+  buildPackagingPlan,
+  runCli as runDesktopCli,
+  stagePackagedWebAssets,
+} from '../scripts/desktop-cli.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(__dirname, '..');
@@ -160,6 +173,8 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   const callbacks = new Map();
   let cbSeq = 10;
 
+  let updaterSupported = false;
+
   const mockTauriGlobal = {
     __TAURI_INTERNALS__: {
       transformCallback(fn) {
@@ -179,12 +194,21 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
               updateAvailable: true,
             };
           case 'check_app_updates':
-            return {
-              updateAvailable: true,
-              currentVersion: '0.1.0',
-              latestVersion: '0.1.1',
-              channel: 'stable',
-            };
+            return updaterSupported
+              ? {
+                  supported: true,
+                  updateAvailable: true,
+                  currentVersion: '0.1.0',
+                  latestVersion: '0.1.1',
+                  channel: 'stable',
+                }
+              : {
+                  supported: false,
+                  updateAvailable: false,
+                  currentVersion: '0.1.0',
+                  latestVersion: null,
+                  channel: 'stable',
+                };
           case 'plugin:event|listen':
             return 77;
           case 'plugin:event|unlisten':
@@ -221,6 +245,12 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   assert.equal(meta.isNativeDesktop, true);
   assert.equal(meta.updateAvailable, true);
 
+  const unsupportedUpdateInfo = await client.checkForAppUpdates();
+  assert.equal(unsupportedUpdateInfo.supported, false);
+  assert.equal(unsupportedUpdateInfo.updateAvailable, false);
+  assert.equal(unsupportedUpdateInfo.latestVersion, null);
+
+  updaterSupported = true;
   const updateInfo = await client.checkForAppUpdates();
   assert.equal(updateInfo.supported, true);
   assert.equal(updateInfo.latestVersion, '0.1.1');
@@ -804,5 +834,126 @@ test('.env.example documents code-signing variables with blank/safe values and C
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
+  }
+});
+
+test('IPC_INIT_SCRIPT skips OIDC /realms/ origins, cancels pending invokes on pagehide, and desktop-cli stages web assets', async () => {
+  const guiRust = readFileSync(join(tauriDir, 'src', 'gui.rs'), 'utf8');
+  const scriptMatch = /const\s+IPC_INIT_SCRIPT\s*:\s*&str\s*=\s*r#"([\s\S]*?)"#;/u.exec(guiRust);
+  assert.notEqual(scriptMatch, null, 'gui.rs must define IPC_INIT_SCRIPT');
+  const initScript = scriptMatch?.[1] ?? '';
+
+  function createVmWindow(urlString) {
+    const parsed = new URL(urlString);
+    /** @type {Map<string, Array<() => void>>} */
+    const listeners = new Map();
+    /** @type {string[]} */
+    const posted = [];
+    const win = {
+      location: {
+        protocol: parsed.protocol,
+        host: parsed.host,
+        pathname: parsed.pathname,
+      },
+      ipc: {
+        postMessage(msg) {
+          posted.push(String(msg));
+        },
+      },
+      addEventListener(type, handler) {
+        const list = listeners.get(type) ?? [];
+        list.push(handler);
+        listeners.set(type, list);
+      },
+    };
+    const context = vm.createContext({
+      window: win,
+      Object,
+      Map,
+      Promise,
+      Error,
+      TypeError,
+      Number,
+      String,
+      Boolean,
+      JSON,
+    });
+    vm.runInContext(initScript, context);
+    return {
+      win: /** @type {Record<string, any>} */ (win),
+      posted,
+      dispatchPageHide() {
+        for (const fn of listeners.get('pagehide') ?? []) {
+          fn();
+        }
+      },
+    };
+  }
+
+  // 1. Identity-provider `/realms/` documents NEVER receive `window.__TAURI_INTERNALS__` or `window.koderaDesktop`.
+  for (const untrustedOrRealmUrl of [
+    'https://auth.kodera.io/realms/kodera-staff/protocol/openid-connect/auth',
+    'https://staging-auth.kodera.io/realms/kodera-staff/protocol/openid-connect/auth',
+    'https://community.kodera.io/realms/acme/protocol/openid-connect/auth',
+    'https://evil.example/app',
+  ]) {
+    const { win } = createVmWindow(untrustedOrRealmUrl);
+    assert.equal(
+      win.__TAURI_INTERNALS__,
+      undefined,
+      `${untrustedOrRealmUrl} must not install __TAURI_INTERNALS__`,
+    );
+    assert.equal(
+      win.koderaDesktop,
+      undefined,
+      `${untrustedOrRealmUrl} must not install koderaDesktop`,
+    );
+  }
+
+  // 2. Admitted app origin installs the bridge and cancels pending invokes + clears callbacks on `pagehide`.
+  const appDoc = createVmWindow('https://app.kodera.io/channels/general');
+  assert.equal(typeof appDoc.win.__TAURI_INTERNALS__?.invoke, 'function');
+  assert.equal(typeof appDoc.win.koderaDesktop?.onEvent, 'function');
+
+  /** @type {string[]} */
+  const deliveredEvents = [];
+  appDoc.win.koderaDesktop.onEvent('kodera://deep-link', (ev) => {
+    deliveredEvents.push(String(ev.payload));
+  });
+  const pendingInvoke = appDoc.win.koderaDesktop.invoke('get_app_metadata', {});
+  assert.equal(appDoc.posted.length, 2);
+
+  appDoc.dispatchPageHide();
+  await assert.rejects(() => pendingInvoke, /navigation_cancelled/u);
+
+  // Late native event dispatch after `pagehide` is inert because callbacks were cleared.
+  appDoc.win.__KODERA_IPC_DISPATCH_EVENT__(1, 'kodera://workspace/acme/stale');
+  assert.deepEqual(deliveredEvents, []);
+
+  // 3. `stagePackagedWebAssets` stages built web bundle into exact `gui.rs` OS paths.
+  const scratch = mkdtempSync(join(tmpdir(), 'kodera-cli-web-stage-'));
+  try {
+    const fakeDist = join(scratch, 'dist');
+    mkdirSync(join(fakeDist, 'assets'), { recursive: true });
+    writeFileSync(join(fakeDist, 'index.html'), '<!doctype html><title>Kodera</title>', 'utf8');
+    writeFileSync(join(fakeDist, 'assets', 'index-hash.js'), 'export default 1;', 'utf8');
+
+    for (const [target, expectedSuffix] of /** @type {const} */ ([
+      ['macos', 'Contents/Resources/web'],
+      ['linux', 'usr/share/kodera-desktop/web'],
+      ['windows', 'web'],
+    ])) {
+      const plan = buildPackagingPlan(target, {});
+      assert.equal(plan.webResourceStage.webResourceRelPath, expectedSuffix);
+      assert.deepEqual(plan.webResourceStage.tauriBundleResources, { '../../web/dist/': 'web/' });
+
+      const outRoot = join(scratch, `stage-${target}`);
+      const staged = stagePackagedWebAssets(target, outRoot, fakeDist);
+      assert.ok(staged.stagedWebDir.endsWith(expectedSuffix));
+      assert.equal(existsSync(join(staged.stagedWebDir, 'index.html')), true);
+      assert.equal(existsSync(join(staged.stagedWebDir, 'assets', 'index-hash.js')), true);
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
 });

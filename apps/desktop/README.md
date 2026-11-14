@@ -19,7 +19,7 @@ Status: Active native Tauri v2 desktop host, typed IPC client, and multi-OS inst
 - **Strict CSP & least-privilege capabilities (`src/csp_policy.rs`, `tauri.conf.json`, `capabilities/default.json`)**:
   - Enforces `default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, zero `'unsafe-eval'`, and explicit path-scoped HTTPS/WSS `connect-src` origins (`https://api.kodera.io`, `https://staging-api.kodera.io`, `https://auth.kodera.io/realms/`, `https://matrix.kodera.io/_matrix/`, `https://*.kodera.io/_matrix/`, `wss://livekit.kodera.io`, `wss://collab.kodera.io`).
   - `capabilities/default.json` binds only the `main` window on local assets (`local: true`) to `core:default`, `core:window:allow-show`, `core:window:allow-hide`, `core:window:allow-set-focus`, `core:window:allow-unminimize`, and `deep-link:default` — zero shell, filesystem, or wildcard permissions.
-  - `build.rs` verifies `tauri.conf.json`, `capabilities/default.json`, and the binary headers of all 6 icon files (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`, `icon.icns`, `icon.ico`) at compile time.
+  - `build.rs` verifies `tauri.conf.json`, `capabilities/default.json`, `@kodera/design-tokens` CSS variables (`packages/design-tokens/dist/tokens.css`), and the binary headers of all 6 icon files (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`, `icon.icns`, `icon.ico`) at compile time.
 - **Proximity mesh, self-host planner, automated `deploy/community` wizard & health inspector (`src/lib.rs`, `src/self_host_deploy.rs`, `src/self_host_health.rs`)**:
   - `DesktopProximityNode` coordinates signed 129-byte proximity check-ins (`kodera-rs`), replay suppression, and priority relay queues within one provisioned organisation session.
   - `#proximity` is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service: it does not reach emergency services, and delivery is never guaranteed. It was first named `#urgence`. The 129-byte public frame and every other v1 wire byte are frozen under their historical values (magic `KE`, signed label `kodera-emergency-v1:`); only names in code, routes and copy changed.
@@ -87,7 +87,7 @@ if (desktop.isNativeDesktop()) {
 
 ### Native GUI Window vs Headless CLI Execution
 
-- **GUI Launch (default installer entrypoint)**: Invoking `kodera-desktop` with no arguments (or `--gui`, macOS LaunchServices `-psn_*`, or a bare `kodera://` / `matrix:` protocol URI) opens the native OS WebView window titled `"Kodera"` (`1280x820`, min `900x600`), serving bundled `apps/web/dist` assets or the CSP-verified bootstrap shell over `kodera-asset://localhost/index.html` with `window.__TAURI_INTERNALS__` + `window.koderaDesktop` IPC bridged to `DesktopShellHost` and fail-closed navigation validation (`validate_navigation_url`).
+- **GUI Launch (default installer entrypoint)**: Invoking `kodera-desktop` with no arguments (or `--gui`, macOS LaunchServices `-psn_*`, or a bare `kodera://` / `matrix:` protocol URI) opens the native OS WebView window titled `"Kodera"` (`1280x820`, min `900x600`), serving bundled `apps/web/dist` assets (`bundle.resources` `"../../web/dist/" -> "web/"`) or the CSP-verified `@kodera/design-tokens` fallback host shell over `kodera-asset://localhost/index.html`. Navigation validation (`validate_navigation_url`) permits OIDC `/realms/` login navigation (`AllowAuthNavigation`) while privileged IPC dispatch (`validate_privileged_ipc_sender`) is restricted strictly to admitted application origins and fenced by `document_generation` across reloads and top-level navigations. Updater status reports `supported: false` until a signed updater feed is configured.
 - **Headless CLI / RPC flags**: `--health` / `--self-check`, `--stdio-rpc` / `--ipc-stdio`, `--open-url <uri>` / `--deep-link <uri>`, `--print-runtime-metadata`, `--version` / `-V`, `--help` / `-h`.
 - **Linux system packages** (Ubuntu / Debian): `pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`.
 
@@ -120,7 +120,7 @@ npm --workspace @kodera/desktop run package:windows
 | `package:linux` | `appimage`, `deb` | `bundle/appimage/Kodera_<version>_amd64.AppImage`, `bundle/deb/Kodera_<version>_amd64.deb` |
 | `package:windows` | `msi`, `nsis` | `bundle/msi/Kodera_<version>_x64_en-US.msi`, `bundle/nsis/Kodera_<version>_x64-setup.exe` |
 
-When running on CI or developer hosts without platform-specific GUI bundlers (`tauri`, `linuxdeploy`, WiX/NSIS), `desktop-cli.mjs` stages the release `kodera-desktop` host binary and emits a secret-free packaging manifest (`--dry-run` inspects the plan without building).
+When running on CI or developer hosts without platform-specific GUI bundlers (`tauri`, `linuxdeploy`, WiX/NSIS), `desktop-cli.mjs` builds `@kodera/web` when needed, stages `apps/web/dist` into each target bundle's native resource directory (`Contents/Resources/web`, `usr/share/kodera-desktop/web`, `web`), stages the release `kodera-desktop` host binary, and emits a secret-free packaging manifest (`--dry-run` inspects the plan without building).
 
 ### Code Signing & Notarization Environment Variables
 
