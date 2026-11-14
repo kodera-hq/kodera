@@ -95,3 +95,9 @@ da7ee4a7a75a0028c7345ab52de0f52232adc09f:Cargo.lock:generic-api-key:1261
 76667946baff3db29e0e4a409ee1cf9ef94fe31b:apps/web/src/api/schema.d.ts:generic-api-key:10702
 76667946baff3db29e0e4a409ee1cf9ef94fe31b:apps/web/src/features/passport/passport.test.tsx:generic-api-key:160
 
+# Reviewed deterministic public proximity key examples in one historical commit; no runtime credential binding.
+69103fe1aa2942a9f5e22b768f91a6d7cbdc02f4:apps/server/contracts/core-api.openapi.yaml:generic-api-key:16909
+69103fe1aa2942a9f5e22b768f91a6d7cbdc02f4:apps/web/contracts/core-api.openapi.yaml:generic-api-key:16909
+69103fe1aa2942a9f5e22b768f91a6d7cbdc02f4:apps/web/src/api/schema.d.ts:generic-api-key:10693
+69103fe1aa2942a9f5e22b768f91a6d7cbdc02f4:apps/web/src/mocks/generated/examples.ts:generic-api-key:5671
+69103fe1aa2942a9f5e22b768f91a6d7cbdc02f4:packages/api-contract/core-api.openapi.yaml:generic-api-key:16909
