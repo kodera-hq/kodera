@@ -21,7 +21,7 @@ MUTANTS = [
     ("group DM immutable invite list ignored", "and invitee in invitees", "", "test_group_dm_invites_are_bound_to_immutable_creation_state"),
     ("unvalidated group DM marker trusted", 'and self._is_direct_message(inviter, {\n                    "is_direct": True, "invite": list(invitees) if isinstance(invitees, (list, tuple)) else invitees,\n                    "preset": "private_chat", "visibility": "private"\n                })', "", "test_malformed_group_dm_creation_state_fails_closed"),
     ("workspace ban native join open", "if user in content.get('banned', ()):", "if False:", "test_workspace_ban_refuses_native_public_join_and_post"),
-    ("workspace mute posting open", "if event.type in {'m.room.message', 'm.sticker'} and _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
+    ("workspace mute posting open", "if event.type in {'m.room.message', 'm.sticker', 'm.room.encrypted'} and _active_mute(content, event.sender):", "if False:", "test_workspace_mute_uses_server_time_even_for_exempt_member"),
     ("archived native join open", 'if content.get("archived", False) is not False:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("archived event posting open", 'if content.get("archived") is True:', 'if False:', "test_archived_public_room_refuses_rejoin_and_post_but_allows_leave"),
     ("public native remote join open", 'if not self._api.is_mine(user) and not self._partner_federation_allowed(state, user):', 'if False:', "test_public_local_only_room_refuses_remote_native_join"),
@@ -39,15 +39,12 @@ MUTANTS = [
     ("agent e-mail invites refused", "return NOT_SPAM if inviter == self._agent else Codes.FORBIDDEN", "return Codes.FORBIDDEN", "test_agent_may_invite_by_email"),
     ("aliases open to members", "return NOT_SPAM if user_id == self._agent else Codes.FORBIDDEN", "return NOT_SPAM", "test_member_cannot_create_a_room_alias"),
     ("directory open", "async def user_may_publish_room(self, user_id: str, room_id: str) -> Any:\n        return Codes.FORBIDDEN", "async def user_may_publish_room(self, user_id: str, room_id: str) -> Any:\n        return NOT_SPAM", "test_nobody_publishes_to_the_directory"),
-    ("agent may encrypt", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "if event.type in ENCRYPTION and event.sender != self._agent:\n            return Codes.FORBIDDEN", "test_nobody_turns_on_encryption"),
-    ("federated ciphertext open", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "if event.type in ENCRYPTION and event.is_state():\n            return Codes.FORBIDDEN", "test_no_federated_event_carries_ciphertext"),
-    ("spam check ignores encryption", "if event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "if False:\n            return Codes.FORBIDDEN", "test_no_federated_event_carries_ciphertext"),
-    ("agent creates encrypted rooms", "if room_config is not None and _asks_for_encryption(room_config):", "if False:", "test_nobody_creates_an_encrypted_room"),
+    ("agent may encrypt", "elif event.type in ENCRYPTION:\n            return Codes.FORBIDDEN", "elif event.type in ENCRYPTION and event.sender != self._agent:\n            return Codes.FORBIDDEN", "test_nobody_turns_on_encryption"),
+    ("spam check ignores room encryption boundary", "if not event_allowed(event, state, self._agent) or not self._governance_allows(event, state):", "if not self._governance_allows(event, state):", "test_no_federated_event_carries_ciphertext"),
+    ("agent creates encrypted rooms", "if room_config is not None and _asks_for_encryption(room_config) and not (user_id == self._agent and valid_initial_encryption(room_config)):", "if False:", "test_nobody_creates_an_encrypted_room"),
     ("any initial state is encryption", 'state.get("type") == "m.room.encryption"', 'state.get("type") is not None', "test_agent_creates_a_room_with_other_initial_state"),
-    ("rules allow encryption", 'return event.type not in ENCRYPTION and self._governance_allows(event, state_events), None', "return True, None", "test_no_event_turns_on_encryption"),
-    ("rules allow turning encryption on", 'frozenset({"m.room.encryption", "m.room.encrypted"})', 'frozenset({"m.room.encrypted"})', "test_no_event_turns_on_encryption"),
-    ("rules allow ciphertext", 'frozenset({"m.room.encryption", "m.room.encrypted"})', 'frozenset({"m.room.encryption"})', "test_no_event_carries_ciphertext"),
-    ("rules refuse everything", 'return event.type not in ENCRYPTION and self._governance_allows(event, state_events), None', "return False, None", "test_rules_allow_every_other_event"),
+    ("rules allow encryption", 'return event_allowed(event, state_events, self._agent) and self._governance_allows(event, state_events), None', "return True, None", "test_no_event_turns_on_encryption"),
+    ("rules refuse everything", 'return event_allowed(event, state_events, self._agent) and self._governance_allows(event, state_events), None', "return False, None", "test_rules_allow_every_other_event"),
     ("join rule open", 'content.get("join_rule") != "invite"', "False", "test_member_cannot_open_a_room"),
     ("world readable open", '== "world_readable"', '== "never"', "test_member_cannot_open_a_room"),
     ("aliases open", "event.type in LOCKED_STATE\n            or", "", "test_member_cannot_open_a_room"),
@@ -75,7 +72,7 @@ MUTANTS = [
     ('agent remote invitation bypass', 'if inviter == self._agent and self._api.is_mine(invitee):', 'if inviter == self._agent:', 'test_agent_cannot_invite_remote_users_into_internal_rooms'),
     ('agent governance bypass before federation boundary', '        if not self._federation_boundary_allows(event, state):\n            return False', '        if event.sender != self._agent and not self._federation_boundary_allows(event, state):\n            return False', 'test_agent_event_bypass_never_admits_remote_membership_to_internal_room'),
     ('stale remote timeline sender admitted', '        if not self._api.is_mine(event.sender):', '        if False:', 'test_previously_joined_remote_sender_cannot_post_inside_internal_room'),
-    ('partner global allowlist ignored', 'or not set(servers) <= self._federation_servers', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
+    ('partner global allowlist ignored', 'or not self._servers_allowed(servers)', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
     ('partner immutable creation ignored', '            and creation_mode(getattr(create, "content", None)) == "partner"', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
     ('partner ACL ignored', '            and acl_matches(getattr(state.get(("m.room.server_acl", "")), "content", None), expected)', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
     ('partner trusted creator ignored', '            and getattr(create, "sender", None) == self._agent', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'),
@@ -87,7 +84,7 @@ MUTANTS = [
     ('immutable federation policy upgrade allowed', 'if creation_mode(creation) != "partner" or self._partner_content(event.content, allow_archived=True) is None:', 'if self._partner_content(event.content, allow_archived=True) is None:', 'test_internal_mode_cannot_be_upgraded_by_valid_mutable_partner_policy'),
     ('agent server ACL boundary widened', 'if not acl_matches(event.content, acl(self._server, partners or ())):', 'if False:', 'test_agent_acl_write_cannot_widen_exact_partner_boundary'),
 ('partner join rule widened by agent', 'if creation_mode(creation) == "partner" and event.type == "m.room.join_rules" and event.content.get(\'join_rule\') != "invite":', 'if False:', 'test_partner_join_rule_is_invite_only_even_for_agent'),
-    ('initial ACL bootstrap untrusted creator admitted', 'if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not set(partners) <= self._federation_servers:', 'if not partners:', 'test_initial_acl_bootstrap_uses_trusted_immutable_servers_without_remote_admission'),
+    ('initial ACL bootstrap untrusted creator admitted', 'if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not self._servers_allowed(partners):', 'if not partners:', 'test_initial_acl_bootstrap_uses_trusted_immutable_servers_without_remote_admission'),
     ('initial approved servers not bound immutably', 'creation["io.kodera.room.initial_partner_servers"] = list(partners)', 'creation["io.kodera.room.initial_partner_servers"] = []', 'test_explicit_partner_creation_has_pinned_mode_policy_and_server_acl'),
     ('raw DM validation skipped before local ACL injection', '        if creator != self._agent and not direct:\n            raise SynapseError(403, "Members may create only validated local direct messages", errcode=Codes.FORBIDDEN)\n', '', 'test_raw_dm_validation_precedes_injected_acl_projection'),
     ('validated DM projection omitted', '                room_config = {**room_config, "initial_state": []}', '                pass', 'test_raw_dm_validation_precedes_injected_acl_projection'),
@@ -96,10 +93,23 @@ MUTANTS = [
 
 HELPER_MUTANTS = [('public homeserver validation omitted', 'return isinstance(value, str) and len(value) <= 253 and PUBLIC_SERVER.fullmatch(value) is not None and not value.endswith(PRIVATE_SUFFIXES)', 'return True', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist bound removed', 'len(value) > MAX_SERVERS', 'len(value) > 100', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('global allowlist duplicates accepted', 'or len(set(value)) != len(value)', '', 'test_public_server_allowlist_configuration_refusals_name_boundary'), ('immutable federation disabled ignored', 'and content.get("m.federate") is True', '', 'test_partner_author_creation_acl_and_global_boundaries_are_independent'), ('frozen ACL not recognized', 'isinstance(content, Mapping) and set(content) == set(expected)', 'isinstance(content, dict) and set(content) == set(expected)', 'test_frozen_partner_state_preserves_bounded_federation')]
 
+CONFIDENTIAL_MUTANTS = [
+    ("ordinary encryption state admitted", 'return event.type not in {"m.room.encryption", "m.room.encrypted"}', 'return event.type != "m.room.encrypted"', "test_no_event_turns_on_encryption"),
+    ("ordinary ciphertext admitted", 'return event.type not in {"m.room.encryption", "m.room.encrypted"}', 'return event.type != "m.room.encryption"', "test_no_event_carries_ciphertext"),
+    ("confidential plaintext timeline admitted", 'return event.type == "m.room.encrypted" and _ciphertext(event.content, marker)', 'return True', "test_no_cleartext_timeline_type_or_agent_exemption"),
+    ("confidential extra plaintext field admitted", 'if set(content) != fields:', 'if False:', "test_ciphertext_envelope_refuses_plaintext_fields_malformed_or_unbounded_data"),
+    ("confidential algorithm downgraded", 'content.get("algorithm") != algorithm', 'False', "test_ciphertext_algorithm_cannot_be_relabelled_with_original_schema"),
+    ("confidential untrusted creator admitted", 'or getattr(create, "sender", None) != agent', '', "test_incomplete_or_untrusted_confidential_state_fails_closed"),
+    ("confidential state payload admitted", 'return event.type in METADATA_STATE and not {\n            "body",\n            "formatted_body",\n        }.intersection(event.content)', 'return True', "test_state_key_cannot_smuggle_plaintext_timeline_payload"),
+    ("confidential ciphertext bound removed", '1 <= len(encoded) <= MAX_CIPHERTEXT', '1 <= len(encoded)', "test_ciphertext_envelope_refuses_plaintext_fields_malformed_or_unbounded_data"),
+]
+
 
 def main() -> int:
     survivors = []
-    all_mutants = [(SOURCE, *mutation) for mutation in MUTANTS] + [(SOURCE.with_name("federation.py"), *mutation) for mutation in HELPER_MUTANTS]
+    all_mutants = ([(SOURCE, *mutation) for mutation in MUTANTS]
+                   + [(SOURCE.with_name("federation.py"), *mutation) for mutation in HELPER_MUTANTS]
+                   + [(SOURCE.with_name("confidential.py"), *mutation) for mutation in CONFIDENTIAL_MUTANTS])
     for source, name, before, after, owner in all_mutants:
         original = source.read_text()
         if original.count(before) != 1:
@@ -119,11 +129,12 @@ def main() -> int:
             (package / source.name).write_text(changed)
             shutil.copytree(ROOT / "tests", pathlib.Path(tmp) / "tests")
             result = subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py", "tests/test_federation.py"],
+                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test_policy.py", "tests/test_community.py", "tests/test_federation.py", "tests/test_confidential.py", "tests/test_open_federation.py"],
                 cwd=tmp,
-                env={"PYTHONPATH": str(pathlib.Path(tmp) / "src"), "PATH": "/usr/bin:/bin"},
+                env={"PYTHONPATH": str(pathlib.Path(tmp) / "src"), "PATH": "/usr/bin:/bin", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
                 capture_output=True,
                 text=True,
+                check=False,
             )
         failed = [line for line in result.stdout.splitlines() if line.startswith("FAILED")]
         caught = result.returncode == 1 and any(f"::{owner}" in line for line in failed)

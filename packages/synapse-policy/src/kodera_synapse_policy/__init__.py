@@ -10,9 +10,9 @@ client a member signs in with, so this module refuses what would route around th
   federated users when ``allow_federated_invites: true`` is also set), and except by the agent;
 - invites by e-mail or phone (third-party identifiers) and room aliases, except by the agent;
 - publishing any room to the directory;
-- end-to-end encryption in any room, from its creation on, for the agent too, also when the
-  agent's account is a server admin, which Synapse exempts from the room-creation check: both
-  turning it on and ciphertext itself, which a client can post without turning it on;
+- end-to-end encryption in ordinary rooms; only an agent-authored immutable confidential
+  room marker and matching initial encryption admit bounded ciphertext envelopes, while
+  cleartext timeline payloads and custom state are refused in those rooms;
 - turning a room public: a join rule other than ``invite``, a world-readable history,
   aliases, server ACLs, room upgrades and space links, unless the agent sends them;
 - Kodera's own room state, whatever the room's power levels: a room's policy
@@ -27,12 +27,18 @@ posting and private-room membership when a room's power levels are accidentally 
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
 
 from synapse.module_api import NOT_SPAM, ModuleApi
 from synapse.module_api.errors import Codes, ConfigError, SynapseError
 
+from .confidential import (
+    CONFIDENTIAL,
+    event_allowed,
+    requested_algorithm,
+    valid_initial_encryption,
+)
 from .federation import MODE, acl, acl_matches, creation_mode, server_list
 
 __version__ = "0.1.6"
@@ -70,6 +76,7 @@ class KoderaPolicy:
         self._api = api
         self._server = self._agent.partition(":")[2]
         self._federation_servers = frozenset(config.get("federation_domain_allowlist", ()))
+        self._federation_mode = config.get("federation_mode", "partner" if self._federation_servers else "closed")
         api.register_spam_checker_callbacks(
             user_may_create_room=self.user_may_create_room,
             user_may_invite=self.user_may_invite,
@@ -97,14 +104,22 @@ class KoderaPolicy:
         servers = server_list(config.get("federation_domain_allowlist", []), empty=True)
         if servers is None or agent.partition(":")[2] in (servers or ()):
             raise ConfigError("federation_domain_allowlist must list at most 32 distinct public homeserver names without ports or wildcards")
-        return {"agent_user_id": agent, "room_access_user_id": room_access, "federation_domain_allowlist": list(servers)}
+        parsed = {"agent_user_id": agent, "room_access_user_id": room_access, "federation_domain_allowlist": list(servers)}
+        if "federation_mode" in config:
+            mode = config["federation_mode"]
+            if mode not in ("closed", "partner", "open") or (mode in ("closed", "open") and servers):
+                raise ConfigError("federation_mode must be closed, partner or open; only partner accepts a global allowlist")
+            if mode == "partner" and not servers:
+                raise ConfigError("partner federation_mode requires a nonempty global allowlist")
+            parsed["federation_mode"] = mode
+        return parsed
 
     async def user_may_create_room(
         self, user_id: str, room_config: dict[str, Any] | None = None
     ) -> Any:
-        # A room's initial state never reaches check_event_for_spam, so encryption asked for at
-        # creation is refused here, the agent's included.
-        if room_config is not None and _asks_for_encryption(room_config):
+        # Initial state never reaches the spam callback. Only a trusted explicit
+        # confidential-room request may include the matching initial encryption.
+        if room_config is not None and _asks_for_encryption(room_config) and not (user_id == self._agent and valid_initial_encryption(room_config)):
             return Codes.FORBIDDEN
         if user_id == self._agent:
             return NOT_SPAM
@@ -170,6 +185,10 @@ class KoderaPolicy:
         creation = request_content.get("creation_content") or {}
         if not isinstance(creation, dict):
             raise SynapseError(403, "Room creation content must be an object", errcode=Codes.FORBIDDEN)
+        if CONFIDENTIAL in creation and (creator != self._agent or not valid_initial_encryption(request_content)):
+            raise SynapseError(403, "Confidential rooms require trusted immutable algorithm and matching initial encryption", errcode=Codes.FORBIDDEN)
+        if _asks_for_encryption(request_content) and requested_algorithm(request_content) is None:
+            raise SynapseError(403, "Ordinary rooms cannot enable encryption", errcode=Codes.FORBIDDEN)
         partner = creation.get(MODE) == "partner"
         initial = request_content.get("initial_state") or []
         if not isinstance(initial, list):
@@ -283,16 +302,16 @@ class KoderaPolicy:
         # Synapse asks this of every event it creates, with no admin exemption: a room's initial
         # state, encryption a server setting forces on at creation, the state an upgrade copies,
         # and every timeline event, ciphertext included.
-        return event.type not in ENCRYPTION and self._governance_allows(event, state_events), None
+        return event_allowed(event, state_events, self._agent) and self._governance_allows(event, state_events), None
 
     async def check_event_for_spam(self, event: Any) -> Any:
         # Synapse runs this, not check_event_allowed, on events from other servers.
-        if event.type in ENCRYPTION:
-            return Codes.FORBIDDEN
         if getattr(event, "room_id", None):
             state = await self._api.get_room_state(event.room_id)
-            if not self._governance_allows(event, state):
+            if not event_allowed(event, state, self._agent) or not self._governance_allows(event, state):
                 return Codes.FORBIDDEN
+        elif event.type in ENCRYPTION:
+            return Codes.FORBIDDEN
         if not event.is_state():
             return NOT_SPAM
         if event.sender == self._agent:
@@ -336,7 +355,7 @@ class KoderaPolicy:
         if not isinstance(content, Mapping):
             return None
         servers = server_list(content.get("federation_servers"))
-        if not servers or self._server in servers or not set(servers) <= self._federation_servers:
+        if not servers or self._server in servers or not self._servers_allowed(servers):
             return None
         if not (
             type(content.get("version")) is int and content["version"] == 1
@@ -350,6 +369,11 @@ class KoderaPolicy:
         ):
             return None
         return servers
+
+    def _servers_allowed(self, servers: tuple[str, ...]) -> bool:
+        # Open removes only the operator-wide allowlist. Every room still pins its
+        # bounded public servers, exact ACL and invite-only membership at creation.
+        return self._federation_mode == "open" or (self._federation_mode == "partner" and set(servers) <= self._federation_servers)
 
     def _partner_federation_allowed(self, state: Any, user: str | None = None) -> bool:
         """A room cannot acquire federation by changing a mutable policy on a legacy room."""
@@ -386,7 +410,7 @@ class KoderaPolicy:
             # membership: admission still requires the complete trusted policy and ACL state.
             if policy is None and creation_mode(creation) == "partner":
                 partners = server_list(creation.get("io.kodera.room.initial_partner_servers"))
-                if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not set(partners) <= self._federation_servers:
+                if event.sender != self._agent or getattr(create, "sender", None) != self._agent or not partners or self._server in partners or not self._servers_allowed(partners):
                     return False
             if not acl_matches(event.content, acl(self._server, partners or ())):
                 return False
@@ -417,7 +441,7 @@ class KoderaPolicy:
             return event.type == 'm.room.member' and getattr(event, 'state_key', None) == event.sender and event.content.get('membership') == 'leave'
         if event.type == 'm.room.member' and event.content.get('membership') in {'join', 'invite', 'knock'} and getattr(event, 'state_key', None) in content.get('banned', ()):
             return False
-        if event.type in {'m.room.message', 'm.sticker'} and _active_mute(content, event.sender):
+        if event.type in {'m.room.message', 'm.sticker', 'm.room.encrypted'} and _active_mute(content, event.sender):
             return False
         if content.get("archived") is True:
             own_leave = (
@@ -440,7 +464,7 @@ class KoderaPolicy:
         if content["audience"] == "listed" and event.sender not in content["members"]:
             return False
         if content["read_only"] and (
-            event.is_state() or event.type in {"m.room.message", "m.sticker"}
+            event.is_state() or event.type in {"m.room.message", "m.sticker", "m.room.encrypted"}
         ):
             if event.sender in content["exempt"]:
                 return True

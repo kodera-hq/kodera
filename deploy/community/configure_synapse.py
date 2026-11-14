@@ -7,13 +7,12 @@ drops one of them.
 """
 
 import copy
-import sys
 import os
 import re
+import sys
 import tempfile
 from importlib.metadata import version
 from pathlib import Path
-
 
 MODULE = "kodera_synapse_policy.KoderaPolicy"
 DATABASE_HOST = "synapse-db"
@@ -50,6 +49,27 @@ RATE_LIMITS = {
 
 
 TOPOLOGIES = ("single", "split")
+FEDERATION_RATE_LIMITS = {"window_size": 1000, "sleep_limit": 10, "sleep_delay": 500, "reject_limit": 50, "concurrent": 3}
+FEDERATION_BLOCKED_IP_RANGES = [
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "100.64.0.0/10", "192.0.0.0/24", "169.254.0.0/16", "192.88.99.0/24",
+    "198.18.0.0/15", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24",
+    "224.0.0.0/4", "::1/128", "fe80::/10", "fc00::/7", "2001:db8::/32",
+    "ff00::/8", "fec0::/10",
+]
+
+
+def federation_mode(environment, allowlist):
+    # Existing explicit partner overlays retain their behavior. An ordinary
+    # Community configuration, with neither setting present, remains closed.
+    mode = environment.get("KODERA_FEDERATION_MODE") or ("partner" if allowlist else "closed")
+    if mode not in ("closed", "partner", "open"):
+        raise ValueError("KODERA_FEDERATION_MODE must be closed, partner or open")
+    if mode in ("closed", "open") and allowlist:
+        raise ValueError("Only partner federation accepts KODERA_MATRIX_FEDERATION_ALLOWLIST")
+    if mode == "partner" and not allowlist:
+        raise ValueError("Partner federation requires KODERA_MATRIX_FEDERATION_ALLOWLIST")
+    return mode
 
 
 def topology(environment):
@@ -119,6 +139,9 @@ def configure(document, environment=None):
     split = topology(environment) == "split"
     issuer = oidc_issuer(environment)
     allowlist = federation_allowlist(environment)
+    mode = federation_mode(environment, allowlist)
+    if mode == "open" and any(environment.get(name) for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")):
+        raise ValueError("Open federation refuses HTTP proxies that bypass private-address filtering")
 
     document.setdefault("presence", {})["enabled"] = True
     modules = document.setdefault("modules", [])
@@ -127,6 +150,7 @@ def configure(document, environment=None):
         "agent_user_id": f"@kodera-agent:{server}",
         "room_access_user_id": f"@kodera-rooms:{server}",
         "federation_domain_allowlist": allowlist,
+        "federation_mode": mode,
     }})
 
     # PostgreSQL only. The password is read by libpq from PGPASSWORD, never written here.
@@ -136,6 +160,14 @@ def configure(document, environment=None):
 
     # Federation is closed unless the operator lists the servers it is opened to.
     document["federation_domain_whitelist"] = allowlist
+    if mode == "open":
+        document["federation_domain_whitelist"] = None
+    document["rc_federation"] = copy.deepcopy(FEDERATION_RATE_LIMITS)
+    document["federation_verify_certificates"] = True
+    document["allow_profile_lookup_over_federation"] = False
+    document["allow_device_name_lookup_over_federation"] = False
+    document["ip_range_blacklist"] = list(FEDERATION_BLOCKED_IP_RANGES)
+    document["ip_range_whitelist"] = []
     document["allow_public_rooms_over_federation"] = False
     document["allow_public_rooms_without_auth"] = False
     if not allowlist:
@@ -150,7 +182,7 @@ def configure(document, environment=None):
         listener["x_forwarded"] = listener.get("port") == PROXIED_LISTENER_PORT
         for resource in listener.get("resources") or []:
             names = [name for name in resource.get("names") or [] if name != "federation"]
-            resource["names"] = names + ["federation"] if allowlist else names
+            resource["names"] = names + ["federation"] if mode != "closed" else names
 
     for key, value in RATE_LIMITS.items():
         document[key] = copy.deepcopy(value)

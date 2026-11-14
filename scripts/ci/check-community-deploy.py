@@ -1241,6 +1241,19 @@ def check_synapse_config(source: str) -> list[str]:
             if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), {FEDERATION_ENV_NAME: unsafe})):
                 problems.append("Synapse federation allowlist must refuse a wildcard or private server name")
                 break
+        public = configure(_generated_homeserver(), {"KODERA_FEDERATION_MODE": "open"})
+        if public.get("federation_domain_whitelist", "missing") is not None or "federation" not in listener_names(public):
+            problems.append("Synapse explicit open mode must enable federation transport")
+        if (public.get("rc_federation") != {"window_size": 1000, "sleep_limit": 10, "sleep_delay": 500, "reject_limit": 50, "concurrent": 3}
+                or public.get("federation_verify_certificates") is not True
+                or public.get("ip_range_whitelist") != []
+                or not {"127.0.0.0/8", "10.0.0.0/8", "169.254.0.0/16", "fc00::/7"} <= set(public.get("ip_range_blacklist", []))
+                or public.get("allow_profile_lookup_over_federation") is not False):
+            problems.append("Synapse open federation must retain rate, TLS and private-address abuse controls")
+        for unsafe in ({"KODERA_FEDERATION_MODE": "typo"}, {"KODERA_FEDERATION_MODE": "partner"}, {"KODERA_FEDERATION_MODE": "closed", FEDERATION_ENV_NAME: "a.example.org"}, {"KODERA_FEDERATION_MODE": "open", FEDERATION_ENV_NAME: "a.example.org"}, {"KODERA_FEDERATION_MODE": "open", "HTTPS_PROXY": "http://proxy.example.org"}):
+            if not _refuses(lambda unsafe=unsafe: configure(_generated_homeserver(), unsafe)):
+                problems.append("Synapse federation modes must refuse ambiguity and proxy bypass")
+                break
         return problems
 
     def policy() -> list[str]:
@@ -1248,6 +1261,7 @@ def check_synapse_config(source: str) -> list[str]:
             "agent_user_id": "@kodera-agent:chat.example.org",
             "room_access_user_id": "@kodera-rooms:chat.example.org",
             "federation_domain_allowlist": [],
+            "federation_mode": "closed",
         }}
         modules = closed.get("modules") or []
         if modules.count(wanted) != 1 or {"module": "operator.module"} not in modules:
@@ -2558,6 +2572,14 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
 # Each entry breaks one hardening invariant in configure_synapse.py; the behavioural check must
 # then name that invariant. (label, text to replace, replacement, expected refusal)
 SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
+    ("open federation loses rate control", 'document["rc_federation"] = copy.deepcopy(FEDERATION_RATE_LIMITS)', 'document["rc_federation"] = {"concurrent": 10000}',
+     "Synapse open federation must retain rate, TLS and private-address abuse controls"),
+    ("open federation loses TLS verification", 'document["federation_verify_certificates"] = True', 'document["federation_verify_certificates"] = False',
+     "Synapse open federation must retain rate, TLS and private-address abuse controls"),
+    ("open federation allows private-address exception", 'document["ip_range_whitelist"] = []', 'document["ip_range_whitelist"] = ["127.0.0.1/32"]',
+     "Synapse open federation must retain rate, TLS and private-address abuse controls"),
+    ("open federation accepts proxy bypass", 'if mode == "open" and any(environment.get(name)', 'if False and any(environment.get(name)',
+     "Synapse federation modes must refuse ambiguity and proxy bypass"),
     ("Synapse stays on SQLite", 'document["database"] = {"name": "psycopg2"', 'document["database_unused"] = {"name": "psycopg2"',
      "Synapse must run on PostgreSQL, not SQLite"),
     ("the database password is written to the configuration", '"host": DATABASE_HOST,', '"host": DATABASE_HOST, "password": "synapse",',
