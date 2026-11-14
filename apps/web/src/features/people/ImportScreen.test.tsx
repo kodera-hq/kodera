@@ -452,7 +452,12 @@ describe('Import a list (03-people.md §4.3)', () => {
     await userEvent.click(screen.getByRole('radio', { name: /^Membre/ }))
     await userEvent.click(screen.getByRole('radio', { name: /^Administrateur/ }))
     release()
-    expect(await screen.findByRole('button', { name: 'Inviter 118 personnes' })).toBeVisible()
+    // A first-response render can show the action before the queued latest mapping is sent.
+    // Observe that second real request, then wait for its UI acknowledgement.
+    await waitFor(() => expect(bodies).toHaveLength(2))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Inviter 118 personnes' })).toBeEnabled()
+    )
     expect(most).toBe(1)
     expect(bodies).toHaveLength(2)
     expect(bodies[1]?.default_role).toBe('org_admin')
