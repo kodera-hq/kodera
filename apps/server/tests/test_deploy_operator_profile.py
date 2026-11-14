@@ -61,6 +61,13 @@ COMMANDS = [
     "run_operator_schedule",
     # Billing's and legal's, there for settle_complimentary_order (BILLING_MODEL.md §4.2).
     "cancel_unpaid_orders",
+    "reconcile_billing",
+    "verify_billing_integrity",
+    "plan_dunning",
+    "schedule_dunning",
+    "confirm_dunning_action",
+    "record_billing_dispute",
+    "render_billing_document",
     "load_catalogue",
     "send_order_confirmations",
     "settle_complimentary_order",

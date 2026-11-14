@@ -80,7 +80,7 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.42.0: directory privacy, proximity and the theme vocabulary; discovery is
 # unchanged.
 # Rebound for additive workspace surfaces; discovery remains unchanged.
-UNCHANGED_SHA = "a25cf6bea4219a0ce942eb98014c5979a3f52a39b5da1eece99b9a8d3714583a"
+UNCHANGED_SHA = "096d536fc9fd05e3d90df0391cdf5a9abe19aea3ea7dad9840d212534995d01e"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.
