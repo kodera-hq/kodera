@@ -15,29 +15,52 @@
 #![forbid(unsafe_code)]
 
 mod commands;
+pub mod csp_policy;
 pub mod deeplink;
 pub mod keychain;
+pub mod notifications;
+pub mod oidc_loopback;
 pub mod self_host_health;
+pub mod shell;
 pub mod tray_ptt;
+pub mod window_state;
 
 pub use commands::{
-    configure_desktop_ptt, get_desktop_ptt_state, get_desktop_tray_state,
-    inspect_desktop_self_host_health, route_desktop_deep_link, set_desktop_ptt_pressed,
+    begin_desktop_oidc_pkce_loopback, complete_desktop_oidc_pkce_callback, configure_desktop_ptt,
+    delete_desktop_keychain_credential, dispatch_desktop_notification, get_desktop_ptt_state,
+    get_desktop_tray_state, inspect_desktop_self_host_health, load_desktop_keychain_credential,
+    restore_desktop_window_bounds, route_desktop_deep_link, set_desktop_ptt_pressed,
+    set_desktop_unread_badge, store_desktop_keychain_credential, trigger_desktop_tray_menu_action,
     update_desktop_tray_state, validate_desktop_keychain_metadata, DesktopCommandError,
     DesktopCommandRequest, DesktopCommandResponse, ProximityMemberStatus, MAX_IPC_COMMAND_BYTES,
     REGISTERED_DESKTOP_COMMANDS,
 };
+pub use csp_policy::{
+    verify_desktop_csp, verify_embedded_tauri_conf_csp, CspPolicyError, APPROVED_CONNECT_SOURCES,
+};
 pub use deeplink::{
     route_deep_link, AdmittedDeepLink, DeepLinkAdmissionPolicy, DeepLinkError, KoderaDeepLink,
-    MatrixAction, MatrixDeepLink, MatrixTarget, DEFAULT_ADMITTED_DOMAINS,
+    MatrixAction, MatrixDeepLink, MatrixTarget, RedactedOidcCode, DEFAULT_ADMITTED_DOMAINS,
     MAX_ADMITTED_DEEP_LINK_DOMAINS, MAX_DEEP_LINK_BYTES, MAX_MATRIX_VIA_SERVERS,
 };
 pub use keychain::{
     build_keychain_slot, metadata_exposes_secret, validate_keychain_account_id,
-    validate_keychain_service_id, KeychainError, KeychainSecretKind, KeychainSessionMetadata,
-    KeychainSlotDescriptor, RedactedSessionSecret, KEYCHAIN_SERVICE_NAMESPACE,
+    validate_keychain_service_id, KeychainCredentialStatus, KeychainCredentialStore, KeychainError,
+    KeychainSecretKind, KeychainSessionMetadata, KeychainSlotDescriptor, OsKeychainCommandSpec,
+    OsKeychainPlatform, RedactedSessionSecret, KEYCHAIN_SERVICE_NAMESPACE,
     MAX_KEYCHAIN_ACCOUNT_BYTES, MAX_KEYCHAIN_SECRET_BYTES, MAX_KEYCHAIN_SERVICE_BYTES,
-    MIN_KEYCHAIN_SECRET_BYTES,
+    MAX_KEYCHAIN_SLOTS_PER_ORG, MIN_KEYCHAIN_SECRET_BYTES,
+};
+pub use notifications::{
+    DesktopNotificationRequest, DispatchedNotification, DockBadgeSnapshot, NotificationCenter,
+    NotificationError, MAX_NOTIFICATION_BODY_BYTES, MAX_NOTIFICATION_HISTORY,
+    MAX_NOTIFICATION_TITLE_BYTES, REDACTED_NOTIFICATION_PREVIEW,
+};
+pub use oidc_loopback::{
+    pkce_s256_challenge, OidcCallbackOutcome, OidcIssuerAllowlist, OidcLoopbackError,
+    OidcLoopbackListener, OidcLoopbackSessionReady, OidcPkceSession, RedactedCodeVerifier,
+    DEFAULT_LOOPBACK_TIMEOUT_MS, DEFAULT_OIDC_ISSUER_ORIGIN, MAX_LOOPBACK_HTTP_REQUEST_BYTES,
+    MAX_LOOPBACK_TIMEOUT_MS, MAX_OIDC_CALLBACK_URI_BYTES,
 };
 pub use self_host_health::{
     classify_docker_stderr, inspect_community_compose_ps, probe_local_community_stack,
@@ -46,10 +69,22 @@ pub use self_host_health::{
     ServiceReadiness, StackHealthState, COMMUNITY_MEMORY_BUDGET_MIB, DEFAULT_PROBE_TIMEOUT_MS,
     MAX_COMPOSE_CONTAINERS, MAX_COMPOSE_PS_JSON_BYTES, MAX_PROBE_TIMEOUT_MS,
 };
+pub use shell::{
+    run_cli, DesktopRuntimeMetadata, DesktopSelfCheckReport, DesktopShellError, DesktopShellHost,
+    DESKTOP_APP_VERSION, DESKTOP_PRODUCT_NAME,
+};
 pub use tray_ptt::{
     PttController, PttKeyChord, PttModifier, PttStateSnapshot, PttTransmissionState, PttTriggerKey,
-    TrayCallKind, TrayController, TrayIndicator, TrayPttError, TrayStateSnapshot,
-    MAX_PTT_CHORD_BYTES, MAX_TRAY_BADGE_DIRECT, MAX_TRAY_UNREAD_COUNT,
+    TrayCallKind, TrayController, TrayIndicator, TrayMenuActionOutcome, TrayMenuEntry,
+    TrayMenuItemId, TrayMenuModel, TrayPttError, TrayStateSnapshot, MAX_PTT_CHORD_BYTES,
+    MAX_TRAY_BADGE_DIRECT, MAX_TRAY_UNREAD_COUNT,
+};
+pub use window_state::{
+    load_window_state, parse_signed_i32, sanitize_and_clamp_window_state, save_window_state_atomic,
+    MonitorWorkArea, RestoredWindowPlacement, SavedWindowState, WindowBounds, WindowStateError,
+    DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MAX_MONITORS, MAX_WINDOW_DIMENSION,
+    MAX_WINDOW_STATE_JSON_BYTES, MIN_VISIBLE_TITLEBAR_PX, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH,
+    TITLEBAR_REACHABLE_HEIGHT_PX,
 };
 
 /// Canonical reverse-DNS bundle identifier for the Kodera Tauri v2 shell.
@@ -683,6 +718,12 @@ pub struct DesktopWorkspaceSession {
     deep_link_policy: DeepLinkAdmissionPolicy,
     tray: TrayController,
     ptt: PttController,
+    monitors: Vec<MonitorWorkArea>,
+    window_placement: RestoredWindowPlacement,
+    notifications: NotificationCenter,
+    keychain_store: KeychainCredentialStore,
+    oidc_allowlist: OidcIssuerAllowlist,
+    pending_oidc: Option<OidcPkceSession>,
 }
 
 impl DesktopWorkspaceSession {
@@ -697,6 +738,9 @@ impl DesktopWorkspaceSession {
             DesktopProximityNode::new(org_beacon_salt, allowed_roster, max_queue_capacity)?;
         let extension_webhooks =
             ExtensionWebhookVerifier::new(organisation_id.clone(), MAX_PROXIMITY_STATE_ENTRIES)?;
+        let monitors = vec![MonitorWorkArea::fallback_primary()];
+        let window_placement = sanitize_and_clamp_window_state(None, &monitors)
+            .expect("fallback primary monitor geometry is valid");
         Ok(Self {
             organisation_id: Some(organisation_id),
             proximity: Some(proximity),
@@ -711,6 +755,12 @@ impl DesktopWorkspaceSession {
             deep_link_policy: DeepLinkAdmissionPolicy::kodera_default(),
             tray: TrayController::new(),
             ptt: PttController::new(),
+            monitors,
+            window_placement,
+            notifications: NotificationCenter::new(),
+            keychain_store: KeychainCredentialStore::new(),
+            oidc_allowlist: OidcIssuerAllowlist::kodera_default(),
+            pending_oidc: None,
         })
     }
 
@@ -1253,6 +1303,9 @@ impl DesktopWorkspaceSession {
         self.tray
             .update_all(unread_count, active_call, muted, self_host_degraded)
             .map_err(DesktopCommandError::TrayPtt)?;
+        self.notifications
+            .set_unread_count(unread_count)
+            .map_err(DesktopCommandError::Notification)?;
         if active_call.is_none() {
             self.ptt.force_release();
         }
@@ -1262,6 +1315,225 @@ impl DesktopWorkspaceSession {
     pub fn tray_state(&self, organisation_id: &str) -> Result<TrayStateSnapshot, CoreError> {
         self.check_organisation(organisation_id)?;
         Ok(self.tray.snapshot(self.ptt.is_transmitting()))
+    }
+
+    pub fn tray_menu(&self, organisation_id: &str) -> Result<TrayMenuModel, CoreError> {
+        self.check_organisation(organisation_id)?;
+        Ok(self.tray.menu_model(self.ptt.is_transmitting()))
+    }
+
+    pub fn trigger_tray_menu_action(
+        &mut self,
+        organisation_id: &str,
+        action: TrayMenuItemId,
+    ) -> Result<TrayMenuActionOutcome, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let outcome = self
+            .tray
+            .handle_menu_action(action, self.ptt.is_transmitting());
+        if matches!(action, TrayMenuItemId::OpenKodera) {
+            self.window_placement.visible = true;
+        }
+        Ok(outcome)
+    }
+
+    pub fn configure_monitors(
+        &mut self,
+        organisation_id: &str,
+        monitors: Vec<MonitorWorkArea>,
+    ) -> Result<RestoredWindowPlacement, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let current_saved = SavedWindowState {
+            bounds: self.window_placement.bounds,
+            maximized: self.window_placement.maximized,
+            fullscreen: self.window_placement.fullscreen,
+            visible: self.window_placement.visible,
+        };
+        let placement = sanitize_and_clamp_window_state(Some(&current_saved), &monitors)
+            .map_err(DesktopCommandError::WindowState)?;
+        self.monitors = if monitors.is_empty() {
+            vec![MonitorWorkArea::fallback_primary()]
+        } else {
+            monitors
+        };
+        self.window_placement = placement.clone();
+        Ok(placement)
+    }
+
+    pub fn restore_window_bounds(
+        &mut self,
+        organisation_id: &str,
+        saved_state_json: Option<&str>,
+    ) -> Result<RestoredWindowPlacement, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let parsed = match saved_state_json {
+            Some(raw) => {
+                Some(SavedWindowState::from_json(raw).map_err(DesktopCommandError::WindowState)?)
+            }
+            None => None,
+        };
+        let placement = sanitize_and_clamp_window_state(parsed.as_ref(), &self.monitors)
+            .map_err(DesktopCommandError::WindowState)?;
+        self.window_placement = placement.clone();
+        Ok(placement)
+    }
+
+    pub fn window_placement(
+        &self,
+        organisation_id: &str,
+    ) -> Result<RestoredWindowPlacement, CoreError> {
+        self.check_organisation(organisation_id)?;
+        Ok(self.window_placement.clone())
+    }
+
+    pub fn set_unread_badge(
+        &mut self,
+        organisation_id: &str,
+        unread_count: u32,
+    ) -> Result<DockBadgeSnapshot, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let badge = self
+            .notifications
+            .set_unread_count(unread_count)
+            .map_err(DesktopCommandError::Notification)?;
+        self.tray
+            .set_unread_count(unread_count)
+            .map_err(DesktopCommandError::TrayPtt)?;
+        Ok(badge)
+    }
+
+    pub fn dock_badge(&self, organisation_id: &str) -> Result<DockBadgeSnapshot, CoreError> {
+        self.check_organisation(organisation_id)?;
+        Ok(self.notifications.dock_badge().clone())
+    }
+
+    pub fn dispatch_notification(
+        &mut self,
+        organisation_id: &str,
+        request: &DesktopNotificationRequest,
+    ) -> Result<DispatchedNotification, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.notifications
+            .dispatch(request, &self.deep_link_policy)
+            .map_err(DesktopCommandError::Notification)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn store_keychain_credential(
+        &mut self,
+        organisation_id: &str,
+        secret_kind: KeychainSecretKind,
+        matrix_user_id: &str,
+        device_id: &str,
+        issued_at_unix_secs: u64,
+        expires_at_unix_secs: Option<u64>,
+        raw_secret: &str,
+    ) -> Result<KeychainSessionMetadata, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.keychain_store
+            .store_credential(
+                secret_kind,
+                organisation_id,
+                matrix_user_id,
+                device_id,
+                issued_at_unix_secs,
+                expires_at_unix_secs,
+                raw_secret,
+            )
+            .map_err(DesktopCommandError::Keychain)
+    }
+
+    pub fn load_keychain_credential(
+        &self,
+        organisation_id: &str,
+        secret_kind: KeychainSecretKind,
+        matrix_user_id: &str,
+    ) -> Result<KeychainCredentialStatus, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.keychain_store
+            .load_credential_status(secret_kind, organisation_id, matrix_user_id)
+            .map_err(DesktopCommandError::Keychain)
+    }
+
+    pub fn delete_keychain_credential(
+        &mut self,
+        organisation_id: &str,
+        secret_kind: KeychainSecretKind,
+        matrix_user_id: &str,
+    ) -> Result<KeychainCredentialStatus, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self.keychain_store
+            .delete_credential(secret_kind, organisation_id, matrix_user_id)
+            .map_err(DesktopCommandError::Keychain)
+    }
+
+    pub fn configure_oidc_issuers(
+        &mut self,
+        organisation_id: &str,
+        extra_origins: &[&str],
+    ) -> Result<(), DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let mut candidate = OidcIssuerAllowlist::kodera_default();
+        for origin in extra_origins {
+            candidate
+                .add_issuer_origin(origin)
+                .map_err(DesktopCommandError::OidcLoopback)?;
+        }
+        self.oidc_allowlist = candidate;
+        Ok(())
+    }
+
+    pub fn begin_oidc_pkce_loopback(
+        &mut self,
+        organisation_id: &str,
+        issuer_origin: &str,
+        client_id: &str,
+        raw_code_verifier: &str,
+        expected_state: &str,
+        loopback_port: u16,
+    ) -> Result<OidcLoopbackSessionReady, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let (session, ready) = OidcPkceSession::start(
+            &self.oidc_allowlist,
+            issuer_origin,
+            client_id,
+            raw_code_verifier,
+            expected_state,
+            loopback_port,
+        )
+        .map_err(DesktopCommandError::OidcLoopback)?;
+        if let Some(mut old) = self.pending_oidc.replace(session) {
+            old.clear();
+        }
+        Ok(ready)
+    }
+
+    pub fn complete_oidc_pkce_callback(
+        &mut self,
+        organisation_id: &str,
+        callback_uri: &str,
+    ) -> Result<OidcCallbackOutcome, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        let pending = self
+            .pending_oidc
+            .take()
+            .ok_or(DesktopCommandError::OidcLoopback(
+                OidcLoopbackError::NoPendingSession,
+            ))?;
+        pending
+            .consume_callback_uri(callback_uri, &self.deep_link_policy)
+            .map_err(DesktopCommandError::OidcLoopback)
     }
 
     pub fn configure_ptt(
@@ -1356,6 +1628,15 @@ impl DesktopWorkspaceSession {
         self.deep_link_policy = DeepLinkAdmissionPolicy::kodera_default();
         self.tray.clear();
         self.ptt.clear();
+        self.monitors = vec![MonitorWorkArea::fallback_primary()];
+        self.window_placement = sanitize_and_clamp_window_state(None, &self.monitors)
+            .expect("fallback primary monitor geometry is valid");
+        self.notifications.clear();
+        self.keychain_store.clear_all();
+        self.oidc_allowlist = OidcIssuerAllowlist::kodera_default();
+        if let Some(mut pending) = self.pending_oidc.take() {
+            pending.clear();
+        }
         self.organisation_id = None;
     }
 

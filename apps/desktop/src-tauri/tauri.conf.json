@@ -17,14 +17,22 @@
         "width": 1280,
         "height": 820,
         "minWidth": 960,
-        "minHeight": 640
+        "minHeight": 640,
+        "resizable": true,
+        "center": true
       }
     ],
+    "trayIcon": {
+      "id": "kodera-tray",
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": false,
+      "tooltip": "Kodera - Idle"
+    },
     "security": {
       "capabilities": [
         "default"
       ],
-      "csp": "default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; style-src 'self'; style-src-attr 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; connect-src 'self' https://api.kodera.io/api/v1/ https://auth.kodera.io/realms/ https://*.kodera.io/.well-known/matrix/client https://*.kodera.io/_matrix/ https://*.kodera.io/_kodera/rooms/token wss://*.kodera.io/rtc wss://*.kodera.io/rtc/v1 wss://*.kodera.io/rtc/validate wss://*.kodera.io/rtc/v1/validate wss://*.kodera.io/ws/collab/; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; style-src 'self'; style-src-attr 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     }
   },
   "plugins": {
@@ -40,11 +48,33 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Sovereign interoperable real-time workspace",
+    "longDescription": "Native Kodera desktop shell for sovereign real-time messaging, voice, video, and collaborative documents.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libayatana-appindicator3-1"
+        ]
+      }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
   }
 }
