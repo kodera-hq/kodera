@@ -476,7 +476,9 @@ async function withFixture<Value = Comparison>(
         projectDevicePreferenceInheritanceAttested: false,
         forceFirstDisposeError,
         playwright: '1.63.0',
-        lockSha256: digest(await readFile(new URL('../../../../package-lock.json', import.meta.url))),
+        lockSha256: digest(
+          await readFile(new URL('../../../../package-lock.json', import.meta.url))
+        ),
         browserVersion: browser.version(),
         reportedDefaultExecutable: browser.browserType().executablePath(),
         browserManifest,
@@ -915,7 +917,7 @@ async function rank1Probe(
   const requestWitness = new Promise<'request' | 'cleanup-only'>((resolve) => {
     requestArrived = resolve
   })
-  let released = false
+  const released = false
   let requestCount = 0
   let routeCount = 0
   let routeWork: Promise<void> | undefined
@@ -1048,7 +1050,6 @@ async function rank1Probe(
     } catch (error) {
       failures.push(error)
     }
-    released = true
     releaseResponse()
     try {
       const drained = await deadline(
@@ -1569,7 +1570,7 @@ async function runRank1Subject(
           : { actual: false, expected: true, name: 'toBe', pass: false }
       )
     } catch (error) {
-      throw new AggregateError([original, error], 'R1_CONTROL_NONQUALIFIED')
+      throw new AggregateError([original, error], 'R1_CONTROL_NONQUALIFIED', { cause: error })
     }
   }
   try {
@@ -1617,7 +1618,8 @@ async function runRank1Subject(
     console.log('W03_RANK1_NATIVE_FETCH ' + body)
     return { record, hashes: captured.hashes }
   } catch (error) {
-    if (refused) throw new AggregateError([original, error], 'R1_PUBLICATION_NONQUALIFIED')
+    if (refused)
+      throw new AggregateError([original, error], 'R1_PUBLICATION_NONQUALIFIED', { cause: error })
     throw error
   }
 }
@@ -2064,7 +2066,7 @@ async function runFencingSubject(
         })
       )
     } catch (error) {
-      throw new AggregateError([primary, error], 'FENCE_CONTROL_NONQUALIFIED')
+      throw new AggregateError([primary, error], 'FENCE_CONTROL_NONQUALIFIED', { cause: error })
     }
   }
   try {
@@ -2131,7 +2133,8 @@ async function runFencingSubject(
     console.log('W03_FENCING ' + body)
     return canonicalAssets
   } catch (error) {
-    if (refused) throw new AggregateError([primary, error], 'FENCE_PUBLICATION_NONQUALIFIED')
+    if (refused)
+      throw new AggregateError([primary, error], 'FENCE_PUBLICATION_NONQUALIFIED', { cause: error })
     throw error
   }
 }

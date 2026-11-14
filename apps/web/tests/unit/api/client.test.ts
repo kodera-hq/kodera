@@ -1533,7 +1533,7 @@ describe('unused native owner-claim dispatch boundary', () => {
 type LateObservation = ReturnType<typeof nativeImported.createOwnerClaimObservation>
 const LATE_GUARD = /if\s*\(\s*!admitOwnerClaimObservation\(cell\)\s*\)\s*return\b/
 const LATE_PUBLICATION_GUARD =
-  /if\s*\(\s*!admitOwnerClaimPublication\(\s*observation\s*,\s*expectedAccessToken\s*,\s*reject\s*\)\s*\)\s*return\b/
+  /if\s*\(\s*!admitOwnerClaimPublication\(\s*observation\s*,\s*expectedAccessToken\.value\s*,\s*reject\s*\)\s*\)\s*return\b/
 
 function lateOwned(api: NativeApi, fixture: NativeFixture, observation: LateObservation) {
   const work = api.dispatchOwnerClaim(fixture.source, observation)

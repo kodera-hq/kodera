@@ -614,7 +614,9 @@ export class OidcAuthAdapter implements AuthAdapter {
       try {
         this.#publish('unauthenticated', true)
       } catch (cleanup: unknown) {
-        throw new AggregateError([primary, cleanup], 'Protected setup and cleanup failed.')
+        throw new AggregateError([primary, cleanup], 'Protected setup and cleanup failed.', {
+          cause: cleanup,
+        })
       }
       throw primary
     }
@@ -755,7 +757,13 @@ export class OidcAuthAdapter implements AuthAdapter {
           cleanup.length === 1
             ? cleanup[0]
             : new AggregateError(cleanup, 'Protected publication cleanup failed.')
-        throw new AggregateError([primary, secondary], 'Protected publication and cleanup failed.')
+        throw new AggregateError(
+          [primary, secondary],
+          'Protected publication and cleanup failed.',
+          {
+            cause: primary,
+          }
+        )
       }
       throw primary
     }

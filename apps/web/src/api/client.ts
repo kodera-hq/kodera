@@ -475,7 +475,7 @@ function settleOwnerClaimCell(
   if (observation !== undefined) {
     const resolve = cell.resolve
     const reject = cell.reject
-    let expectedAccessToken = cell.expectedAccessToken
+    const expectedAccessToken = { value: cell.expectedAccessToken }
     cell.settled = true
     try {
       try {
@@ -490,9 +490,9 @@ function settleOwnerClaimCell(
         )
         return
       }
-      if (!admitOwnerClaimPublication(observation, expectedAccessToken, reject)) return
+      if (!admitOwnerClaimPublication(observation, expectedAccessToken.value, reject)) return
     } finally {
-      expectedAccessToken = undefined
+      expectedAccessToken.value = undefined
     }
     if (outcome.ok) resolve?.(outcome.value)
     else reject?.(outcome.error)
@@ -682,7 +682,9 @@ export function dispatchOwnerClaim(
     try {
       retireOwnerClaimCell(cell)
     } catch (failure) {
-      throw new AggregateError([error, failure], 'Owner-claim setup cleanup failed.')
+      throw new AggregateError([error, failure], 'Owner-claim setup cleanup failed.', {
+        cause: failure,
+      })
     }
     throw error
   }

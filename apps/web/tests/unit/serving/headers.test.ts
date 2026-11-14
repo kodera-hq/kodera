@@ -204,7 +204,8 @@ async function start(arguments_: string[], script = SCRIPT): Promise<Running> {
     } catch (cleanupError) {
       throw new AggregateError(
         [error, cleanupError],
-        'Static server setup and cleanup observations failed'
+        'Static server setup and cleanup observations failed',
+        { cause: cleanupError }
       )
     }
     throw error
@@ -1268,7 +1269,13 @@ describe('finite real-source serving mutation controls', { concurrent: false }, 
             await phase(after, root, mutation, false)
           } catch (error) {
             if (firstFailure !== undefined)
-              throw new AggregateError([firstFailure, error], 'Mutation and pristine-after failed')
+              throw new AggregateError(
+                [firstFailure, error],
+                'Mutation and pristine-after failed',
+                {
+                  cause: error,
+                }
+              )
             throw error
           }
           if (firstFailure !== undefined) throw firstFailure
@@ -1330,7 +1337,9 @@ describe('finite real-source serving mutation controls', { concurrent: false }, 
           await phase(after, root, baseline, false)
         } catch (error) {
           if (failure !== undefined)
-            throw new AggregateError([failure, error], 'Bind refusal and pristine-after failed')
+            throw new AggregateError([failure, error], 'Bind refusal and pristine-after failed', {
+              cause: error,
+            })
           throw error
         }
         if (failure !== undefined) throw failure
