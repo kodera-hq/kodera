@@ -689,10 +689,6 @@ class Channels:
     ) -> str:
         synapse = self._synapse
         channel_id = channel["channel_id"]
-        if wanted.federation_blocked:
-            raise EngineError(
-                "partner opt-in requires an unrestricted non-read-only active text channel"
-            )
         room_id = rooms.get(channel_id)
         if not fresh or room_id is None:
             room_id = synapse.resolve(channel_id)
@@ -703,6 +699,10 @@ class Channels:
                         f"the room under channel {channel_id}'s alias is not the agent's"
                     )
             if room_id is None:
+                if wanted.federation_blocked:
+                    raise EngineError(
+                        "partner opt-in requires an unrestricted non-read-only active text channel"
+                    )
                 room_id = synapse.create(
                     channel_id,
                     channel["name"],
@@ -716,12 +716,29 @@ class Channels:
                     federation_servers=wanted.federation_servers,
                 )
             else:
-                synapse.require_federation_mode(room_id, wanted.federation_servers)
-                self._put_state(room_id, wanted.state)
+                if not wanted.federation_servers:
+                    self._put_state(room_id, wanted.state)
+                try:
+                    if wanted.federation_blocked:
+                        raise EngineError(
+                            "partner opt-in requires an unrestricted non-read-only active text channel"
+                        )
+                    synapse.require_federation_mode(room_id, wanted.federation_servers)
+                except EngineError:
+                    if not wanted.federation_servers:
+                        for user in self._removed(wanted, self._present(room_id), keep):
+                            synapse.kick(room_id, user)
+                    raise
+                if wanted.federation_servers:
+                    self._put_state(room_id, wanted.state)
             if rooms.get(channel_id) != room_id:
                 # Recorded at once: a deleted channel's room is then emptied even if this pass stops.
                 rooms[channel_id] = room_id
                 self._state.keep_channel_rooms(rooms)
+        elif wanted.federation_blocked:
+            raise EngineError(
+                "partner opt-in requires an unrestricted non-read-only active text channel"
+            )
         if moderation is not None and not fresh:
             # Policy is current before ban changes. Clear our old bans before inviting/joining
             # a readmitted member; an operator's independent ban is never overwritten.

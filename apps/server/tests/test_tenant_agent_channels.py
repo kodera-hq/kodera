@@ -1763,6 +1763,8 @@ def test_existing_internal_room_requires_replacement_before_partner_mode_and_wri
 def test_removing_partner_optin_kicks_foreign_members_but_holds_immutable_room_for_replacement(
     tmp_path,
 ):
+    from tenant_agent import federation
+
     homeserver = FakeHomeserver()
     state = State(tmp_path)
     desired = parse(channel_set(1, channel(audience="all", members=[])))
@@ -1775,7 +1777,55 @@ def test_removing_partner_optin_kicks_foreign_members_but_holds_immutable_room_f
     homeserver.room_of(TEXT)["members"][remote] = "join"
     internal = Channels(homeserver, CallLiveKit({}), state)
     assert internal.apply(desired, full=True).failed == [TEXT]
-    assert homeserver.room_of(TEXT)["members"][remote] == "leave"
+    room = homeserver.room_of(TEXT)
+    assert room["members"][remote] == "leave"
+    assert room["state"][(POLICY, "")]["local_only"] is True
+    assert room["state"][(POLICY, "")]["allow_member_invites"] is False
+    assert room["state"][(POLICY, "")]["allow_federated_invites"] is False
+    assert room["state"][(POLICY, "")]["federation_servers"] == []
+    assert room["state"][(POWER_LEVELS, "")]["invite"] == 100
+    assert room["state"][("m.room.server_acl", "")] == federation.acl(SERVER)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"read_only": True},
+        {"archived": True},
+        {"audience": "listed"},
+        {"denied": [BOB]},
+    ],
+)
+def test_ineligible_existing_partner_room_locks_governance_and_acl_before_holding(
+    tmp_path, changes
+):
+    from tenant_agent import federation
+
+    homeserver = FakeHomeserver()
+    state = State(tmp_path)
+    initial = parse(channel_set(1, channel(audience="all", members=[])))
+    assert initial is not None
+    partnered = Channels(
+        homeserver, CallLiveKit({}), state, partner_channels=((TEXT, ("partner.example.org",)),)
+    )
+    assert partnered.apply(initial).failed == []
+    remote = "@outside:partner.example.org"
+    homeserver.room_of(TEXT)["members"][remote] = "join"
+    updated = (
+        parse(channel_set(2, channel(audience="all", members=[], **changes)))
+        if "audience" not in changes
+        else parse(channel_set(2, channel(**changes)))
+    )
+    assert updated is not None
+    assert partnered.apply(updated).failed == [TEXT]
+    room = homeserver.room_of(TEXT)
+    assert room["members"][remote] == "leave"
+    assert room["state"][(POLICY, "")]["local_only"] is True
+    assert room["state"][(POLICY, "")]["allow_member_invites"] is False
+    assert room["state"][(POLICY, "")]["allow_federated_invites"] is False
+    assert room["state"][(POLICY, "")]["federation_servers"] == []
+    assert room["state"][(POWER_LEVELS, "")]["invite"] == 100
+    assert room["state"][("m.room.server_acl", "")] == federation.acl(SERVER)
 
 
 @pytest.mark.parametrize(
