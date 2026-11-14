@@ -22,6 +22,14 @@ export {
 } from './security-policy.mjs';
 
 export {
+  type CommunityCoreServiceStatus,
+  type CommunityDeployInput,
+  type CommunityDeployResult,
+  type CommunityPreflightInput,
+  type CommunityPreflightResult,
+  type CommunityPrepareInput,
+  type CommunityPrepareResult,
+  type CommunityTlsModeSlug,
   type DesktopAppMetadata,
   type DesktopClientOptions,
   type DesktopDeepLinkEvent,
@@ -41,6 +49,7 @@ export {
   type SecureCredentialStatusResult,
   type SecureCredentialStoreInput,
   type WindowPlacementResult,
+  COMMUNITY_TLS_MODES,
   MAX_DIRECT_BADGE_COUNT,
   MAX_UNREAD_BADGE_COUNT,
   REDACTED_NOTIFICATION_PREVIEW,

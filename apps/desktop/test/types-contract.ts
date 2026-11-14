@@ -1,9 +1,14 @@
 import {
+  type CommunityDeployResult,
+  type CommunityPreflightResult,
+  type CommunityPrepareResult,
+  type CommunityTlsModeSlug,
   type DesktopAppMetadata,
   type DesktopDeepLinkEvent,
   type DesktopUpdateStatus,
   type KoderaDesktopClient,
   type TrayMenuActionId,
+  COMMUNITY_TLS_MODES,
   DESKTOP_APP_IDENTIFIER,
   TRAY_MENU_ITEM_IDS,
   createDesktopClient,
@@ -74,4 +79,31 @@ export async function verifyDesktopTypeContract(): Promise<void> {
     'http://127.0.0.1:51920/auth/callback?code=code_fixture_0001&state=pkce_state_fixture_0001',
   );
   await client.restoreWindowBounds();
+
+  const tlsModes: readonly CommunityTlsModeSlug[] = COMMUNITY_TLS_MODES;
+  void tlsModes;
+  const preflight: CommunityPreflightResult = await client.preflightCommunityDeploy({
+    stackDir: '/srv/kodera/community',
+    domain: 'chat.example.org',
+    acmeEmail: 'ops@example.org',
+    tlsMode: 'acme',
+    httpPort: 80,
+    httpsPort: 443,
+  });
+  const prepare: CommunityPrepareResult = await client.prepareCommunityDeploy({
+    stackDir: '/srv/kodera/community',
+    domain: 'chat.example.org',
+    acmeEmail: 'ops@example.org',
+    oidcProviderOrigin: 'https://id.example.org',
+    tlsMode: 'acme',
+    httpPort: 80,
+    httpsPort: 443,
+  });
+  const deploy: CommunityDeployResult = await client.deployCommunityStack({
+    stackDir: '/srv/kodera/community',
+    timeoutMs: 60_000,
+  });
+  void preflight;
+  void prepare;
+  void deploy;
 }

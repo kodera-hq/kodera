@@ -1,0 +1,298 @@
+name: Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish or update the GitHub Release when running manually on a release tag
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-release:
+    name: Desktop Release (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: macos
+            artifact_name: release-desktop-macos
+          - os: ubuntu-latest
+            target: linux
+            artifact_name: release-desktop-linux
+          - os: windows-latest
+            target: windows
+            artifact_name: release-desktop-windows
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify release workflow policy gate
+        if: matrix.target == 'linux'
+        run: |
+          python3 scripts/ci/check-release-workflow.py --selftest
+          python3 scripts/ci/check-release-workflow.py
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install Linux desktop WebKitGTK, AppIndicator and packaging libraries
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            dpkg-dev
+
+      - name: Install locked npm workspace dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install stable Rust toolchain
+        shell: bash
+        env:
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          if [ "$DESKTOP_TARGET" = "macos" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          fi
+
+      - name: Build @kodera/web and package @kodera/desktop installers
+        shell: bash
+        env:
+          DESKTOP_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          npm --workspace @kodera/web run build
+          node scripts/ci/package-desktop-release.mjs --target "$DESKTOP_TARGET" --out-dir dist-release
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist-release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  android-release:
+    name: Android Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Build paired release APKs via Gradle assembleRelease
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          bash scripts/ci/check-app-resources.selftest.sh
+          python3 scripts/ci/check-app-resources.py
+          ./gradlew clean assembleRelease --no-daemon
+          python3 scripts/ci/check-app-resources.py \
+            --merged-release app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
+          first_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$first_apk"
+          cp "$first_apk" "$RUNNER_TEMP/first-release.apk"
+          ./gradlew clean assembleRelease --no-daemon
+          second_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$second_apk"
+          cp "$second_apk" "$RUNNER_TEMP/second-release.apk"
+
+      - name: Stage native packaging evidence and verify kodera-android.apk
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/package-android-release.py \
+            --first-raw "$RUNNER_TEMP/first-release.apk" \
+            --second-raw "$RUNNER_TEMP/second-release.apk" \
+            --candidate-dir candidate \
+            --out-apk dist-release/kodera-android.apk \
+            --revision "$EXPECTED_REVISION"
+          python3 scripts/ci/check-native-packaging.py \
+            --first candidate/first/package.zip \
+            --second candidate/second/package.zip \
+            --sbom candidate/sbom.cdx.json \
+            --evidence candidate/evidence.json \
+            --toolchain candidate/toolchain-lock.json \
+            --revision "$EXPECTED_REVISION" \
+            --target android-apk
+          test -s dist-release/kodera-android.apk
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-android
+          path: dist-release/kodera-android.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-verify:
+    name: iOS Release Parity & Archive Readiness
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      XCODEGEN_VERSION: "2.44.1"
+      XCODEGEN_SHA256: a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify native token source and iOS app resources
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-native-tokens.py --selftest
+          python3 scripts/ci/check-native-tokens.py
+          (cd apps/ios && bash scripts/ci/check-app-resources.selftest.sh && python3 scripts/ci/check-app-resources.py)
+
+      - name: Swift package tests (Domain, Client, Auth)
+        working-directory: apps/ios/packages
+        run: |
+          set -euo pipefail
+          for package in KoderaDomain KoderaClient KoderaAuth; do
+            (cd "$package" && swift test --force-resolved-versions)
+          done
+
+      - name: Install SHA256-verified XcodeGen release
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip"
+          echo "${XCODEGEN_SHA256}  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Validate XcodeGen project generation and Release simulator build readiness
+        working-directory: apps/ios
+        run: |
+          set -euo pipefail
+          test ! -e Config/Local.xcconfig && test ! -L Config/Local.xcconfig
+          xcodegen generate --spec project.yml
+          xcodebuild -project Kodera.xcodeproj -scheme Kodera \
+            -configuration Release \
+            -destination 'generic/platform=iOS Simulator' \
+            build CODE_SIGNING_ALLOWED=NO
+
+  publish-release:
+    name: Assemble Checksums, SBOM & GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [desktop-release, android-release, ios-verify]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-desktop-macos
+          path: release-staging/macos
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-desktop-linux
+          path: release-staging/linux
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-desktop-windows
+          path: release-staging/windows
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-android
+          path: release-staging/android
+
+      - name: Normalize release asset filenames, generate CycloneDX SBOM and SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p release-bundle
+          cp release-staging/macos/kodera-desktop-macos-universal.dmg release-bundle/kodera-desktop-macos-universal.dmg
+          cp release-staging/macos/kodera-desktop-macos-universal.app.tar.gz release-bundle/kodera-desktop-macos-universal.app.tar.gz
+          cp release-staging/linux/kodera-desktop-linux-x86_64.AppImage release-bundle/kodera-desktop-linux-x86_64.AppImage
+          cp release-staging/linux/kodera-desktop-linux-amd64.deb release-bundle/kodera-desktop-linux-amd64.deb
+          cp release-staging/windows/kodera-desktop-windows-x64.msi release-bundle/kodera-desktop-windows-x64.msi
+          cp release-staging/windows/kodera-desktop-windows-x64-setup.exe release-bundle/kodera-desktop-windows-x64-setup.exe
+          cp release-staging/android/kodera-android.apk release-bundle/kodera-android.apk
+
+          npm sbom --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root \
+            > release-bundle/sbom-cyclonedx.json
+          python3 -c 'import json; d = json.load(open("release-bundle/sbom-cyclonedx.json")); assert d.get("bomFormat") == "CycloneDX"; assert len(d.get("components", [])) > 0'
+
+          (
+            cd release-bundle
+            sha256sum * > "$RUNNER_TEMP/SHA256SUMS.txt"
+            mv "$RUNNER_TEMP/SHA256SUMS.txt" SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          {
+            echo "### Multi-OS Release Bundle Checksums"
+            echo ""
+            echo '```text'
+            cat release-bundle/SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kodera-release-bundle
+          path: release-bundle/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release == true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_FULL: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$REF_FULL" in
+            refs/tags/v*)
+              TAG="$REF_NAME"
+              ;;
+            *)
+              TAG="$(git describe --exact-match --tags --match 'v[0-9]*.[0-9]*.[0-9]*' "$COMMIT_SHA" 2>/dev/null || true)"
+              if [ -z "$TAG" ]; then
+                echo "::error::publish_release requires a vX.Y.Z git tag on the target commit"
+                exit 1
+              fi
+              ;;
+          esac
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "Kodera $TAG" --generate-notes
+          gh release upload "$TAG" release-bundle/* --clobber

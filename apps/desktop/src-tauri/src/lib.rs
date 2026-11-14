@@ -21,6 +21,7 @@ pub mod gui;
 pub mod keychain;
 pub mod notifications;
 pub mod oidc_loopback;
+pub mod self_host_deploy;
 pub mod self_host_health;
 pub mod shell;
 pub mod tray_ptt;
@@ -28,8 +29,10 @@ pub mod window_state;
 
 pub use commands::{
     begin_desktop_oidc_pkce_loopback, complete_desktop_oidc_pkce_callback, configure_desktop_ptt,
-    delete_desktop_keychain_credential, dispatch_desktop_notification, get_desktop_ptt_state,
-    get_desktop_tray_state, inspect_desktop_self_host_health, load_desktop_keychain_credential,
+    delete_desktop_keychain_credential, deploy_desktop_community_stack,
+    dispatch_desktop_notification, get_desktop_ptt_state, get_desktop_tray_state,
+    inspect_desktop_self_host_health, load_desktop_keychain_credential,
+    preflight_desktop_community_stack, prepare_desktop_community_stack,
     restore_desktop_window_bounds, route_desktop_deep_link, set_desktop_ptt_pressed,
     set_desktop_unread_badge, store_desktop_keychain_credential, trigger_desktop_tray_menu_action,
     update_desktop_tray_state, validate_desktop_keychain_metadata, DesktopCommandError,
@@ -69,6 +72,16 @@ pub use oidc_loopback::{
     OidcLoopbackListener, OidcLoopbackSessionReady, OidcPkceSession, RedactedCodeVerifier,
     DEFAULT_LOOPBACK_TIMEOUT_MS, DEFAULT_OIDC_ISSUER_ORIGIN, MAX_LOOPBACK_HTTP_REQUEST_BYTES,
     MAX_LOOPBACK_TIMEOUT_MS, MAX_OIDC_CALLBACK_URI_BYTES,
+};
+pub use self_host_deploy::{
+    self_host_deploy_community, self_host_preflight_community, self_host_prepare_community,
+    CommandExecOutput, CommunityCommandRunner, CommunityCoreService, CommunityDeployError,
+    CommunityDeployReport, CommunityDeployServiceStatus, CommunityPreflightReport,
+    CommunityPreflightSpec, CommunityPrepareReport, CommunityPrepareSpec, CommunityTlsMode,
+    StdProcessCommunityRunner, COMPOSE_CONFIG_TIMEOUT_MS, DEFAULT_DEPLOY_TIMEOUT_MS,
+    HEX_SECRET_BYTES, LIVEKIT_KEY_RANDOM_BYTES, MAX_DEPLOY_TIMEOUT_MS, MAX_DOMAIN_BYTES,
+    MAX_EMAIL_BYTES, MAX_OIDC_ORIGIN_BYTES, MAX_STACK_DIR_BYTES, MIN_DEPLOY_TIMEOUT_MS,
+    PREFLIGHT_COMMAND_TIMEOUT_MS, READINESS_MAX_POLL_ATTEMPTS, SEAL_KEY_BYTES,
 };
 pub use self_host_health::{
     classify_docker_stderr, inspect_community_compose_ps, probe_local_community_stack,
@@ -733,6 +746,7 @@ pub struct DesktopWorkspaceSession {
     keychain_store: KeychainCredentialStore,
     oidc_allowlist: OidcIssuerAllowlist,
     pending_oidc: Option<OidcPkceSession>,
+    community_runner: std::sync::Arc<dyn CommunityCommandRunner>,
 }
 
 impl DesktopWorkspaceSession {
@@ -770,6 +784,7 @@ impl DesktopWorkspaceSession {
             keychain_store: KeychainCredentialStore::new(),
             oidc_allowlist: OidcIssuerAllowlist::kodera_default(),
             pending_oidc: None,
+            community_runner: std::sync::Arc::new(StdProcessCommunityRunner::new()),
         })
     }
 
@@ -1618,6 +1633,66 @@ impl DesktopWorkspaceSession {
         Ok(report)
     }
 
+    /// Trusted adapter or test seam replacing the local `docker` CLI runner for this session.
+    pub fn configure_community_runner(
+        &mut self,
+        organisation_id: &str,
+        runner: std::sync::Arc<dyn CommunityCommandRunner>,
+    ) -> Result<(), CoreError> {
+        self.check_organisation(organisation_id)?;
+        self.community_runner = runner;
+        Ok(())
+    }
+
+    pub fn preflight_community_deploy(
+        &self,
+        organisation_id: &str,
+        spec: &CommunityPreflightSpec<'_>,
+    ) -> Result<CommunityPreflightReport, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self_host_preflight_community(spec, self.community_runner.as_ref())
+            .map_err(DesktopCommandError::CommunityDeploy)
+    }
+
+    pub fn prepare_community_deploy(
+        &self,
+        organisation_id: &str,
+        spec: &CommunityPrepareSpec<'_>,
+    ) -> Result<CommunityPrepareReport, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        self_host_prepare_community(spec, self.community_runner.as_ref())
+            .map_err(DesktopCommandError::CommunityDeploy)
+    }
+
+    pub fn deploy_community_stack(
+        &mut self,
+        organisation_id: &str,
+        stack_dir: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<CommunityDeployReport, DesktopCommandError> {
+        self.check_organisation(organisation_id)
+            .map_err(DesktopCommandError::Core)?;
+        match self_host_deploy_community(stack_dir, timeout_ms, self.community_runner.as_ref()) {
+            Ok(report) => {
+                self.tray.set_self_host_degraded(!report.stack_healthy);
+                Ok(report)
+            }
+            Err(err) => {
+                if matches!(
+                    err,
+                    CommunityDeployError::ComposeLaunchFailed
+                        | CommunityDeployError::ReadinessProbeFailed(_)
+                        | CommunityDeployError::StackUnhealthy
+                ) {
+                    self.tray.set_self_host_degraded(true);
+                }
+                Err(DesktopCommandError::CommunityDeploy(err))
+            }
+        }
+    }
+
     pub fn clear_session(&mut self) {
         if let Some(node) = &mut self.proximity {
             node.clear();
@@ -1646,6 +1721,7 @@ impl DesktopWorkspaceSession {
         if let Some(mut pending) = self.pending_oidc.take() {
             pending.clear();
         }
+        self.community_runner = std::sync::Arc::new(StdProcessCommunityRunner::new());
         self.organisation_id = None;
     }
 
