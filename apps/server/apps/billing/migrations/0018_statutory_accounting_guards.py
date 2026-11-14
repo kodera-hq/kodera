@@ -389,6 +389,164 @@ REVOKE ALL ON FUNCTION billing_payment_retention_delete() FROM PUBLIC;
 
 '''
 
+REVERSE = r"""
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP TRIGGER payment_retention_delete ON billing_payment;
+DROP FUNCTION billing_payment_retention_delete();
+
+-- The accounting guards go back to the bodies of billing 0002/0008, with that history's
+-- SECURITY INVOKER, no search_path of their own and the execute right they were created with.
+CREATE OR REPLACE FUNCTION billing_creditnoteline_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  note_issued timestamptz;
+  note_invoice uuid;
+BEGIN
+  IF TG_OP <> 'INSERT' THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+      MESSAGE='A line of a credit note never changes';
+  END IF;
+  SELECT issued_at, invoice_id INTO note_issued, note_invoice
+    FROM billing_creditnote WHERE id = NEW.credit_note_id;
+  IF note_issued < now() THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+      MESSAGE='A line is written with its credit note, never afterwards';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM billing_invoiceline
+                 WHERE id = NEW.invoice_line_id AND invoice_id = note_invoice) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_complete',
+      MESSAGE='A credit note line credits a line of the note''s invoice';
+  END IF;
+  RETURN NEW;
+END $$;
+GRANT EXECUTE ON FUNCTION billing_creditnoteline_guard() TO PUBLIC;
+CREATE OR REPLACE FUNCTION billing_creditnote_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  settable text[] := ARRAY['pdf_ref', 'external_ref', 'notice_delivery_id', 'updated_at'];
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- Dated in the transaction that issues it: never written afterwards with an older date.
+    IF NEW.issued_at < now() THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+        MESSAGE='A credit note is written in the transaction that issues it';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'DELETE'
+     OR (to_jsonb(OLD) - settable) IS DISTINCT FROM (to_jsonb(NEW) - settable)
+     OR (OLD.pdf_ref IS NOT NULL AND NEW.pdf_ref IS DISTINCT FROM OLD.pdf_ref)
+     OR (OLD.external_ref IS NOT NULL AND NEW.external_ref IS DISTINCT FROM OLD.external_ref) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_creditnote_immutable',
+      MESSAGE='A credit note never changes';
+  END IF;
+  RETURN NEW;
+END $$;
+GRANT EXECUTE ON FUNCTION billing_creditnote_guard() TO PUBLIC;
+CREATE OR REPLACE FUNCTION billing_invoiceline_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  parent_state text;
+BEGIN
+  IF TG_OP IN ('UPDATE', 'DELETE') THEN
+    SELECT state INTO parent_state FROM billing_invoice WHERE id = OLD.invoice_id FOR SHARE;
+    IF parent_state <> 'draft' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoiceline_immutable',
+        MESSAGE='A line of an issued invoice never changes';
+    END IF;
+  END IF;
+  IF TG_OP IN ('INSERT', 'UPDATE') THEN
+    SELECT state INTO parent_state FROM billing_invoice WHERE id = NEW.invoice_id FOR SHARE;
+    IF parent_state <> 'draft' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoiceline_immutable',
+        MESSAGE='A line of an issued invoice never changes';
+    END IF;
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END $$;
+GRANT EXECUTE ON FUNCTION billing_invoiceline_guard() TO PUBLIC;
+CREATE OR REPLACE FUNCTION billing_invoice_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  mutable text[] := ARRAY['state', 'paid_at', 'amount_paid_minor', 'updated_at',
+                          'external_ref', 'pdf_ref'];
+  line_count bigint;
+  net bigint;
+  vat bigint;
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.state <> 'draft' OR NEW.number IS NOT NULL THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+        MESSAGE='An invoice is created as a draft';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.state <> 'draft' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_immutable',
+        MESSAGE='An issued invoice is never deleted';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF OLD.state = 'draft' THEN
+    IF NEW.state = 'draft' THEN
+      RETURN NEW;
+    END IF;
+    IF NEW.state <> 'issued' THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+        MESSAGE='A draft invoice is only issued';
+    END IF;
+    SELECT count(*), coalesce(sum(total_excl_vat_minor), 0), coalesce(sum(vat_amount_minor), 0)
+      INTO line_count, net, vat FROM billing_invoiceline WHERE invoice_id = NEW.id;
+    IF line_count = 0 OR net <> NEW.total_excl_vat_minor OR vat <> NEW.vat_amount_minor
+       OR NEW.number !~ '^[A-Z]{2,8}(-[A-Z]{2,8})?-[0-9]{4}-[0-9]{5}$'
+       OR NEW.amount_paid_minor <> 0 THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_issue',
+        MESSAGE='An invoice is issued with its lines, their totals and a series number';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF (to_jsonb(OLD) - mutable) IS DISTINCT FROM (to_jsonb(NEW) - mutable)
+     OR (OLD.external_ref IS NOT NULL AND NEW.external_ref IS DISTINCT FROM OLD.external_ref)
+     OR (OLD.pdf_ref IS NOT NULL AND NEW.pdf_ref IS DISTINCT FROM OLD.pdf_ref) THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_immutable',
+      MESSAGE='An issued invoice never changes';
+  END IF;
+  IF NEW.state IS DISTINCT FROM OLD.state AND (OLD.state || '>' || NEW.state) NOT IN (
+       'issued>paid', 'issued>overdue', 'issued>void',
+       'overdue>paid', 'overdue>void',
+       'paid>issued', 'paid>overdue') THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='billing_invoice_transition',
+      MESSAGE='Not an invoice state transition';
+  END IF;
+  RETURN NEW;
+END $$;
+GRANT EXECUTE ON FUNCTION billing_invoice_guard() TO PUBLIC;
+
+DROP TRIGGER statutory_immutable ON billing_statutoryrecord;
+DROP FUNCTION billing_statutory_guard();
+DROP TRIGGER z_statutory_capture ON billing_payment;
+DROP TRIGGER z_statutory_capture ON billing_creditnoteline;
+DROP TRIGGER z_statutory_capture ON billing_creditnote;
+DROP TRIGGER z_statutory_capture ON billing_invoiceline;
+DROP TRIGGER z_statutory_capture ON billing_invoice;
+DROP FUNCTION billing_statutory_capture();
+DROP TRIGGER a_accounting_retention ON billing_payment;
+DROP TRIGGER a_accounting_retention ON billing_creditnoteline;
+DROP TRIGGER a_accounting_retention ON billing_creditnote;
+DROP TRIGGER a_accounting_retention ON billing_invoiceline;
+DROP TRIGGER zz_accounting_retention ON billing_invoice;
+DROP FUNCTION billing_retention_clock_guard();
+DROP FUNCTION billing_accounting_clock(text,timestamptz);
+DROP TRIGGER billing_fiscal_immutable ON billing_fiscalperiod;
+DROP FUNCTION billing_fiscal_guard();
+DROP FUNCTION retention_context(text,text,uuid);
+DROP TABLE retention_worker_context;
+DROP FUNCTION retention_inventory_digest(jsonb);
+DROP FUNCTION retention_canonical_inventory(jsonb,integer);
+DROP FUNCTION retention_new_uuid7();
+"""
+
+
 class Migration(migrations.Migration):
     dependencies = [("billing", "0017_creditnote_accounting_event_at_and_more")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [migrations.RunSQL(FORWARD, REVERSE)]

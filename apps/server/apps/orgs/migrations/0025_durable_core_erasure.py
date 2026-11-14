@@ -5,9 +5,14 @@ from django.db import migrations
 FORWARD = r'''
 
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
-CREATE FUNCTION privacy_erasure_context(p_org uuid) RETURNS boolean LANGUAGE sql
+-- plpgsql, not sql: the statutory worker helpers belong to the accounting application, which
+-- the customer applications' migrations must not depend on (orgs 0007). A plpgsql body is
+-- resolved on the first call, so this schema installs without it and no erasure runs without it.
+CREATE FUNCTION privacy_erasure_context(p_org uuid) RETURNS boolean LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
- SELECT public.retention_context('erase','orgs_organisation',p_org) IS NOT NULL $$;
+BEGIN
+ RETURN public.retention_context('erase','orgs_organisation',p_org) IS NOT NULL;
+END $$;
 REVOKE ALL ON FUNCTION privacy_erasure_context(uuid) FROM PUBLIC;
 
 CREATE FUNCTION privacy_erasure_journal_guard() RETURNS trigger LANGUAGE plpgsql
@@ -75,8 +80,10 @@ BEGIN
  AND (to_jsonb(NEW)-ARRAY['authority_revision','owner_guard_revision'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['authority_revision','owner_guard_revision']) THEN RETURN NEW; END IF;
  IF org IS NOT NULL THEN
-  -- Same lock as cutoff: a pre-cutoff writer commits before the inventory, or sees the fence.
-  PERFORM 1 FROM public.orgs_organisation WHERE id=org FOR SHARE;
+  -- The cutoff's own fence, on an advisory key of its own: a pre-cutoff writer commits before
+  -- the inventory is taken, or it sees the fence. Taking no row lock here keeps the declared
+  -- organisation/workspace lock order of the authority and structural writes intact.
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:'||org::text,0));
   IF EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
    AND NOT public.privacy_erasure_context(org) THEN
    RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514';
@@ -87,13 +94,6 @@ END $$;
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON orgs_organisation FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON orgs_membership FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON identity_identity FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_document FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_documentgrant FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_documentlink FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_documentsnapshot FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_documentupdate FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_collection FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON docs_collectionrow FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON media_attachment FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON notifications_notification FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON notifications_pushsubscription FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
@@ -106,34 +106,9 @@ CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON workspaces_workspace
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON workspaces_workspacememberrestriction FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON workspaces_workspaceinvitelink FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON workspaces_workspaceabusereport FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_outboxdelivery FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON orgs_privacyexport FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON billing_billingprofile FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON support_supportticket FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_message FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_realmaccount FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
-CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE ON outbox_realmaccess FOR EACH ROW EXECUTE FUNCTION privacy_cutoff_guard();
 
-CREATE OR REPLACE FUNCTION public.docs_journal_guard() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp SET lock_timeout='3s' SET statement_timeout='5s' AS $$
-DECLARE covered bigint; head bigint; expected uuid; actual uuid;
-BEGIN
- IF TG_OP='DELETE' AND EXISTS(SELECT 1 FROM public.docs_document d JOIN public.workspaces_workspace w ON w.id=d.workspace_id
- WHERE d.id=OLD.document_id AND public.privacy_erasure_context(w.organisation_id)) THEN RETURN OLD; END IF;
-
-  IF TG_OP='UPDATE' THEN RAISE EXCEPTION 'document journal is immutable' USING ERRCODE='23514'; END IF;
-  IF TG_OP='DELETE' THEN
-    SELECT sequence INTO covered FROM docs_documentsnapshot WHERE document_id=OLD.document_id;
-    IF covered IS NULL OR covered<OLD.sequence THEN RAISE EXCEPTION 'document update is not covered by a snapshot' USING ERRCODE='23514'; END IF;
-    RETURN OLD;
-  END IF;
-  SELECT head_sequence INTO head FROM docs_documentsnapshot WHERE document_id=NEW.document_id FOR UPDATE;
-  IF head IS NULL OR NEW.sequence<>head+1 THEN RAISE EXCEPTION 'document journal sequence refused' USING ERRCODE='23514'; END IF;
-  SELECT w.organisation_id INTO expected FROM docs_document d JOIN workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=NEW.document_id;
-  SELECT organisation_id INTO actual FROM identity_identity WHERE id=NEW.actor_id;
-  IF expected IS DISTINCT FROM actual THEN RAISE EXCEPTION 'document journal actor scope refused' USING ERRCODE='23514'; END IF;
-  UPDATE docs_documentsnapshot SET head_sequence=NEW.sequence,updated_at=clock_timestamp() WHERE document_id=NEW.document_id;
-  RETURN NEW;
-END $$;
 CREATE OR REPLACE FUNCTION public.organisation_intake_change() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 BEGIN
  IF TG_OP='UPDATE' AND public.privacy_erasure_context(OLD.organisation_id)
@@ -143,7 +118,6 @@ BEGIN
 
   RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='intake_immutable', MESSAGE='An intake record is never changed or deleted';
 END $$;
-ALTER FUNCTION organisation_intake_change() SECURITY DEFINER; ALTER FUNCTION organisation_intake_change() SET search_path=pg_catalog,public,pg_temp;
 
 
 CREATE FUNCTION privacy_export_expiry_inventory(p_ids jsonb) RETURNS jsonb LANGUAGE plpgsql
@@ -181,6 +155,9 @@ BEGIN
  OR p_digest IS NULL OR p_digest !~ '^[0-9a-f]{64}$' OR p_not_before IS NULL
  OR NOT public.retention_current_operator(p_actor)
  THEN RAISE EXCEPTION 'validated erasure instruction authority refused' USING ERRCODE='23514'; END IF;
+ -- The exclusive side of the writers' fence: every in-flight pre-cutoff write to this
+ -- organisation has committed before the inventory below is taken.
+ PERFORM pg_advisory_xact_lock(hashtextextended('privacy_erasure_cutoff:'||p_org::text,0));
  SELECT * INTO org FROM public.orgs_organisation WHERE id=p_org FOR UPDATE;
  IF NOT FOUND OR org.is_default_community OR EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=p_org)
  THEN RAISE EXCEPTION 'erasure scope unavailable or already fenced' USING ERRCODE='23514'; END IF;
@@ -307,10 +284,68 @@ REVOKE ALL ON FUNCTION privacy_erasure_journal_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION privacy_receipt_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION privacy_cutoff_guard() FROM PUBLIC;
 REVOKE ALL ON FUNCTION organisation_intake_change() FROM PUBLIC;
-REVOKE ALL ON FUNCTION docs_journal_guard() FROM PUBLIC;
 
 '''
 
+REVERSE = r'''
+
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP FUNCTION privacy_record_absence(uuid,text,timestamptz,text,text,timestamptz);
+DROP FUNCTION privacy_purge_core(uuid);
+DROP FUNCTION privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid);
+DROP FUNCTION privacy_export_expiry_inventory(jsonb);
+
+-- The intake record goes back to the unconditional refusal of orgs 0007, with that
+-- migration's SECURITY INVOKER and no search_path of its own.
+CREATE OR REPLACE FUNCTION public.organisation_intake_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='intake_immutable', MESSAGE='An intake record is never changed or deleted';
+END $$;
+GRANT EXECUTE ON FUNCTION organisation_intake_change() TO PUBLIC;
+
+DROP TRIGGER aa_privacy_cutoff ON support_supportticket;
+DROP TRIGGER aa_privacy_cutoff ON orgs_privacyexport;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_workspaceabusereport;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_workspaceinvitelink;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_workspacememberrestriction;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_workspacemoderator;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_category;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_channel;
+DROP TRIGGER aa_privacy_cutoff ON workspaces_workspace;
+DROP TRIGGER aa_privacy_cutoff ON orgs_invitation;
+DROP TRIGGER aa_privacy_cutoff ON notifications_pushoutbox;
+DROP TRIGGER aa_privacy_cutoff ON notifications_pushsubscription;
+DROP TRIGGER aa_privacy_cutoff ON notifications_notification;
+DROP TRIGGER aa_privacy_cutoff ON media_attachment;
+DROP TRIGGER aa_privacy_cutoff ON identity_identity;
+DROP TRIGGER aa_privacy_cutoff ON orgs_membership;
+DROP TRIGGER aa_privacy_cutoff ON orgs_organisation;
+DROP FUNCTION privacy_cutoff_guard();
+DROP TRIGGER erasure_receipt_immutable ON orgs_erasurereceipt;
+DROP FUNCTION privacy_receipt_guard();
+DROP TRIGGER erasure_journal_immutable ON orgs_privacyerasure;
+DROP FUNCTION privacy_erasure_journal_guard();
+DROP FUNCTION privacy_erasure_context(uuid);
+
+'''
+
+
 class Migration(migrations.Migration):
-    dependencies = [("orgs", "0024_privacyerasure_erasurereceipt"), ("billing", "0019_statutory_worker_operations"), ("docs", "0006_collection_scope"), ("notifications", "0002_recipient_scope"), ("outbox", "0006_invitations"), ("support", "0001_initial")]
-    operations = [migrations.RunSQL(FORWARD)]
+    """The cutoff fence of this application's own tables and of the customer tables whose
+    applications it may depend on.
+
+    The guards of the queue applications (jobs, outbox, audit) and of the applications that
+    depend on them (docs, billing) are installed by those applications' own migrations, which
+    depend on this one: the same rule as orgs 0007's bootstrap_job_id, since the profiles that
+    install this application's schema need not install theirs.
+    """
+
+    dependencies = [
+        ("orgs", "0024_privacyerasure_erasurereceipt"),
+        ("identity", "0006_discovery_quotas"),
+        ("media", "0002_attachment_scope"),
+        ("notifications", "0002_recipient_scope"),
+        ("support", "0001_initial"),
+        ("workspaces", "0009_workspace_moderation"),
+    ]
+    operations = [migrations.RunSQL(FORWARD, REVERSE)]

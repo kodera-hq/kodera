@@ -133,6 +133,49 @@ REVOKE ALL ON FUNCTION public.privacy_complete_account_erasure(uuid) FROM PUBLIC
 """
 
 
+REVERSE = r"""
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP FUNCTION public.privacy_complete_account_erasure(uuid);
+DROP TRIGGER ac_erased_subject_rebind ON public.identity_identity;
+DROP FUNCTION public.privacy_erased_subject_rebind_guard();
+
+-- Back to the organisation-erasure-only exemption of orgs 0026, with that migration's
+-- SECURITY DEFINER and search_path.
+CREATE OR REPLACE FUNCTION public.customer_immutable() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
+ IF TG_ARGV[0]='identity' AND TG_OP='UPDATE' THEN
+ IF public.privacy_erasure_context(OLD.organisation_id)
+ AND NEW.subject='erased:'||OLD.id AND NOT NEW.enabled
+ AND (to_jsonb(NEW)-ARRAY['subject','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['subject','updated_at'])
+ THEN RETURN NEW; END IF;
+ END IF;
+
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT=TG_ARGV[0] || '_id_immutable', MESSAGE='Stored identifier is immutable';
+  END IF;
+  IF TG_ARGV[0]='identity' THEN
+    IF (NEW.user_id,NEW.organisation_id,NEW.issuer,NEW.realm,NEW.subject) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id,OLD.issuer,OLD.realm,OLD.subject) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='identity_immutable_binding', MESSAGE='Principal binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='membership' THEN
+    IF (NEW.user_id,NEW.organisation_id) IS DISTINCT FROM (OLD.user_id,OLD.organisation_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='membership_immutable_binding', MESSAGE='Membership binding is immutable';
+    END IF;
+  ELSIF TG_ARGV[0]='organisation' THEN
+    IF NEW.issuer IS DISTINCT FROM OLD.issuer THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='organisation_immutable_binding', MESSAGE='Organisation issuer is immutable';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.customer_immutable() FROM PUBLIC;
+
+DROP FUNCTION public.privacy_record_account_absence(uuid,uuid,timestamptz,text,text,text,text,timestamptz);
+DROP TRIGGER account_receipt_immutable ON public.orgs_accounterasurereceipt;
+DROP FUNCTION public.privacy_account_receipt_guard();
+"""
+
+
 class Migration(migrations.Migration):
     dependencies = [("orgs", "0030_erasure_resource_binding")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [migrations.RunSQL(FORWARD, REVERSE)]

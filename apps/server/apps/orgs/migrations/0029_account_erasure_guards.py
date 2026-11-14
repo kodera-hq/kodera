@@ -5,9 +5,13 @@ from django.db import migrations
 FORWARD = r"""
 
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
-CREATE FUNCTION privacy_account_context(p_user uuid) RETURNS boolean LANGUAGE sql
+-- plpgsql, as privacy_erasure_context: the statutory worker helpers belong to the accounting
+-- application, which this one must not depend on; a plpgsql body is resolved on the first call.
+CREATE FUNCTION privacy_account_context(p_user uuid) RETURNS boolean LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
- SELECT public.retention_context('account','identity_user',p_user) IS NOT NULL $$;
+BEGIN
+ RETURN public.retention_context('account','identity_user',p_user) IS NOT NULL;
+END $$;
 REVOKE ALL ON FUNCTION privacy_account_context(uuid) FROM PUBLIC;
 
 CREATE FUNCTION privacy_account_journal_guard() RETURNS trigger LANGUAGE plpgsql
@@ -49,7 +53,10 @@ BEGIN
   SELECT user_id INTO person FROM public.identity_identity WHERE id=NEW.actor_id;
  END IF;
  IF person IS NULL THEN RETURN NEW; END IF;
- PERFORM 1 FROM public.identity_user WHERE id=person FOR SHARE;
+ -- The account cutoff's own advisory fence, never a row lock on the person: the authority
+ -- fan-out already versions identity_user under its declared order, and a share lock here
+ -- would both mask that touch and reach tables that take no parent lock at all.
+ PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:'||person::text,0));
  IF NOT EXISTS(SELECT 1 FROM public.orgs_accounterasure WHERE user_reference=person) OR public.privacy_account_context(person) THEN RETURN NEW; END IF;
  IF TG_OP='UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
  IF TG_OP='UPDATE' THEN
@@ -89,8 +96,6 @@ CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON orgs_privacyexport F
 CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON notifications_pushsubscription FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
 CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON notifications_notification FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
 CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON notifications_pushoutbox FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
-CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON outbox_realmaccess FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
-CREATE TRIGGER ab_account_cutoff BEFORE INSERT OR UPDATE ON docs_documentupdate FOR EACH ROW EXECUTE FUNCTION privacy_account_cutoff_guard();
 CREATE OR REPLACE FUNCTION public.privacy_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
 SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid;
@@ -124,8 +129,10 @@ BEGIN
  AND (to_jsonb(NEW)-ARRAY['authority_revision','owner_guard_revision'])
  IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['authority_revision','owner_guard_revision']) THEN RETURN NEW; END IF;
  IF org IS NOT NULL THEN
-  -- Same lock as cutoff: a pre-cutoff writer commits before the inventory, or sees the fence.
-  PERFORM 1 FROM public.orgs_organisation WHERE id=org FOR SHARE;
+  -- The cutoff's own fence, on an advisory key of its own: a pre-cutoff writer commits before
+  -- the inventory is taken, or it sees the fence. Taking no row lock here keeps the declared
+  -- organisation/workspace lock order of the authority and structural writes intact.
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:'||org::text,0));
   IF EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
    AND NOT public.privacy_erasure_context(org) THEN
    RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514';
@@ -144,6 +151,9 @@ BEGIN
  THEN RAISE EXCEPTION 'account erasure admission refused' USING ERRCODE='23514'; END IF;
  SELECT user_id INTO person FROM public.identity_identity WHERE id=p_identity AND organisation_id IS NOT NULL;
  IF NOT FOUND THEN RAISE EXCEPTION 'account erasure identity absent' USING ERRCODE='23514'; END IF;
+ -- The exclusive side of the writers' fence: every in-flight pre-cutoff write for this person
+ -- has committed before the inventory below is taken.
+ PERFORM pg_advisory_xact_lock(hashtextextended('privacy_account_cutoff:'||person::text,0));
  PERFORM 1 FROM public.identity_user WHERE id=person AND enabled AND deleted_at IS NULL FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'account erasure person unavailable' USING ERRCODE='23514'; END IF;
  PERFORM 1 FROM public.orgs_organisation WHERE id IN (
@@ -265,7 +275,67 @@ REVOKE ALL ON FUNCTION privacy_purge_account_core(uuid) FROM PUBLIC;
 
 """
 
+REVERSE = r"""
+
+SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
+DROP FUNCTION privacy_purge_account_core(uuid);
+DROP FUNCTION privacy_account_protocol_recorded(uuid);
+DROP FUNCTION privacy_begin_account_erasure(uuid,uuid,text,text,timestamptz,uuid);
+
+-- Back to the organisation-only cutoff guard of orgs 0025, before any account journal exists.
+CREATE OR REPLACE FUNCTION public.privacy_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE item jsonb:=to_jsonb(NEW); org uuid; parent uuid;
+BEGIN
+ IF item ? 'organisation_id' THEN org:=(item->>'organisation_id')::uuid;
+ ELSIF TG_TABLE_NAME='orgs_organisation' THEN org:=NEW.id;
+ ELSIF item ? 'workspace_id' THEN
+  SELECT organisation_id INTO org FROM public.workspaces_workspace WHERE id=(item->>'workspace_id')::uuid;
+ ELSIF item ? 'document_id' THEN
+  SELECT w.organisation_id INTO org FROM public.docs_document d JOIN public.workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=(item->>'document_id')::uuid;
+ ELSIF TG_TABLE_NAME='docs_documentlink' THEN
+  SELECT w.organisation_id INTO org FROM public.docs_document d JOIN public.workspaces_workspace w ON w.id=d.workspace_id WHERE d.id=NEW.source_id;
+ ELSIF TG_TABLE_NAME='docs_collectionrow' THEN
+  SELECT w.organisation_id INTO org FROM public.docs_collection c JOIN public.workspaces_workspace w ON w.id=c.workspace_id WHERE c.id=NEW.collection_id;
+ ELSIF item ? 'delivery_id' THEN
+  SELECT organisation_id INTO org FROM public.outbox_outboxdelivery WHERE id=(item->>'delivery_id')::uuid;
+ ELSIF TG_TABLE_NAME='notifications_pushoutbox' THEN
+  SELECT organisation_id INTO org FROM public.notifications_pushsubscription WHERE id=NEW.subscription_id;
+ END IF;
+ IF TG_TABLE_NAME='orgs_organisation' AND TG_OP='UPDATE'
+ AND (to_jsonb(NEW)-ARRAY['authority_revision','owner_guard_revision'])
+ IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['authority_revision','owner_guard_revision']) THEN RETURN NEW; END IF;
+ IF org IS NOT NULL THEN
+  -- The cutoff's own fence, on an advisory key of its own: a pre-cutoff writer commits before
+  -- the inventory is taken, or it sees the fence. Taking no row lock here keeps the declared
+  -- organisation/workspace lock order of the authority and structural writes intact.
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:'||org::text,0));
+  IF EXISTS(SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
+   AND NOT public.privacy_erasure_context(org) THEN
+   RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+DROP TRIGGER ab_account_cutoff ON notifications_pushoutbox;
+DROP TRIGGER ab_account_cutoff ON notifications_notification;
+DROP TRIGGER ab_account_cutoff ON notifications_pushsubscription;
+DROP TRIGGER ab_account_cutoff ON orgs_privacyexport;
+DROP TRIGGER ab_account_cutoff ON orgs_membership;
+DROP TRIGGER ab_account_cutoff ON identity_identity;
+DROP TRIGGER ab_account_cutoff ON identity_user;
+DROP FUNCTION privacy_account_cutoff_guard();
+DROP TRIGGER account_erasure_immutable ON orgs_accounterasure;
+DROP FUNCTION privacy_account_journal_guard();
+DROP FUNCTION privacy_account_context(uuid);
+
+"""
+
 
 class Migration(migrations.Migration):
+    """As orgs 0025: the account guards of the queue applications' tables and of the tables of
+    the applications that depend on them are installed by those applications' own migrations."""
+
     dependencies = [("orgs", "0028_accounterasure")]
-    operations = [migrations.RunSQL(FORWARD)]
+    operations = [migrations.RunSQL(FORWARD, REVERSE)]
