@@ -1403,7 +1403,7 @@ describe('CallController: local retirement barrier', () => {
     const f = retirementFixture(setup())
     let first: Promise<RetirementResult> | undefined
     let second: Promise<RetirementResult> | undefined
-    let atCheckpoint: string[] = []
+    let atCheckpoint: string[]
     try {
       await f.call.join(STANDUP)
       expect(f.room().state).toBe(ConnectionState.Connected)

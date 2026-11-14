@@ -82,7 +82,6 @@ export function timelineWindow({
     } else {
       const margin = maxRows - visible
       const above = Math.min(first, Math.floor(margin / 2))
-      start = first - above
       end = Math.min(count, last + 1 + (margin - above))
       start = Math.max(0, end - maxRows)
     }
