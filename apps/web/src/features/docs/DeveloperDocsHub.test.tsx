@@ -26,9 +26,9 @@ it('filters the reference, reports no result and opens the matching source-linke
   render(<DeveloperDocsHub />)
   const search = screen.getByRole('searchbox', { name: 'Rechercher dans la documentation' })
   await user.type(search, 'qonto')
-  await user.click(screen.getByRole('button', { name: 'Extension SDK & 10 connecteurs' }))
+  await user.click(screen.getByRole('button', { name: 'Extension SDK & 22 connecteurs' }))
   expect(
-    screen.getByRole('heading', { name: 'Extension SDK & 10 connecteurs', level: 2 })
+    screen.getByRole('heading', { name: 'Extension SDK & 22 connecteurs', level: 2 })
   ).toBeInTheDocument()
   expect(screen.getByRole('link', { name: /packages\/extension-sdk\/README.md/ })).toHaveAttribute(
     'href',

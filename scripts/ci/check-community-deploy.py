@@ -18,10 +18,12 @@ import copy
 import json
 import os
 import re
+import runpy
 import stat
 import sys
 import tempfile
 import types
+import urllib.parse
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -259,7 +261,9 @@ def parse_env_example(env_text: str) -> tuple[dict[str, str], list[str]]:
             continue
         match = ENV_LINE_RE.match(line)
         if not match:
-            errors.append(f".env.example line {idx}: malformed assignment '{line}'")
+            # The line itself is never quoted back: the same parser reads an operator's real
+            # .env, where a malformed line can hold the value of a secret.
+            errors.append(f".env.example line {idx}: malformed assignment (value not shown)")
             continue
         key, value = match.group(1), match.group(2).strip()
         if key in env_map:
@@ -331,6 +335,8 @@ def check_community_deploy(
         errors.append(
             f"federation must be closed by default: {FEDERATION_ENV_NAME} must be empty in .env.example"
         )
+    if env_map.get("KODERA_MATRIX_PARTNER_CHANNELS", "missing") != "":
+        errors.append("partner channels must be closed by default in .env.example")
     if env_map.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "missing") != "":
         errors.append(f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be empty in .env.example: it has no usable default")
 
@@ -398,6 +404,9 @@ def check_community_deploy(
         for key in AGENT_ENV_NAMES:
             if agent.environment.get(key) != "${" + key + ":-}":
                 errors.append("tenant-agent must consume isolated " + key)
+        for key in (FEDERATION_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS"):
+            if agent.environment.get(key) != "${" + key + ":-}":
+                errors.append("tenant-agent partner policy must consume " + key + " with an empty default")
         if "docker.sock" in block:
             errors.append("tenant-agent Matrix profile must not mount the Docker socket")
         for dependency, condition in (("server", "service_healthy"), ("synapse", "service_healthy"), ("agent-state-init", "service_completed_successfully")):
@@ -1119,7 +1128,7 @@ def check_synapse_policy_source(source: str) -> list[str]:
         'MODULE = "kodera_synapse_policy.KoderaPolicy"',
         '"room_access_user_id": f"@kodera-rooms:{server}"',
         '"agent_user_id": f"@kodera-agent:{server}"',
-        'version("kodera-synapse-policy") != "0.1.5"',
+        'version("kodera-synapse-policy") != "0.1.6"',
         'yaml.safe_dump(configure(document, os.environ)',
         '"pkce_method": "always"',
         '"allow_existing_users": False',
@@ -1238,6 +1247,7 @@ def check_synapse_config(source: str) -> list[str]:
         wanted = {"module": "kodera_synapse_policy.KoderaPolicy", "config": {
             "agent_user_id": "@kodera-agent:chat.example.org",
             "room_access_user_id": "@kodera-rooms:chat.example.org",
+            "federation_domain_allowlist": [],
         }}
         modules = closed.get("modules") or []
         if modules.count(wanted) != 1 or {"module": "operator.module"} not in modules:
@@ -1635,7 +1645,7 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME) and not actual.get(key, "").strip("'\""):
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME) and not actual.get(key, "").strip("'\""):
             continue  # An .env written before the topology setting existed runs the single topology.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
@@ -1679,6 +1689,14 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             for name in value.split(",")
         ):
             errors.append(f"{FEDERATION_ENV_NAME} must list public server names, comma-separated, with no wildcard")
+    partner_raw = actual.get("KODERA_MATRIX_PARTNER_CHANNELS", "").strip("'\"")
+    if partner_raw:
+        validation = runpy.run_path(str(ROOT / "apps/server/tenant_agent/federation.py"))
+        try:
+            allowed = validation["servers"]([name.strip() for name in actual.get(FEDERATION_ENV_NAME, "").strip("'\"").split(",") if name.strip()])
+            validation["parse"](partner_raw, allowed)
+        except (ValueError, TypeError):
+            errors.append("KODERA_MATRIX_PARTNER_CHANNELS requires bounded UUIDs and allowlisted public servers")
     database_passwords = [actual.get(key, "").strip().strip("'\"") for key in (
         "POSTGRES_PASSWORD", "KODERA_API_DATABASE_PASSWORD", "KODERA_COLLAB_DATABASE_PASSWORD"
     )]
@@ -1748,6 +1766,49 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
 
 
 MutationFn = Callable[[str, str, str], tuple[str, str, str]]
+
+
+def drop_service_key(compose_text: str, service: str, key: str) -> str:
+    """The compose text without the first `key:` line of `service`'s own block.
+
+    Scanned line by line rather than matched: a pattern that has to skip a service's body
+    needs alternatives for each indentation it may carry, and those overlap, so the engine
+    backtracks exponentially over a block that holds no such key.
+    """
+    out: list[str] = []
+    inside = False
+    dropped = False
+    for line in compose_text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped:
+            indent = len(line) - len(line.lstrip(" "))
+            if indent < 4:
+                inside = indent == 2 and stripped == service + ":"
+            elif inside and not dropped and indent == 4 and stripped.startswith(key + ":"):
+                dropped = True
+                continue
+        out.append(line)
+    return "".join(out)
+
+
+def quotes_host(message: str, host: str) -> bool:
+    """Whether an error message quotes back a URL or a hostname served by `host`.
+
+    The hostname is parsed out of each token and compared, never searched for: a substring
+    test also answers yes to `id.example.net.operator.test`, which is a different host that
+    merely ends in the same text.
+    """
+    for token in message.replace("'", " ").replace('"', " ").replace(",", " ").split():
+        candidate = token.rstrip(".,;:)")
+        if "://" not in candidate:
+            candidate = "//" + candidate
+        try:
+            hostname = urllib.parse.urlsplit(candidate).hostname
+        except ValueError:
+            continue
+        if hostname is not None and (hostname == host or hostname.endswith("." + host)):
+            return True
+    return False
 
 
 def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
@@ -1946,7 +2007,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "drop the memory limit of livekit",
-            lambda c, e, cf: (re.sub(r"(?m)^(  livekit:\n(?:    .*\n|      .*\n)*?)    mem_limit: [^\n]*\n", r"\1", c, count=1), e, cf),
+            lambda c, e, cf: (drop_service_key(c, "livekit", "mem_limit"), e, cf),
             "service 'livekit' must set mem_limit",
         ),
         (
@@ -2169,8 +2230,23 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "federation is open by default: compose defaults the allowlist",
-            lambda c, e, cf: (c.replace("${" + FEDERATION_ENV_NAME + ":-}", "${" + FEDERATION_ENV_NAME + ":-matrix.org}", 1), e, cf),
+            lambda c, e, cf: (("${" + FEDERATION_ENV_NAME + ":-matrix.org}").join(c.rsplit("${" + FEDERATION_ENV_NAME + ":-}", 1)), e, cf),
             "federation must be closed by default: service 'synapse' must consume " + FEDERATION_ENV_NAME,
+        ),
+        (
+            "tenant agent defaults global partner admission",
+            lambda c, e, cf: (c.replace("${" + FEDERATION_ENV_NAME + ":-}", "${" + FEDERATION_ENV_NAME + ":-matrix.org}", 1), e, cf),
+            "tenant-agent partner policy must consume " + FEDERATION_ENV_NAME + " with an empty default",
+        ),
+        (
+            "tenant agent defaults a partner channel",
+            lambda c, e, cf: (c.replace("${KODERA_MATRIX_PARTNER_CHANNELS:-}", "${KODERA_MATRIX_PARTNER_CHANNELS:-unsafe}", 1), e, cf),
+            "tenant-agent partner policy must consume KODERA_MATRIX_PARTNER_CHANNELS with an empty default",
+        ),
+        (
+            "template enables partner channels",
+            lambda c, e, cf: (c, e.replace("KODERA_MATRIX_PARTNER_CHANNELS=", "KODERA_MATRIX_PARTNER_CHANNELS=unsafe", 1), cf),
+            "partner channels must be closed by default in .env.example",
         ),
         (
             "federation is open by default: Caddy routes every Matrix path",
@@ -2319,7 +2395,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     filled = "\n".join(
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
-        else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, SYNAPSE_OIDC_ISSUER_ENV_NAME)
+        else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i]) * 32).decode()}" if "BASE64URL_32" in value
@@ -2346,7 +2422,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         if expected not in got:
             print(f"[FAIL] preflight case '{label}' did not report the expected error", file=sys.stderr)
             return 1
-        if any("filled-value" in err or "example.net" in err for err in got):
+        if any("filled-value" in err or quotes_host(err, "example.net") for err in got):
             print(f"[FAIL] preflight case '{label}' printed a value", file=sys.stderr)
             return 1
 
@@ -2433,12 +2509,19 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ("federation opened to a private name", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net,synapse.internal"}),
          f"{FEDERATION_ENV_NAME} must list public server names"),
     ]
+    partner_example = '{"11111111-1111-4111-8111-111111111111":["partner.example.net"]}'
+    for label, raw, global_names in (
+        ("partner channel outside global allowlist", partner_example, "other.example.net"),
+        ("partner channel invalid UUID", '{"everyone":["partner.example.net"]}', "partner.example.net"),
+        ("partner channel private server", '{"11111111-1111-4111-8111-111111111111":["127.0.0.1"]}', "partner.example.net"),
+    ):
+        hardening_refusals.append((label, with_values(filled, **{FEDERATION_ENV_NAME: global_names, "KODERA_MATRIX_PARTNER_CHANNELS": raw}), "KODERA_MATRIX_PARTNER_CHANNELS requires bounded UUIDs and allowlisted public servers"))
     for label, value, expected in hardening_refusals:
         got = preflight_env(env_text, value)
         if not any(expected in error for error in got):
             print(f"[FAIL] preflight hardening case '{label}' did not report '{expected}' (got {got})", file=sys.stderr)
             return 1
-        if any(re.search(r"example\.net", error) or SYNTHETIC_CREDENTIAL in error for error in got):
+        if any(quotes_host(error, "example.net") or SYNTHETIC_CREDENTIAL in error for error in got):
             print(f"[FAIL] preflight hardening case '{label}' printed a value", file=sys.stderr)
             return 1
     hardening_accepted = [
@@ -2446,6 +2529,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ("federation opened to named servers", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net,other.example.net"})),
         ("Community naming its own issuer for Synapse", with_values(canonical, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.net/realms/community"})),
     ]
+    hardening_accepted.append(("explicit bounded partner channel", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net", "KODERA_MATRIX_PARTNER_CHANNELS": partner_example})))
     for label, value in hardening_accepted:
         if preflight_env(env_text, value):
             print(f"[FAIL] preflight refused '{label}': {preflight_env(env_text, value)}", file=sys.stderr)
@@ -2486,7 +2570,7 @@ SYNAPSE_CONFIG_MUTATIONS: tuple[tuple[str, str, str, str], ...] = (
      "Synapse federation must be closed by default"),
     ("federation is open by default: the notary stays", 'document["trusted_key_servers"] = []', 'document.setdefault("trusted_key_servers", [])',
      "Synapse federation must be closed by default"),
-    ("the federation allowlist accepts a wildcard", 'if not re.fullmatch(PUBLIC_DOMAIN, name) or name.endswith(PRIVATE_SUFFIXES):', 'if False:',
+    ("the federation allowlist accepts a wildcard", 'if len(name) > 253 or any(len(label) > 63 for label in name.split(".")) or not re.fullmatch(PUBLIC_DOMAIN, name) or name.endswith((*PRIVATE_SUFFIXES, ".invalid", ".test", ".example", ".onion")):', 'if False:',
      "Synapse federation allowlist must refuse a wildcard or private server name"),
     ("the room-policy module is missing", '    modules.append({"module": MODULE, "config": {', '    dict({"module": MODULE, "config": {',
      "Synapse room-policy module is missing or misconfigured"),
@@ -2777,7 +2861,7 @@ def main() -> int:
             print("[FAIL] " + error, file=sys.stderr)
         return 1
     if args.selftest:
-        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.5'):
+        for guard in ('kodera_synapse_policy.KoderaPolicy', 'room_access_user_id', '0.1.6'):
             if not check_synapse_policy_source(policy_source.replace(guard, "removed")):
                 print("[FAIL] Synapse policy source mutation escaped", file=sys.stderr)
                 return 1

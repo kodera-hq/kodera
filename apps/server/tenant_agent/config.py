@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import federation
+
 
 class ConfigError(Exception):
     pass
@@ -38,6 +40,7 @@ class Config:
     synapse_token: str = ""
     matrix_server_name: str = ""
     room_access_user: str = ""
+    partner_channels: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Config":
@@ -61,6 +64,23 @@ class Config:
             for name in ("KODERA_SYNAPSE_URL", "KODERA_SYNAPSE_TOKEN", "KODERA_MATRIX_SERVER_NAME"):
                 need(name)
 
+        try:
+            names = [
+                name.strip()
+                for name in env.get("KODERA_MATRIX_FEDERATION_ALLOWLIST", "").split(",")
+                if name.strip()
+            ]
+            allowlist = federation.servers(names, empty=True)
+            partners = federation.parse(env.get("KODERA_MATRIX_PARTNER_CHANNELS", ""), allowlist)
+            if any(env.get("KODERA_MATRIX_SERVER_NAME", "") in names for _, names in partners):
+                raise ValueError("a partner homeserver must be external")
+        except (ValueError, TypeError):
+            raise ConfigError(
+                "KODERA_MATRIX_PARTNER_CHANNELS requires bounded channel UUIDs and explicitly allowlisted public servers"
+            ) from None
+        if partners and "matrix" not in apps:
+            raise ConfigError("KODERA_MATRIX_PARTNER_CHANNELS requires the matrix app")
+
         return cls(
             apps=apps,
             core_url=need("KODERA_CORE_URL").rstrip("/"),
@@ -79,4 +99,5 @@ class Config:
             synapse_token=env.get("KODERA_SYNAPSE_TOKEN", ""),
             matrix_server_name=env.get("KODERA_MATRIX_SERVER_NAME", ""),
             room_access_user=env.get("KODERA_ROOM_ACCESS_USER", ""),
+            partner_channels=partners,
         )

@@ -45,13 +45,6 @@ async function splitContext(
   return { context: created, page: opened }
 }
 
-/** Runs a module of the page's own graph, as the page itself would import it. */
-function inPage<T>(target: Page, source: string, args: unknown): Promise<T> {
-  return target.evaluate(
-    `(async (args) => { const load = (path) => import(path); ${source} })(${JSON.stringify(args)})`
-  ) as Promise<T>
-}
-
 const hitsOn = (server: string, path?: string) =>
   stack.hits.filter((hit) => hit.server === server && (path === undefined || hit.path === path))
 
@@ -66,13 +59,14 @@ test.beforeAll(async ({ browser }) => {
     await expect(warm.page.getByRole('heading', { name: 'Kodera Community' })).toBeVisible({
       timeout: 60_000,
     })
-    await inPage(
-      warm.page,
-      `await load('/src/features/espace/audio/call.ts'); await load('/src/auth/matrix.ts');
-       await load('/src/features/espace/homeserver.ts');
-       await load('/src/features/support/communitySupportClient.ts'); return true`,
-      null
-    )
+    await warm.page.evaluate(async () => {
+      const load = (specifier: string): Promise<unknown> => import(specifier)
+      await load('/src/features/espace/audio/call.ts')
+      await load('/src/auth/matrix.ts')
+      await load('/src/features/espace/homeserver.ts')
+      await load('/src/features/support/communitySupportClient.ts')
+      return true
+    })
   } finally {
     await warm.context.close()
   }
@@ -111,14 +105,30 @@ test('sign-in and Core calls cross to their own origins, never the static one', 
 })
 
 test('discovery, Matrix SSO, token login, refresh, room access and LiveKit reach the homeserver origins', async () => {
-  const found = await inPage<{ serverName: string; baseUrl: string; target: string }>(
-    page,
-    `const { resolveHomeserver } = await load('/src/features/espace/homeserver.ts');
-     const { beginMatrixSignIn } = await load('/src/auth/matrix.ts');
-     const found = await resolveHomeserver('community', { matrixDomain: args.domain });
-     let target = '';
-     beginMatrixSignIn(found.baseUrl, '/community/workspace', { navigate: (url) => { target = url } });
-     return { ...found, target };`,
+  const found = await page.evaluate(
+    async ({ domain }) => {
+      const load = (specifier: string): Promise<Record<string, unknown>> =>
+        import(specifier) as Promise<Record<string, unknown>>
+      const homeserverMod = await load('/src/features/espace/homeserver.ts')
+      const matrixMod = await load('/src/auth/matrix.ts')
+      const resolveHomeserver = homeserverMod.resolveHomeserver as (
+        slug: string,
+        opts: { matrixDomain: string }
+      ) => Promise<{ serverName: string; baseUrl: string }>
+      const beginMatrixSignIn = matrixMod.beginMatrixSignIn as (
+        baseUrl: string,
+        returnTo: string,
+        opts: { navigate: (url: string) => void }
+      ) => void
+      const resolved = await resolveHomeserver('community', { matrixDomain: domain })
+      let target = ''
+      beginMatrixSignIn(resolved.baseUrl, '/community/workspace', {
+        navigate: (url) => {
+          target = url
+        },
+      })
+      return { ...resolved, target }
+    },
     { domain: DOMAIN }
   )
   expect(found.serverName).toBe(SERVER_NAME)
@@ -136,22 +146,44 @@ test('discovery, Matrix SSO, token login, refresh, room access and LiveKit reach
   expect(login).toHaveLength(1)
   expect(login[0]?.origin).toBe(ORIGINS.spa)
 
-  const status = await inPage<string>(
-    page,
-    `const { getMatrixSession } = await load('/src/auth/matrix.ts');
-     const { createCallController } = await load('/src/features/espace/audio/call.ts');
-     const session = getMatrixSession();
-     if (session === undefined) return 'no-session';
-     const call = createCallController({
-       homeserver: session.baseUrl,
-       serverName: args.serverName,
-       tokens: {
-         current: () => session.accessToken,
-         renew: async (stale) => (await session.refresh(session.refreshToken)).accessToken,
-       },
-     });
-     await call.join(args.room).catch(() => undefined);
-     return call.getSnapshot ? call.getSnapshot().status : 'joined';`,
+  const status = await page.evaluate(
+    async ({ serverName, room }) => {
+      const load = (specifier: string): Promise<Record<string, unknown>> =>
+        import(specifier) as Promise<Record<string, unknown>>
+      const matrixMod = await load('/src/auth/matrix.ts')
+      const callMod = await load('/src/features/espace/audio/call.ts')
+      const getMatrixSession = matrixMod.getMatrixSession as () =>
+        | {
+            baseUrl: string
+            accessToken: string
+            refreshToken: string
+            refresh: (token: string) => Promise<{ accessToken: string }>
+          }
+        | undefined
+      const createCallController = callMod.createCallController as (opts: {
+        homeserver: string
+        serverName: string
+        tokens: {
+          current: () => string
+          renew: (stale: string) => Promise<string>
+        }
+      }) => {
+        join: (roomId: string) => Promise<unknown>
+        getSnapshot?: () => { status: string }
+      }
+      const session = getMatrixSession()
+      if (session === undefined) return 'no-session'
+      const call = createCallController({
+        homeserver: session.baseUrl,
+        serverName,
+        tokens: {
+          current: () => session.accessToken,
+          renew: async () => (await session.refresh(session.refreshToken)).accessToken,
+        },
+      })
+      await call.join(room).catch(() => undefined)
+      return call.getSnapshot ? call.getSnapshot().status : 'joined'
+    },
     { serverName: SERVER_NAME, room: AUDIO_ROOM }
   )
   expect(status).not.toBe('no-session')
@@ -174,12 +206,23 @@ test('discovery, Matrix SSO, token login, refresh, room access and LiveKit reach
 })
 
 test('a #support ticket is submitted to the Core API origin', async () => {
-  const receipt = await inPage<{ confirmation: string }>(
-    page,
-    `const { createCommunitySupportTicket } = await load('/src/features/support/communitySupportClient.ts');
-     return createCommunitySupportTicket('Synthetic subject', 'Synthetic body', 'fr', crypto.randomUUID());`,
-    null
-  )
+  const receipt = await page.evaluate(async () => {
+    const load = (specifier: string): Promise<Record<string, unknown>> =>
+      import(specifier) as Promise<Record<string, unknown>>
+    const supportMod = await load('/src/features/support/communitySupportClient.ts')
+    const createCommunitySupportTicket = supportMod.createCommunitySupportTicket as (
+      subject: string,
+      body: string,
+      locale: string,
+      idempotencyKey: string
+    ) => Promise<{ confirmation: string }>
+    return createCommunitySupportTicket(
+      'Synthetic subject',
+      'Synthetic body',
+      'fr',
+      crypto.randomUUID()
+    )
+  })
   expect(receipt.confirmation).toBe('ticket-created')
   const posted = hitsOn('api', '/api/v1/community/support/tickets').filter(
     (h) => h.method === 'POST'

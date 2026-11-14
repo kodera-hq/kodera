@@ -1,6 +1,6 @@
 {
   "name": "@kodera/api-contract",
-  "version": "0.44.0",
+  "version": "0.44.1",
   "private": false,
   "license": "Apache-2.0",
   "description": "Canonical OpenAPI 3.1 contracts for Kodera Server and Agent API.",

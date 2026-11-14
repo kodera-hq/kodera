@@ -3328,6 +3328,1158 @@
           }
         }
       }
+    },
+    "community.title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espace communautaire Kodera"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kodera community workspace"
+          }
+        }
+      }
+    },
+    "community.subtitle": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Structure canonique en trois catégories alignée avec le Web et la fédération Matrix."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Canonical three-category structure aligned with Web and Matrix federation."
+          }
+        }
+      }
+    },
+    "community.federated_badge": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partenaire fédéré"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Federated partner"
+          }
+        }
+      }
+    },
+    "community.audience_public": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvert à tous · Discussions publiques et entraide"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open to everyone · Public discussion and peer support"
+          }
+        }
+      }
+    },
+    "community.audience_core": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Équipe interne · Ingénierie, produit et exploitation"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Core team · Engineering, product, and operations"
+          }
+        }
+      }
+    },
+    "community.audience_partners": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Organisations partenaires · Salons partagés en fédération"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partner organisations · Shared federated rooms"
+          }
+        }
+      }
+    },
+    "community.topic_releases": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versions, notes de publication et jalons produit"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Releases, changelogs, and product milestones"
+          }
+        }
+      }
+    },
+    "community.topic_developers": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Architecture, API, SDK et contributions"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Architecture, APIs, SDKs, and contributions"
+          }
+        }
+      }
+    },
+    "community.topic_support": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questions d’installation, dépannage et entraide"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setup questions, troubleshooting, and peer help"
+          }
+        }
+      }
+    },
+    "community.topic_extensions": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connecteurs, webhooks, bots et intégrations Matrix"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connectors, webhooks, bots, and Matrix integrations"
+          }
+        }
+      }
+    },
+    "community.topic_self_host": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déploiement Docker, Helm, fédération et durcissement"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docker, Helm, federation, and security hardening"
+          }
+        }
+      }
+    },
+    "community.topic_show_tell": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Démonstrations, retours d’usage et prototypes"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Demos, field reports, and community prototypes"
+          }
+        }
+      }
+    },
+    "community.topic_office": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rendez-vous audio hebdomadaire avec l’équipe"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weekly live audio session with the engineering team"
+          }
+        }
+      }
+    },
+    "community.topic_engineering": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coordination technique quotidienne et revues"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daily engineering coordination and code reviews"
+          }
+        }
+      }
+    },
+    "community.topic_strategy": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Feuille de route produit et priorités d’architecture"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Product roadmap and architectural priorities"
+          }
+        }
+      }
+    },
+    "community.topic_operations": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exploitation, astreinte et santé des services"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Operations, on-call rotation, and service health"
+          }
+        }
+      }
+    },
+    "community.topic_partner_onboarding": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accueil dédié et cadrage technique inter-organisations"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dedicated onboarding and cross-organisation alignment"
+          }
+        }
+      }
+    },
+    "community.topic_partner_feedback": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retours terrain directs avec les équipes partenaires"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct field feedback with federated partner teams"
+          }
+        }
+      }
+    },
+    "invite.open_button": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inviter"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invite"
+          }
+        }
+      }
+    },
+    "invite.title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invitation Matrix universelle"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Universal Matrix invitation"
+          }
+        }
+      }
+    },
+    "invite.close": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close"
+          }
+        }
+      }
+    },
+    "invite.description": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partagez un lien Matrix standard ou validez un identifiant fédéré sans quitter l’application."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Share a standard Matrix link or validate a federated identifier without leaving the app."
+          }
+        }
+      }
+    },
+    "invite.links_section": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liens de partage interopérables"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interoperable share links"
+          }
+        }
+      }
+    },
+    "invite.format_matrix_to": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lien universel matrix.to"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Universal matrix.to link"
+          }
+        }
+      }
+    },
+    "invite.format_matrix_uri": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URI native Matrix"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native Matrix URI"
+          }
+        }
+      }
+    },
+    "invite.format_alias": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alias de salon Matrix"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matrix room alias"
+          }
+        }
+      }
+    },
+    "invite.suggested_alias_hint": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alias canonique suggéré tant que le salon Matrix distant n’est pas provisionné."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suggested canonical alias until the remote Matrix room is provisioned."
+          }
+        }
+      }
+    },
+    "invite.copy": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copier"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy"
+          }
+        }
+      }
+    },
+    "invite.copied": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copié dans le presse-papiers"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copied to clipboard"
+          }
+        }
+      }
+    },
+    "invite.direct_section": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invitation directe par identifiant Matrix"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direct invitation by Matrix ID"
+          }
+        }
+      }
+    },
+    "invite.direct_label": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Identifiant Matrix du destinataire"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recipient Matrix ID"
+          }
+        }
+      }
+    },
+    "invite.direct_placeholder": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@alice:exemple.org"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "@alice:example.org"
+          }
+        }
+      }
+    },
+    "invite.direct_hint": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Format attendu : @identifiant:domaine.tld sur n’importe quel serveur Matrix fédéré."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expected format: @localpart:domain.tld on any federated Matrix server."
+          }
+        }
+      }
+    },
+    "invite.send_action": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifier et préparer l’invitation"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verify and prepare invitation"
+          }
+        }
+      }
+    },
+    "invite.status_sending": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoi de l’invitation Matrix…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sending Matrix invitation…"
+          }
+        }
+      }
+    },
+    "invite.status_sent": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invitation Matrix envoyée"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matrix invitation sent"
+          }
+        }
+      }
+    },
+    "invite.status_unprovisioned": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Identifiant Matrix valide · Transport d’invitation distant non provisionné dans cette version"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Valid Matrix ID · Remote room-invite transport is not provisioned in this build"
+          }
+        }
+      }
+    },
+    "invite.error_invalid_mxid": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Identifiant Matrix invalide. Utilisez la forme @utilisateur:domaine.tld."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invalid Matrix ID. Use the @user:domain.tld format."
+          }
+        }
+      }
+    },
+    "invite.error_send_failed": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L’invitation n’a pas pu être transmise au salon distant."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The invitation could not be delivered to the remote room."
+          }
+        }
+      }
+    },
+    "callkit.section_title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Intégration d’appel système CallKit"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System CallKit call integration"
+          }
+        }
+      }
+    },
+    "callkit.payload_free_badge": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Push sans contenu"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Payload-free push"
+          }
+        }
+      }
+    },
+    "callkit.policy_description": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les réveils PushKit n’acceptent que des identifiants opaques et rejettent tout nom de salon, d’expéditeur ou message en clair."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "PushKit wakeups admit only opaque sync identifiers and reject any cleartext room title, sender name, or message body."
+          }
+        }
+      }
+    },
+    "callkit.unprovisioned_hint": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Machine à états CallKit active localement ; le relais VoIP PushKit et LiveKit ne sont pas provisionnés dans cette version."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CallKit state machine active locally; PushKit VoIP relay and LiveKit media are not provisioned in this build."
+          }
+        }
+      }
+    },
+    "callkit.phase_idle": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : au repos"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: idle"
+          }
+        }
+      }
+    },
+    "callkit.phase_ringing": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : sonnerie entrante authentifiée"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: authenticated incoming ringing"
+          }
+        }
+      }
+    },
+    "callkit.phase_connecting": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : connexion chiffrée en cours"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: encrypted session connecting"
+          }
+        }
+      }
+    },
+    "callkit.phase_active": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : appel actif"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: active call"
+          }
+        }
+      }
+    },
+    "callkit.phase_muted": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : appel actif · micro coupé"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: active call · muted"
+          }
+        }
+      }
+    },
+    "callkit.phase_held": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : appel en attente"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: on hold"
+          }
+        }
+      }
+    },
+    "callkit.phase_ended": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : terminé"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: ended"
+          }
+        }
+      }
+    },
+    "callkit.phase_failed": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État d’appel : refusé ou interrompu"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Call state: refused or interrupted"
+          }
+        }
+      }
+    },
+    "passkey.title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clé d’accès liée à l’appareil"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device-bound passkey"
+          }
+        }
+      }
+    },
+    "passkey.unprovisioned": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérificateur ES256 prêt · Enregistrement distant non provisionné"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ES256 verifier ready · Remote registration not provisioned"
+          }
+        }
+      }
+    },
+    "passkey.description": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérifie localement les assertions WebAuthn P-256 liées à l’organisation avec présence et vérification biométrique ou code de l’appareil."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Locally verifies organisation-bound P-256 WebAuthn assertions requiring user presence and device user verification."
+          }
+        }
+      }
+    },
+    "passkey.policy_summary": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profil universel ES256 WebAuthn L3 (drapeaux 0x05, 0x0D et 0x1D avec UP+UV, compteur monotone, refus de 0x15 et des défis expirés)."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Universal ES256 WebAuthn L3 profile (0x05, 0x0D and 0x1D UP+UV flags, monotonic counter, rejecting 0x15 and expired challenges)."
+          }
+        }
+      }
+    },
+    "passkey.organisation_required": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sélectionnez une organisation active pour lier un défi d’authentification."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select an active organisation to bind an authentication challenge."
+          }
+        }
+      }
+    },
+    "proximity.online_lane_title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Canal Matrix en ligne"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Online Matrix room relay"
+          }
+        }
+      }
+    },
+    "proximity.online_disconnected": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun relais Matrix en ligne connecté dans cette version"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No online Matrix room relay connected in this build"
+          }
+        }
+      }
+    },
+    "proximity.online_connected": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salon Matrix en ligne synchronisé"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Online Matrix room synchronized"
+          }
+        }
+      }
+    },
+    "proximity.online_lane_note": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les messages Matrix passent par le serveur de l’organisation lorsqu’une connexion réseau est disponible."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matrix room updates travel through the organisation homeserver when network connectivity is available."
+          }
+        }
+      }
+    },
+    "proximity.ble_lane_title": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Radio locale Bluetooth (#proximité v2)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local BLE radio (#proximity v2)"
+          }
+        }
+      }
+    },
+    "proximity.duty_cycle_disclosure": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balises tournantes de 27 octets (fenêtre de 5 min, écoute max 10 s suivie de 50 s de pause, arrêt automatique en mode économie d’énergie ou batterie sous 15 %)."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "27-byte rotating beacons (5 min window, max 10 s scan followed by 50 s cooldown, auto-paused in Low Power Mode or below 15% battery)."
+          }
+        }
+      }
+    },
+    "proximity.ble_no_verified_delivery": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune trame radio locale vérifiée n’a été émise ni reçue sur cet appareil."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No verified local radio frame has been emitted or received on this device."
+          }
+        }
+      }
+    },
+    "proximity.consent_opt_in": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser la radio locale pendant l’ouverture à l’écran"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow local BLE radio while active on screen"
+          }
+        }
+      }
+    },
+    "proximity.consent_revoke": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couper l’autorisation radio locale"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revoke local BLE radio consent"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_unprovisioned": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consentement accordé · Adaptateur radio matériel non provisionné"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consent granted · Hardware BLE radio adapter not provisioned"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_awaiting_consent": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente d’un accord explicite à l’écran avant toute activité Bluetooth"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Awaiting explicit on-screen opt-in before any BLE radio activity"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_suspended_background": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suspendu automatiquement lorsque l’application passe en veille"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically suspended while the app is not active on screen"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_battery_paused": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suspendu pour préserver la batterie (mode économie d’énergie ou charge insuffisante)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paused to preserve battery (Low Power Mode or low charge)"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_duty_throttled": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Temporisé par le quota radio de la fenêtre courante"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Throttled by the current scan and broadcast duty-cycle window"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_scanning": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtre d’écoute Bluetooth active"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bounded BLE scan window active"
+          }
+        }
+      }
+    },
+    "proximity.ble_status_ready": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Radio locale prête pour les balises #proximité v2"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local BLE radio ready for #proximity v2 beacons"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

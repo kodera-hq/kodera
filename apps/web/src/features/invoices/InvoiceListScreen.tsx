@@ -457,7 +457,12 @@ function InvoiceListContent() {
               <p className="text-sm text-c-ink-2">{t('console.invoices.detail.hint-transfer')}</p>
             </CardBody>
           </Card>
-          <BillingProfileCard organisationId={organisationId} />
+          <BillingProfileCard
+            organisationId={organisationId}
+            loadVatStatus
+            canValidateVat={canPayInvoices(membership.role)}
+            taxRegime={subscriptionQuery.data?.price_snapshot.vat_regime}
+          />
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-//! ES256 WebAuthn assertion verification for a trusted, pre-registered device-bound credential.
+//! ES256 WebAuthn assertion verification for a trusted, pre-registered passkey credential.
 //! Registration/attestation, platform association and protected persistence remain external.
 
 use std::collections::BTreeMap;
@@ -11,6 +11,35 @@ use serde::Deserialize;
 use crate::{sha256, validate_docs_host, NativeCryptoError, OrganisationId};
 
 const MAX_CHALLENGES: usize = 64;
+const FLAG_UP: u8 = 0x01;
+const FLAG_UV: u8 = 0x04;
+const FLAG_BE: u8 = 0x08;
+const FLAG_BS: u8 = 0x10;
+const FLAG_AT: u8 = 0x40;
+const FLAG_ED: u8 = 0x80;
+const FLAG_RFU_MASK: u8 = 0x22;
+
+/// Backup flag policy for WebAuthn Level 3 §6.5 assertion flags.
+///
+/// - [`Self::Universal`] (default): admits single-device security keys (`0x05`), backup-eligible
+///   local passkeys (`0x0D`), and multi-device synced passkeys (`0x1D`, including platform keychains
+///   and self-hosted software vaults) while still requiring `UP|UV` and rejecting invalid `BS=1, BE=0`
+///   (`0x15`), attested-data (`AT`), extension (`ED`), and reserved (`RFU`) bits.
+/// - [`Self::StrictNonBackupable`]: additionally requires `(flags & 0x18) == 0` (`0x05`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PasskeyBackupPolicy {
+    #[default]
+    Universal,
+    StrictNonBackupable,
+}
+
+/// Authenticator backup/residency posture reported by signed WebAuthn Level 3 assertion flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasskeyResidencyPosture {
+    SingleDeviceBound,
+    BackupEligibleLocal,
+    MultiDeviceSynced,
+}
 
 /// Sensitive correlation material; the bytes are passed to the platform authenticator.
 #[derive(Clone)]
@@ -66,7 +95,8 @@ struct ChallengeState {
 }
 
 /// The public key must come from trusted registration/attestation, never an assertion payload.
-/// This strict ES256 profile requires UP+UV and refuses backup eligibility/state and extensions.
+/// Requires `UP+UV` (`0x05`) and enforces [`PasskeyBackupPolicy`] (`Universal` by default: `0x05`,
+/// `0x0D`, `0x1D`, rejecting invalid `BS=1, BE=0` `0x15`, `AT`, `ED`, and RFU bits).
 /// Signed flags do not themselves prove a hardware manufacturer or secure-element residency.
 pub struct PasskeyBinding {
     organisation: OrganisationId,
@@ -74,8 +104,10 @@ pub struct PasskeyBinding {
     origin: String,
     credential_id: Vec<u8>,
     public_key: VerifyingKey,
+    backup_policy: PasskeyBackupPolicy,
     last_counter: u32,
     latest_now: u64,
+    last_residency_posture: Option<PasskeyResidencyPosture>,
     challenges: BTreeMap<[u8; 32], ChallengeState>,
 }
 
@@ -83,6 +115,30 @@ impl fmt::Debug for PasskeyBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("PasskeyBinding([redacted])")
     }
+}
+
+fn validate_assertion_flags(
+    flags: u8,
+    policy: PasskeyBackupPolicy,
+) -> Result<PasskeyResidencyPosture, NativeCryptoError> {
+    if (flags & (FLAG_UP | FLAG_UV)) != (FLAG_UP | FLAG_UV) {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    if (flags & (FLAG_RFU_MASK | FLAG_AT | FLAG_ED)) != 0 {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    let backup_bits = flags & (FLAG_BE | FLAG_BS);
+    if backup_bits == FLAG_BS {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    if policy == PasskeyBackupPolicy::StrictNonBackupable && backup_bits != 0 {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    Ok(match backup_bits {
+        0 => PasskeyResidencyPosture::SingleDeviceBound,
+        FLAG_BE => PasskeyResidencyPosture::BackupEligibleLocal,
+        _ => PasskeyResidencyPosture::MultiDeviceSynced,
+    })
 }
 
 fn admitted_origin(rp_id: &str, origin: &str) -> bool {
@@ -106,13 +162,33 @@ fn admitted_origin(rp_id: &str, origin: &str) -> bool {
 
 impl PasskeyBinding {
     /// Public origin and RP data come from the reviewed platform association policy.
-    /// Android certificate hashes are exact public build identities, not a guessed default.
+    /// Defaults to [`PasskeyBackupPolicy::Universal`] so standard multi-provider WebAuthn L3
+    /// passkeys (`0x05`, `0x0D`, `0x1D`) verify without vendor lock-in.
     pub fn new(
         organisation: OrganisationId,
         rp_id: &str,
         origin: &str,
         credential_id: &[u8],
         public_sec1_key: &[u8],
+    ) -> Result<Self, NativeCryptoError> {
+        Self::with_backup_policy(
+            organisation,
+            rp_id,
+            origin,
+            credential_id,
+            public_sec1_key,
+            PasskeyBackupPolicy::Universal,
+        )
+    }
+
+    /// Creates an assertion verifier with an explicit [`PasskeyBackupPolicy`].
+    pub fn with_backup_policy(
+        organisation: OrganisationId,
+        rp_id: &str,
+        origin: &str,
+        credential_id: &[u8],
+        public_sec1_key: &[u8],
+        backup_policy: PasskeyBackupPolicy,
     ) -> Result<Self, NativeCryptoError> {
         if validate_docs_host(rp_id).is_err()
             || !admitted_origin(rp_id, origin)
@@ -130,10 +206,20 @@ impl PasskeyBinding {
             origin: origin.to_owned(),
             credential_id: credential_id.to_vec(),
             public_key,
+            backup_policy,
             last_counter: 0,
             latest_now: 0,
+            last_residency_posture: None,
             challenges: BTreeMap::new(),
         })
+    }
+
+    pub fn backup_policy(&self) -> PasskeyBackupPolicy {
+        self.backup_policy
+    }
+
+    pub fn last_residency_posture(&self) -> Option<PasskeyResidencyPosture> {
+        self.last_residency_posture
     }
 
     /// OS entropy supplies each 256-bit challenge. The trusted adapter supplies the clock.
@@ -193,6 +279,18 @@ impl PasskeyBinding {
         assertion: &PasskeyAssertion,
         now: u64,
     ) -> Result<(), NativeCryptoError> {
+        self.verify_assertion_posture(organisation, challenge, assertion, now)
+            .map(|_| ())
+    }
+
+    /// Verify the assertion and return the authenticated [`PasskeyResidencyPosture`].
+    pub fn verify_assertion_posture(
+        &mut self,
+        organisation: &OrganisationId,
+        challenge: &PasskeyChallenge,
+        assertion: &PasskeyAssertion,
+        now: u64,
+    ) -> Result<PasskeyResidencyPosture, NativeCryptoError> {
         if organisation != &self.organisation || challenge.organisation != self.organisation {
             return Err(NativeCryptoError::ScopeMismatch);
         }
@@ -232,9 +330,10 @@ impl PasskeyBinding {
             return Err(NativeCryptoError::ScopeMismatch);
         }
         let data = &assertion.authenticator_data;
-        if data[..32] != sha256(self.rp_id.as_bytes()) || data[32] != 0x05 {
+        if data[..32] != sha256(self.rp_id.as_bytes()) {
             return Err(NativeCryptoError::AuthenticationFailed);
         }
+        let posture = validate_assertion_flags(data[32], self.backup_policy)?;
         let counter = u32::from_be_bytes(
             data[33..37]
                 .try_into()
@@ -255,7 +354,8 @@ impl PasskeyBinding {
             .ok_or(NativeCryptoError::AuthenticationFailed)?
             .used = true;
         self.last_counter = counter;
-        Ok(())
+        self.last_residency_posture = Some(posture);
+        Ok(posture)
     }
 }
 
@@ -451,10 +551,69 @@ mod tests {
     }
 
     #[test]
-    fn scope_origin_uv_backup_expiry_and_clock_refusals_are_real_signed_assertions() {
+    fn universal_policy_admits_single_device_backup_eligible_and_synced_passkeys_and_refuses_invalid_flags(
+    ) {
         let (mut binding, signer) = setup();
+        assert_eq!(binding.backup_policy(), PasskeyBackupPolicy::Universal);
+        assert_eq!(binding.last_residency_posture(), None);
+
         let challenge = binding.issue_challenge(&org(), 100, 30).unwrap();
-        for flags in [0x00, 0x01, 0x04, 0x0d, 0x1d, 0x45, 0x85] {
+        for flags in [0x00, 0x01, 0x04, 0x09, 0x15, 0x19, 0x25, 0x45, 0x85] {
+            let response = assertion(
+                &signer,
+                &challenge,
+                1,
+                flags,
+                "https://accounts.example.test",
+            );
+            assert_eq!(
+                binding.verify_assertion(&org(), &challenge, &response, 101),
+                Err(NativeCryptoError::AuthenticationFailed),
+                "unexpected acceptance for flags 0x{flags:02x}"
+            );
+        }
+
+        for (step, (flags, expected_posture)) in [
+            (0x05, PasskeyResidencyPosture::SingleDeviceBound),
+            (0x0d, PasskeyResidencyPosture::BackupEligibleLocal),
+            (0x1d, PasskeyResidencyPosture::MultiDeviceSynced),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let now = 102 + (step as u64) * 2;
+            let c = binding.issue_challenge(&org(), now, 30).unwrap();
+            let resp = assertion(
+                &signer,
+                &c,
+                (step as u32) + 1,
+                flags,
+                "https://accounts.example.test",
+            );
+            let posture = binding
+                .verify_assertion_posture(&org(), &c, &resp, now + 1)
+                .unwrap();
+            assert_eq!(posture, expected_posture);
+            assert_eq!(binding.last_residency_posture(), Some(expected_posture));
+        }
+    }
+
+    #[test]
+    fn strict_non_backupable_policy_scope_origin_uv_expiry_and_clock_refusals_are_real_signed_assertions(
+    ) {
+        let (_, signer) = setup();
+        let key = signer.verifying_key().to_sec1_point(false);
+        let mut binding = PasskeyBinding::with_backup_policy(
+            org(),
+            "accounts.example.test",
+            "https://accounts.example.test",
+            b"public-fixture-credential",
+            key.as_bytes(),
+            PasskeyBackupPolicy::StrictNonBackupable,
+        )
+        .unwrap();
+        let challenge = binding.issue_challenge(&org(), 100, 30).unwrap();
+        for flags in [0x00, 0x01, 0x04, 0x0d, 0x15, 0x1d, 0x45, 0x85] {
             let response = assertion(
                 &signer,
                 &challenge,
