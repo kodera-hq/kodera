@@ -148,3 +148,63 @@ test('configured resource mapping stages the complete local frontend on each sup
     assert.throws(() => verifyFrontendAssets(source), /symlink_refused/);
   } finally { rmSync(scratch, { recursive: true, force: true }); }
 });
+
+test('departing same-origin document envelope cannot invoke self_host_prepare_community or self_host_deploy_community or resolve in new document', async () => {
+  const cap1 = 'a'.repeat(64);
+  const cap2 = 'b'.repeat(64);
+  const oldDoc = document(false);
+  const newDoc = document(false);
+  vm.runInContext(nativeScript('activate_js_document', { document_id: oldDoc.id, generation: 1, capability: cap1 }), oldDoc.context);
+
+  void vm.runInContext(
+    "window.koderaDesktop.invoke('self_host_prepare_community', { organisation_id: '019a5e62-6ca0-7303-8303-030303030303', stack_dir: '/opt/kodera', domain: 'chat.example.org', acme_email: 'ops@example.org', oidc_provider_origin: 'https://auth.example.org', tls_mode: 'acme', http_port: 80, https_port: 443 })",
+    oldDoc.context,
+  );
+  void vm.runInContext(
+    "window.koderaDesktop.invoke('self_host_deploy_community', { organisation_id: '019a5e62-6ca0-7303-8303-030303030303', stack_dir: '/opt/kodera', timeout_ms: 5000 })",
+    oldDoc.context,
+  );
+  assert.match(oldDoc.messages[1], new RegExp(`^${oldDoc.id}:1:${cap1}:1\\tself_host_prepare_community\\n`));
+  assert.match(oldDoc.messages[2], new RegExp(`^${oldDoc.id}:1:${cap1}:2\\tself_host_deploy_community\\n`));
+
+  // After same-origin navigation, generation 2 rotates capability and cannot re-activate or leak into oldDoc.
+  const newActivation = nativeScript('activate_js_document', { document_id: newDoc.id, generation: 2, capability: cap2 });
+  vm.runInContext(newActivation, oldDoc.context);
+  vm.runInContext(newActivation, newDoc.context);
+  assert.notEqual(oldDoc.id, newDoc.id);
+
+  // Late invoke from departing oldDoc still carries oldDoc's invalidated (id, generation 1, cap1), never (newDoc.id, 2, cap2).
+  void vm.runInContext(
+    "window.koderaDesktop.invoke('self_host_deploy_community', { organisation_id: '019a5e62-6ca0-7303-8303-030303030303', stack_dir: '/opt/kodera' })",
+    oldDoc.context,
+  );
+  assert.match(oldDoc.messages[3], new RegExp(`^${oldDoc.id}:1:${cap1}:3\\tself_host_deploy_community\\n`));
+  assert.doesNotMatch(oldDoc.messages[3], new RegExp(cap2));
+
+  // Reused request IDs 1 and 2 in newDoc cannot be resolved by stale replies bound to oldDoc.
+  const newPrepare = vm.runInContext(
+    "window.koderaDesktop.invoke('self_host_prepare_community', { organisation_id: '019a5e62-6ca0-7303-8303-030303030303', stack_dir: '/opt/kodera', domain: 'chat.example.org', acme_email: 'ops@example.org', oidc_provider_origin: 'https://auth.example.org', tls_mode: 'acme', http_port: 80, https_port: 443 }).then(v => window.prepareOut = v)",
+    newDoc.context,
+  );
+  assert.match(newDoc.messages[1], new RegExp(`^${newDoc.id}:2:${cap2}:1\\tself_host_prepare_community\\n`));
+
+  const staleReply = nativeScript('resolve_js_promise', {
+    document_id: oldDoc.id,
+    req_id: 1,
+    ok_lit: 'true',
+    raw_json_expr: '{"env_file_written":true,"source":"stale"}',
+  });
+  vm.runInContext(staleReply, newDoc.context);
+  await new Promise(setImmediate);
+  assert.equal(newDoc.context.window.prepareOut, undefined);
+
+  const freshReply = nativeScript('resolve_js_promise', {
+    document_id: newDoc.id,
+    req_id: 1,
+    ok_lit: 'true',
+    raw_json_expr: '{"env_file_written":true,"source":"fresh"}',
+  });
+  vm.runInContext(freshReply, newDoc.context);
+  await newPrepare;
+  assert.equal(newDoc.context.window.prepareOut.source, 'fresh');
+});

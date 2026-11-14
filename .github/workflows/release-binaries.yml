@@ -60,7 +60,21 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            dpkg-dev
+            dpkg-dev \
+            squashfs-tools
+
+      - name: Install SHA256-verified AppImage Type-2 ELF runtime
+        if: matrix.target == 'linux'
+        env:
+          APPIMAGE_RUNTIME_TAG: "20251108"
+          APPIMAGE_RUNTIME_SHA256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/appimage-runtime-x86_64" \
+            "https://github.com/AppImage/type2-runtime/releases/download/${APPIMAGE_RUNTIME_TAG}/runtime-x86_64"
+          echo "${APPIMAGE_RUNTIME_SHA256}  $RUNNER_TEMP/appimage-runtime-x86_64" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/appimage-runtime-x86_64"
+          echo "KODERA_APPIMAGE_RUNTIME_PATH=$RUNNER_TEMP/appimage-runtime-x86_64" >> "$GITHUB_ENV"
 
       - name: Install locked npm workspace dependencies
         run: npm ci --ignore-scripts
@@ -338,6 +352,10 @@ jobs:
           cp release-staging/windows/kodera-desktop-windows-x64.msi release-bundle/kodera-desktop-windows-x64.msi
           cp release-staging/windows/kodera-desktop-windows-x64-setup.exe release-bundle/kodera-desktop-windows-x64-setup.exe
           cp release-staging/android/kodera-android.apk release-bundle/kodera-android.apk
+
+          python3 -c 'import pathlib, sys; h = pathlib.Path("release-bundle/kodera-desktop-linux-x86_64.AppImage").read_bytes()[:16]; sys.exit(0 if h[:4] == b"\x7fELF" and h[8:11] == b"AI\x02" else "kodera-desktop-linux-x86_64.AppImage missing ELF64 + AI\\x02 Type-2 header")'
+          node scripts/ci/package-desktop-release.mjs \
+            --verify-appimage release-bundle/kodera-desktop-linux-x86_64.AppImage
 
           npm sbom --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root \
             > "$RUNNER_TEMP/npm-sbom.cdx.json"

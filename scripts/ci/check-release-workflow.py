@@ -38,6 +38,7 @@ EXPECTED_LINUX_PACKAGES = (
     "libayatana-appindicator3-dev",
     "librsvg2-dev",
     "patchelf",
+    "squashfs-tools",
 )
 
 USES_LINE_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)")
@@ -182,6 +183,14 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
     for pkg in EXPECTED_LINUX_PACKAGES:
         if pkg not in desktop_block:
             errors.append(f"desktop-release Linux step must install '{pkg}'")
+    if (
+        "APPIMAGE_RUNTIME_SHA256:" not in desktop_block
+        or "sha256sum -c -" not in desktop_block
+        or "KODERA_APPIMAGE_RUNTIME_PATH=" not in desktop_block
+    ):
+        errors.append(
+            "desktop-release Linux step must install a SHA256-verified Type-2 ELF runtime and export KODERA_APPIMAGE_RUNTIME_PATH"
+        )
     if "scripts/ci/package-desktop-release.mjs" not in desktop_block:
         errors.append("desktop-release must invoke scripts/ci/package-desktop-release.mjs")
     if not (root / "scripts" / "ci" / "package-desktop-release.mjs").is_file():
@@ -295,6 +304,14 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         if asset not in publish_block:
             errors.append(f"publish-release must stage or generate '{asset}'")
     if (
+        r'b"\x7fELF"' not in publish_block
+        or r'b"AI\x02"' not in publish_block
+        or "--verify-appimage release-bundle/kodera-desktop-linux-x86_64.AppImage" not in publish_block
+    ):
+        errors.append(
+            "publish-release must verify kodera-desktop-linux-x86_64.AppImage carries ELF64 \\x7fELF + AI\\x02 Type-2 + SquashFS headers"
+        )
+    if (
         "name: release-android-sbom" not in publish_block
         or "python3 scripts/ci/assemble-release-sbom.py" not in publish_block
         or "--cargo-lock Cargo.lock" not in publish_block
@@ -396,6 +413,21 @@ def run_selftest(baseline: str) -> int:
             "missing Linux webkitgtk dependency",
             lambda s: s.replace("libwebkit2gtk-4.1-dev", "libgtk-3-dev", 1),
             "desktop-release Linux step must install 'libwebkit2gtk-4.1-dev'",
+        ),
+        (
+            "missing Linux squashfs-tools dependency",
+            lambda s: s.replace("squashfs-tools", "gzip", 1),
+            "desktop-release Linux step must install 'squashfs-tools'",
+        ),
+        (
+            "missing SHA256-verified AppImage Type-2 runtime",
+            lambda s: s.replace("KODERA_APPIMAGE_RUNTIME_PATH=", "UNUSED_RUNTIME_PATH=", 1),
+            "desktop-release Linux step must install a SHA256-verified Type-2 ELF runtime",
+        ),
+        (
+            "missing publish-release ELF AI\\x02 AppImage verification",
+            lambda s: s.replace(r'b"AI\x02"', r'b"SH\x00"', 1),
+            "publish-release must verify kodera-desktop-linux-x86_64.AppImage carries ELF64",
         ),
         (
             "removed Android native packaging check",

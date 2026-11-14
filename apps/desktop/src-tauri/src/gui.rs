@@ -2344,7 +2344,8 @@ mod tests {
         assert!(!stack_dir.join(".env").exists());
 
         // Initialize session and attach deterministic mock runner.
-        let init_msg = format!("{doc_id}:0:{cap}:2\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
+        let init_msg =
+            format!("{doc_id}:0:{cap}:2\tinit_session\n{{\"organisation_id\":\"{ORG}\"}}");
         let init_out = bridge
             .handle_ipc_request("https://app.kodera.io/self-host", &init_msg)
             .unwrap();

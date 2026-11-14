@@ -4,6 +4,7 @@
  *
  * Usage:
  *   node scripts/ci/package-desktop-release.mjs --target <macos|linux|windows> --out-dir <dir>
+ *   node scripts/ci/package-desktop-release.mjs --verify-appimage <path>
  *   node scripts/ci/package-desktop-release.mjs --selftest
  *
  * Produces normalized release assets in `--out-dir`:
@@ -11,7 +12,7 @@
  *       kodera-desktop-macos-universal.dmg
  *       kodera-desktop-macos-universal.app.tar.gz
  *   - linux:
- *       kodera-desktop-linux-x86_64.AppImage
+ *       kodera-desktop-linux-x86_64.AppImage  (genuine ELF64 Type-2 `AI\x02` + SquashFS image)
  *       kodera-desktop-linux-amd64.deb
  *   - windows:
  *       kodera-desktop-windows-x64.msi
@@ -26,6 +27,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -36,8 +38,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { verifyFrontendAssets } from '../../apps/desktop/scripts/verify-frontend-assets.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..', '..');
@@ -60,11 +63,191 @@ export const EXPECTED_RELEASE_ASSETS = Object.freeze({
   ]),
 });
 
+export const WEB_RESOURCE_STAGE_PATHS = Object.freeze({
+  macos: Object.freeze({
+    bundleRoot: 'Kodera.app',
+    executableRelPath: 'Contents/MacOS/kodera-desktop',
+    webResourceRelPath: 'Contents/Resources/web',
+    guiLookupFromExeDir: '../Resources/web',
+  }),
+  linux: Object.freeze({
+    bundleRoot: 'linux-root',
+    executableRelPath: 'usr/bin/kodera-desktop',
+    webResourceRelPath: 'usr/lib/Kodera/web',
+    guiLookupFromExeDir: '../lib/Kodera/web',
+  }),
+  windows: Object.freeze({
+    bundleRoot: 'Kodera',
+    executableRelPath: 'kodera-desktop.exe',
+    webResourceRelPath: 'web',
+    guiLookupFromExeDir: 'web',
+  }),
+});
+
+const APPIMAGE_ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]); // \x7fELF
+const APPIMAGE_TYPE2_MAGIC = Buffer.from([0x41, 0x49, 0x02]); // AI\x02 at bytes 8..11
+const SQUASHFS_LE_MAGIC = Buffer.from([0x68, 0x73, 0x71, 0x73]); // 'hsqs' (SquashFS 4.0 LE)
+const SQUASHFS_SUPERBLOCK_MIN_BYTES = 96;
 const SAFE_PATH_RE = /^[A-Za-z0-9._:/\\-]+$/u;
+
+function bundlerUnavailableError(detail) {
+  const err = new Error(`appimage_packager_unavailable:${detail}`);
+  err.exitCode = 69;
+  return err;
+}
+
+export function stagePackagedWebAssets(targetOs, bundleRootDir, sourceDistDir = webDistDir) {
+  const spec = WEB_RESOURCE_STAGE_PATHS[targetOs];
+  if (!spec) {
+    throw new Error(`unsupported_target:${String(targetOs)}`);
+  }
+  verifyFrontendAssets(sourceDistDir);
+  const destWebDir = join(bundleRootDir, spec.webResourceRelPath);
+  rmSync(destWebDir, { recursive: true, force: true });
+  mkdirSync(dirname(destWebDir), { recursive: true });
+  cpSync(sourceDistDir, destWebDir, { recursive: true });
+  verifyFrontendAssets(destWebDir);
+  return {
+    stagedWebDir: destWebDir,
+    executablePath: join(bundleRootDir, spec.executableRelPath),
+    guiLookupFromExeDir: spec.guiLookupFromExeDir,
+  };
+}
+
+export function computeElf64EndOffset(buf) {
+  if (!Buffer.isBuffer(buf)) {
+    throw new TypeError('appimage_buffer_expected');
+  }
+  if (buf.length >= 2 && buf[0] === 0x23 && buf[1] === 0x21) {
+    throw new Error('appimage_shell_script_refused');
+  }
+  if (buf.length < 64 || !buf.subarray(0, 4).equals(APPIMAGE_ELF_MAGIC)) {
+    throw new Error('appimage_missing_elf_magic');
+  }
+  if (buf[4] !== 2 || buf[5] !== 1) {
+    throw new Error('appimage_invalid_elf64_header');
+  }
+  if (!buf.subarray(8, 11).equals(APPIMAGE_TYPE2_MAGIC)) {
+    throw new Error('appimage_missing_type2_magic');
+  }
+  const phOff = Number(buf.readBigUInt64LE(0x20));
+  const shOff = Number(buf.readBigUInt64LE(0x28));
+  const phEntSize = buf.readUInt16LE(0x36);
+  const phNum = buf.readUInt16LE(0x38);
+  const shEntSize = buf.readUInt16LE(0x3a);
+  const shNum = buf.readUInt16LE(0x3c);
+  const phEnd = phNum > 0 ? phOff + phEntSize * phNum : 0;
+  const shEnd = shNum > 0 ? shOff + shEntSize * shNum : 0;
+  const elfEnd = Math.max(64, phEnd, shEnd);
+  if (!Number.isSafeInteger(elfEnd) || elfEnd > buf.length) {
+    throw new Error('appimage_invalid_elf64_bounds');
+  }
+  return elfEnd;
+}
+
+export function verifyAppImageType2Runtime(runtimeBytes) {
+  const elfEnd = computeElf64EndOffset(runtimeBytes);
+  if (elfEnd !== runtimeBytes.length) {
+    throw new Error(`appimage_runtime_size_mismatch:expected_${elfEnd}_got_${runtimeBytes.length}`);
+  }
+  return elfEnd;
+}
+
+export function verifySquashfsPayload(squashfsBytes) {
+  if (!Buffer.isBuffer(squashfsBytes) || squashfsBytes.length < SQUASHFS_SUPERBLOCK_MIN_BYTES) {
+    throw new Error('appimage_missing_squashfs_payload');
+  }
+  if (!squashfsBytes.subarray(0, 4).equals(SQUASHFS_LE_MAGIC)) {
+    throw new Error('appimage_missing_squashfs_payload');
+  }
+}
+
+export function verifyAppImageType2Bytes(appImageBytes) {
+  const elfEnd = computeElf64EndOffset(appImageBytes);
+  if (appImageBytes.length < elfEnd + SQUASHFS_SUPERBLOCK_MIN_BYTES) {
+    throw new Error('appimage_missing_squashfs_payload');
+  }
+  const payloadHeader = appImageBytes.subarray(elfEnd, elfEnd + 4);
+  if (!payloadHeader.equals(SQUASHFS_LE_MAGIC)) {
+    throw new Error('appimage_missing_squashfs_payload');
+  }
+  return { elfEnd, squashfsBytes: appImageBytes.length - elfEnd };
+}
+
+export function verifyAppImageType2File(filePath) {
+  const st = lstatSync(filePath);
+  if (!st.isFile() || st.isSymbolicLink() || st.size === 0) {
+    throw new Error(`appimage_invalid_file:${filePath}`);
+  }
+  const raw = readFileSync(filePath);
+  return verifyAppImageType2Bytes(raw);
+}
+
+export function assembleAppImageType2(runtimeBytes, squashfsBytes) {
+  verifyAppImageType2Runtime(runtimeBytes);
+  verifySquashfsPayload(squashfsBytes);
+  const image = Buffer.concat([runtimeBytes, squashfsBytes]);
+  verifyAppImageType2Bytes(image);
+  return image;
+}
+
+function resolvePosixExecutable(binName, env = process.env) {
+  const pathRaw = env.PATH ?? '';
+  for (const dir of pathRaw.split(delimiter)) {
+    if (!dir) {
+      continue;
+    }
+    const candidate = join(dir, binName);
+    if (existsSync(candidate)) {
+      const info = statSync(candidate);
+      if (info.isFile()) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+export function resolveLinuxAppImageTools(env = process.env) {
+  const runtimePathRaw = env.KODERA_APPIMAGE_RUNTIME_PATH ?? '';
+  if (typeof runtimePathRaw !== 'string' || runtimePathRaw.trim().length === 0) {
+    throw bundlerUnavailableError(
+      'KODERA_APPIMAGE_RUNTIME_PATH is unset and Tauri bundler is unavailable',
+    );
+  }
+  const runtimePath = resolve(runtimePathRaw.trim());
+  if (!existsSync(runtimePath)) {
+    throw bundlerUnavailableError(`runtime file does not exist: ${runtimePath}`);
+  }
+  const st = lstatSync(runtimePath);
+  if (!st.isFile() || st.isSymbolicLink()) {
+    throw bundlerUnavailableError(`runtime path must be a regular file: ${runtimePath}`);
+  }
+  const runtimeBytes = readFileSync(runtimePath);
+  verifyAppImageType2Runtime(runtimeBytes);
+
+  const mksquashfsBin = resolvePosixExecutable('mksquashfs', env);
+  if (!mksquashfsBin) {
+    throw bundlerUnavailableError('mksquashfs (squashfs-tools) is not installed on PATH');
+  }
+  return { runtimePath, runtimeBytes, mksquashfsBin };
+}
 
 export function parseReleaseArgs(argv) {
   if (argv.length === 1 && argv[0] === '--selftest') {
-    return { selftest: true, target: null, outDir: null };
+    return { selftest: true, verifyAppImage: null, target: null, outDir: null };
+  }
+  if (argv.length === 2 && argv[0] === '--verify-appimage') {
+    const appImagePath = argv[1] ?? '';
+    if (
+      typeof appImagePath !== 'string'
+      || appImagePath.trim().length === 0
+      || appImagePath.includes('..')
+      || !SAFE_PATH_RE.test(appImagePath)
+    ) {
+      throw new Error(`invalid_appimage_path:${String(appImagePath)}`);
+    }
+    return { selftest: false, verifyAppImage: appImagePath, target: null, outDir: null };
   }
   let target = null;
   let outDir = null;
@@ -91,7 +274,7 @@ export function parseReleaseArgs(argv) {
   ) {
     throw new Error(`invalid_out_dir:${String(outDir)}`);
   }
-  return { selftest: false, target, outDir };
+  return { selftest: false, verifyAppImage: null, target, outDir };
 }
 
 function runChecked(cmd, args, options = {}) {
@@ -390,34 +573,6 @@ export function renderDebianControl(conf) {
   ].join('\n');
 }
 
-export function buildSelfExtractingAppImage(appDirTarGzBytes) {
-  const header = Buffer.from(
-    [
-      '#!/bin/sh',
-      '# Kodera Desktop Linux x86_64 AppImage launcher bundle',
-      'set -eu',
-      'TMP_APPDIR="$(mktemp -d "${TMPDIR:-/tmp}/kodera-appimage.XXXXXX")"',
-      'cleanup() { rm -rf "$TMP_APPDIR"; }',
-      'trap cleanup EXIT INT TERM HUP',
-      'ARCHIVE_LINE="$(awk \'/^__KODERA_APPDIR_ARCHIVE__$/ { print NR + 1; exit 0; }\' "$0")"',
-      'tail -n +"$ARCHIVE_LINE" "$0" | tar -xzf - -C "$TMP_APPDIR"',
-      'export APPDIR="$TMP_APPDIR"',
-      'if [ -z "${KODERA_DESKTOP_DIST_DIR:-}" ] && [ -f "$TMP_APPDIR/usr/share/kodera-desktop/web/index.html" ]; then',
-      '  export KODERA_DESKTOP_DIST_DIR="$TMP_APPDIR/usr/share/kodera-desktop/web"',
-      'fi',
-      'rc=0',
-      '"$TMP_APPDIR/usr/bin/kodera-desktop" "$@" || rc=$?',
-      'cleanup',
-      'trap - EXIT INT TERM HUP',
-      'exit "$rc"',
-      '__KODERA_APPDIR_ARCHIVE__',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  return Buffer.concat([header, appDirTarGzBytes]);
-}
-
 function packageMacosHost(conf, outDir) {
   const targetDir = resolveCargoTargetDir();
   runChecked('rustup', ['target', 'add', 'aarch64-apple-darwin', 'x86_64-apple-darwin']);
@@ -460,9 +615,7 @@ function packageMacosHost(conf, outDir) {
 
     writeFileSync(join(appDir, 'Contents', 'Info.plist'), renderMacosInfoPlist(conf), 'utf8');
     copyFileSync(join(tauriDir, 'icons', 'icon.icns'), join(resourcesDir, 'icon.icns'));
-    if (existsSync(webDistDir)) {
-      cpSync(webDistDir, join(resourcesDir, 'web'), { recursive: true });
-    }
+    stagePackagedWebAssets('macos', appDir, webDistDir);
 
     const appTarGz = join(outDir, 'kodera-desktop-macos-universal.app.tar.gz');
     runChecked('tar', ['-czf', appTarGz, '-C', scratch, 'Kodera.app']);
@@ -487,7 +640,63 @@ function packageMacosHost(conf, outDir) {
   }
 }
 
+function stageLinuxAppDir(appDir, conf, builtBin, sourceWebDir) {
+  const desktopEntry = [
+    '[Desktop Entry]',
+    'Type=Application',
+    `Name=${conf.productName}`,
+    'Exec=kodera-desktop %u',
+    'Icon=kodera-desktop',
+    'Terminal=false',
+    'Categories=Network;InstantMessaging;Chat;',
+    'MimeType=x-scheme-handler/kodera;x-scheme-handler/matrix;',
+    '',
+  ].join('\n');
+
+  mkdirSync(join(appDir, 'usr', 'bin'), { recursive: true });
+  mkdirSync(join(appDir, 'usr', 'share', 'applications'), { recursive: true });
+  mkdirSync(join(appDir, 'usr', 'share', 'icons', 'hicolor', '128x128', 'apps'), {
+    recursive: true,
+  });
+
+  copyFileSync(builtBin, join(appDir, 'usr', 'bin', 'kodera-desktop'));
+  chmodSync(join(appDir, 'usr', 'bin', 'kodera-desktop'), 0o755);
+
+  writeFileSync(
+    join(appDir, 'AppRun'),
+    [
+      '#!/bin/sh',
+      'set -eu',
+      'HERE="$(dirname "$(readlink -f "$0")")"',
+      'export APPDIR="$HERE"',
+      'exec "$HERE/usr/bin/kodera-desktop" "$@"',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  chmodSync(join(appDir, 'AppRun'), 0o755);
+
+  writeFileSync(join(appDir, 'kodera-desktop.desktop'), desktopEntry, 'utf8');
+  writeFileSync(
+    join(appDir, 'usr', 'share', 'applications', 'kodera-desktop.desktop'),
+    desktopEntry,
+    'utf8',
+  );
+
+  const iconSrc = join(tauriDir, 'icons', '128x128.png');
+  copyFileSync(iconSrc, join(appDir, 'kodera-desktop.png'));
+  copyFileSync(iconSrc, join(appDir, '.DirIcon'));
+  copyFileSync(
+    iconSrc,
+    join(appDir, 'usr', 'share', 'icons', 'hicolor', '128x128', 'apps', 'kodera-desktop.png'),
+  );
+  stagePackagedWebAssets('linux', appDir, sourceWebDir);
+}
+
 function packageLinuxHost(conf, outDir) {
+  // Fail closed with exit 69 before building if a verified Type-2 ELF runtime or mksquashfs is missing.
+  const { runtimeBytes, mksquashfsBin } = resolveLinuxAppImageTools();
+
   const targetDir = resolveCargoTargetDir();
   runChecked('cargo', [
     'build',
@@ -525,7 +734,6 @@ function packageLinuxHost(conf, outDir) {
     mkdirSync(join(debRoot, 'usr', 'share', 'icons', 'hicolor', '128x128', 'apps'), {
       recursive: true,
     });
-    mkdirSync(join(debRoot, 'usr', 'share', 'kodera-desktop'), { recursive: true });
 
     writeFileSync(join(debRoot, 'DEBIAN', 'control'), renderDebianControl(conf), 'utf8');
     copyFileSync(builtBin, join(debRoot, 'usr', 'bin', 'kodera-desktop'));
@@ -539,49 +747,23 @@ function packageLinuxHost(conf, outDir) {
       join(tauriDir, 'icons', '128x128.png'),
       join(debRoot, 'usr', 'share', 'icons', 'hicolor', '128x128', 'apps', 'kodera-desktop.png'),
     );
-    if (existsSync(webDistDir)) {
-      cpSync(webDistDir, join(debRoot, 'usr', 'share', 'kodera-desktop', 'web'), {
-        recursive: true,
-      });
-    }
+    stagePackagedWebAssets('linux', debRoot, webDistDir);
 
     const debOut = join(outDir, 'kodera-desktop-linux-amd64.deb');
     runChecked('dpkg-deb', ['--root-owner-group', '--build', debRoot, debOut]);
 
-    // 2. AppImage bundle (.AppImage)
+    // 2. Genuine ELF Type-2 AppImage (`\x7fELF` + `AI\x02` runtime + SquashFS 4.0 AppDir payload)
     const appDir = join(scratch, 'Kodera.AppDir');
-    mkdirSync(join(appDir, 'usr', 'bin'), { recursive: true });
-    mkdirSync(join(appDir, 'usr', 'share', 'kodera-desktop'), { recursive: true });
-    copyFileSync(builtBin, join(appDir, 'usr', 'bin', 'kodera-desktop'));
-    chmodSync(join(appDir, 'usr', 'bin', 'kodera-desktop'), 0o755);
-    writeFileSync(
-      join(appDir, 'AppRun'),
-      [
-        '#!/bin/sh',
-        'HERE="$(dirname "$(readlink -f "$0")")"',
-        'export APPDIR="$HERE"',
-        'if [ -z "${KODERA_DESKTOP_DIST_DIR:-}" ] && [ -f "$HERE/usr/share/kodera-desktop/web/index.html" ]; then',
-        '  export KODERA_DESKTOP_DIST_DIR="$HERE/usr/share/kodera-desktop/web"',
-        'fi',
-        'exec "$HERE/usr/bin/kodera-desktop" "$@"',
-        '',
-      ].join('\n'),
-      'utf8',
-    );
-    chmodSync(join(appDir, 'AppRun'), 0o755);
-    writeFileSync(join(appDir, 'kodera-desktop.desktop'), desktopEntry, 'utf8');
-    copyFileSync(join(tauriDir, 'icons', '128x128.png'), join(appDir, 'kodera-desktop.png'));
-    if (existsSync(webDistDir)) {
-      cpSync(webDistDir, join(appDir, 'usr', 'share', 'kodera-desktop', 'web'), {
-        recursive: true,
-      });
-    }
+    stageLinuxAppDir(appDir, conf, builtBin, webDistDir);
 
-    const appDirArchive = join(scratch, 'appdir.tar.gz');
-    runChecked('tar', ['-czf', appDirArchive, '-C', appDir, '.']);
+    const squashfsPath = join(scratch, 'kodera-appdir.squashfs');
+    runChecked(mksquashfsBin, [appDir, squashfsPath, '-root-owned', '-noappend']);
+
     const appImageOut = join(outDir, 'kodera-desktop-linux-x86_64.AppImage');
-    writeFileSync(appImageOut, buildSelfExtractingAppImage(readFileSync(appDirArchive)));
+    const appImageBytes = assembleAppImageType2(runtimeBytes, readFileSync(squashfsPath));
+    writeFileSync(appImageOut, appImageBytes);
     chmodSync(appImageOut, 0o755);
+    verifyAppImageType2File(appImageOut);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -621,17 +803,13 @@ function packageWindowsHost(conf, outDir) {
 
   const scratch = mkdtempSync(join(tmpdir(), 'kodera-win-pkg-'));
   try {
-    const stageDir = join(scratch, 'stage');
+    const stageDir = join(scratch, 'Kodera');
     mkdirSync(stageDir, { recursive: true });
     const stagedExe = join(stageDir, 'kodera-desktop.exe');
     const stagedIco = join(stageDir, 'icon.ico');
-    const stagedWebDir = join(stageDir, 'web');
     copyFileSync(builtExe, stagedExe);
     copyFileSync(join(tauriDir, 'icons', 'icon.ico'), stagedIco);
-    if (!existsSync(join(webDistDir, 'index.html'))) {
-      throw new Error('web_dist_missing_for_windows_installer');
-    }
-    cpSync(webDistDir, stagedWebDir, { recursive: true });
+    const { stagedWebDir } = stagePackagedWebAssets('windows', stageDir, webDistDir);
 
     // 1. MSI installer via WiX Toolset (candle + light, or wix v4+)
     const msiOut = join(outDir, 'kodera-desktop-windows-x64.msi');
@@ -722,8 +900,10 @@ function collectTauriBundleOutputs(tauriBin, target, outDir) {
     if (!appImage || !deb) {
       throw new Error('tauri_bundle_missing_linux_installers');
     }
-    copyFileSync(appImage, join(outDir, 'kodera-desktop-linux-x86_64.AppImage'));
-    chmodSync(join(outDir, 'kodera-desktop-linux-x86_64.AppImage'), 0o755);
+    const appImageOut = join(outDir, 'kodera-desktop-linux-x86_64.AppImage');
+    copyFileSync(appImage, appImageOut);
+    chmodSync(appImageOut, 0o755);
+    verifyAppImageType2File(appImageOut);
     copyFileSync(deb, join(outDir, 'kodera-desktop-linux-amd64.deb'));
     return;
   }
@@ -746,6 +926,47 @@ export function verifyStagedAssets(target, outDir) {
     const info = statSync(full);
     assert.ok(info.isFile() && info.size > 0, `empty staged desktop release asset: ${name}`);
   }
+  if (target === 'linux') {
+    verifyAppImageType2File(join(outDir, 'kodera-desktop-linux-x86_64.AppImage'));
+  }
+}
+
+function buildSyntheticType2ElfRuntime({ includeAi2Magic = true, trailingExtraBytes = 0 } = {}) {
+  const codeSection = Buffer.alloc(64, 0x90);
+  const shEntSize = 64;
+  const shNum = 2;
+  const shOff = 64 + codeSection.length; // 128
+  const totalElfBytes = shOff + shEntSize * shNum; // 256
+  const buf = Buffer.alloc(totalElfBytes + trailingExtraBytes, 0);
+
+  APPIMAGE_ELF_MAGIC.copy(buf, 0);
+  buf[4] = 2; // ELFCLASS64
+  buf[5] = 1; // ELFDATA2LSB
+  buf[6] = 1; // EV_CURRENT
+  if (includeAi2Magic) {
+    APPIMAGE_TYPE2_MAGIC.copy(buf, 8);
+  }
+  buf.writeUInt16LE(2, 0x10); // ET_EXEC
+  buf.writeUInt16LE(0x3e, 0x12); // EM_X86_64
+  buf.writeUInt32LE(1, 0x14); // EV_CURRENT
+  buf.writeBigUInt64LE(0n, 0x20); // e_phoff
+  buf.writeBigUInt64LE(BigInt(shOff), 0x28); // e_shoff
+  buf.writeUInt16LE(64, 0x34); // e_ehsize
+  buf.writeUInt16LE(0, 0x36); // e_phentsize
+  buf.writeUInt16LE(0, 0x38); // e_phnum
+  buf.writeUInt16LE(shEntSize, 0x3a); // e_shentsize
+  buf.writeUInt16LE(shNum, 0x3c); // e_shnum
+  codeSection.copy(buf, 64);
+  return buf;
+}
+
+function buildSyntheticSquashfsSuperblock(extraPayloadBytes = 64) {
+  const sb = Buffer.alloc(SQUASHFS_SUPERBLOCK_MIN_BYTES + extraPayloadBytes, 0);
+  SQUASHFS_LE_MAGIC.copy(sb, 0);
+  sb.writeUInt32LE(4, 4); // inode_count
+  sb.writeUInt16LE(4, 28); // s_major = 4
+  sb.writeUInt16LE(0, 30); // s_minor = 0
+  return sb;
 }
 
 function runSelftest() {
@@ -778,74 +999,132 @@ function runSelftest() {
     /Depends: libwebkit2gtk-4\.1-0, libayatana-appindicator3-1, librsvg2-2/u,
   );
 
-  const appImageHeaderProbe = buildSelfExtractingAppImage(Buffer.from('payload'));
-  const headerStr = appImageHeaderProbe.toString('utf8');
-  assert.ok(headerStr.startsWith('#!/bin/sh\n'));
-  assert.ok(
-    !headerStr.includes('exec "$TMP_APPDIR/usr/bin/kodera-desktop"'),
-    'AppImage launcher must not exec-replace /bin/sh before cleaning up $TMP_APPDIR',
-  );
-  assert.match(headerStr, /export APPDIR="\$TMP_APPDIR"/u);
-
   const scratch = mkdtempSync(join(tmpdir(), 'kodera-pkg-selftest-'));
   try {
-    // 1. Verify miniature AppImage execution & guaranteed $TMPDIR cleanup on both 0 and non-zero exits.
-    if (process.platform !== 'win32') {
-      const isolatedTmp = join(scratch, 'isolated-tmp');
-      mkdirSync(isolatedTmp, { recursive: true });
-      const miniAppDir = join(scratch, 'Mini.AppDir');
-      mkdirSync(join(miniAppDir, 'usr', 'bin'), { recursive: true });
-      mkdirSync(join(miniAppDir, 'usr', 'share', 'kodera-desktop', 'web'), { recursive: true });
-      writeFileSync(
-        join(miniAppDir, 'usr', 'share', 'kodera-desktop', 'web', 'index.html'),
-        '<!doctype html><title>Kodera</title>',
-        'utf8',
-      );
-      const dummyBin = join(miniAppDir, 'usr', 'bin', 'kodera-desktop');
-      writeFileSync(
-        dummyBin,
-        [
-          '#!/bin/sh',
-          'printf "%s|%s|%s" "$APPDIR" "$KODERA_DESKTOP_DIST_DIR" "${1:-none}"',
-          'if [ "${1:-}" = "fail-7" ]; then exit 7; fi',
-          'exit 0',
-          '',
-        ].join('\n'),
-        'utf8',
-      );
-      chmodSync(dummyBin, 0o755);
+    // 1. Verify frontend asset staging & relative lookup across macOS, Linux, and Windows layouts.
+    const spaSource = join(scratch, 'spa-dist-fixture');
+    mkdirSync(join(spaSource, 'assets'), { recursive: true });
+    const fixtureHtml =
+      '<!doctype html><html><head><link rel="stylesheet" href="/assets/index-C4p1L8nR.css"><script type="module" src="/assets/index-B7x9K2mQ.js"></script></head><body><div id="root"></div></body></html>';
+    const fixtureJs = 'export const KODERA_SPA_BUNDLE = "hashed-release-module-ok";\n';
+    const fixtureCss = ':root { color: var(--text-primary); }\n';
+    writeFileSync(join(spaSource, 'index.html'), fixtureHtml, 'utf8');
+    writeFileSync(join(spaSource, 'assets', 'index-B7x9K2mQ.js'), fixtureJs, 'utf8');
+    writeFileSync(join(spaSource, 'assets', 'index-C4p1L8nR.css'), fixtureCss, 'utf8');
 
-      const miniTarGz = join(scratch, 'mini-appdir.tar.gz');
-      runChecked('tar', ['-czf', miniTarGz, '-C', miniAppDir, '.'], { stdio: 'pipe' });
-      const miniAppImage = join(scratch, 'kodera-mini.AppImage');
-      writeFileSync(miniAppImage, buildSelfExtractingAppImage(readFileSync(miniTarGz)));
-      chmodSync(miniAppImage, 0o755);
+    const guiRelCandidates = [
+      '../Resources/web',
+      '../lib/Kodera/web',
+      '../Resources/dist',
+      '../share/kodera-desktop/web',
+      '../share/kodera-desktop/dist',
+      'web',
+      'dist',
+    ];
+    for (const target of /** @type {const} */ (['macos', 'linux', 'windows'])) {
+      const bundleStage = join(scratch, `bundle-${target}`, WEB_RESOURCE_STAGE_PATHS[target].bundleRoot);
+      const staged = stagePackagedWebAssets(target, bundleStage, spaSource);
+      mkdirSync(dirname(staged.executablePath), { recursive: true });
+      writeFileSync(staged.executablePath, 'binary-stub', 'utf8');
 
-      const okRun = spawnSync(miniAppImage, ['hello-ok'], {
-        env: { ...process.env, TMPDIR: isolatedTmp, KODERA_DESKTOP_DIST_DIR: '' },
-        encoding: 'utf8',
-      });
-      assert.equal(okRun.status, 0, `expected exit 0, got ${String(okRun.status)}: ${okRun.stderr}`);
-      assert.match(okRun.stdout, /kodera-appimage\..*\|.*\/usr\/share\/kodera-desktop\/web\|hello-ok/u);
-      assert.deepEqual(
-        readdirSync(isolatedTmp).filter((name) => name.startsWith('kodera-appimage.')),
-        [],
-        'AppImage launcher left temporary directory behind after exit 0',
-      );
-
-      const failRun = spawnSync(miniAppImage, ['fail-7'], {
-        env: { ...process.env, TMPDIR: isolatedTmp, KODERA_DESKTOP_DIST_DIR: '' },
-        encoding: 'utf8',
-      });
-      assert.equal(failRun.status, 7, 'AppImage launcher must preserve child non-zero exit status');
-      assert.deepEqual(
-        readdirSync(isolatedTmp).filter((name) => name.startsWith('kodera-appimage.')),
-        [],
-        'AppImage launcher left temporary directory behind after non-zero exit',
+      const exeDir = dirname(staged.executablePath);
+      const discovered = guiRelCandidates
+        .map((rel) => resolve(exeDir, rel))
+        .find((candidate) => existsSync(join(candidate, 'index.html')));
+      assert.ok(discovered, `gui.rs relative lookup failed to discover staged web dir for ${target}`);
+      assert.equal(realpathSync(discovered), realpathSync(staged.stagedWebDir));
+      assert.equal(readFileSync(join(discovered, 'index.html'), 'utf8'), fixtureHtml);
+      assert.equal(
+        readFileSync(join(discovered, 'assets', 'index-B7x9K2mQ.js'), 'utf8'),
+        fixtureJs,
       );
     }
 
-    // 2. Verify Windows WiX v3, WiX v4, and NSIS generators stage nested `web/assets/*.js` cleanly.
+    // 2. Positive & negative AppImage Type-2 (`\x7fELF` + `AI\x02` + `hsqs` SquashFS) verification.
+    const validRuntime = buildSyntheticType2ElfRuntime();
+    const validSquashfs = buildSyntheticSquashfsSuperblock();
+    const validAppImage = assembleAppImageType2(validRuntime, validSquashfs);
+    assert.deepEqual([...validAppImage.subarray(0, 4)], [0x7f, 0x45, 0x4c, 0x46]);
+    assert.deepEqual([...validAppImage.subarray(8, 11)], [0x41, 0x49, 0x02]);
+
+    const linuxStageOk = join(scratch, 'linux-out-ok');
+    mkdirSync(linuxStageOk, { recursive: true });
+    writeFileSync(join(linuxStageOk, 'kodera-desktop-linux-x86_64.AppImage'), validAppImage);
+    writeFileSync(join(linuxStageOk, 'kodera-desktop-linux-amd64.deb'), '!<arch>\ndebian-binary');
+    verifyStagedAssets('linux', linuxStageOk);
+
+    // Negative refusal: shell+tar masquerading (`#!/bin/sh`) MUST be rejected everywhere.
+    const fakeShellTar = Buffer.from(
+      `#!/bin/sh\ntail -n +3 "$0" | tar -xzf -\n${'P'.repeat(256)}`,
+      'utf8',
+    );
+    assert.throws(() => verifyAppImageType2Runtime(fakeShellTar), /appimage_shell_script_refused/u);
+    assert.throws(() => verifyAppImageType2Bytes(fakeShellTar), /appimage_shell_script_refused/u);
+    const linuxStageShell = join(scratch, 'linux-out-shell');
+    mkdirSync(linuxStageShell, { recursive: true });
+    writeFileSync(join(linuxStageShell, 'kodera-desktop-linux-x86_64.AppImage'), fakeShellTar);
+    writeFileSync(join(linuxStageShell, 'kodera-desktop-linux-amd64.deb'), '!<arch>\ndebian-binary');
+    assert.throws(
+      () => verifyStagedAssets('linux', linuxStageShell),
+      /appimage_shell_script_refused/u,
+    );
+    assert.deepEqual(parseReleaseArgs(['--verify-appimage', 'release-bundle/kodera-desktop-linux-x86_64.AppImage']), {
+      selftest: false,
+      verifyAppImage: 'release-bundle/kodera-desktop-linux-x86_64.AppImage',
+      target: null,
+      outDir: null,
+    });
+
+    // Negative refusal: plain ELF64 binary missing `AI\x02` at bytes 8..11.
+    const plainElf = buildSyntheticType2ElfRuntime({ includeAi2Magic: false });
+    assert.throws(
+      () => assembleAppImageType2(plainElf, validSquashfs),
+      /appimage_missing_type2_magic/u,
+    );
+
+    // Negative refusal: Type-2 runtime with trailing garbage or missing SquashFS superblock.
+    const trailingRuntime = buildSyntheticType2ElfRuntime({ trailingExtraBytes: 16 });
+    assert.throws(
+      () => verifyAppImageType2Runtime(trailingRuntime),
+      /appimage_runtime_size_mismatch/u,
+    );
+    assert.throws(
+      () => verifyAppImageType2Bytes(validRuntime),
+      /appimage_missing_squashfs_payload/u,
+    );
+    assert.throws(
+      () => assembleAppImageType2(validRuntime, Buffer.from('not-squashfs-magic-at-all')),
+      /appimage_missing_squashfs_payload/u,
+    );
+
+    // Negative refusal: missing KODERA_APPIMAGE_RUNTIME_PATH fails closed with exit code 69.
+    assert.throws(
+      () => resolveLinuxAppImageTools({ PATH: process.env.PATH ?? '' }),
+      (err) => err instanceof Error
+        && err.message.startsWith('appimage_packager_unavailable:')
+        && err.exitCode === 69,
+    );
+
+    // When `mksquashfs` is installed on the host/runner, pack a real AppDir and verify SquashFS superblock.
+    const hostMksquashfs = resolvePosixExecutable('mksquashfs');
+    if (hostMksquashfs) {
+      const realAppDir = join(scratch, 'Real.AppDir');
+      const stubBin = join(scratch, 'kodera-desktop-stub');
+      writeFileSync(stubBin, '#!/bin/sh\nexit 0\n', 'utf8');
+      chmodSync(stubBin, 0o755);
+      stageLinuxAppDir(realAppDir, conf, stubBin, spaSource);
+      const realSquashfs = join(scratch, 'real.squashfs');
+      runChecked(hostMksquashfs, [realAppDir, realSquashfs, '-root-owned', '-noappend'], {
+        stdio: 'pipe',
+      });
+      const realAppImagePath = join(scratch, 'real-packed.AppImage');
+      writeFileSync(realAppImagePath, assembleAppImageType2(validRuntime, readFileSync(realSquashfs)));
+      const verified = verifyAppImageType2File(realAppImagePath);
+      assert.equal(verified.elfEnd, validRuntime.length);
+      assert.ok(verified.squashfsBytes >= SQUASHFS_SUPERBLOCK_MIN_BYTES);
+    }
+
+    // 3. Verify Windows WiX v3, WiX v4, and NSIS generators stage nested `web/assets/*.js` cleanly.
     const winStage = join(scratch, 'win-stage');
     const stagedExe = join(winStage, 'kodera-desktop.exe');
     const stagedIco = join(winStage, 'icon.ico');
@@ -887,7 +1166,7 @@ function runSelftest() {
     assert.ok(nsi.includes(`File /r "${stagedWebDir}\\*.*"`));
     assert.ok(nsi.includes('RMDir /r "$INSTDIR\\web"'));
 
-    // 3. Verify asset staging check.
+    // 4. Verify asset staging check for macOS.
     assert.throws(
       () => verifyStagedAssets('macos', scratch),
       /missing staged desktop release asset/u,
@@ -900,7 +1179,7 @@ function runSelftest() {
     rmSync(scratch, { recursive: true, force: true });
   }
   console.log(
-    'OK: package-desktop-release.mjs selftest passed (AppImage TMPDIR cleanup + WiX v3/v4 & NSIS web staging).',
+    'OK: package-desktop-release.mjs selftest passed (ELF Type-2 AI\\x02 + SquashFS AppImage, shell-tar refusal, WiX v3/v4 & NSIS web staging).',
   );
 }
 
@@ -910,7 +1189,23 @@ function main() {
     runSelftest();
     return;
   }
+  if (args.verifyAppImage) {
+    const appImageAbs = resolve(repoRoot, args.verifyAppImage);
+    const verified = verifyAppImageType2File(appImageAbs);
+    console.log(
+      JSON.stringify({
+        ok: true,
+        path: appImageAbs,
+        elfEnd: verified.elfEnd,
+        squashfsBytes: verified.squashfsBytes,
+      }),
+    );
+    return;
+  }
 
+  runChecked(process.execPath, [join(desktopDir, 'scripts', 'generate-bootstrap-css.mjs')], {
+    cwd: desktopDir,
+  });
   runChecked(process.execPath, [join(desktopDir, 'scripts', 'generate-icons.mjs'), '--check'], {
     cwd: desktopDir,
   });
@@ -921,6 +1216,7 @@ function main() {
   if (!existsSync(join(webDistDir, 'index.html'))) {
     runChecked('npm', ['--workspace', '@kodera/web', 'run', 'build']);
   }
+  verifyFrontendAssets(webDistDir);
 
   const outAbs = resolve(repoRoot, args.outDir);
   mkdirSync(outAbs, { recursive: true });
@@ -955,5 +1251,11 @@ function isDirectExecution(metaUrl, argv1 = process.argv[1]) {
 }
 
 if (isDirectExecution(import.meta.url)) {
-  main();
+  try {
+    main();
+  } catch (err) {
+    const code = err && typeof err === 'object' && typeof err.exitCode === 'number' ? err.exitCode : 1;
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(code);
+  }
 }
