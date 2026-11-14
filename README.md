@@ -14,6 +14,7 @@
 </p>
 
 <p align="center">
+  <a href="#downloads-desktop--mobile">Downloads</a> ·
   <a href="./deploy/community/README.md">Self-Host (Docker Compose)</a> ·
   <a href="./ARCHITECTURE.md">Architecture</a> ·
   <a href="./ROADMAP.md">Roadmap</a> ·
@@ -26,6 +27,20 @@
 ---
 
 > **Status: Developer Preview (`v0.x`).** Pre-`v1.0`, under active development. This page says what the repository contains today and marks everything else **Planned**. The list of planned work, and its order, is the [roadmap](./ROADMAP.md); the authoritative backlog is this repository's issues and its GitHub Project.
+
+## Downloads (Desktop & Mobile)
+
+Direct release builds and integrity manifests are published on [GitHub Releases (`releases/latest`)](https://github.com/kodera-hq/kodera/releases/latest):
+
+| Platform | Architecture / Format | Direct Download |
+| :--- | :--- | :--- |
+| **macOS** | Universal (`Apple Silicon & Intel` — `.dmg`) | [`kodera-desktop-macos-universal.dmg`](https://github.com/kodera-hq/kodera/releases/latest/download/kodera-desktop-macos-universal.dmg) |
+| **Linux** | `x86_64` / `amd64` (`.AppImage`, `.deb`) | [`kodera-desktop-linux-x86_64.AppImage`](https://github.com/kodera-hq/kodera/releases/latest/download/kodera-desktop-linux-x86_64.AppImage) · [`kodera-desktop-linux-amd64.deb`](https://github.com/kodera-hq/kodera/releases/latest/download/kodera-desktop-linux-amd64.deb) |
+| **Windows** | `x64` (`.msi`, NSIS `.exe`) | [`kodera-desktop-windows-x64.msi`](https://github.com/kodera-hq/kodera/releases/latest/download/kodera-desktop-windows-x64.msi) · [`kodera-desktop-windows-x64-setup.exe`](https://github.com/kodera-hq/kodera/releases/latest/download/kodera-desktop-windows-x64-setup.exe) |
+| **Android** | Universal (`.apk`) | [`kodera-android.apk`](https://github.com/kodera-hq/kodera/releases/latest/download/kodera-android.apk) |
+| **Checksums & SBOM** | SHA-256 digests & release inventory | [`SHA256SUMS.txt`](https://github.com/kodera-hq/kodera/releases/latest/download/SHA256SUMS.txt) · [All assets & SBOM on GitHub Releases](https://github.com/kodera-hq/kodera/releases/latest) |
+
+Verify downloaded binaries against [`SHA256SUMS.txt`](https://github.com/kodera-hq/kodera/releases/latest/download/SHA256SUMS.txt) before installation. OS code-signing/notarisation and Apple App Store / Google Play store listings remain planned operator gates (see [What is not there yet](#what-is-not-there-yet)).
 
 ## What works today
 

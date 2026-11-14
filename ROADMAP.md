@@ -17,7 +17,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Hardened `deploy/community` profile (Synapse on PostgreSQL, federation closed by default, rate limits, no public agent API), checked on every change
 - [ ] End-to-end cold-start verification of `deploy/community` on a clean host, with a measured footprint
 
-## Track 2 — Collaboration, Governance & Workspace Lifecycle (`Status: Implemented through Wave 7; cutover in progress`)
+## Track 2 — Collaboration, Governance & Workspace Lifecycle (`Status: Implemented through Wave 8; cutover in progress`)
 
 - [x] Direct messages and bounded group conversations, file and image upload, and message search in the web client
 - [x] Camera video and screen sharing in rooms. LiveKit alone carries voice and video.
@@ -35,8 +35,8 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Companion client foundations in `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose) with `ciel` design parity, Matrix room/invitation models, CallKit / `ConnectionService` call seams, payload-free push integration and universal WebAuthn passkeys (no in-app purchase and no pricing screen)
 - [x] Reproducible native candidate verification and SPDX SBOM provenance gates across desktop and mobile targets
 - [x] Web Push notifications that wake the web client without carrying message text
-- [x] Origin-fenced Tauri v2 desktop bridge (`@kodera/desktop`) with `kodera://` / `matrix:` deep-links, tray controls, opt-in Push-to-Talk, OS keychain integration and local self-host preflight
-- [ ] Signed and notarised desktop installers for macOS, Windows and Linux, and published App Store / Google Play companion releases
+- [x] Origin-fenced Tauri v2 desktop bridge (`@kodera/desktop`) with `kodera://` / `matrix:` deep-links, tray controls, opt-in Push-to-Talk, OS keychain integration, local self-host preflight, and direct GitHub Releases multi-OS desktop (`.dmg`, `.AppImage`, `.deb`, `.msi`, `-setup.exe`) and Android (`.apk`) distribution with `SHA256SUMS.txt`
+- [ ] OS-notarised desktop installers for macOS and Windows, and published Apple App Store / Google Play companion listings
 - [ ] Automated provider deployment inside the Kodera Desktop self-host wizard
 
 ## Track 4 — Encryption & Federation (`Status: Partially Implemented / Deferred`)
@@ -57,10 +57,11 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 The generic invoice ledger and the payment engine already in `apps/server` stay open source; see [`GOVERNANCE.md`](./GOVERNANCE.md).
 
-## Waves 4–7 (`Status: Implemented on main; operator gates in progress`)
+## Waves 4–8 (`Status: Implemented on main / Wave 8; operator gates in progress`)
 
 The [collaboration status](./docs/specs/collaboration-status.md) records the completed Wave 2B through Wave 7 repository boundaries and separates merged source code from operator-run cutover and distribution gates:
 
 - **Wave 4 (`Implemented`):** typed Collections, transactional quotas, Factur-X `380`/`381` ledger, VIES validation and GDPR Art. 17/20 export and erasure. Community self-hosting remains independent of billing.
 - **Wave 5 (`Implemented in tree; store/installer signing pending`):** `kodera-rs` OpenMLS/Megolm/Passkey/proximity codecs, reproducible native SBOM gates, Tauri v2 desktop shell/bridge and iOS/Android companion implementations.
 - **Wave 6 & 7 (`Implemented`):** extension runtime v2, 22 reference implementations, `Slack`/`Discord`/`Notion` importers, bounded partner-room federation policy, developer docs + `llms.txt`, and multi-surface security hardening.
+- **Wave 8 (`In Progress — Direct Releases & Surface Polish`):** direct GitHub Releases desktop & mobile asset links (`kodera-desktop-macos-universal.dmg`, `kodera-desktop-linux-x86_64.AppImage`, `kodera-desktop-linux-amd64.deb`, `kodera-desktop-windows-x64.msi`, `kodera-desktop-windows-x64-setup.exe`, `kodera-android.apk`, `SHA256SUMS.txt`), runnable desktop packaging, `.well-known` discovery, and landing/identity polish; OS notarisation and store publication remain operator-gated.
