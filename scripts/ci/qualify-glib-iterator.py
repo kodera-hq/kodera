@@ -164,8 +164,11 @@ def qualify(revision: str, evidence_path: Path) -> None:
                 if code != 0:
                     raise ValueError(name + ' version query failed')
                 evidence[name + '_version'] = stdout.strip()
+            # Pin intermediate output as well as final output. --target-dir alone
+            # does not override an independently configured build.build-dir.
             command = ['cargo', 'build', '--locked', '--offline', '--release', '-p', 'glib', '--lib',
-                       '--target-dir', str(target), '--message-format=json']
+                       '--target-dir', str(target), '--config', 'build.build-dir=' + json.dumps(str(target)),
+                       '--message-format=json']
             code, stdout, stderr, messages = run('optimized-library', command, BUILD_SECONDS)
             if code != 0:
                 print(stderr[-24000:], file=sys.stderr)
