@@ -10,7 +10,7 @@ from uuid import UUID
 from django.db import transaction
 from django.utils import timezone
 
-from apps.audit.services import check_extension_event, record_extension_event
+from apps.audit.services import record_extension_event
 from apps.docs import services as documents
 from apps.identity.selectors import lock_delivery_identity
 from apps.media import outbound
@@ -37,11 +37,9 @@ def admin(verified, organisation_id):
 
 
 def audit(action, principal, organisation_id, target_id, metadata):
-    """The registered action and its closed shape are refused before the actor is read."""
-    check_extension_event(action=action, metadata=metadata)
     record_extension_event(
         action=action,
-        identity_id=principal.identity_id,
+        identity_id=None if principal is None else principal.identity_id,
         organisation_id=organisation_id,
         target_id=target_id,
         metadata=metadata,

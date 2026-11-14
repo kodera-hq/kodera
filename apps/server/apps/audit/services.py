@@ -891,27 +891,20 @@ AUDIT_FIELDS = {
 }
 
 
-def check_extension_event(*, action: str, metadata: object) -> None:
-    """Only the eight registered extension actions and their closed metadata shapes.
-
-    Separate from the write so a caller refuses the action and the shape before it reads an
-    actor: an unregistered action never reaches a principal, a target or this application.
-    """
-    fields = AUDIT_FIELDS.get(action)
-    if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
-        raise ValueError("extension audit action or metadata refused")
-
-
 def record_extension_event(
     *,
     action: str,
-    identity_id: UUID,
+    identity_id: UUID | None,
     organisation_id: UUID,
     target_id: UUID,
     metadata: object,
 ) -> None:
     """Only the eight registered extension actions and their closed metadata shapes."""
-    check_extension_event(action=action, metadata=metadata)
+    fields = AUDIT_FIELDS.get(action)
+    if fields is None or not isinstance(metadata, dict) or set(metadata) != fields:
+        raise ValueError("extension audit action or metadata refused")
+    if identity_id is None:
+        raise ValueError("extension audit principal required")
     AuditEvent.objects.create(
         action="extension." + action,
         actor_type="tenant",
