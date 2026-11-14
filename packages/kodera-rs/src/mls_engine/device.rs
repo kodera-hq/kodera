@@ -944,25 +944,23 @@ pub(super) mod tests {
     }
 
     impl MlsDeviceStore for TestStore {
-        fn compare_and_swap<'a>(
+        async fn compare_and_swap<'a>(
             &'a mut self,
             write: &'a MlsDeviceWrite<'_>,
-        ) -> impl Future<Output = Result<(), MlsDeviceStoreError>> + 'a {
-            async move {
-                self.attempts += 1;
-                match std::mem::take(&mut self.mode) {
-                    WriteMode::Normal => self.apply(write),
-                    WriteMode::Abort => Err(MlsDeviceStoreError::Unavailable),
-                    WriteMode::Conflict => Err(MlsDeviceStoreError::Conflict),
-                    WriteMode::Pending => std::future::pending().await,
-                    WriteMode::CommitThenPending => {
-                        self.apply(write)?;
-                        std::future::pending().await
-                    }
-                    WriteMode::CommitThenError => {
-                        self.apply(write)?;
-                        Err(MlsDeviceStoreError::Unavailable)
-                    }
+        ) -> Result<(), MlsDeviceStoreError> {
+            self.attempts += 1;
+            match std::mem::take(&mut self.mode) {
+                WriteMode::Normal => self.apply(write),
+                WriteMode::Abort => Err(MlsDeviceStoreError::Unavailable),
+                WriteMode::Conflict => Err(MlsDeviceStoreError::Conflict),
+                WriteMode::Pending => std::future::pending().await,
+                WriteMode::CommitThenPending => {
+                    self.apply(write)?;
+                    std::future::pending().await
+                }
+                WriteMode::CommitThenError => {
+                    self.apply(write)?;
+                    Err(MlsDeviceStoreError::Unavailable)
                 }
             }
         }
