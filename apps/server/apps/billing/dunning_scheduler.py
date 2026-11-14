@@ -72,9 +72,7 @@ def _locked(subscription_id: UUID) -> tuple[Subscription, DunningCase, list[Invo
     return subscription, case, invoices
 
 
-def _proposal(
-    subscription: Subscription, case: DunningCase, invoices: list[Invoice], now: datetime
-) -> Proposal | None:
+def _debts(invoices: list[Invoice], now: datetime) -> tuple[Debt, ...]:
     debts = []
     for invoice in invoices:
         if invoice.state not in {"issued", "overdue"} or invoice.due_at is None:
@@ -97,6 +95,18 @@ def _proposal(
             raise DunningRefusedError("dunning_processing_evidence_date_missing")
         processing = None if processing_row is None else processing_row.last_event_at
         debts.append(Debt(invoice.id, invoice.due_at, owed, disputed, hold_until, processing))
+    return tuple(debts)
+
+
+def _proposal(
+    subscription: Subscription,
+    case: DunningCase,
+    invoices: list[Invoice],
+    now: datetime,
+    *,
+    debts: tuple[Debt, ...] | None = None,
+) -> Proposal | None:
+    resolved_debts = _debts(invoices, now) if debts is None else debts
     rows = list(DunningAction.objects.filter(case=case, episode=case.episode, state="confirmed"))
     order = {name: index for index, (name, _, _) in enumerate(STEPS)}
     rows.sort(key=lambda row: order[row.step])
@@ -106,7 +116,10 @@ def _proposal(
             raise DunningRefusedError("dunning_notice_trail_date_invalid")
         delivered.append(DeliveredStep(row.step, row.delivered_at, row.receipt_at))
     return propose(
-        subscription_id=subscription.id, debts=tuple(debts), delivered=tuple(delivered), now=now
+        subscription_id=subscription.id,
+        debts=resolved_debts,
+        delivered=tuple(delivered),
+        now=now,
     )
 
 
@@ -116,51 +129,46 @@ def schedule_subscription(subscription_id: UUID) -> DunningAction | None:
         if subscription.state not in {"active", "past_due", "suspended"}:
             return None
         now = timezone.now()
-        proposal = _proposal(subscription, case, invoices, now)
-        outstanding = any(
-            row.state in {"issued", "overdue"} and row.total_incl_vat_minor > row.amount_paid_minor
-            for row in invoices
-        )
-        if not outstanding and case.state != "current":
-            # Resume of an actually suspended tenant needs its confirmed transition, not a
-            # scheduler write. Keep the episode until that writer has resumed the tenant.
-            if subscription.state == "suspended":
-                return None
-            DunningAction.objects.filter(case=case, episode=case.episode, state="prepared").update(
-                state="cancelled", updated_at=now
+        debts = _debts(invoices, now)
+        proposal = _proposal(subscription, case, invoices, now, debts=debts)
+        undisputed_overdue_ids = {
+            debt.invoice_id
+            for debt in debts
+            if debt.due_at < now
+            and debt.owed_minor
+            > (
+                debt.disputed_minor
+                if debt.dispute_hold_until is not None and debt.dispute_hold_until > now
+                else 0
             )
-            case.state, case.episode = "current", new_uuid7()
-            case.save(update_fields=["state", "episode", "updated_at"])
-            if subscription.state == "past_due":
-                subscription.state = "active"
-                subscription.save(update_fields=["state", "updated_at"])
-            events.record(
-                "dunning.cleared",
-                actor=SYSTEM,
-                organisation_id=subscription.organisation_id,
-                target=("organisation", subscription.organisation_id),
-                metadata={"subscription_id": str(subscription.id)},
-            )
-            return None
-        overdue = any(
-            row.state in {"issued", "overdue"}
-            and row.due_at is not None
-            and row.due_at < now
-            and row.total_incl_vat_minor > row.amount_paid_minor
-            for row in invoices
-        )
-        if not overdue:
+        }
+        if not undisputed_overdue_ids:
+            if case.state not in {"current", "terminated"}:
+                # Resume of an actually suspended tenant needs its confirmed transition, not a
+                # scheduler write. Keep the episode until that writer has resumed the tenant.
+                if subscription.state == "suspended":
+                    return None
+                DunningAction.objects.filter(
+                    case=case, episode=case.episode, state="prepared"
+                ).update(state="cancelled", updated_at=now)
+                case.state, case.episode = "current", new_uuid7()
+                case.save(update_fields=["state", "episode", "updated_at"])
+                if subscription.state == "past_due":
+                    subscription.state = "active"
+                    subscription.save(update_fields=["state", "updated_at"])
+                events.record(
+                    "dunning.cleared",
+                    actor=SYSTEM,
+                    organisation_id=subscription.organisation_id,
+                    target=("organisation", subscription.organisation_id),
+                    metadata={"subscription_id": str(subscription.id)},
+                )
             return None
         if subscription.state == "active":
             subscription.state = "past_due"
             subscription.save(update_fields=["state", "updated_at"])
         for invoice in invoices:
-            if (
-                invoice.state == "issued"
-                and invoice.due_at is not None
-                and invoice.due_at < now
-                and invoice.total_incl_vat_minor > invoice.amount_paid_minor
-            ):
+            if invoice.state == "issued" and invoice.id in undisputed_overdue_ids:
                 invoice.state = "overdue"
                 invoice.save(update_fields=["state", "updated_at"])
                 events.record(
