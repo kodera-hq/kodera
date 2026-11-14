@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.44.1
+  version: 0.44.2
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
