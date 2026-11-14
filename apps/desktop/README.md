@@ -1,8 +1,8 @@
 # Kodera Desktop (`@kodera/desktop`)
 
-Status: Active native Tauri v2 desktop host, typed IPC client, and multi-OS installer configuration.
+Status: Implemented tao/wry host and Tauri-compatible IPC; native launch and installed-package qualification pending.
 
-`@kodera/desktop` packages the Kodera workspace shell for macOS, Linux, and Windows on top of Tauri v2 and the shared `kodera-rs` Rust crate. It provides a `#![forbid(unsafe_code)]` Rust host binary (`kodera-desktop`), least-privilege Tauri v2 capabilities (`src-tauri/capabilities/default.json`), a strict `WEB-ADR-0012` Content Security Policy with zero `'unsafe-eval'`, deterministic multi-OS bundle icons (`PNG`, `ICNS`, `ICO`), and a zero-dependency TypeScript IPC client (`@kodera/desktop`) with automatic browser no-op fallback when running outside Tauri.
+`@kodera/desktop` packages the Kodera workspace shell for macOS, Linux, and Windows using tao/wry, Tauri installer tooling, and the shared `kodera-rs` Rust crate. It provides a `#![forbid(unsafe_code)]` Rust host binary (`kodera-desktop`), least-privilege Tauri v2 capabilities (`src-tauri/capabilities/default.json`), a strict `WEB-ADR-0012` Content Security Policy with zero `'unsafe-eval'`, deterministic multi-OS bundle icons (`PNG`, `ICNS`, `ICO`), and a zero-dependency TypeScript IPC client (`@kodera/desktop`) with automatic browser no-op fallback when running outside Tauri.
 
 ## Architecture & Native Capabilities
 
@@ -81,6 +81,12 @@ if (desktop.isNativeDesktop()) {
 
 ## Local Development, Code Signing & Multi-OS Packaging
 
+### Document and resource boundaries
+
+Authentication navigation into the admitted identity origin grants no native command authority. Each new document creates a random identity for promise/callback delivery. Each navigation also rotates a native 256-bit OS-random capability, delivered only through identity-guarded activation; both capability and generation are required on commands. OS entropy failure denies activation and commands. The native page-load generation and capability reject queued work from departed documents, clears listeners and volatile host state, and binds replies/events to the originating document. Route changes within an existing document do not reset it.
+
+The fallback stylesheet is generated from `@kodera/design-tokens` by `scripts/generate-bootstrap-css.mjs --write`; preflight rejects drift and literal styles. The updater reports unsupported until a real checked update implementation is wired. Native OS keychain execution, tray behavior and installed-package acceptance remain separate qualification work; command models and status-only credential loads do not prove vault persistence or secret extraction.
+
 ### Native GUI Window vs Headless CLI Execution
 
 - **GUI Launch (default installer entrypoint)**: Invoking `kodera-desktop` with no arguments (or `--gui`, macOS LaunchServices `-psn_*`, or a bare `kodera://` / `matrix:` protocol URI) opens the native OS WebView window titled `"Kodera"` (`1280x820`, min `900x600`), serving bundled `apps/web/dist` assets or the CSP-verified bootstrap shell over `kodera-asset://localhost/index.html` with `window.__TAURI_INTERNALS__` + `window.koderaDesktop` IPC bridged to `DesktopShellHost` and fail-closed navigation validation (`validate_navigation_url`).
@@ -116,7 +122,7 @@ npm --workspace @kodera/desktop run package:windows
 | `package:linux` | `appimage`, `deb` | `bundle/appimage/Kodera_<version>_amd64.AppImage`, `bundle/deb/Kodera_<version>_amd64.deb` |
 | `package:windows` | `msi`, `nsis` | `bundle/msi/Kodera_<version>_x64_en-US.msi`, `bundle/nsis/Kodera_<version>_x64-setup.exe` |
 
-When running on CI or developer hosts without platform-specific GUI bundlers (`tauri`, `linuxdeploy`, WiX/NSIS), `desktop-cli.mjs` stages the release `kodera-desktop` host binary and emits a secret-free packaging manifest (`--dry-run` inspects the plan without building).
+Installer packaging requires the platform bundler and refuses with exit 69 when it is unavailable. `build` builds the host separately; `package --dry-run` only describes the plan. The frontend build is checked for complete local entry assets, symlinks and size bounds before bundling. `bundle.resources` copies the full frontend tree to `web/`: `Contents/Resources/web` on macOS, `usr/lib/Kodera/web` on Linux (including inside AppDir), and the installation's `web/` on Windows. Synthetic staging tests verify this mapping; no installed artifact is qualified by those tests.
 
 ### Code Signing & Notarization Environment Variables
 
