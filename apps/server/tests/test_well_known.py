@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import uuid
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 
 from config.environment import android_assetlinks_sha256, ios_app_ids
+from core.well_known import REQUEST_ID_RE, apple_app_site_association, assetlinks
 
 SAMPLE_IOS_APP_ID = "ABCDE12345.io.kodera.app"
 SAMPLE_IOS_EXT_ID = "ABCDE12345.io.kodera.app.share-extension"
@@ -163,3 +167,75 @@ def test_well_known_endpoints_reject_post_with_405(path: str) -> None:
     client = Client()
     response = client.post(path, data="{}", content_type="application/json")
     assert response.status_code == 405
+
+
+@pytest.mark.parametrize(
+    "bad_request_id",
+    [
+        "",
+        "short77",
+        "x" * 65,
+        "x" * 256,
+        "bad\r\nheader-inject",
+        "bad\x00null-byte",
+        "bad space id",
+    ],
+)
+def test_well_known_replaces_oversized_or_control_char_request_id_with_uuid7(
+    bad_request_id: str,
+) -> None:
+    factory = RequestFactory()
+
+    with override_settings(KODERA_IOS_APP_IDS=()):
+        req_unconf = factory.get(
+            "/.well-known/apple-app-site-association",
+            HTTP_X_REQUEST_ID=bad_request_id,
+        )
+        resp_unconf = apple_app_site_association(req_unconf)
+        assert resp_unconf.status_code == 503
+        rid_unconf = resp_unconf["X-Request-Id"]
+        assert rid_unconf != bad_request_id
+        assert REQUEST_ID_RE.fullmatch(rid_unconf) is not None
+        assert uuid.UUID(rid_unconf).version == 7
+        assert json.loads(resp_unconf.content)["request_id"] == rid_unconf
+
+    with override_settings(
+        KODERA_IOS_APP_IDS=(SAMPLE_IOS_APP_ID,),
+        KODERA_ANDROID_ASSETLINKS_SHA256=(SAMPLE_ANDROID_SHA256,),
+    ):
+        req_aasa = factory.get(
+            "/.well-known/apple-app-site-association",
+            HTTP_X_REQUEST_ID=bad_request_id,
+        )
+        resp_aasa = apple_app_site_association(req_aasa)
+        assert resp_aasa.status_code == 200
+        assert uuid.UUID(resp_aasa["X-Request-Id"]).version == 7
+
+        req_asset = factory.get(
+            "/.well-known/assetlinks.json",
+            HTTP_X_REQUEST_ID=bad_request_id,
+        )
+        resp_asset = assetlinks(req_asset)
+        assert resp_asset.status_code == 200
+        assert uuid.UUID(resp_asset["X-Request-Id"]).version == 7
+
+        client = Client()
+        full_resp = client.get(
+            "/.well-known/apple-app-site-association",
+            HTTP_X_REQUEST_ID=bad_request_id,
+        )
+        assert full_resp.status_code == 200
+        assert uuid.UUID(full_resp["X-Request-Id"]).version == 7
+
+
+@pytest.mark.parametrize("valid_request_id", ["abcd_123", "A" * 64])
+@override_settings(KODERA_IOS_APP_IDS=(SAMPLE_IOS_APP_ID,))
+def test_well_known_preserves_valid_bounded_request_id(valid_request_id: str) -> None:
+    factory = RequestFactory()
+    req = factory.get(
+        "/.well-known/apple-app-site-association",
+        HTTP_X_REQUEST_ID=valid_request_id,
+    )
+    resp = apple_app_site_association(req)
+    assert resp.status_code == 200
+    assert resp["X-Request-Id"] == valid_request_id

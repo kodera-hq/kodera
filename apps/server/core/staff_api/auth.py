@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from http.client import HTTPMessage
+from typing import IO, Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -55,6 +57,30 @@ class _PlaneConfig:
 _jwks_lock = threading.Lock()
 _jwks_cache: dict[str, tuple[float, dict[str, tuple[str, PublicKey]]]] = {}
 _test_jwks_registry: dict[str, dict[str, Any]] = {}
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse all 3xx HTTP redirects on staff OIDC JWKS fetches."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            "HTTP redirects are forbidden when fetching staff JWKS",
+            headers,
+            fp,
+        )
+
+
+_JWKS_OPENER = urllib.request.build_opener(NoRedirectHandler)
 
 
 def register_test_jwks(jwks_url: str, jwks_payload: dict[str, Any]) -> None:
@@ -134,11 +160,11 @@ def _fetch_jwks_document(jwks_url: str) -> dict[str, Any]:
             "Refused non-HTTPS staff JWKS URL",
             type_slug="c1-backend-jwks-unavailable",
         )
-    req = urllib.request.Request(  # noqa: S310 - scheme validated above
+    req = urllib.request.Request(  # noqa: S310 - scheme validated above, redirects disabled
         jwks_url, headers={"Accept": "application/json"}, method="GET"
     )
     try:
-        with urllib.request.urlopen(req, timeout=3.0) as resp:  # noqa: S310 - scheme validated above
+        with _JWKS_OPENER.open(req, timeout=3.0) as resp:
             raw = resp.read(MAX_JWKS_BYTES + 1)
     except Exception as exc:
         raise StaffApiError(

@@ -16,6 +16,7 @@ from core.db.ids import new_uuid7
 ANDROID_PACKAGE_NAME = "io.kodera.app"
 IOS_APP_ID_RE = re.compile(r"[A-Z0-9]{10}\.io\.kodera\.app(?:\.[A-Za-z0-9-]+)*\Z")
 ANDROID_SHA256_RE = re.compile(r"(?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}\Z")
+REQUEST_ID_RE = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 MAX_ENTRIES = 16
 
 UNIVERSAL_LINK_COMPONENTS = (
@@ -27,8 +28,17 @@ UNIVERSAL_LINK_COMPONENTS = (
 )
 
 
+def _validated_request_id(request: HttpRequest) -> str:
+    existing = request.META.get("HTTP_X_REQUEST_ID")
+    if isinstance(existing, str) and REQUEST_ID_RE.fullmatch(existing) is not None:
+        return existing
+    generated = str(new_uuid7())
+    request.META["HTTP_X_REQUEST_ID"] = generated
+    return generated
+
+
 def _unconfigured_response(request: HttpRequest, detail: str) -> HttpResponse:
-    request_id = request.META.get("HTTP_X_REQUEST_ID") or str(new_uuid7())
+    request_id = _validated_request_id(request)
     response = HttpResponse(
         json.dumps(
             {
@@ -49,7 +59,7 @@ def _unconfigured_response(request: HttpRequest, detail: str) -> HttpResponse:
 
 
 def _json_document(request: HttpRequest, payload: object) -> HttpResponse:
-    request_id = request.META.get("HTTP_X_REQUEST_ID") or str(new_uuid7())
+    request_id = _validated_request_id(request)
     response = HttpResponse(
         json.dumps(payload),
         status=200,

@@ -6,9 +6,11 @@ import ast
 import hashlib
 import json
 import re
+import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +20,7 @@ import yaml
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection, transaction
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
 
@@ -32,6 +34,12 @@ from config.environment import staff_oidc_issuer, staff_oidc_jwks_url, staff_ops
 from core.api.scopes import ATTRIBUTE as DECLARED_OPS_ATTR
 from core.staff_api import views as staff_views
 from core.staff_api.auth import clear_jwks_cache, register_test_jwks
+from core.staff_api.errors import (
+    REQUEST_ID_RE,
+    request_correlation_id,
+    staff_json_response,
+    staff_problem_response,
+)
 from core.staff_api.models import (
     GROSS_MARGIN_FLOOR_BPS,
     OPS_STEP_UP_MAX_AGE_SEC,
@@ -1149,3 +1157,144 @@ def test_staff_openapi_contract_roles_match_views_allowed_roles_verbatim() -> No
 
     _walk(resolver.url_patterns)
     assert len(staff_patterns) == 21
+
+
+# ------------------------------------ P2 Security Hardening Regression Suite ----
+
+
+@pytest.mark.parametrize(
+    "bad_request_id",
+    [
+        "",
+        "tiny123",
+        "z" * 65,
+        "z" * 256,
+        "bad\r\ncrlf-1234",
+        "bad\x00null-1234",
+        "bad/slash/id",
+    ],
+)
+def test_staff_api_replaces_oversized_or_control_char_request_id_with_uuid7(
+    bad_request_id: str,
+) -> None:
+    factory = RequestFactory()
+
+    req_corr = factory.get("/staff/v1/read/overview", HTTP_X_REQUEST_ID=bad_request_id)
+    corr = request_correlation_id(req_corr)
+    assert corr != bad_request_id
+    assert REQUEST_ID_RE.fullmatch(corr) is not None
+    assert uuid.UUID(corr).version == 7
+
+    req_prob = factory.get("/staff/v1/read/overview", HTTP_X_REQUEST_ID=bad_request_id)
+    prob = staff_problem_response(req_prob, status=403, code="forbidden", title="Forbidden")
+    prob_rid = prob["X-Request-Id"]
+    assert uuid.UUID(prob_rid).version == 7
+    assert json.loads(prob.content)["request_id"] == prob_rid
+
+    req_ok = factory.get("/staff/v1/read/overview", HTTP_X_REQUEST_ID=bad_request_id)
+    ok_resp = staff_json_response(req_ok, {"ok": True})
+    assert uuid.UUID(ok_resp["X-Request-Id"]).version == 7
+
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        client = Client()
+        r_unauth = client.get(
+            "/staff/v1/read/overview",
+            HTTP_HOST=ADMIN_HOST,
+            HTTP_X_REQUEST_ID=bad_request_id,
+        )
+        assert r_unauth.status_code == 401
+        rid_unauth = r_unauth["X-Request-Id"]
+        assert uuid.UUID(rid_unauth).version == 7
+        assert r_unauth.json()["request_id"] == rid_unauth
+
+        r_not_found = client.get(
+            "/staff/v1/unknown",
+            HTTP_HOST=ADMIN_HOST,
+            HTTP_X_REQUEST_ID=bad_request_id,
+        )
+        assert r_not_found.status_code == 404
+        rid_nf = r_not_found["X-Request-Id"]
+        assert uuid.UUID(rid_nf).version == 7
+        assert r_not_found.json()["request_id"] == rid_nf
+
+
+@pytest.mark.django_db
+def test_staff_mutation_audit_entry_replaces_oversized_request_id_with_uuid7() -> None:
+    owner_ident = _seed_staff_member(roles=("staff_owner",))
+    token = _mint_staff_jwt(
+        owner_ident.subject,
+        amr=["hwk"],
+        auth_time=int(time.time()),
+    )
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        client = Client()
+        resp = client.post(
+            "/staff/v1/triage/waitlist/open-cohort",
+            data=json.dumps({"cohort_code": "wave-reqid-guard", "limit_count": 10}),
+            content_type="application/json",
+            **_auth_headers(token, request_id="r" * 200),
+        )
+    assert resp.status_code == 200
+    header_rid = resp["X-Request-Id"]
+    assert uuid.UUID(header_rid).version == 7
+    audit_row = StaffAuditEntry.objects.order_by("-sequence_no").first()
+    assert audit_row is not None
+    assert audit_row.request_id == header_rid
+    assert uuid.UUID(audit_row.request_id).version == 7
+
+
+@pytest.mark.parametrize("redirect_status", [301, 302, 307, 308])
+def test_staff_jwks_fetch_refuses_http_redirects_with_503(redirect_status: int) -> None:
+    clear_jwks_cache()
+    redirect_target_hits: list[str] = []
+    bound_port: list[int] = []
+
+    class _RedirectJwksHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/jwks-redirect":
+                self.send_response(redirect_status)
+                self.send_header(
+                    "Location", f"http://127.0.0.1:{bound_port[0]}/redirect-destination"
+                )
+                self.end_headers()
+                return
+            redirect_target_hits.append(self.path)
+            payload = json.dumps({"keys": [_RSA_PUBLIC_JWK]}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), _RedirectJwksHandler)
+    port = server.server_port
+    bound_port.append(port)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        redirect_jwks_url = f"http://127.0.0.1:{port}/jwks-redirect"
+        redirect_settings = {
+            **STAFF_PLANE_SETTINGS,
+            "KODERA_LOOPBACK_ISSUERS": True,
+            "KODERA_STAFF_OIDC_JWKS_URL": redirect_jwks_url,
+        }
+        token = _mint_staff_jwt("staff-sub-redirect", amr=["otp"])
+        with override_settings(**redirect_settings):
+            client = Client()
+            resp = client.get(
+                "/staff/v1/read/overview",
+                **_auth_headers(token, host=ADMIN_HOST),
+            )
+        assert resp.status_code == 503
+        assert resp["Content-Type"] == "application/json"
+        body = resp.json()
+        assert body["code"] == "staff_jwks_unavailable"
+        assert body["type"] == "https://kodera.io/problems/c1-backend-jwks-unavailable"
+        assert redirect_target_hits == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
