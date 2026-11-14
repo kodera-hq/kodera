@@ -152,6 +152,22 @@ export function isDevelopmentAsset(
   )
 }
 
+/** MSW 3 intercepts the mock provider's HTML round trip as well as API requests. */
+export function isMockIdentityNavigation(
+  request: Pick<Request, 'url' | 'method' | 'mode'>,
+  origin: string,
+  mode = authMode()
+): boolean {
+  if (mode !== 'mock' || request.method !== 'GET' || request.mode !== 'navigate') return false
+  const url = new URL(request.url)
+  return (
+    url.origin === origin &&
+    !url.username &&
+    !url.password &&
+    ['/__mock-idp/authorize', '/auth/callback', '/auth/claim-callback'].includes(url.pathname)
+  )
+}
+
 function registerDemoRuntime(): void {
   // The demo organisation's own mark, registered from inside the mock tree so
   // it can only ever exist where this module does (`src/app/demoBranding.ts`
@@ -228,7 +244,8 @@ export async function startMockWorker(): Promise<void> {
     onUnhandledFrame({ frame, defaults }) {
       if (
         frame instanceof HttpNetworkFrame &&
-        isDevelopmentAsset(frame.data.request, window.location.origin, true)
+        (isDevelopmentAsset(frame.data.request, window.location.origin, true) ||
+          isMockIdentityNavigation(frame.data.request, window.location.origin))
       )
         return
       defaults.error()

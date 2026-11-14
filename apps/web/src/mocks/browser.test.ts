@@ -6,6 +6,7 @@ import {
   buildHandlers,
   prepareDemoScenarios,
   communityDiscoveryHandler,
+  isMockIdentityNavigation,
 } from '@/mocks/browser'
 import { DEMO_SCENARIO, ORGANISATION_NAME } from '@/mocks/demo/seed'
 
@@ -272,4 +273,50 @@ it('bypasses only same-origin development module requests, never API calls or pr
       true
     )
   ).toBe(false)
+})
+
+describe('mock identity document navigation', () => {
+  const origin = 'https://console.test'
+  const navigation = (
+    path: string,
+    overrides: Partial<Pick<Request, 'method' | 'mode'>> = {}
+  ): Pick<Request, 'url' | 'method' | 'mode'> => ({
+    url: `${origin}${path}`,
+    method: 'GET',
+    mode: 'navigate',
+    ...overrides,
+  })
+
+  it.each([
+    '/__mock-idp/authorize?realm=acme-sa&state=public-fixture',
+    '/auth/callback?code=public-fixture&state=public-fixture',
+    '/auth/claim-callback?code=public-fixture&state=public-fixture',
+  ])('admits only the mock HTML round trip at %s', (path) => {
+    expect(isMockIdentityNavigation(navigation(path), origin, 'mock')).toBe(true)
+    expect(isMockIdentityNavigation(navigation(path), origin, 'oidc')).toBe(false)
+    for (const mode of ['cors', 'same-origin', 'no-cors'] as const) {
+      expect(isMockIdentityNavigation(navigation(path, { mode }), origin, 'mock')).toBe(false)
+    }
+    expect(isMockIdentityNavigation(navigation(path, { method: 'POST' }), origin, 'mock')).toBe(
+      false
+    )
+    expect(
+      isMockIdentityNavigation(
+        { ...navigation(path), url: `https://foreign.test${path}` },
+        origin,
+        'mock'
+      )
+    ).toBe(false)
+  })
+
+  it.each([
+    '/api/v1/unknown',
+    '/auth/unknown',
+    '/auth/callback/extra',
+    '/__mock-idp/authorize/extra',
+    '/workspace',
+    '/assets/application.js',
+  ])('keeps unknown navigation strict at %s', (path) => {
+    expect(isMockIdentityNavigation(navigation(path), origin, 'mock')).toBe(false)
+  })
 })
