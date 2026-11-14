@@ -1,7 +1,12 @@
 """Cryptographic signing and canonical hashing for Enterprise compliance audit exports.
 
 Supports detached Ed25519 (`ed25519`, primary) and HMAC-SHA256 (`hmac-sha256`, fallback) manifest
-signatures with strict domain separation.
+signatures with strict domain separation and deterministic HKDF-SHA256 per-tenant key derivation.
+
+Security invariant (`W2-2`):
+- `verify_manifest_signature` NEVER trusts or falls back to `manifest["public_key_pem"]` embedded
+  inside an untrusted bundle. Callers MUST supply a server-governed or pinned `trusted_public_key_pem`
+  (for `ed25519`) or `hmac_secret` (for `hmac-sha256`).
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -22,10 +27,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from ee.store import derive_ee_hkdf_bytes
+
 GENESIS_PREV_HASH = "0" * 64
 LEDGER_HASH_DOMAIN = b"kodera-audit-ledger-v1\x00"
 EXPORT_ROW_HASH_DOMAIN = b"kodera-audit-export-entry-v1\x00"
 MANIFEST_SIG_DOMAIN = b"kodera-audit-manifest-v1\x00"
+
+_TENANT_ED25519_KDF_PREFIX = b"kodera-ee-audit-ed25519-v1\x00"
+_TENANT_HMAC_KDF_PREFIX = b"kodera-ee-audit-hmac-v1\x00"
 
 
 def canonical_json_bytes(payload: object) -> bytes:
@@ -136,13 +146,49 @@ class HmacAuditSigner:
         return base64.b64encode(mac).decode("ascii")
 
 
+def derive_tenant_ed25519_signer(
+    tenant_slug: str,
+    *,
+    seed_material: bytes | str | None = None,
+) -> Ed25519AuditSigner:
+    """Derive a stable per-tenant Ed25519 audit signer via HKDF-SHA256 across workers/restarts."""
+    canonical_tenant = tenant_slug.strip().lower()
+    if not canonical_tenant:
+        raise ValueError("tenant_slug must be non-empty")
+    derived_seed = derive_ee_hkdf_bytes(
+        domain_info=_TENANT_ED25519_KDF_PREFIX + canonical_tenant.encode("utf-8"),
+        seed_material=seed_material,
+    )
+    signing_obj = Ed25519PrivateKey.from_private_bytes(derived_seed)
+    return Ed25519AuditSigner(signing_obj)
+
+
+def derive_tenant_hmac_signer(
+    tenant_slug: str,
+    *,
+    seed_material: bytes | str | None = None,
+) -> HmacAuditSigner:
+    """Derive a stable per-tenant HMAC-SHA256 audit signer via HKDF-SHA256 across workers/restarts."""
+    canonical_tenant = tenant_slug.strip().lower()
+    if not canonical_tenant:
+        raise ValueError("tenant_slug must be non-empty")
+    derived_mac = derive_ee_hkdf_bytes(
+        domain_info=_TENANT_HMAC_KDF_PREFIX + canonical_tenant.encode("utf-8"),
+        seed_material=seed_material,
+    )
+    return HmacAuditSigner(derived_mac)
+
+
 def verify_manifest_signature(
     manifest: dict[str, object],
     *,
     trusted_public_key_pem: str | None = None,
     hmac_secret: bytes | None = None,
 ) -> tuple[bool, str | None]:
-    """Verify the detached Ed25519 or HMAC-SHA256 signature on `manifest`."""
+    """Verify the detached Ed25519 or HMAC-SHA256 signature on `manifest` against a pinned key.
+
+    Never falls back to `manifest["public_key_pem"]`: an unpinned bundle cannot self-authenticate.
+    """
     alg = manifest.get("signing_algorithm")
     sig_b64 = manifest.get("signature")
     if not isinstance(alg, str) or not isinstance(sig_b64, str) or not sig_b64:
@@ -157,15 +203,10 @@ def verify_manifest_signature(
     message = MANIFEST_SIG_DOMAIN + canonical_json_bytes(unsigned)
 
     if alg == "ed25519":
-        pem_source = trusted_public_key_pem
-        if pem_source is None:
-            embedded = manifest.get("public_key_pem")
-            if isinstance(embedded, str) and embedded.strip():
-                pem_source = embedded
-        if not pem_source:
-            return False, "missing_ed25519_public_key"
+        if not isinstance(trusted_public_key_pem, str) or not trusted_public_key_pem.strip():
+            return False, "missing_trusted_public_key"
         try:
-            loaded = serialization.load_pem_public_key(pem_source.encode("utf-8"))
+            loaded = serialization.load_pem_public_key(trusted_public_key_pem.encode("utf-8"))
         except Exception:
             return False, "invalid_ed25519_public_key"
         if not isinstance(loaded, Ed25519PublicKey):
@@ -174,6 +215,27 @@ def verify_manifest_signature(
             loaded.verify(sig_bytes, message)
         except InvalidSignature:
             return False, "invalid_manifest_signature"
+
+        embedded_pem = manifest.get("public_key_pem")
+        if embedded_pem is not None:
+            if not isinstance(embedded_pem, str) or not embedded_pem.strip():
+                return False, "invalid_manifest_signature"
+            try:
+                embedded_key = serialization.load_pem_public_key(embedded_pem.encode("utf-8"))
+            except Exception:
+                return False, "invalid_manifest_signature"
+            if not isinstance(embedded_key, Ed25519PublicKey):
+                return False, "invalid_manifest_signature"
+            trusted_raw = loaded.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            embedded_raw = embedded_key.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            if not hmac.compare_digest(trusted_raw, embedded_raw):
+                return False, "invalid_manifest_signature"
         return True, None
 
     if alg == "hmac-sha256":

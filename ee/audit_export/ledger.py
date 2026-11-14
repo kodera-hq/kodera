@@ -1,16 +1,22 @@
 """Append-only SHA-256 hash-chained compliance audit ledger (`ee/audit_export/ledger.py`).
 
+Persists hash-chained audit events in PostgreSQL (`ee_audit_events`) under a per-tenant transaction
+advisory lock so all Gunicorn workers share a single contiguous, tamper-evident chain, and derives
+per-tenant Ed25519 & HMAC-SHA256 signing keys deterministically via HKDF-SHA256.
+
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
+from django.db import connection, transaction
 from uuid6 import uuid7
 
 from ee.audit_export.crypto import (
@@ -19,8 +25,11 @@ from ee.audit_export.crypto import (
     Ed25519AuditSigner,
     HmacAuditSigner,
     compute_domain_sha256,
+    derive_tenant_ed25519_signer,
+    derive_tenant_hmac_signer,
 )
 from ee.edition import require_enterprise_edition
+from ee.store import can_use_postgres, ensure_ee_tables, reset_ee_tables
 
 SUPPORTED_FRAMEWORKS = frozenset({"SOC2", "ISO27001", "SECNUMCLOUD"})
 
@@ -90,28 +99,29 @@ class ComplianceAuditEvent:
 
 
 class ComplianceAuditLedger:
-    """Thread-safe append-only SHA-256 hash-chained audit stream per tenant."""
+    """Multi-worker PostgreSQL-backed append-only SHA-256 hash-chained audit stream per tenant."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._streams: dict[str, list[ComplianceAuditEvent]] = {}
-        self._ed25519_signers: dict[str, Ed25519AuditSigner] = {}
-        self._hmac_signers: dict[str, HmacAuditSigner] = {}
+        self._ed25519_overrides: dict[str, Ed25519AuditSigner] = {}
+        self._hmac_overrides: dict[str, HmacAuditSigner] = {}
 
     def reset(self) -> None:
         with self._lock:
             self._streams.clear()
-            self._ed25519_signers.clear()
-            self._hmac_signers.clear()
+            self._ed25519_overrides.clear()
+            self._hmac_overrides.clear()
+        reset_ee_tables("audit")
 
     def ed25519_signer_for_tenant(self, tenant_slug: str) -> Ed25519AuditSigner:
+        """Return deterministic HKDF-derived Ed25519 signer for `tenant_slug`."""
         require_enterprise_edition()
         with self._lock:
-            signer = self._ed25519_signers.get(tenant_slug)
-            if signer is None:
-                signer = Ed25519AuditSigner()
-                self._ed25519_signers[tenant_slug] = signer
-            return signer
+            override = self._ed25519_overrides.get(tenant_slug)
+        if override is not None:
+            return override
+        return derive_tenant_ed25519_signer(tenant_slug)
 
     def hmac_signer_for_tenant(
         self,
@@ -119,17 +129,18 @@ class ComplianceAuditLedger:
         *,
         secret_key: bytes | None = None,
     ) -> HmacAuditSigner:
+        """Return deterministic HKDF-derived HMAC-SHA256 signer for `tenant_slug`."""
         require_enterprise_edition()
+        if secret_key is not None:
+            signer = HmacAuditSigner(secret_key)
+            with self._lock:
+                self._hmac_overrides[tenant_slug] = signer
+            return signer
         with self._lock:
-            if secret_key is not None:
-                signer = HmacAuditSigner(secret_key)
-                self._hmac_signers[tenant_slug] = signer
-                return signer
-            existing = self._hmac_signers.get(tenant_slug)
-            if existing is None:
-                existing = HmacAuditSigner()
-                self._hmac_signers[tenant_slug] = existing
-            return existing
+            override = self._hmac_overrides.get(tenant_slug)
+        if override is not None:
+            return override
+        return derive_tenant_hmac_signer(tenant_slug)
 
     def append_event(
         self,
@@ -163,37 +174,116 @@ class ComplianceAuditLedger:
 
         eid = event_id or str(uuid7())
         clean_meta = dict(metadata) if metadata is not None else {}
+        clean_actor_type = actor_type.strip()
+        clean_actor_id = actor_id.strip()
+        clean_actor_label = actor_label.strip()
+        clean_action = action.strip()
+        clean_target = target_urn.strip()
+        clean_ip = source_ip.strip()
+
+        if can_use_postgres():
+            ensure_ee_tables()
+            meta_json = json.dumps(clean_meta, sort_keys=True, separators=(",", ":"))
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('kodera_ee_audit:' || %s))",
+                    [tenant_slug],
+                )
+                cur.execute(
+                    "SELECT sequence, entry_hash FROM ee_audit_events "
+                    "WHERE tenant_slug = %s ORDER BY sequence DESC LIMIT 1",
+                    [tenant_slug],
+                )
+                last_row = cur.fetchone()
+                if last_row is None:
+                    seq = 1
+                    prev = GENESIS_PREV_HASH
+                else:
+                    seq = int(last_row[0]) + 1
+                    prev = str(last_row[1])
+
+                unsigned_fields: dict[str, object] = {
+                    "sequence": seq,
+                    "event_id": eid,
+                    "occurred_at": ts_str,
+                    "tenant_slug": tenant_slug,
+                    "actor_type": clean_actor_type,
+                    "actor_id": clean_actor_id,
+                    "actor_label": clean_actor_label,
+                    "action": clean_action,
+                    "target_urn": clean_target,
+                    "source_ip": clean_ip,
+                    "metadata": clean_meta,
+                    "prev_hash": prev,
+                }
+                digest = compute_domain_sha256(LEDGER_HASH_DOMAIN, unsigned_fields)
+                cur.execute(
+                    "INSERT INTO ee_audit_events ("
+                    "tenant_slug, sequence, event_id, occurred_at, actor_type, actor_id, "
+                    "actor_label, action, target_urn, source_ip, metadata_json, prev_hash, entry_hash"
+                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    [
+                        tenant_slug,
+                        seq,
+                        eid,
+                        ts_str,
+                        clean_actor_type,
+                        clean_actor_id,
+                        clean_actor_label,
+                        clean_action,
+                        clean_target,
+                        clean_ip,
+                        meta_json,
+                        prev,
+                        digest,
+                    ],
+                )
+            return ComplianceAuditEvent(
+                sequence=seq,
+                event_id=eid,
+                occurred_at=ts_str,
+                tenant_slug=tenant_slug,
+                actor_type=clean_actor_type,
+                actor_id=clean_actor_id,
+                actor_label=clean_actor_label,
+                action=clean_action,
+                target_urn=clean_target,
+                source_ip=clean_ip,
+                metadata=clean_meta,
+                prev_hash=prev,
+                entry_hash=digest,
+            )
 
         with self._lock:
             chain = self._streams.setdefault(tenant_slug, [])
             seq = len(chain) + 1
             prev = GENESIS_PREV_HASH if seq == 1 else chain[-1].entry_hash
-            unsigned_fields: dict[str, object] = {
+            unsigned_fields_mem: dict[str, object] = {
                 "sequence": seq,
                 "event_id": eid,
                 "occurred_at": ts_str,
                 "tenant_slug": tenant_slug,
-                "actor_type": actor_type.strip(),
-                "actor_id": actor_id.strip(),
-                "actor_label": actor_label.strip(),
-                "action": action.strip(),
-                "target_urn": target_urn.strip(),
-                "source_ip": source_ip.strip(),
+                "actor_type": clean_actor_type,
+                "actor_id": clean_actor_id,
+                "actor_label": clean_actor_label,
+                "action": clean_action,
+                "target_urn": clean_target,
+                "source_ip": clean_ip,
                 "metadata": clean_meta,
                 "prev_hash": prev,
             }
-            digest = compute_domain_sha256(LEDGER_HASH_DOMAIN, unsigned_fields)
+            digest = compute_domain_sha256(LEDGER_HASH_DOMAIN, unsigned_fields_mem)
             event = ComplianceAuditEvent(
                 sequence=seq,
                 event_id=eid,
                 occurred_at=ts_str,
                 tenant_slug=tenant_slug,
-                actor_type=actor_type.strip(),
-                actor_id=actor_id.strip(),
-                actor_label=actor_label.strip(),
-                action=action.strip(),
-                target_urn=target_urn.strip(),
-                source_ip=source_ip.strip(),
+                actor_type=clean_actor_type,
+                actor_id=clean_actor_id,
+                actor_label=clean_actor_label,
+                action=clean_action,
+                target_urn=clean_target,
+                source_ip=clean_ip,
                 metadata=clean_meta,
                 prev_hash=prev,
                 entry_hash=digest,
@@ -203,11 +293,55 @@ class ComplianceAuditLedger:
 
     def snapshot_events(self, tenant_slug: str) -> tuple[ComplianceAuditEvent, ...]:
         require_enterprise_edition()
+        if can_use_postgres():
+            ensure_ee_tables()
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT sequence, event_id, occurred_at, tenant_slug, actor_type, actor_id, "
+                    "actor_label, action, target_urn, source_ip, metadata_json, prev_hash, entry_hash "
+                    "FROM ee_audit_events WHERE tenant_slug = %s ORDER BY sequence ASC",
+                    [tenant_slug],
+                )
+                rows = cur.fetchall()
+            out: list[ComplianceAuditEvent] = []
+            for row in rows:
+                loaded_meta = json.loads(str(row[10]))
+                meta_obj = loaded_meta if isinstance(loaded_meta, dict) else {}
+                out.append(
+                    ComplianceAuditEvent(
+                        sequence=int(row[0]),
+                        event_id=str(row[1]),
+                        occurred_at=str(row[2]),
+                        tenant_slug=str(row[3]),
+                        actor_type=str(row[4]),
+                        actor_id=str(row[5]),
+                        actor_label=str(row[6]),
+                        action=str(row[7]),
+                        target_urn=str(row[8]),
+                        source_ip=str(row[9]),
+                        metadata=meta_obj,
+                        prev_hash=str(row[11]),
+                        entry_hash=str(row[12]),
+                    )
+                )
+            return tuple(out)
+
         with self._lock:
             return tuple(self._streams.get(tenant_slug, ()))
 
     def head_hash(self, tenant_slug: str) -> str:
         require_enterprise_edition()
+        if can_use_postgres():
+            ensure_ee_tables()
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT entry_hash FROM ee_audit_events "
+                    "WHERE tenant_slug = %s ORDER BY sequence DESC LIMIT 1",
+                    [tenant_slug],
+                )
+                row = cur.fetchone()
+            return str(row[0]) if row is not None else GENESIS_PREV_HASH
+
         with self._lock:
             chain = self._streams.get(tenant_slug, [])
             return chain[-1].entry_hash if chain else GENESIS_PREV_HASH

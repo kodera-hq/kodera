@@ -1,5 +1,14 @@
 """HTTP views for Enterprise SAML 2.0 Federation (`/api/v1/ee/sso/saml/*`).
 
+Security invariants (`W2-1`):
+- Public SAML 2.0 protocol endpoints are strictly limited to SP metadata (`GET .../metadata`),
+  SP-initiated login redirect (`GET`/`POST .../login`), and IdP-signed Assertion Consumer Service
+  (`POST .../acs`, which verifies cryptographic RSA-SHA256 / ECDSA-SHA256 signatures against the
+  tenant's pre-registered IdP certificate + single-use `RelayState` + replay cache).
+- Tenant IdP administration & inspection (`GET`/`POST .../providers`) requires a verified Kodera
+  customer Bearer token with active `org_owner` or `org_admin` membership for `tenant_slug` (`401`
+  anonymous, `403` cross-tenant or insufficient role).
+
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
 
@@ -12,9 +21,17 @@ from urllib.parse import parse_qs
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
-from ee.saml.service import SamlError, default_saml_service
+from ee.auth import ADMIN_ROLES, EeAuthError, authenticate_tenant_request
+from ee.saml.service import SamlError, SamlIdpConfig, default_saml_service
 
 _SAML_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
+    # Authentication & tenant admin authorization rejections (401 / 403)
+    ("unauthenticated", 401, "Authentication required"),
+    ("forbidden_lane", 403, "Customer authentication lane required"),
+    ("identity_unknown", 403, "Authenticated identity is not provisioned"),
+    ("tenant_membership_required", 403, "Active tenant membership is required"),
+    ("cross_tenant_forbidden", 403, "Cross-tenant SAML administration is forbidden"),
+    ("insufficient_role", 403, "Organisation owner or admin role is required"),
     # XML pre-parse & structural security rejections (400)
     ("unexpected_child_element", 400, "SAML XML element contains forbidden child elements"),
     ("malformed_qname", 400, "Malformed XML qualified name"),
@@ -123,6 +140,8 @@ def _json(payload: dict[str, object], *, status: int = 200) -> HttpResponse:
         content_type="application/json",
     )
     resp["Cache-Control"] = "no-store"
+    if status == 401:
+        resp["WWW-Authenticate"] = "Bearer"
     return resp
 
 
@@ -162,15 +181,88 @@ def metadata_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
 
 
 def providers_view(request: HttpRequest, tenant_slug: str) -> HttpResponse:
-    """List federated SAML 2.0 Identity Providers configured for `tenant_slug`."""
-    if request.method != "GET":
+    """List or configure federated SAML 2.0 Identity Providers for authenticated tenant admins."""
+    if request.method not in {"GET", "POST"}:
         resp = _json({"detail": "Method not allowed", "code": "method_not_allowed"}, status=405)
-        resp["Allow"] = "GET"
+        resp["Allow"] = "GET, POST"
         return resp
-    idps = default_saml_service.list_idps(tenant_slug)
+
+    try:
+        auth = authenticate_tenant_request(
+            request,
+            required_roles=ADMIN_ROLES,
+            target_tenant_slug=tenant_slug,
+        )
+    except EeAuthError as exc:
+        return _saml_error_response(exc.code)
+
+    if request.method == "POST":
+        if not request.body or len(request.body) > 65_536:
+            return _json({"detail": "Invalid JSON body", "code": "invalid_json"}, status=400)
+        try:
+            payload = json.loads(request.body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return _json({"detail": "Invalid JSON body", "code": "invalid_json"}, status=400)
+        if not isinstance(payload, dict):
+            return _json({"detail": "JSON object expected", "code": "invalid_json"}, status=400)
+
+        raw_idp_id = payload.get("idp_id")
+        raw_entity_id = payload.get("idp_entity_id")
+        raw_sso_url = payload.get("idp_sso_url")
+        raw_pub_pem = payload.get("public_key_pem")
+        raw_domains = payload.get("verified_domains")
+        raw_mapping = payload.get("group_role_mapping", {})
+        raw_default_role = payload.get("default_role", "org_member")
+
+        if not isinstance(raw_idp_id, str):
+            return _saml_error_response("invalid_idp_id")
+        if not isinstance(raw_entity_id, str):
+            return _saml_error_response("invalid_idp_entity_id")
+        if not isinstance(raw_sso_url, str):
+            return _saml_error_response("invalid_idp_sso_url")
+        if not isinstance(raw_pub_pem, str):
+            return _saml_error_response("invalid_idp_certificate")
+        if not isinstance(raw_domains, list) or not all(isinstance(d, str) for d in raw_domains):
+            return _saml_error_response("missing_verified_domains")
+        if not isinstance(raw_mapping, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in raw_mapping.items()
+        ):
+            return _saml_error_response("invalid_group_mapping")
+        if not isinstance(raw_default_role, str):
+            return _saml_error_response("invalid_default_role")
+
+        try:
+            cfg = default_saml_service.register_idp(
+                SamlIdpConfig(
+                    tenant_slug=auth.tenant_slug,
+                    idp_id=raw_idp_id.strip(),
+                    idp_entity_id=raw_entity_id.strip(),
+                    idp_sso_url=raw_sso_url.strip(),
+                    public_key_pem=raw_pub_pem,
+                    verified_domains=frozenset(raw_domains),
+                    group_role_mapping=raw_mapping,
+                    default_role=raw_default_role.strip(),
+                    organisation_id=auth.organisation_id,
+                )
+            )
+        except SamlError as exc:
+            return _saml_error_response(exc.code)
+
+        return _json(
+            {
+                "tenant_slug": cfg.tenant_slug,
+                "idp_id": cfg.idp_id,
+                "idp_entity_id": cfg.idp_entity_id,
+                "idp_sso_url": cfg.idp_sso_url,
+                "verified_domains": sorted(cfg.verified_domains),
+            },
+            status=201,
+        )
+
+    idps = default_saml_service.list_idps(auth.tenant_slug)
     return _json(
         {
-            "tenant_slug": tenant_slug,
+            "tenant_slug": auth.tenant_slug,
             "providers": [
                 {
                     "idp_id": cfg.idp_id,

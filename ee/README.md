@@ -14,17 +14,19 @@ Kodera follows a strict, transparent boundary inspired by GitLab, Mattermost, an
 
 ## Implemented Enterprise Edition Modules
 
-- **[`ee/edition.py`](./edition.py) & [`ee/router.py`](./router.py):**
+- **[`ee/edition.py`](./edition.py), [`ee/router.py`](./router.py), [`ee/auth.py`](./auth.py) & [`ee/store.py`](./store.py):**
   - Runtime `KODERA_EDITION=enterprise` gate and `/api/v1/ee/*` HTTP dispatcher (`GET /api/v1/ee/status`).
+  - Verified Kodera customer Bearer token admission + active `Organisation` and `Membership` (`org_owner` / `org_admin`) authorization (`401` unauthenticated, `403` cross-tenant or insufficient role).
+  - Multi-worker PostgreSQL persistence (`ee_*` idempotent tables via `django.db.connection` with zero open-core `apps/server/apps/*/migrations/` pollution) and deterministic HKDF-SHA256 per-tenant signing key derivation across Gunicorn workers and restarts.
 - **[`ee/saml/`](./saml/__init__.py) — SAML 2.0 Corporate Federation & Multi-IdP SSO (`/api/v1/ee/sso/saml/*`):**
-  - Tenant-scoped Service Provider metadata (`GET /api/v1/ee/sso/saml/<tenant_slug>/metadata`), multi-IdP discovery (`GET /providers`), HTTP-Redirect `AuthnRequest` + HMAC `RelayState` CSRF binding (`GET|POST /login`), and Assertion Consumer Service (`POST /acs`).
-  - Hardened XML security (`ee/saml/xml_security.py`): rejects `DOCTYPE`, `!ENTITY`, processing instructions, comments, XInclude, non-UTF-8 BOMs, and unknown entities prior to parsing; enforces W3C Exclusive XML Canonicalization (`exc-c14n#`), RSA-SHA256 / ECDSA-SHA256 signature verification, XSW1-XSW8 structural defenses, Assertion `ID` replay caching, and tenant-verified email domain enforcement.
+  - Public SAML 2.0 protocol endpoints (`GET .../metadata`, SP-initiated `GET|POST .../login`, and IdP-signed `POST .../acs`) plus Bearer-authenticated tenant admin IdP management (`GET|POST .../providers`).
+  - Hardened XML security (`ee/saml/xml_security.py`): rejects `DOCTYPE`, `!ENTITY`, processing instructions, comments, XInclude, non-UTF-8 BOMs, and unknown entities prior to parsing; enforces W3C Exclusive XML Canonicalization (`exc-c14n#`), RSA-SHA256 / ECDSA-SHA256 signature verification, XSW1-XSW8 structural defenses, PostgreSQL atomic `RelayState` consumption and Assertion `ID` replay caching, and tenant-verified email domain enforcement.
 - **[`ee/scim/`](./scim/__init__.py) — RFC 7643 / RFC 7644 SCIM 2.0 Provisioning (`/api/v1/ee/scim/v2/*`):**
-  - Constant-time SHA-256 hashed per-tenant SCIM bearer tokens with scope enforcement, cross-tenant isolation, and instant token revocation.
-  - `/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`, `/Users`, and `/Groups` with `application/scim+json` responses, `filter` + `startIndex`/`count` pagination, and Okta / Microsoft Entra ID `PatchOp` compatibility including instant session and membership deprovisioning on `active: false`.
+  - Constant-time SHA-256 hashed per-tenant SCIM bearer tokens persisted in PostgreSQL with scope enforcement, cross-tenant isolation, and instant multi-worker token revocation.
+  - `/ServiceProviderConfig`, `/Schemas`, `/ResourceTypes`, `/Users`, and `/Groups` with `application/scim+json` responses, linear-time `filter` + `startIndex`/`count` pagination, and Okta / Microsoft Entra ID `PatchOp` compatibility including instant session and membership deprovisioning on `active: false`.
 - **[`ee/audit_export/`](./audit_export/__init__.py) — Tamper-Evident Signed Compliance Audit Exports (`/api/v1/ee/compliance/audit-exports/*`):**
-  - Append-only SHA-256 hash-chained audit ledger (`prev_hash -> entry_hash`) with detached Ed25519 (and HMAC-SHA256 fallback) manifest signatures over NDJSON and CSV compliance bundles (`SOC2`, `ISO27001`, `SECNUMCLOUD`), streaming export, date/actor filters, PII redaction policy, `/verify` endpoint, and standalone offline CLI verifier:
+  - Authenticated tenant-admin append-only SHA-256 hash-chained audit ledger (`prev_hash -> entry_hash`) with detached Ed25519 (and HMAC-SHA256 fallback) manifest signatures over NDJSON and CSV compliance bundles (`SOC2`, `ISO27001`, `SECNUMCLOUD`), streaming export, date/actor filters, PII redaction by default (`redact_pii=True`, `org_owner` required for unredacted export), server-governed key-pinned `/verify` endpoint, and standalone offline CLI verifier requiring an explicit pinned trust key:
     ```bash
-    PYTHONPATH=. python3 -m ee.audit_export.verify --bundle export.ndjson --manifest manifest.json
+    PYTHONPATH=. python3 -m ee.audit_export.verify --bundle export.ndjson --manifest manifest.json --public-key tenant-ed25519.pub.pem
     ```
 - **[`ee/billing/`](./billing/README.md):** Commercial subscription catalogue and fleet billing boundary.

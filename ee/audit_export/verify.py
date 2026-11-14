@@ -1,7 +1,14 @@
 """Cryptographic verifier & standalone CLI (`python3 -m ee.audit_export.verify`) for audit exports.
 
-Detects any single-byte modification, row deletion, row insertion, row reordering, or forged
-manifest signature across both NDJSON and CSV compliance bundles.
+Detects any single-byte modification, row deletion, row insertion, row reordering, forged manifest
+signature, or unpinned / attacker-supplied signing key across both NDJSON and CSV compliance bundles.
+
+Security invariant (`W2-2`):
+- `verify_compliance_bundle` / `verify_export_bundle` NEVER falls back to the manifest's embedded
+  `public_key_pem` to return `verified=True`. An explicit `trusted_public_key_pem` (for `ed25519`)
+  or `hmac_secret` (for `hmac-sha256`) MUST be supplied.
+- Unpinned structural checks use `structural_self_check_only(...)`, which ALWAYS returns
+  `verified=False` and `trusted=False`.
 
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
@@ -155,27 +162,15 @@ def _parse_csv_rows(payload_text: str, errors: list[str]) -> list[dict[str, obje
     return parsed
 
 
-def verify_compliance_bundle(
+def _check_bundle_structure(
     payload: bytes | str,
     manifest: dict[str, object],
-    *,
-    trusted_public_key_pem: str | None = None,
-    hmac_secret: bytes | None = None,
-) -> VerificationResult:
-    """Verify detached signature, payload digest, sequence contiguity, and row SHA-256 hash chain."""
-    errors: list[str] = []
+    errors: list[str],
+) -> tuple[str | None, list[dict[str, object]], str]:
     payload_bytes = payload.encode("utf-8") if isinstance(payload, str) else payload
 
     if manifest.get("schema_version") != EXPORT_SCHEMA_VERSION:
         errors.append("unsupported_manifest_schema_version")
-
-    sig_ok, sig_err = verify_manifest_signature(
-        manifest,
-        trusted_public_key_pem=trusted_public_key_pem,
-        hmac_secret=hmac_secret,
-    )
-    if not sig_ok and sig_err is not None:
-        errors.append(sig_err)
 
     expected_payload_sha = manifest.get("payload_sha256")
     actual_payload_sha = hashlib.sha256(payload_bytes).hexdigest()
@@ -263,6 +258,52 @@ def verify_compliance_bundle(
         if manifest.get("last_ledger_sequence") != rows[-1].get("ledger_seq"):
             errors.append("last_ledger_sequence_mismatch")
 
+    return fmt_str, rows, expected_prev
+
+
+def structural_self_check_only(
+    payload: bytes | str,
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    """Perform an UNTRUSTED offline structural hash-chain inspection (`verified=False` always).
+
+    Cannot establish authenticity because no pinned verification key is supplied.
+    """
+    errors: list[str] = []
+    fmt_str, rows, head_hash = _check_bundle_structure(payload, manifest, errors)
+    return {
+        "verified": False,
+        "trusted": False,
+        "structurally_consistent": len(errors) == 0,
+        "format": fmt_str,
+        "record_count": len(rows),
+        "head_entry_hash": head_hash,
+        "errors": errors,
+    }
+
+
+def verify_compliance_bundle(
+    payload: bytes | str,
+    manifest: dict[str, object],
+    *,
+    trusted_public_key_pem: str | None = None,
+    hmac_secret: bytes | None = None,
+) -> VerificationResult:
+    """Verify detached signature against an explicit pinned key + payload digest + row hash chain."""
+    errors: list[str] = []
+
+    sig_ok, sig_err = verify_manifest_signature(
+        manifest,
+        trusted_public_key_pem=trusted_public_key_pem,
+        hmac_secret=hmac_secret,
+    )
+    if not sig_ok and sig_err is not None:
+        errors.append(sig_err)
+
+    fmt_str, rows, expected_prev = _check_bundle_structure(payload, manifest, errors)
+
+    expected_tenant = manifest.get("tenant_slug")
+    expected_framework = manifest.get("framework")
     bundle_id = manifest.get("bundle_id")
     alg = manifest.get("signing_algorithm")
     return VerificationResult(
@@ -278,11 +319,14 @@ def verify_compliance_bundle(
     )
 
 
+verify_export_bundle = verify_compliance_bundle
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Standalone CLI entry point (`python3 -m ee.audit_export.verify`)."""
     parser = argparse.ArgumentParser(
         prog="python3 -m ee.audit_export.verify",
-        description="Verify hash-chain & Ed25519/HMAC manifest signature on a Kodera audit bundle.",
+        description="Verify hash-chain & pinned Ed25519/HMAC signature on a Kodera audit bundle.",
     )
     parser.add_argument(
         "--bundle",
@@ -302,14 +346,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         required=False,
         type=Path,
         default=None,
-        help="Optional trusted Ed25519 public key PEM file to pin against.",
+        help="Pinned trusted Ed25519 public key PEM file (required when signing_algorithm=ed25519).",
     )
     parser.add_argument(
         "--hmac-key-hex",
         required=False,
         type=str,
         default=None,
-        help="Hex-encoded HMAC-SHA256 secret when verifying an hmac-sha256 bundle.",
+        help="Pinned hex-encoded HMAC-SHA256 secret (required when signing_algorithm=hmac-sha256).",
     )
 
     args = parser.parse_args(argv)
