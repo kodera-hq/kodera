@@ -127,152 +127,7 @@ const BOOTSTRAP_INDEX_HTML: &str = r#"<!doctype html>
 </html>
 "#;
 
-const BOOTSTRAP_CSS: &str = r#":root {
-  color-scheme: light;
-  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background-color: #f8fafc;
-  color: #0f172a;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px;
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
-}
-
-.shell-card {
-  width: 100%;
-  max-width: 680px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
-  padding: 32px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06);
-}
-
-.shell-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.monogram {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  background: #2563eb;
-  color: #ffffff;
-  font-weight: 700;
-  font-size: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.eyebrow {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #2563eb;
-}
-
-h1 {
-  margin: 2px 0 0;
-  font-size: 24px;
-  line-height: 1.25;
-}
-
-.lead {
-  margin: 0 0 24px;
-  color: #475569;
-  line-height: 1.6;
-  font-size: 15px;
-}
-
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin: 0 0 24px;
-}
-
-.meta-grid > div {
-  padding: 12px 14px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-}
-
-dt {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #64748b;
-  margin-bottom: 4px;
-}
-
-dd {
-  margin: 0;
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  color: #0f172a;
-  word-break: break-all;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.btn {
-  appearance: none;
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #0f172a;
-  border-radius: 10px;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.btn:hover {
-  background: #f1f5f9;
-}
-
-.btn-primary {
-  background: #2563eb;
-  border-color: #2563eb;
-  color: #ffffff;
-}
-
-.btn-primary:hover {
-  background: #1d4ed8;
-}
-
-.btn-danger {
-  border-color: #fecaca;
-  color: #b91c1c;
-}
-
-.btn-danger:hover {
-  background: #fef2f2;
-}
-"#;
+const BOOTSTRAP_CSS: &str = include_str!("../assets/bootstrap.css");
 
 const BOOTSTRAP_JS: &str = r#"(function () {
   const DEFAULT_ORG = '019a5e62-6ca0-7303-8303-030303030303';
@@ -339,6 +194,11 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
   }
   const pending = new Map();
   const callbacks = new Map();
+  const documentId = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+    byte => byte.toString(16).padStart(2, '0')).join('');
+  Object.defineProperty(window, '__KODERA_DOCUMENT_ID__', { value: documentId });
+  let nativeGeneration = null;
+  let nativeCapability = null;
   let nextReqId = 1;
   let nextCbId = 1;
 
@@ -346,7 +206,8 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
     if (!window.ipc || typeof window.ipc.postMessage !== 'function') {
       return false;
     }
-    const line = String(reqId) + '\t' + String(cmd) + '\n' + JSON.stringify(payloadObj);
+    if (nativeGeneration === null) return true;
+    const line = documentId + ':' + nativeGeneration + ':' + nativeCapability + ':' + String(reqId) + '\t' + String(cmd) + '\n' + JSON.stringify(payloadObj);
     window.ipc.postMessage(line);
     return true;
   }
@@ -370,6 +231,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
         reject(new Error('invalid_ipc_command'));
         return;
       }
+      if (pending.size >= 64) { reject(new Error('ipc_pending_limit')); return; }
       const reqId = nextReqId++;
       let payload;
       if (cmd === 'plugin:event|listen') {
@@ -385,7 +247,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
       } else {
         payload = sanitizeFlatArgs(cmd, args);
       }
-      pending.set(reqId, { resolve: resolve, reject: reject });
+      pending.set(reqId, { resolve: resolve, reject: reject, cmd: cmd, payload: payload });
       if (!postEnvelope(reqId, cmd, payload)) {
         pending.delete(reqId);
         reject(new Error('ipc_transport_unavailable'));
@@ -397,6 +259,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
     if (typeof cb !== 'function') {
       throw new TypeError('invalid_callback');
     }
+    if (callbacks.size >= 64) throw new Error('ipc_callback_limit');
     const id = nextCbId++;
     callbacks.set(id, { cb: cb, once: Boolean(once) });
     return id;
@@ -409,6 +272,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
       target: { kind: 'Any' },
       handler: handlerId
     });
+    void regPromise.catch(() => callbacks.delete(handlerId));
     return function () {
       return regPromise.then(function (eventId) {
         callbacks.delete(handlerId);
@@ -416,6 +280,21 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
       });
     };
   }
+
+  Object.defineProperty(window, '__KODERA_IPC_ACTIVATE__', {
+    value: function (generation, capability) {
+      if (nativeGeneration !== null || !Number.isSafeInteger(generation) || generation < 0 ||
+          typeof capability !== 'string' || !/^[a-f0-9]{64}$/.test(capability)) return;
+      nativeGeneration = String(generation);
+      nativeCapability = capability;
+      for (const [reqId, entry] of pending) {
+        if (!postEnvelope(reqId, entry.cmd, entry.payload)) {
+          pending.delete(reqId);
+          entry.reject(new Error('ipc_transport_unavailable'));
+        }
+      }
+    }
+  });
 
   Object.defineProperty(window, '__KODERA_IPC_READY__', {
     value: true,
@@ -431,6 +310,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
         return;
       }
       pending.delete(reqId);
+      if (!ok && entry.cmd === 'plugin:event|listen') callbacks.delete(entry.payload.handler);
       if (ok) {
         entry.resolve(payload);
       } else {
@@ -464,6 +344,12 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
     enumerable: false,
     writable: false
   });
+
+  // A non-privileged handshake avoids waiting for page-finished: application modules may
+  // themselves await an IPC promise before the document load event can finish.
+  if (window.ipc && typeof window.ipc.postMessage === 'function') {
+    window.ipc.postMessage(documentId + ':hello\t__document_generation\n{}');
+  }
 
   const tauriInternals = Object.freeze({
     invoke: invoke,
@@ -914,6 +800,9 @@ pub struct DesktopWebViewBridge {
     next_event_id: u64,
     listeners: Vec<RegisteredListener>,
     pending_deep_links: VecDeque<String>,
+    document_id: Option<String>,
+    document_generation: u64,
+    document_capability: Option<String>,
 }
 
 impl DesktopWebViewBridge {
@@ -929,7 +818,25 @@ impl DesktopWebViewBridge {
             next_event_id: 1,
             listeners: Vec::new(),
             pending_deep_links,
+            document_id: None,
+            document_generation: 0,
+            document_capability: fresh_document_capability(),
         }
+    }
+
+    /// Discard all authority and callbacks owned by a departed top-level document.
+    pub fn begin_document(&mut self, generation: u64) {
+        if self.document_generation == generation {
+            return;
+        }
+        if self.document_id.is_some() || self.document_generation != 0 {
+            self.pending_deep_links.clear();
+        }
+        self.host.clear_active_session();
+        self.listeners.clear();
+        self.document_id = None;
+        self.document_generation = generation;
+        self.document_capability = fresh_document_capability();
     }
 
     pub fn clear_session(&mut self) {
@@ -960,10 +867,9 @@ impl DesktopWebViewBridge {
             return Err(WebViewIpcError::MessageTooLarge);
         }
         match validate_navigation_url(sender_url, &self.policy, self.allow_dev_origin) {
-            Ok(
-                NavigationDecision::AllowInternalAsset { .. }
-                | NavigationDecision::AllowTrustedWebOrigin { .. },
-            ) => {}
+            Ok(NavigationDecision::AllowInternalAsset { .. }) => {}
+            Ok(NavigationDecision::AllowTrustedWebOrigin { origin })
+                if origin != "https://auth.kodera.io" => {}
             _ => return Err(WebViewIpcError::UntrustedSenderOrigin),
         }
 
@@ -973,6 +879,51 @@ impl DesktopWebViewBridge {
         let Some((req_id_str, cmd_raw)) = header_line.split_once('\t') else {
             return Err(WebViewIpcError::MalformedEnvelope);
         };
+        let Some((document_id, req_id_str)) = req_id_str.split_once(':') else {
+            return Err(WebViewIpcError::MalformedEnvelope);
+        };
+        if document_id.len() != 32
+            || !document_id
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(WebViewIpcError::MalformedEnvelope);
+        }
+        if req_id_str == "hello" && cmd_raw == "__document_generation" {
+            return Ok(WebViewIpcOutcome {
+                eval_scripts: vec![activate_js_document(
+                    document_id,
+                    self.document_generation,
+                    self.document_capability
+                        .as_deref()
+                        .ok_or(WebViewIpcError::UntrustedSenderOrigin)?,
+                )],
+                window_action: None,
+            });
+        }
+        if self
+            .document_id
+            .as_deref()
+            .is_some_and(|current| current != document_id)
+        {
+            return Err(WebViewIpcError::UntrustedSenderOrigin);
+        }
+        let Some((generation, req_id_str)) = req_id_str.split_once(':') else {
+            return Err(WebViewIpcError::MalformedEnvelope);
+        };
+        if generation.parse::<u64>().ok() != Some(self.document_generation) {
+            return Err(WebViewIpcError::UntrustedSenderOrigin);
+        }
+        let Some((capability, req_id_str)) = req_id_str.split_once(':') else {
+            return Err(WebViewIpcError::MalformedEnvelope);
+        };
+        if !self
+            .document_capability
+            .as_deref()
+            .is_some_and(|expected| same_document_capability(expected, capability))
+        {
+            return Err(WebViewIpcError::UntrustedSenderOrigin);
+        }
         let req_id: u64 = req_id_str
             .parse()
             .map_err(|_| WebViewIpcError::MalformedEnvelope)?;
@@ -988,6 +939,7 @@ impl DesktopWebViewBridge {
             return Err(WebViewIpcError::MalformedEnvelope);
         }
 
+        self.document_id = Some(document_id.to_owned());
         let mut eval_scripts = Vec::new();
         let mut window_action = None;
 
@@ -997,18 +949,19 @@ impl DesktopWebViewBridge {
                     r#"{{"identifier":"{}","productName":"{}","version":"{}","updateChannel":"stable","updateAvailable":false,"isNativeDesktop":true,"schemes":["kodera","matrix"]}}"#,
                     DESKTOP_APP_IDENTIFIER, DESKTOP_PRODUCT_NAME, DESKTOP_APP_VERSION,
                 );
-                eval_scripts.push(resolve_js_promise(req_id, true, &payload));
+                eval_scripts.push(resolve_js_promise(document_id, req_id, true, &payload));
             }
             "check_app_updates" => {
                 let payload = format!(
-                    r#"{{"supported":true,"updateAvailable":false,"currentVersion":"{}","latestVersion":null,"channel":"stable"}}"#,
+                    r#"{{"supported":false,"updateAvailable":false,"currentVersion":"{}","latestVersion":null,"channel":"stable"}}"#,
                     DESKTOP_APP_VERSION,
                 );
-                eval_scripts.push(resolve_js_promise(req_id, true, &payload));
+                eval_scripts.push(resolve_js_promise(document_id, req_id, true, &payload));
             }
             "plugin:event|listen" => {
                 let Some(event_name) = extract_json_string_field(json_body, "event") else {
                     eval_scripts.push(resolve_js_promise(
+                        document_id,
                         req_id,
                         false,
                         r#"{"error":"invalid_event_name"}"#,
@@ -1020,6 +973,7 @@ impl DesktopWebViewBridge {
                 };
                 let Some(callback_id) = extract_json_u64_field(json_body, "handler") else {
                     eval_scripts.push(resolve_js_promise(
+                        document_id,
                         req_id,
                         false,
                         r#"{"error":"invalid_event_handler"}"#,
@@ -1031,6 +985,7 @@ impl DesktopWebViewBridge {
                 };
                 if callback_id == 0 || event_name.is_empty() || event_name.len() > 64 {
                     eval_scripts.push(resolve_js_promise(
+                        document_id,
                         req_id,
                         false,
                         r#"{"error":"invalid_event_registration"}"#,
@@ -1050,10 +1005,15 @@ impl DesktopWebViewBridge {
                     event_name: event_name.clone(),
                     callback_id,
                 });
-                eval_scripts.push(resolve_js_promise(req_id, true, &event_id.to_string()));
+                eval_scripts.push(resolve_js_promise(
+                    document_id,
+                    req_id,
+                    true,
+                    &event_id.to_string(),
+                ));
                 if event_name == "kodera://deep-link" {
                     while let Some(queued_uri) = self.pending_deep_links.pop_front() {
-                        eval_scripts.push(dispatch_js_event(callback_id, &queued_uri));
+                        eval_scripts.push(dispatch_js_event(document_id, callback_id, &queued_uri));
                     }
                 }
             }
@@ -1061,23 +1021,34 @@ impl DesktopWebViewBridge {
                 if let Some(event_id) = extract_json_u64_field(json_body, "eventId") {
                     self.listeners.retain(|entry| entry.event_id != event_id);
                 }
-                eval_scripts.push(resolve_js_promise(req_id, true, "null"));
+                eval_scripts.push(resolve_js_promise(document_id, req_id, true, "null"));
             }
             "plugin:window|show"
             | "plugin:window|set_focus"
             | "plugin:window|unminimize"
             | "show_window" => {
                 window_action = Some(GuiWindowAction::ShowAndFocus);
-                eval_scripts.push(resolve_js_promise(req_id, true, r#"{"ok":true}"#));
+                eval_scripts.push(resolve_js_promise(
+                    document_id,
+                    req_id,
+                    true,
+                    r#"{"ok":true}"#,
+                ));
             }
             "plugin:window|hide" | "hide_window" => {
                 window_action = Some(GuiWindowAction::Hide);
-                eval_scripts.push(resolve_js_promise(req_id, true, r#"{"ok":true}"#));
+                eval_scripts.push(resolve_js_promise(
+                    document_id,
+                    req_id,
+                    true,
+                    r#"{"ok":true}"#,
+                ));
             }
             "plugin:window|close" | "quit" => {
                 self.host.clear_active_session();
                 window_action = Some(GuiWindowAction::Quit);
                 eval_scripts.push(resolve_js_promise(
+                    document_id,
                     req_id,
                     true,
                     r#"{"ok":true,"quit":true}"#,
@@ -1091,9 +1062,10 @@ impl DesktopWebViewBridge {
                     );
                     let (reply, _) = self.host.handle_stdio_line(&init_line);
                     let ok = reply.starts_with(r#"{"ok":true"#);
-                    eval_scripts.push(resolve_js_promise(req_id, ok, &reply));
+                    eval_scripts.push(resolve_js_promise(document_id, req_id, ok, &reply));
                 } else {
                     eval_scripts.push(resolve_js_promise(
+                        document_id,
                         req_id,
                         false,
                         r#"{"ok":false,"error":"invalid_organisation"}"#,
@@ -1136,7 +1108,7 @@ impl DesktopWebViewBridge {
                         ));
                     }
                 }
-                eval_scripts.push(resolve_js_promise(req_id, ok, &reply));
+                eval_scripts.push(resolve_js_promise(document_id, req_id, ok, &reply));
             }
         }
 
@@ -1150,19 +1122,46 @@ impl DesktopWebViewBridge {
         self.listeners
             .iter()
             .filter(|entry| entry.event_name == event_name)
-            .map(|entry| dispatch_js_event(entry.callback_id, str_payload))
+            .map(|entry| {
+                dispatch_js_event(
+                    self.document_id.as_deref().unwrap_or(""),
+                    entry.callback_id,
+                    str_payload,
+                )
+            })
             .collect()
     }
 }
 
-fn resolve_js_promise(req_id: u64, ok: bool, raw_json_expr: &str) -> String {
-    let ok_lit = if ok { "true" } else { "false" };
-    format!("window.__KODERA_IPC_RESOLVE__({req_id}, {ok_lit}, {raw_json_expr});")
+fn fresh_document_capability() -> Option<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).ok()?;
+    Some(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn dispatch_js_event(callback_id: u64, str_payload: &str) -> String {
+fn same_document_capability(expected: &str, supplied: &str) -> bool {
+    if expected.len() != 64 || supplied.len() != 64 {
+        return false;
+    }
+    expected
+        .bytes()
+        .zip(supplied.bytes())
+        .fold(0u8, |difference, (left, right)| difference | (left ^ right))
+        == 0
+}
+
+fn activate_js_document(document_id: &str, generation: u64, capability: &str) -> String {
+    format!("if (window.__KODERA_DOCUMENT_ID__ === \"{document_id}\") {{ window.__KODERA_IPC_ACTIVATE__({generation}, \"{capability}\"); }}")
+}
+
+fn resolve_js_promise(document_id: &str, req_id: u64, ok: bool, raw_json_expr: &str) -> String {
+    let ok_lit = if ok { "true" } else { "false" };
+    format!("if (window.__KODERA_DOCUMENT_ID__ === \"{document_id}\") {{ window.__KODERA_IPC_RESOLVE__({req_id}, {ok_lit}, {raw_json_expr}); }}")
+}
+
+fn dispatch_js_event(document_id: &str, callback_id: u64, str_payload: &str) -> String {
     format!(
-        "window.__KODERA_IPC_DISPATCH_EVENT__({callback_id}, \"{}\");",
+        "if (window.__KODERA_DOCUMENT_ID__ === \"{document_id}\") {{ window.__KODERA_IPC_DISPATCH_EVENT__({callback_id}, \"{}\"); }}",
         escape_js_json_str(str_payload)
     )
 }
@@ -1289,6 +1288,7 @@ fn discover_frontend_dist_from_context(
     if let Some(exe_dir) = exe_path.and_then(Path::parent) {
         for rel in [
             "../Resources/web",
+            "../lib/Kodera/web",
             "../Resources/dist",
             "../share/kodera-desktop/web",
             "../share/kodera-desktop/dist",
@@ -1305,6 +1305,7 @@ fn discover_frontend_dist_from_context(
     if let Some(app_root) = appdir {
         for rel in [
             "usr/share/kodera-desktop/web",
+            "usr/lib/Kodera/web",
             "usr/share/kodera-desktop/dist",
         ] {
             let candidate = app_root.join(rel);
@@ -1338,13 +1339,21 @@ mod native_runtime {
     };
     use wry::{
         http::{header::CONTENT_TYPE, Response},
-        NewWindowResponse, WebViewBuilder,
+        NewWindowResponse, PageLoadEvent, WebViewBuilder,
     };
 
     #[derive(Debug)]
     enum DesktopUserEvent {
-        IpcMessage { sender_url: String, body: String },
-        InterceptedDeepLink(AdmittedDeepLink),
+        IpcMessage {
+            generation: u64,
+            sender_url: String,
+            body: String,
+        },
+        DocumentChanged(u64),
+        InterceptedDeepLink {
+            generation: u64,
+            admitted: AdmittedDeepLink,
+        },
     }
 
     fn default_window_state_path() -> Option<PathBuf> {
@@ -1487,6 +1496,12 @@ mod native_runtime {
             .build(&event_loop)
             .map_err(|_| DesktopShellError::GuiWindowInitFailed)?;
 
+        let document_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let ipc_generation = document_generation.clone();
+        let nav_generation = document_generation.clone();
+        let popup_generation = document_generation.clone();
+        let page_generation = document_generation.clone();
+        let page_proxy = event_loop.create_proxy();
         let ipc_proxy = event_loop.create_proxy();
         let nav_proxy = event_loop.create_proxy();
         let popup_proxy = event_loop.create_proxy();
@@ -1521,11 +1536,19 @@ mod native_runtime {
                         })
                 },
             )
+            .with_on_page_load_handler(move |event, _url| {
+                if matches!(event, PageLoadEvent::Started) {
+                    let generation =
+                        page_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    let _ = page_proxy.send_event(DesktopUserEvent::DocumentChanged(generation));
+                }
+            })
             .with_initialization_script_for_main_only(build_ipc_init_script(), true)
             .with_ipc_handler(move |request| {
                 let body = request.body();
                 if body.len() <= MAX_IPC_COMMAND_BYTES {
                     let _ = ipc_proxy.send_event(DesktopUserEvent::IpcMessage {
+                        generation: ipc_generation.load(std::sync::atomic::Ordering::SeqCst),
                         sender_url: request.uri().to_string(),
                         body: body.clone(),
                     });
@@ -1538,8 +1561,10 @@ mod native_runtime {
                         | NavigationDecision::AllowTrustedWebOrigin { .. },
                     ) => true,
                     Ok(NavigationDecision::InterceptDeepLink(admitted)) => {
-                        let _ =
-                            nav_proxy.send_event(DesktopUserEvent::InterceptedDeepLink(admitted));
+                        let _ = nav_proxy.send_event(DesktopUserEvent::InterceptedDeepLink {
+                            generation: nav_generation.load(std::sync::atomic::Ordering::SeqCst),
+                            admitted,
+                        });
                         false
                     }
                     Err(_) => false,
@@ -1549,7 +1574,10 @@ mod native_runtime {
                 if let Ok(NavigationDecision::InterceptDeepLink(admitted)) =
                     validate_navigation_url(&target_url, &popup_policy, allow_dev)
                 {
-                    let _ = popup_proxy.send_event(DesktopUserEvent::InterceptedDeepLink(admitted));
+                    let _ = popup_proxy.send_event(DesktopUserEvent::InterceptedDeepLink {
+                        generation: popup_generation.load(std::sync::atomic::Ordering::SeqCst),
+                        admitted,
+                    });
                 }
                 NewWindowResponse::Deny
             })
@@ -1637,7 +1665,14 @@ mod native_runtime {
                     bridge.clear_session();
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::UserEvent(DesktopUserEvent::InterceptedDeepLink(admitted)) => {
+                Event::UserEvent(DesktopUserEvent::InterceptedDeepLink {
+                    generation,
+                    admitted,
+                }) => {
+                    if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    bridge.begin_document(generation);
                     window.set_visible(true);
                     window.set_minimized(false);
                     window.set_focus();
@@ -1645,8 +1680,26 @@ mod native_runtime {
                         let _ = webview.evaluate_script(&js);
                     }
                 }
-                Event::UserEvent(DesktopUserEvent::IpcMessage { sender_url, body }) => {
+                Event::UserEvent(DesktopUserEvent::DocumentChanged(generation)) => {
+                    if generation == document_generation.load(std::sync::atomic::Ordering::SeqCst) {
+                        bridge.begin_document(generation);
+                    }
+                }
+                Event::UserEvent(DesktopUserEvent::IpcMessage {
+                    generation,
+                    sender_url,
+                    body,
+                }) => {
+                    if generation != document_generation.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    bridge.begin_document(generation);
                     if let Ok(outcome) = bridge.handle_ipc_request(&sender_url, &body) {
+                        if generation
+                            != document_generation.load(std::sync::atomic::Ordering::SeqCst)
+                        {
+                            return;
+                        }
                         for js in outcome.eval_scripts {
                             let _ = webview.evaluate_script(&js);
                         }
@@ -1920,7 +1973,7 @@ mod tests {
 
         // 2. Linux `.deb`: /usr/bin/kodera-desktop -> /usr/share/kodera-desktop/web/index.html
         let deb_exe = scratch.path().join("deb-root/usr/bin/kodera-desktop");
-        let deb_web = scratch.path().join("deb-root/usr/share/kodera-desktop/web");
+        let deb_web = scratch.path().join("deb-root/usr/lib/Kodera/web");
         fs::create_dir_all(deb_exe.parent().unwrap()).unwrap();
         fs::create_dir_all(&deb_web).unwrap();
         fs::write(deb_web.join("index.html"), b"<!doctype html>").unwrap();
@@ -1933,7 +1986,7 @@ mod tests {
 
         // 3. Linux `.AppImage` via `$APPDIR/usr/share/kodera-desktop/web/index.html`
         let appdir = scratch.path().join("AppDir");
-        let appimage_web = appdir.join("usr/share/kodera-desktop/web");
+        let appimage_web = appdir.join("usr/lib/Kodera/web");
         fs::create_dir_all(&appimage_web).unwrap();
         fs::write(appimage_web.join("index.html"), b"<!doctype html>").unwrap();
         let found_appimage =
@@ -1961,12 +2014,13 @@ mod tests {
         let policy = DeepLinkAdmissionPolicy::kodera_default();
         let startup_link = route_deep_link("kodera://workspace/acme/general", &policy).unwrap();
         let mut bridge = DesktopWebViewBridge::new(false, Some(startup_link));
+        bridge.document_capability = Some("c".repeat(64));
 
         // Untrusted frame origin is rejected before parsing or executing commands.
         assert_eq!(
             bridge.handle_ipc_request(
                 "https://evil.example/frame",
-                "1\tget_app_metadata\n{\"command\":\"get_app_metadata\"}"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tget_app_metadata\n{\"command\":\"get_app_metadata\"}"
             ),
             Err(WebViewIpcError::UntrustedSenderOrigin)
         );
@@ -1975,7 +2029,7 @@ mod tests {
         let listen_out = bridge
             .handle_ipc_request(
                 "kodera-asset://localhost/index.html",
-                "1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":7}",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":7}",
             )
             .unwrap();
         assert_eq!(listen_out.eval_scripts.len(), 2);
@@ -1985,7 +2039,7 @@ mod tests {
 
         // Setting unread badge auto-provisions the session and updates native window title.
         let badge_cmd = format!(
-            "2\tset_unread_badge\n{{\"command\":\"set_unread_badge\",\"organisation_id\":\"{ORG}\",\"unread_count\":9}}"
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2\tset_unread_badge\n{{\"command\":\"set_unread_badge\",\"organisation_id\":\"{ORG}\",\"unread_count\":9}}"
         );
         let badge_out = bridge
             .handle_ipc_request("https://app.kodera.io/", &badge_cmd)
@@ -2000,9 +2054,172 @@ mod tests {
         let quit_out = bridge
             .handle_ipc_request(
                 "kodera-asset://localhost/index.html",
-                "3\tquit\n{\"command\":\"quit\"}",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:3\tquit\n{\"command\":\"quit\"}",
             )
             .unwrap();
         assert_eq!(quit_out.window_action, Some(GuiWindowAction::Quit));
+    }
+
+    #[test]
+    fn authentication_navigation_never_grants_native_command_authority() {
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.document_capability = Some("c".repeat(64));
+        for url in [
+            "https://auth.kodera.io/realms/example/account",
+            "https://AUTH.KODERA.IO/realms/example/account",
+        ] {
+            assert!(validate_navigation_url(
+                url,
+                &DeepLinkAdmissionPolicy::kodera_default(),
+                false
+            )
+            .is_ok());
+            for command in [
+                "quit",
+                "init_session",
+                "store_keychain_credential",
+                "plugin:event|listen",
+            ] {
+                let message = format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\t{command}\n{{}}");
+                assert_eq!(
+                    bridge.handle_ipc_request(url, &message),
+                    Err(WebViewIpcError::UntrustedSenderOrigin)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn document_transition_discards_listeners_sessions_and_old_document_messages() {
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.document_capability = Some("c".repeat(64));
+        let hello = bridge
+            .handle_ipc_request(
+                "https://app.kodera.io/",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:hello\t__document_generation\n{}",
+            )
+            .unwrap();
+        assert!(hello.eval_scripts[0].contains("__KODERA_IPC_ACTIVATE__(0,"));
+        assert!(bridge.document_id.is_none());
+        let old = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":1}";
+        bridge
+            .handle_ipc_request("https://app.kodera.io/", old)
+            .unwrap();
+        bridge.host.provision_session(ORG).unwrap();
+        bridge.begin_document(1);
+        bridge.document_capability = Some("c".repeat(64));
+        assert!(bridge.listeners.is_empty());
+        assert!(!bridge.host.has_active_session());
+        assert_eq!(
+            bridge.handle_ipc_request("https://app.kodera.io/", old),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        assert!(bridge.document_id.is_none());
+        let new = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1\tplugin:event|listen\n{\"event\":\"kodera://deep-link\",\"handler\":1}";
+        bridge
+            .handle_ipc_request("https://app.kodera.io/", new)
+            .unwrap();
+        assert_eq!(
+            bridge.handle_ipc_request("https://app.kodera.io/", old),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        bridge.begin_document(1);
+        assert_eq!(bridge.listeners.len(), 1);
+        let late = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2\tquit\n{}";
+        assert_eq!(
+            bridge.handle_ipc_request("https://app.kodera.io/", late),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        let link = route_deep_link(
+            "kodera://workspace/acme/general",
+            &DeepLinkAdmissionPolicy::kodera_default(),
+        )
+        .unwrap();
+        let scripts = bridge.enqueue_deep_link(link);
+        assert_eq!(scripts.len(), 1);
+        assert!(scripts[0].contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        assert!(!scripts[0].contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        let update = bridge
+            .handle_ipc_request(
+                "https://app.kodera.io/",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:2\tcheck_app_updates\n{}",
+            )
+            .unwrap();
+        assert!(update.eval_scripts[0].contains("\"supported\":false"));
+    }
+
+    #[test]
+    fn document_capability_rotates_and_rejects_stale_and_future_generation_forgeries() {
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        bridge.begin_document(1);
+        let old_capability = bridge.document_capability.clone().unwrap();
+        let old_message = format!(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1:{old_capability}:1\tget_app_metadata\n{{}}"
+        );
+        bridge
+            .handle_ipc_request("https://app.kodera.io/", &old_message)
+            .unwrap();
+        bridge.begin_document(2);
+        assert!(bridge.document_id.is_none());
+        let capability = bridge.document_capability.clone().unwrap();
+        assert_ne!(capability, old_capability);
+        let forged_current_generation =
+            format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:2:{old_capability}:2\tquit\n{{}}");
+        assert_eq!(
+            bridge.handle_ipc_request("https://app.kodera.io/", &forged_current_generation),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        assert!(bridge.document_id.is_none());
+        let forged_future_generation =
+            format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:3:{capability}:2\tquit\n{{}}");
+        assert_eq!(
+            bridge.handle_ipc_request("https://app.kodera.io/", &forged_future_generation),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        assert!(bridge.document_id.is_none());
+        let valid =
+            format!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:2:{capability}:1\tget_app_metadata\n{{}}");
+        bridge
+            .handle_ipc_request("https://app.kodera.io/", &valid)
+            .unwrap();
+        bridge.begin_document(3);
+        // An unavailable OS capability has no predictable or empty fallback.
+        bridge.document_capability = None;
+        assert_eq!(
+            bridge.handle_ipc_request(
+                "https://app.kodera.io/",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:hello\t__document_generation\n{}"
+            ),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+        let unavailable = format!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:3:{capability}:2\tquit\n{{}}");
+        assert_eq!(
+            bridge.handle_ipc_request("https://app.kodera.io/", &unavailable),
+            Err(WebViewIpcError::UntrustedSenderOrigin)
+        );
+    }
+
+    #[test]
+    fn update_response_exactly_reports_unsupported() {
+        let mut bridge = DesktopWebViewBridge::new(false, None);
+        let capability = bridge.document_capability.clone().unwrap();
+        let message =
+            format!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0:{capability}:1\tcheck_app_updates\n{{}}");
+        let outcome = bridge
+            .handle_ipc_request("https://app.kodera.io/", &message)
+            .unwrap();
+        let payload = format!(
+            r#"{{"supported":false,"updateAvailable":false,"currentVersion":"{}","latestVersion":null,"channel":"stable"}}"#,
+            DESKTOP_APP_VERSION
+        );
+        assert_eq!(
+            outcome.eval_scripts,
+            vec![resolve_js_promise(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                1,
+                true,
+                &payload
+            )]
+        );
     }
 }
