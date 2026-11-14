@@ -15,6 +15,8 @@ MIDDLEWARE = [
     "core.api.edge.ConsoleCorsMiddleware",
     # Before any view: one principal's writes per minute (§2).
     "core.api.edge.MutationRateLimitMiddleware",
+    # Zero-trust C1 staff plane (/staff/v1/*): JSON-only 404s, workspace wall, and listed CORS.
+    "core.staff_api.middleware.StaffPlaneMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
@@ -72,3 +74,11 @@ KODERA_DEFAULT_COMMUNITY_ISSUER = os.environ.get("KODERA_DEFAULT_COMMUNITY_ISSUE
 KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
     "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID", ""
 )
+
+# Zero-trust /staff/v1/* C1 plane and mobile Universal/App Links (/.well-known/*); fail-closed (503) when unset.
+KODERA_STAFF_OIDC_ISSUER: str | None = None
+KODERA_STAFF_OIDC_JWKS_URL: str | None = None
+KODERA_STAFF_OPS_HOSTS: tuple[str, ...] = ()
+KODERA_STAFF_ADMIN_ORIGINS: str | None = None
+KODERA_IOS_APP_IDS: tuple[str, ...] = ()
+KODERA_ANDROID_ASSETLINKS_SHA256: tuple[str, ...] = ()

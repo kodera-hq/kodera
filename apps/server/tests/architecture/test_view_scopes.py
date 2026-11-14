@@ -82,12 +82,34 @@ CONTRACT = ROOT / "contracts" / "core-api.openapi.yaml"
 AGENT_CONTRACT = ROOT / "contracts" / "agent-api.openapi.yaml"
 AGENT_PREFIX = "agent/v1/"
 AGENT_SCOPE = "agent"
+STAFF_CONTRACT = ROOT / "contracts" / "staff-api.openapi.yaml"
+STAFF_PREFIX = "staff/v1/"
+STAFF_SCOPE = "staff"
+STAFF_ALLOWED_ROLES = frozenset(
+    {
+        "staff_owner",
+        "staff_operator",
+        "staff_security",
+        "staff_support",
+        "staff_growth",
+        "staff_backend",
+        "staff_frontend",
+    }
+)
 
 # Views with no principal: their whole purpose is to answer before anyone authenticates. An entry
 # is a route and the view it reaches, so an exempt view routed anywhere else is not exempt there.
 EXEMPT: Mapping[tuple[str, str], str] = {
     ("health/live", "core.health.live"): "liveness probe, AllowAny, no principal",
     ("health/ready", "core.health.ready"): "readiness probe, AllowAny, no principal",
+    (
+        ".well-known/apple-app-site-association",
+        "core.well_known.apple_app_site_association",
+    ): "Apple Universal Links association, AllowAny, no principal",
+    (
+        ".well-known/assetlinks.json",
+        "core.well_known.assetlinks",
+    ): "Android App Links association, AllowAny, no principal",
 }
 
 
@@ -117,11 +139,18 @@ class AgentOperation(NamedTuple):
     roles: frozenset[str]
 
 
+class StaffOperation(NamedTuple):
+    method: str
+    path: str
+    roles: frozenset[str]
+
+
 class Reference(NamedTuple):
     resources: frozenset[str]
     verbs: frozenset[str]
     operations: Mapping[str, ContractOperation]
     agent_operations: Mapping[str, AgentOperation]
+    staff_operations: Mapping[str, StaffOperation]
 
 
 def reference() -> Reference:
@@ -134,11 +163,16 @@ def reference() -> Reference:
     for operation_id, method_and_path, _scope, roles in authz.parse_operations(AGENT_CONTRACT):
         method, _, route = method_and_path.partition(" ")
         agent_operations[operation_id] = AgentOperation(method, route, frozenset(roles or ()))
+    staff_operations = {}
+    for operation_id, method_and_path, _scope, roles in authz.parse_operations(STAFF_CONTRACT):
+        method, _, route = method_and_path.partition(" ")
+        staff_operations[operation_id] = StaffOperation(method, route, frozenset(roles or ()))
     return Reference(
         resources=frozenset(authz.Matrix(AUTHZ).cells),
         verbs=frozenset(authz.CLOSED_VERBS),
         operations=operations,
         agent_operations=agent_operations,
+        staff_operations=staff_operations,
     )
 
 
@@ -248,9 +282,38 @@ def _agent_operation_failures(where: str, route: str, op: Operation, ref: Refere
     return failures
 
 
+def _staff_operation_failures(where: str, route: str, op: Operation, ref: Reference) -> list[str]:
+    failures = []
+    if op.scope != STAFF_SCOPE:
+        failures.append(
+            f"{where} declares scope {op.scope!r} for {op.operation_id}; a Staff API operation "
+            f"declares {STAFF_SCOPE!r}"
+        )
+    contract = ref.staff_operations.get(op.operation_id)
+    if contract is None:
+        failures.append(
+            f"{where} declares operation {op.operation_id!r}, which "
+            "contracts/staff-api.openapi.yaml does not have"
+        )
+        return failures
+    if not contract.roles or not (contract.roles <= STAFF_ALLOWED_ROLES):
+        failures.append(
+            f"{where} serves {op.operation_id}, whose x-kodera-authz does not declare valid staff roles"
+        )
+    served = (op.method.upper(), "/" + re.sub(r"<(?:\w+:)?(\w+)>", r"{\1}", route))
+    if served != (contract.method, contract.path):
+        failures.append(
+            f"{where} serves {op.operation_id} as {served[0]} {served[1]}; "
+            f"the contract has it at {contract.method} {contract.path}"
+        )
+    return failures
+
+
 def _operation_failures(where: str, route: str, op: Operation, ref: Reference) -> list[str]:
     if route.startswith(AGENT_PREFIX):
         return _agent_operation_failures(where, route, op, ref)
+    if route.startswith(STAFF_PREFIX):
+        return _staff_operation_failures(where, route, op, ref)
     shape = re.fullmatch(r"([a-z][a-z_]*):([a-z]+)", op.scope)
     if shape is None:
         return [f"{where} declares scope {op.scope!r} for {op.operation_id}, not <resource>:<verb>"]
@@ -511,6 +574,21 @@ def agent_route_serving_a_customer_operation(request: HttpRequest) -> HttpRespon
     return HttpResponse()
 
 
+@declares(Operation("GET", "getStaffOverview", "staff"))
+def staff_overview_fixture(request: HttpRequest) -> HttpResponse:
+    return HttpResponse()
+
+
+@declares(Operation("GET", "getStaffOverview", "identity:read"))
+def staff_with_customer_scope(request: HttpRequest) -> HttpResponse:
+    return HttpResponse()
+
+
+@declares(Operation("GET", "getMe", "staff"))
+def staff_serving_customer_operation(request: HttpRequest) -> HttpResponse:
+    return HttpResponse()
+
+
 def _check(*patterns: Any, exempt: Mapping[tuple[str, str], str] | None = None) -> list[str]:
     found, unreadable = routes({"fixture": list(patterns)})
     return unreadable + scope_failures(found, reference(), {} if exempt is None else exempt)
@@ -634,6 +712,26 @@ def test_an_agent_operation_the_contract_does_not_admit_the_agent_to_fails() -> 
     assert scope_failures(found, ref._replace(agent_operations=closed), {}) == [
         f"fixture: agent/v1/commands -> {HERE}.agent_commands serves getCommands, whose "
         "x-kodera-authz does not admit the agent"
+    ]
+
+
+def test_a_staff_route_matching_the_staff_contract_and_failing_mutations() -> None:
+    assert _check(path("staff/v1/read/overview", staff_overview_fixture)) == []
+    assert _check(path("staff/v1/read/overview", staff_with_customer_scope)) == [
+        f"fixture: staff/v1/read/overview -> {HERE}.staff_with_customer_scope declares scope "
+        "'identity:read' for getStaffOverview; a Staff API operation declares 'staff'"
+    ]
+    assert _check(path("staff/v1/read/overview", staff_serving_customer_operation)) == [
+        f"fixture: staff/v1/read/overview -> {HERE}.staff_serving_customer_operation declares "
+        "operation 'getMe', which contracts/staff-api.openapi.yaml does not have"
+    ]
+    ref = reference()
+    closed = {**ref.staff_operations}
+    closed["getStaffOverview"] = closed["getStaffOverview"]._replace(roles=frozenset({"org_owner"}))
+    found, _ = routes({"fixture": [path("staff/v1/read/overview", staff_overview_fixture)]})
+    assert scope_failures(found, ref._replace(staff_operations=closed), {}) == [
+        f"fixture: staff/v1/read/overview -> {HERE}.staff_overview_fixture serves "
+        "getStaffOverview, whose x-kodera-authz does not declare valid staff roles"
     ]
 
 

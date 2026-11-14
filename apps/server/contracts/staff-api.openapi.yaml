@@ -1,0 +1,828 @@
+openapi: 3.1.0
+info:
+  title: Kodera Staff C1 API
+  version: 0.1.0
+  summary: Zero-trust C1 staff operations, triage and reconciliation API served by kodera-server.
+  description: |
+    Zero-trust C1 backend contract for `kodera-admin`.
+
+    ## Plane Admission and Step-Up Authentication
+
+    1. Tokens are verified exclusively against the `kodera-staff` Keycloak realm configured by
+       `KODERA_STAFF_OIDC_ISSUER` and `KODERA_STAFF_OIDC_JWKS_URL`. When any staff OIDC or ops
+       ingress setting is unset, every `/staff/v1/*` endpoint fails closed with `503`.
+    2. Every token must carry `azp == "kodera-admin"` and `aud` containing both
+       `"kodera-admin-api"` and `"kodera-server"`.
+    3. Staff roles are hydrated from PostgreSQL (`kodera-staff` identity and active role grants),
+       never trusted from JWT role claims alone.
+    4. `/staff/v1/read/*` and `/staff/v1/triage/*` require `"hwk"` or `"otp"` in `amr`.
+    5. `/staff/v1/ops/*` requires hardware WebAuthn (`"hwk"` in `amr`), a fresh authentication
+       timestamp (`0 <= now - auth_time <= 320` seconds), and an admitted `ops-admin.*` `Host`
+       listed in `KODERA_STAFF_OPS_HOSTS`.
+
+    ## Strict C1 Zero-Trust Boundary
+
+    This surface never queries, imports, or serializes C2/C3 customer workspace content (messages,
+    collaborative document bodies, media attachments, or end-to-end encryption key material). Every
+    mutation appends a SHA-256 hash-chained `StaffAuditEntry` verifiable via
+    `POST /staff/v1/ops/audit-chain/verify`.
+  contact:
+    name: kodera-server maintainers
+    url: https://github.com/kodera-hq/kodera
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  x-kodera-contract: staff-api
+  x-kodera-owners:
+    - kodera-hq/core
+
+servers:
+  - url: https://admin.kodera.io
+    description: Staff read and triage ingress (`kodera-staff` MFA required).
+  - url: https://ops-admin.kodera.io
+    description: Dedicated staff ops ingress (`hwk` WebAuthn step-up within 320 seconds required).
+
+tags:
+  - name: Read
+    description: C1 read-only operational views across fleet, pipeline, feedback, FinOps, SRE and security.
+  - name: Triage
+    description: Audited C1 triage mutations for feedback, pipeline deals, waitlist cohorts and SAR tracking.
+  - name: Ops
+    description: Hardware-step-up C1 mutations for job/outbox reconciliation, staff roles, issuer snapshots, FinOps snapshots and audit-chain verification.
+
+security:
+  - staffBearer: []
+
+paths:
+  /staff/v1/read/overview:
+    get:
+      operationId: getStaffOverview
+      summary: Read the C1 staff command-center overview
+      description: Returns caller session posture, fleet health counters, pipeline summary, triage counts, FinOps margin posture and SRE/security alert counters.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+          - staff_support
+          - staff_growth
+          - staff_backend
+          - staff_frontend
+      responses:
+        '200':
+          description: C1 overview snapshot.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/organisations:
+    get:
+      operationId: getStaffOrganisations
+      summary: List C1 organisation and tenant posture records
+      description: Returns C1 organisation metadata, provisioning state and capacity posture; engineering seats receive `c1_slugs_only` redaction.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+          - staff_support
+          - staff_backend
+          - staff_frontend
+      responses:
+        '200':
+          description: C1 organisation directory.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/pipeline:
+    get:
+      operationId: getStaffPipeline
+      summary: Read C1 B2B deal pipeline and waitlist cohorts
+      description: Returns C1 deal cards, stage totals and opened waitlist cohorts without exposing raw prospect contacts.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_growth
+      responses:
+        '200':
+          description: C1 pipeline and waitlist summary.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/feedback:
+    get:
+      operationId: getStaffFeedback
+      summary: List C1 support and product feedback items
+      description: Returns C1 scrubbed feedback items filtered optionally by status or kind; engineering seats receive redacted reporter pseudonyms.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_support
+          - staff_backend
+          - staff_frontend
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Optional feedback status filter.
+          schema:
+            type: string
+            enum: [new, triaged, planned, in_progress, shipped, wont_fix, closed]
+        - name: kind
+          in: query
+          required: false
+          description: Optional feedback kind filter.
+          schema:
+            type: string
+            enum: [ticket, bug, feature_request, quote_request]
+      responses:
+        '200':
+          description: C1 feedback triage queue.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/engineering:
+    get:
+      operationId: getStaffEngineering
+      summary: List C1 engineering-triaged bugs and feature requests
+      description: Returns C1 scrubbed engineering items (`bug` and `feature_request`) with seat ownership and roadmap milestones.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_support
+          - staff_backend
+          - staff_frontend
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Optional feedback status filter.
+          schema:
+            type: string
+            enum: [new, triaged, planned, in_progress, shipped, wont_fix, closed]
+        - name: kind
+          in: query
+          required: false
+          description: Optional feedback kind filter.
+          schema:
+            type: string
+            enum: [ticket, bug, feature_request, quote_request]
+      responses:
+        '200':
+          description: C1 engineering backlog slice.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/finops:
+    get:
+      operationId: getStaffFinops
+      summary: Read C1 FinOps unit economics and gross margin floor posture
+      description: Evaluates monthly revenue and infrastructure cost snapshots against `GROSS_MARGIN_FLOOR_BPS = 4400` (`44.0%`).
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_growth
+      parameters:
+        - name: period_month
+          in: query
+          required: false
+          description: Optional accounting month in `YYYY-MM` format.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+      responses:
+        '200':
+          description: C1 FinOps snapshot report.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/sre:
+    get:
+      operationId: getStaffSre
+      summary: Read C1 SRE reconciliation queues and fleet job health
+      description: Returns jobs and outbox deliveries awaiting operator reconciliation alongside recent job/delivery counters.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+          - staff_backend
+      responses:
+        '200':
+          description: C1 SRE queue posture.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/read/security:
+    get:
+      operationId: getStaffSecurity
+      summary: Read C1 security posture, staff role roster, SAR register and audit chain head
+      description: Returns staff role grants by subject pseudonym (never raw staff emails), issuer snapshots, SAR deadlines and audit-chain integrity metadata.
+      tags: [Read]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+          - staff_support
+      responses:
+        '200':
+          description: C1 security and compliance posture.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/triage/feedback/{feedback_id}:
+    parameters:
+      - $ref: '#/components/parameters/FeedbackId'
+    post:
+      operationId: triageStaffFeedback
+      summary: Update status, severity, seat assignment or milestone on a C1 feedback item
+      description: Scrubs any free-text milestone/reference fields to preserve the C1 boundary and appends a SHA-256 hash-chained `StaffAuditEntry`.
+      tags: [Triage]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_support
+          - staff_backend
+          - staff_frontend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Updated C1 feedback item and audit receipt.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/triage/feedback/{feedback_id}/github-draft:
+    parameters:
+      - $ref: '#/components/parameters/FeedbackId'
+    post:
+      operationId: createStaffFeedbackGithubDraft
+      summary: Generate a C1-scrubbed GitHub issue draft from a feedback item
+      description: Produces a token- and PII-scrubbed Markdown draft scoped to an allowlisted Kodera repository and records a hash-chained `StaffAuditEntry`.
+      tags: [Triage]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_support
+          - staff_backend
+          - staff_frontend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Scrubbed GitHub issue draft and audit receipt.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/triage/deals:
+    post:
+      operationId: upsertStaffDeal
+      summary: Create or update a C1 B2B deal card by prospect slug
+      description: Stores C1 commercial stage, pack code, capacity tier, estimated MRR cents and canonical seat owner, appending a `StaffAuditEntry`.
+      tags: [Triage]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_growth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Upserted C1 deal card and audit receipt.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/triage/waitlist/open-cohort:
+    post:
+      operationId: openStaffWaitlistCohort
+      summary: Record an opened waitlist cohort wave by cohort code
+      description: Idempotent on matching parameters for the same `cohort_code`; conflicting parameters answer `409`. Appends a `StaffAuditEntry` when created.
+      tags: [Triage]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_growth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Opened waitlist cohort record.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/triage/sar:
+    post:
+      operationId: createStaffSar
+      summary: Open a C1 GDPR Subject Access, Erasure or Portability tracking record
+      description: Accepts pseudonymous subject tokens only (refuses raw email addresses with `400`) and appends a `StaffAuditEntry`.
+      tags: [Triage]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+          - staff_support
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '201':
+          description: Created C1 SAR tracking record and audit receipt.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/triage/sar/{sar_id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/SarId'
+    post:
+      operationId: completeStaffSar
+      summary: Complete an open C1 SAR tracking record with an evidence reference
+      description: Marks the SAR record completed with an opaque C1 evidence token and appends a `StaffAuditEntry`.
+      tags: [Triage]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+          - staff_support
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Completed C1 SAR record and audit receipt.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/reconcile/jobs/{job_id}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    post:
+      operationId: reconcileStaffJob
+      summary: Reconcile a job stuck in `reconciling` after hardware WebAuthn step-up
+      description: Records an immutable `JobReconciliationDecision`, transitions the job out of `reconciling`, writes the core audit event and appends a `StaffAuditEntry`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Job reconciliation decision recorded.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/reconcile/deliveries/{delivery_id}:
+    parameters:
+      - $ref: '#/components/parameters/DeliveryId'
+    post:
+      operationId: reconcileStaffDelivery
+      summary: Reconcile an outbox delivery stuck in `reconciling` after hardware WebAuthn step-up
+      description: Records an immutable `DeliveryDecision`, transitions the outbox delivery out of `reconciling`, writes the core audit event and appends a `StaffAuditEntry`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Outbox delivery reconciliation decision recorded.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/staff-roles/grant:
+    post:
+      operationId: grantStaffRole
+      summary: Grant a `kodera-staff` role to another staff identity (two-person rule enforced)
+      description: Refuses self-mutation (`403`) and non-`kodera-staff` identities, records the role grant in PostgreSQL and appends a `StaffAuditEntry`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Staff role granted and audited.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/staff-roles/revoke:
+    post:
+      operationId: revokeStaffRole
+      summary: Revoke a `kodera-staff` role from another staff identity while preserving seat floors
+      description: Enforces the two-person rule (`403` on self-revocation) and seat floors (`>= 1` active `staff_owner`, `>= 2` active `staff_operator`), appending a `StaffAuditEntry`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Staff role revoked and audited.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/issuer-snapshots:
+    post:
+      operationId: registerStaffIssuerSnapshot
+      summary: Register a public JWKS issuer snapshot bound to an organisation's OIDC issuer
+      description: Rejects private or symmetric JWK parameters (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`), verifies the issuer matches the organisation's realm issuer and appends a `StaffAuditEntry`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '201':
+          description: Public JWKS issuer snapshot recorded and audited.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/finops/snapshots:
+    post:
+      operationId: recordStaffFinopsSnapshot
+      summary: Record a monthly C1 FinOps snapshot and evaluate the 44.0% gross margin floor
+      description: Computes `total_cost_cents`, `gross_margin_cents`, `gross_margin_bps` and `gross_margin_alert` against `GROSS_MARGIN_FLOOR_BPS = 4400`, appending a `StaffAuditEntry`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '201':
+          description: FinOps snapshot recorded and audited.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /staff/v1/ops/audit-chain/verify:
+    post:
+      operationId: verifyStaffAuditChain
+      summary: Recompute and verify the SHA-256 hash chain over `StaffAuditEntry` records
+      description: Walks every `StaffAuditEntry` in `sequence_no` order for the requested `scope_key`, verifying both `previous_hash` linkage and deterministic SHA-256 `entry_hash`.
+      tags: [Ops]
+      x-kodera-authz:
+        roles:
+          - staff_owner
+          - staff_operator
+          - staff_security
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffMutationBody' }
+      responses:
+        '200':
+          description: Audit hash-chain verification report (`verified`, `checked_entries`, `head_hash`, `broken_at_sequence_no`).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffPayload' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+components:
+  securitySchemes:
+    staffBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        OIDC access token issued by the `kodera-staff` realm (`KODERA_STAFF_OIDC_ISSUER`) with
+        `azp == "kodera-admin"` and `aud` containing both `"kodera-admin-api"` and
+        `"kodera-server"`.
+
+  headers:
+    XRequestId:
+      description: Correlation identifier echoed on every response and quoted in every problem document.
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 64 }
+
+  parameters:
+    FeedbackId:
+      name: feedback_id
+      in: path
+      required: true
+      description: Identifier of the C1 staff feedback item.
+      schema: { type: string, format: uuid }
+    SarId:
+      name: sar_id
+      in: path
+      required: true
+      description: Identifier of the C1 GDPR SAR tracking record.
+      schema: { type: string, format: uuid }
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      description: Identifier of the core job in `reconciling` status.
+      schema: { type: string, format: uuid }
+    DeliveryId:
+      name: delivery_id
+      in: path
+      required: true
+      description: Identifier of the outbox delivery in `reconciling` status.
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationFailed:
+      description: Malformed JSON body, unknown query filter, or C1 boundary validation refusal.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthenticated:
+      description: Missing, expired, or invalid `kodera-staff` OIDC Bearer token (`iss`, `azp`, or `aud` mismatch).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Insufficient PostgreSQL `StaffRole`, missing `hwk`/`otp` MFA, stale `auth_time > 320s` (`step_up_expired`), or non-ops `Host` on `/staff/v1/ops/*`.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Target C1 resource does not exist or unlisted `/staff/v1/*` route.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: State transition conflict (for example non-reconciling target, partial outcome with resume exit, or seat-floor violation).
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ServiceUnavailable:
+      description: Fail-closed `503` when `KODERA_STAFF_OIDC_ISSUER`, `KODERA_STAFF_OIDC_JWKS_URL`, or `KODERA_STAFF_OPS_HOSTS` is unconfigured or JWKS cannot be fetched.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    StaffPayload:
+      type: object
+      title: StaffPayload
+      description: Zero-trust C1 JSON response object containing operational aggregates or mutation receipts (never C2/C3 user content).
+      additionalProperties: true
+      examples:
+        - status: ok
+
+    StaffMutationBody:
+      type: object
+      title: StaffMutationBody
+      description: JSON mutation payload validated against closed C1 enums and PII/secret scrubbers.
+      additionalProperties: true
+      examples:
+        - scope_key: global
+
+    Problem:
+      type: object
+      title: Problem
+      description: Structured JSON problem document returned on every `/staff/v1/*` error with `application/json` content type.
+      required: [type, title, status, detail, code, request_id]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          maxLength: 200
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          maxLength: 2000
+        code:
+          type: string
+          maxLength: 100
+        request_id:
+          type: string
+          maxLength: 64
+      examples:
+        - type: https://kodera.io/problems/step-up-expired
+          title: Hardware step-up expired
+          status: 403
+          detail: Token auth_time exceeds 320-second ops step-up window
+          code: step_up_expired
+          request_id: 019467a3-0f9b-7cc3-98c2-1fa48f28f562
