@@ -141,10 +141,7 @@ REVOKE ALL ON FUNCTION extension_decision_guard() FROM PUBLIC;
 
 '''
 
-REVERSE = r"""
-SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
--- The scope and decision guards go back to the bodies of extensions 0006 and 0004,
--- before any cutoff-authorised teardown existed.
+REVERSE = r'''
 CREATE OR REPLACE FUNCTION extension_scope_guard() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 DECLARE org uuid; workspace uuid; old_json jsonb; new_json jsonb;
 BEGIN
@@ -239,11 +236,10 @@ BEGIN
  RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION extension_decision_guard() FROM PUBLIC;
-
-DROP TRIGGER extension_cutoff_immutable ON extensions_workspacecutoff;
-DROP FUNCTION extension_cutoff_immutable();
-DROP FUNCTION extension_erasure_allowed(uuid);
-"""
+DROP TRIGGER IF EXISTS extension_cutoff_immutable ON extensions_workspacecutoff;
+DROP FUNCTION IF EXISTS extension_cutoff_immutable();
+DROP FUNCTION IF EXISTS extension_erasure_allowed(uuid);
+'''
 
 
 class Migration(migrations.Migration):
@@ -253,7 +249,7 @@ class Migration(migrations.Migration):
             "SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
             reverse_sql=migrations.RunSQL.noop,
         ),
-        migrations.RunSQL(FORWARD, REVERSE),
+migrations.RunSQL(FORWARD, REVERSE),
         migrations.RunSQL(
             migrations.RunSQL.noop,
             reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",
