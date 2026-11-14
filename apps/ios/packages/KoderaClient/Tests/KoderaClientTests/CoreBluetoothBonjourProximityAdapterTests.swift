@@ -371,12 +371,17 @@ final class CoreBluetoothBonjourProximityAdapterTests: XCTestCase {
         XCTAssertEqual(lanPeer.distanceBand, .immediate)
 
         // Background auto-stop timer immediately halts GATT + Bonjour and clears active peer list.
+        let previousGattStops = gatt.stopCount
+        let previousBonjourStops = bonjour.stopCount
         session.handleSceneForegroundChange(isActive: false, backgroundGraceNanoseconds: 10_000_000)
-        try await Task.sleep(nanoseconds: 40_000_000)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while session.isSessionActive && ContinuousClock.now < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
         XCTAssertFalse(session.isSessionActive)
         XCTAssertTrue(session.peers.isEmpty)
-        XCTAssertGreaterThanOrEqual(gatt.stopCount, 1)
-        XCTAssertGreaterThanOrEqual(bonjour.stopCount, 1)
+        XCTAssertGreaterThan(gatt.stopCount, previousGattStops)
+        XCTAssertGreaterThan(bonjour.stopCount, previousBonjourStops)
 
         // Resume foreground, restart 15-min session, then trigger instant kill-switch (`leaveProximity`).
         session.handleSceneForegroundChange(isActive: true)

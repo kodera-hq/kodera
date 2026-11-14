@@ -104,3 +104,8 @@ da7ee4a7a75a0028c7345ab52de0f52232adc09f:Cargo.lock:generic-api-key:1261
 
 # Reviewed fixed public epoch-lease conformance vector, derived from documented synthetic bytes.
 5b6bf1c8107bfa998ccfa67dfdb494b62c615726:packages/kodera-rs/vectors/proximity-epoch-lease-v1.json:generic-api-key:10
+
+# Reviewed fixed public epoch-lease examples in the canonical contract and its byte-identical mirrors.
+b86a992075219fdb838aba03a5a3dd3f9ebbfd67:apps/server/contracts/core-api.openapi.yaml:generic-api-key:17186
+b86a992075219fdb838aba03a5a3dd3f9ebbfd67:apps/web/contracts/core-api.openapi.yaml:generic-api-key:17186
+b86a992075219fdb838aba03a5a3dd3f9ebbfd67:packages/api-contract/core-api.openapi.yaml:generic-api-key:17186
