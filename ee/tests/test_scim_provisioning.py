@@ -21,6 +21,8 @@ from ee.scim.schemas import (
 )
 from ee.scim.service import default_scim_service
 
+pytestmark = pytest.mark.django_db
+
 
 @pytest.fixture
 def enterprise_client(monkeypatch: pytest.MonkeyPatch) -> Client:

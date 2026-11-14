@@ -1,5 +1,15 @@
 """HTTP views for Enterprise Signed Compliance Audit Exports (`/api/v1/ee/compliance/audit-exports/*`).
 
+Security invariants (`W2-1` & `W2-2`):
+- Every endpoint requires a verified Kodera customer Bearer token with active `Organisation` and
+  accepted `org_owner` or `org_admin` `Membership`.
+- `tenant_slug` and `actor_id` are bound strictly to the authenticated principal; cross-tenant
+  requests and spoofed `actor_id` / `actor_type` fields are rejected with `403`.
+- Compliance exports default `redact_pii=True`; unredacted exports (`redact_pii=False`) require
+  `org_owner` membership.
+- Bundle verification (`POST .../verify`) ignores caller-supplied trust keys and pins strictly to
+  the server-governed deterministic tenant signing key registry.
+
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
 
@@ -20,8 +30,27 @@ from ee.audit_export.exporter import (
 )
 from ee.audit_export.ledger import default_audit_ledger, parse_utc_iso
 from ee.audit_export.verify import verify_compliance_bundle
+from ee.auth import ADMIN_ROLES, OWNER_ROLES, EeAuthError, authenticate_tenant_request
 
 _AUDIT_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
+    # Authentication & tenant authorization rejections (401 / 403)
+    ("unauthenticated", 401, "Authentication required"),
+    ("forbidden_lane", 403, "Customer authentication lane required"),
+    ("identity_unknown", 403, "Authenticated identity is not provisioned"),
+    ("tenant_membership_required", 403, "Active tenant membership is required"),
+    ("cross_tenant_forbidden", 403, "Cross-tenant compliance operation is forbidden"),
+    ("insufficient_role", 403, "Organisation owner or admin role is required"),
+    (
+        "actor_spoofing_forbidden",
+        403,
+        "Audit event actor fields must match the authenticated principal",
+    ),
+    (
+        "owner_required_for_unredacted_export",
+        403,
+        "Organisation owner role is required for unredacted PII export",
+    ),
+    # Input validation rejections (400)
     ("invalid_json", 400, "Malformed or oversized JSON request body"),
     ("invalid_timestamp", 400, "Invalid ISO-8601 timestamp parameter"),
     ("invalid_time_range", 400, "from_timestamp must not be after to_timestamp"),
@@ -30,7 +59,7 @@ _AUDIT_PUBLIC_ERRORS: Final[tuple[tuple[str, int, str], ...]] = (
     ("unsupported_signing_algorithm", 400, "Unsupported audit manifest signing algorithm"),
     ("missing_fields", 400, "Required audit event fields are missing"),
     ("invalid_metadata", 400, "Audit event metadata must be a JSON object"),
-    ("missing_tenant_slug", 400, "tenant_slug is required"),
+    ("missing_tenant_slug", 400, "tenant_slug is invalid"),
     ("invalid_event", 400, "Invalid compliance audit event parameters"),
     ("invalid_export_request", 400, "Invalid compliance audit export parameters"),
 )
@@ -43,6 +72,8 @@ def _json_response(payload: dict[str, object], *, status: int = 200) -> HttpResp
         content_type="application/json",
     )
     resp["Cache-Control"] = "no-store"
+    if status == 401:
+        resp["WWW-Authenticate"] = "Bearer"
     return resp
 
 
@@ -106,8 +137,25 @@ def _select_signer(tenant_slug: str, signing_algorithm: str) -> AuditSigner:
     )
 
 
+def _resolve_redact_pii(raw_redact: object, *, caller_role: str) -> bool:
+    """Default `redact_pii` to `True`; allow `False` solely for verified `org_owner` callers."""
+    if raw_redact is None:
+        return True
+    if raw_redact is True or (
+        isinstance(raw_redact, str) and raw_redact.strip().lower() in {"1", "true"}
+    ):
+        return True
+    if raw_redact is False or (
+        isinstance(raw_redact, str) and raw_redact.strip().lower() in {"0", "false"}
+    ):
+        if caller_role not in OWNER_ROLES:
+            raise EeAuthError("owner_required_for_unredacted_export", status=403)
+        return False
+    raise AuditExportError("invalid_export_request", "Invalid redact_pii boolean value")
+
+
 def append_audit_event_view(request: HttpRequest) -> HttpResponse:
-    """Append an audit event into a tenant's hash-chained compliance vault."""
+    """Append an administrative audit event bound strictly to the authenticated tenant admin."""
     if request.method != "POST":
         resp = _json_response(
             {"detail": "Method not allowed", "code": "method_not_allowed"},
@@ -116,41 +164,56 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
         resp["Allow"] = "POST"
         return resp
     try:
+        auth = authenticate_tenant_request(request, required_roles=ADMIN_ROLES)
         body = _parse_json_body(request)
-        tenant_slug = body.get("tenant_slug")
-        actor_type = body.get("actor_type")
-        actor_id = body.get("actor_id")
+
+        if "tenant_slug" in body and body["tenant_slug"] is not None:
+            raw_tenant = body["tenant_slug"]
+            if not isinstance(raw_tenant, str) or raw_tenant.strip() != auth.tenant_slug:
+                raise EeAuthError("cross_tenant_forbidden", status=403)
+
+        expected_actor_id = str(auth.user_id)
+        if "actor_id" in body and body["actor_id"] is not None:
+            raw_actor_id = body["actor_id"]
+            if not isinstance(raw_actor_id, str) or raw_actor_id.strip() != expected_actor_id:
+                raise EeAuthError("actor_spoofing_forbidden", status=403)
+
+        if "actor_type" in body and body["actor_type"] is not None:
+            raw_actor_type = body["actor_type"]
+            if not isinstance(raw_actor_type, str) or raw_actor_type.strip() != "customer_user":
+                raise EeAuthError("actor_spoofing_forbidden", status=403)
+
         action = body.get("action")
         target_urn = body.get("target_urn")
         if (
-            not isinstance(tenant_slug, str)
-            or not isinstance(actor_type, str)
-            or not isinstance(actor_id, str)
-            or not isinstance(action, str)
+            not isinstance(action, str)
+            or not action.strip()
             or not isinstance(target_urn, str)
+            or not target_urn.strip()
         ):
-            raise AuditExportError(
-                "missing_fields",
-                "tenant_slug, actor_type, actor_id, action, and target_urn are required",
-            )
-        actor_label = body.get("actor_label")
-        source_ip = body.get("source_ip")
+            raise AuditExportError("missing_fields", "action and target_urn are required")
+
         metadata = body.get("metadata")
         occurred_at = body.get("occurred_at")
         if metadata is not None and not isinstance(metadata, dict):
             raise AuditExportError("invalid_metadata", "metadata must be a JSON object")
 
+        remote_addr = request.META.get("REMOTE_ADDR")
+        client_ip = remote_addr if isinstance(remote_addr, str) else ""
+
         evt = default_audit_ledger.append_event(
-            tenant_slug=tenant_slug.strip(),
-            actor_type=actor_type,
-            actor_id=actor_id,
-            actor_label=actor_label if isinstance(actor_label, str) else "",
+            tenant_slug=auth.tenant_slug,
+            actor_type="customer_user",
+            actor_id=expected_actor_id,
+            actor_label=auth.email,
             action=action,
             target_urn=target_urn,
-            source_ip=source_ip if isinstance(source_ip, str) else "",
+            source_ip=client_ip,
             metadata=metadata,
             occurred_at=occurred_at if isinstance(occurred_at, str) else None,
         )
+    except EeAuthError as exc:
+        return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
     except ValueError:
@@ -162,6 +225,8 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
             "event_id": evt.event_id,
             "occurred_at": evt.occurred_at,
             "tenant_slug": evt.tenant_slug,
+            "actor_type": evt.actor_type,
+            "actor_id": evt.actor_id,
             "prev_hash": evt.prev_hash,
             "entry_hash": evt.entry_hash,
         },
@@ -170,7 +235,7 @@ def append_audit_event_view(request: HttpRequest) -> HttpResponse:
 
 
 def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHttpResponse:
-    """Export a signed NDJSON or CSV compliance bundle (JSON envelope or chunked stream)."""
+    """Export a signed NDJSON or CSV compliance bundle for the authenticated tenant."""
     if request.method not in {"POST", "GET"}:
         resp = _json_response(
             {"detail": "Method not allowed", "code": "method_not_allowed"},
@@ -180,15 +245,22 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
         return resp
 
     try:
-        if request.method == "POST":
+        auth = authenticate_tenant_request(request, required_roles=ADMIN_ROLES)
+        if request.method == "POST" and request.body:
             params = _parse_json_body(request)
+        elif request.method == "POST":
+            params = {}
         else:
             params = {k: v for k, v in request.GET.items()}
 
-        tenant_raw = params.get("tenant_slug")
-        if not isinstance(tenant_raw, str) or not tenant_raw.strip():
-            raise AuditExportError("missing_tenant_slug", "tenant_slug is required")
-        tenant_slug = tenant_raw.strip()
+        if "tenant_slug" in params and params["tenant_slug"] is not None:
+            tenant_raw = params["tenant_slug"]
+            if not isinstance(tenant_raw, str) or not tenant_raw.strip():
+                raise AuditExportError("missing_tenant_slug", "Invalid tenant_slug")
+            if tenant_raw.strip() != auth.tenant_slug:
+                raise EeAuthError("cross_tenant_forbidden", status=403)
+
+        tenant_slug = auth.tenant_slug
 
         fmt_raw = params.get("format", "ndjson")
         export_format = fmt_raw if isinstance(fmt_raw, str) else "ndjson"
@@ -199,10 +271,8 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
         alg_raw = params.get("signing_algorithm", "ed25519")
         signing_alg = alg_raw if isinstance(alg_raw, str) else "ed25519"
 
-        raw_redact = params.get("redact_pii", False)
-        redact_pii = raw_redact is True or (
-            isinstance(raw_redact, str) and raw_redact.strip().lower() in {"1", "true"}
-        )
+        redact_pii = _resolve_redact_pii(params.get("redact_pii"), caller_role=auth.role)
+
         raw_stream = params.get("stream", request.path_info.endswith("/stream"))
         use_stream = raw_stream is True or (
             isinstance(raw_stream, str) and raw_stream.strip().lower() in {"1", "true"}
@@ -220,6 +290,8 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
             filters=filters,
             redact_pii=redact_pii,
         )
+    except EeAuthError as exc:
+        return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
     except ValueError:
@@ -260,7 +332,7 @@ def create_audit_export_view(request: HttpRequest) -> HttpResponse | StreamingHt
 
 
 def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
-    """Verify hash-chain and detached Ed25519 / HMAC-SHA256 signature on an exported bundle."""
+    """Verify hash-chain and detached signature pinned strictly to the server-governed tenant key."""
     if request.method != "POST":
         resp = _json_response(
             {"detail": "Method not allowed", "code": "method_not_allowed"},
@@ -270,7 +342,10 @@ def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
         return resp
 
     try:
+        auth = authenticate_tenant_request(request, required_roles=ADMIN_ROLES)
         body = _parse_json_body(request)
+    except EeAuthError as exc:
+        return _audit_error_response(exc.code)
     except AuditExportError as exc:
         return _audit_error_response(exc.code)
 
@@ -285,29 +360,19 @@ def verify_audit_export_view(request: HttpRequest) -> HttpResponse:
             status=400,
         )
 
-    pub_pem_raw = body.get("public_key_pem")
-    trusted_pub_pem = pub_pem_raw if isinstance(pub_pem_raw, str) and pub_pem_raw.strip() else None
+    manifest_tenant = manifest.get("tenant_slug")
+    if not isinstance(manifest_tenant, str) or manifest_tenant.strip() != auth.tenant_slug:
+        return _audit_error_response("cross_tenant_forbidden")
 
-    hmac_secret: bytes | None = None
-    if manifest.get("signing_algorithm") == "hmac-sha256":
-        hmac_hex = body.get("hmac_key_hex")
-        if isinstance(hmac_hex, str) and hmac_hex.strip():
-            try:
-                hmac_secret = bytes.fromhex(hmac_hex.strip())
-            except ValueError:
-                return _json_response(
-                    {"detail": "Invalid hmac_key_hex", "code": "invalid_hmac_key_hex"},
-                    status=400,
-                )
-        else:
-            t_slug = manifest.get("tenant_slug")
-            if isinstance(t_slug, str) and t_slug.strip():
-                hmac_secret = default_audit_ledger.hmac_signer_for_tenant(t_slug).secret_key
+    # Security invariant (`W2-2`): ignore any caller-supplied `public_key_pem` / `hmac_key_hex` and
+    # pin strictly to the server-governed deterministic signing keys for `auth.tenant_slug`.
+    server_pub_pem = default_audit_ledger.ed25519_signer_for_tenant(auth.tenant_slug).public_key_pem
+    server_hmac_secret = default_audit_ledger.hmac_signer_for_tenant(auth.tenant_slug).secret_key
 
     result = verify_compliance_bundle(
         payload,
         manifest,
-        trusted_public_key_pem=trusted_pub_pem,
-        hmac_secret=hmac_secret,
+        trusted_public_key_pem=server_pub_pem,
+        hmac_secret=server_hmac_secret,
     )
     return _json_response(result.to_dict(), status=200 if result.verified else 422)

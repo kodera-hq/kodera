@@ -17,6 +17,7 @@ import base64
 import time
 import urllib.parse
 import zlib
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -32,6 +33,9 @@ from ee.saml.xml_security import (
     parse_hardened_xml,
     sign_enveloped_xml,
 )
+from ee.tests.conftest import ProvisionedTestPrincipal
+
+pytestmark = pytest.mark.django_db
 
 
 def _fmt_ts(dt: datetime) -> str:
@@ -117,9 +121,11 @@ def enterprise_client(monkeypatch: pytest.MonkeyPatch) -> Client:
 
 def test_sp_metadata_and_authn_request_binding(
     enterprise_client: Client,
+    tenant_principal_factory: Callable[..., ProvisionedTestPrincipal],
     rsa_idp_keypair: tuple[rsa.RSAPrivateKey, str, str],
 ) -> None:
     _, _, cert_pem = rsa_idp_keypair
+    owner = tenant_principal_factory("acme-corp", role="org_owner")
     with override_settings(KODERA_EDITION="enterprise"):
         default_saml_service.register_idp(
             SamlIdpConfig(
@@ -142,7 +148,13 @@ def test_sp_metadata_and_authn_request_binding(
             meta_tree.attr("entityID") == "http://127.0.0.1/api/v1/ee/sso/saml/acme-corp/metadata"
         )
 
-        providers_resp = enterprise_client.get("/api/v1/ee/sso/saml/acme-corp/providers")
+        unauth_providers = enterprise_client.get("/api/v1/ee/sso/saml/acme-corp/providers")
+        assert unauth_providers.status_code == 401
+
+        providers_resp = enterprise_client.get(
+            "/api/v1/ee/sso/saml/acme-corp/providers",
+            headers=owner.headers,
+        )
         assert providers_resp.status_code == 200
         assert providers_resp.json()["providers"][0]["idp_id"] == "okta-primary"
 

@@ -1,5 +1,9 @@
 """SAML 2.0 Service Provider metadata, `AuthnRequest`, ACS verification, and JIT provisioning.
 
+Persists tenant IdP configurations (`ee_saml_idps`), single-use `AuthnRequest` / `RelayState`
+bindings (`ee_saml_pending_requests`), assertion replay nonces (`ee_saml_replay_assertions`), and
+federated principal projections (`ee_saml_principals`) in PostgreSQL across Gunicorn workers.
+
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
 
@@ -8,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import secrets
 import threading
 import urllib.parse
@@ -17,6 +22,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
+
+from django.db import connection, transaction
 
 from ee.edition import require_enterprise_edition
 from ee.saml.xml_security import (
@@ -32,6 +39,7 @@ from ee.saml.xml_security import (
     parse_hardened_xml,
     verify_saml_response_tree,
 )
+from ee.store import can_use_postgres, derive_ee_hkdf_bytes, ensure_ee_tables, reset_ee_tables
 
 SAML_BINDING_HTTP_POST = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
 SAML_BINDING_HTTP_REDIRECT = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
@@ -41,6 +49,7 @@ SAML_CM_BEARER = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
 
 VALID_ROLES = ("org_member", "org_billing", "org_admin")
 _ROLE_PRIORITY = {"org_member": 1, "org_billing": 2, "org_admin": 3}
+_RELAY_HMAC_KDF_INFO = b"kodera-ee-saml-relay-hmac-v1"
 
 
 def _is_ascii_lower_alnum(ch: str) -> bool:
@@ -197,6 +206,71 @@ class ProvisionedSamlPrincipal:
     authenticated_at: datetime
 
 
+def _idp_from_row(row: tuple[object, ...]) -> SamlIdpConfig:
+    domains_raw = json.loads(str(row[5]))
+    mapping_raw = json.loads(str(row[6]))
+    org_str = str(row[10]) if row[10] is not None else None
+    return SamlIdpConfig(
+        tenant_slug=str(row[0]),
+        idp_id=str(row[1]),
+        idp_entity_id=str(row[2]),
+        idp_sso_url=str(row[3]),
+        public_key_pem=str(row[4]),
+        verified_domains=frozenset(str(d) for d in domains_raw)
+        if isinstance(domains_raw, list)
+        else frozenset(),
+        group_role_mapping={str(k): str(v) for k, v in mapping_raw.items()}
+        if isinstance(mapping_raw, dict)
+        else {},
+        default_role=str(row[7]),
+        want_assertions_signed=bool(row[8]),
+        clock_skew_seconds=int(str(row[9])),
+        organisation_id=UUID(org_str) if org_str else None,
+    )
+
+
+def _principal_to_json(record: ProvisionedSamlPrincipal) -> str:
+    return json.dumps(
+        {
+            "user_id": record.user_id,
+            "tenant_slug": record.tenant_slug,
+            "idp_id": record.idp_id,
+            "idp_entity_id": record.idp_entity_id,
+            "assertion_id": record.assertion_id,
+            "subject_name_id": record.subject_name_id,
+            "email": record.email,
+            "display_name": record.display_name,
+            "groups": list(record.groups),
+            "role": record.role,
+            "return_path": record.return_path,
+            "authenticated_at": record.authenticated_at.astimezone(UTC).isoformat(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _principal_from_json(raw_json: str) -> ProvisionedSamlPrincipal:
+    data = json.loads(raw_json)
+    auth_dt = datetime.fromisoformat(str(data["authenticated_at"])).astimezone(UTC)
+    groups_raw = data.get("groups", [])
+    groups_tuple = tuple(str(g) for g in groups_raw) if isinstance(groups_raw, list) else ()
+    return ProvisionedSamlPrincipal(
+        user_id=str(data["user_id"]),
+        tenant_slug=str(data["tenant_slug"]),
+        idp_id=str(data["idp_id"]),
+        idp_entity_id=str(data["idp_entity_id"]),
+        assertion_id=str(data["assertion_id"]),
+        subject_name_id=str(data["subject_name_id"]),
+        email=str(data["email"]),
+        display_name=str(data["display_name"]),
+        groups=groups_tuple,
+        role=str(data["role"]),
+        return_path=str(data["return_path"]),
+        authenticated_at=auth_dt,
+    )
+
+
 def _parse_saml_instant(raw: str | None, field_name: str) -> datetime:
     if not raw:
         raise SamlError(
@@ -295,23 +369,29 @@ def _sanitize_return_path(return_path: str) -> str:
 
 
 class SamlService:
-    """Multi-IdP SAML 2.0 Service Provider engine with replay protection and domain scoping."""
+    """Multi-IdP SAML 2.0 Service Provider engine with PostgreSQL multi-worker persistence."""
 
     def __init__(self, *, relay_hmac_secret: bytes | None = None) -> None:
         self._lock = threading.Lock()
-        self._relay_secret = relay_hmac_secret or secrets.token_bytes(32)
+        self._explicit_relay_secret = relay_hmac_secret
         self._idps: dict[tuple[str, str], SamlIdpConfig] = {}
         self._pending_by_relay: OrderedDict[str, _PendingRequest] = OrderedDict()
         self._replay_cache: OrderedDict[tuple[str, str, str], datetime] = OrderedDict()
         self._provisioned_users: dict[tuple[str, str], ProvisionedSamlPrincipal] = {}
 
+    def _relay_hmac_key(self) -> bytes:
+        if self._explicit_relay_secret is not None:
+            return self._explicit_relay_secret
+        return derive_ee_hkdf_bytes(domain_info=_RELAY_HMAC_KDF_INFO)
+
     def reset(self) -> None:
-        """Clear in-memory IdP registrations, pending requests, replay cache, and principals."""
+        """Clear IdP registrations, pending requests, replay cache, and principals."""
         with self._lock:
             self._idps.clear()
             self._pending_by_relay.clear()
             self._replay_cache.clear()
             self._provisioned_users.clear()
+        reset_ee_tables("saml")
 
     def sp_entity_id(self, tenant_slug: str, sp_base_url: str) -> str:
         if not _is_valid_slug(tenant_slug):
@@ -327,19 +407,87 @@ class SamlService:
 
     def register_idp(self, config: SamlIdpConfig) -> SamlIdpConfig:
         require_enterprise_edition()
+        if can_use_postgres():
+            ensure_ee_tables()
+            domains_json = json.dumps(sorted(config.verified_domains))
+            mapping_json = json.dumps(dict(config.group_role_mapping), sort_keys=True)
+            org_id_str = str(config.organisation_id) if config.organisation_id is not None else None
+            now_ts = datetime.now(UTC)
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ee_saml_idps ("
+                    "tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem, "
+                    "verified_domains_json, group_role_mapping_json, default_role, "
+                    "want_assertions_signed, clock_skew_seconds, organisation_id, updated_at"
+                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                    "ON CONFLICT (tenant_slug, idp_id) DO UPDATE SET "
+                    "idp_entity_id = EXCLUDED.idp_entity_id, "
+                    "idp_sso_url = EXCLUDED.idp_sso_url, "
+                    "public_key_pem = EXCLUDED.public_key_pem, "
+                    "verified_domains_json = EXCLUDED.verified_domains_json, "
+                    "group_role_mapping_json = EXCLUDED.group_role_mapping_json, "
+                    "default_role = EXCLUDED.default_role, "
+                    "want_assertions_signed = EXCLUDED.want_assertions_signed, "
+                    "clock_skew_seconds = EXCLUDED.clock_skew_seconds, "
+                    "organisation_id = EXCLUDED.organisation_id, "
+                    "updated_at = EXCLUDED.updated_at",
+                    [
+                        config.tenant_slug,
+                        config.idp_id,
+                        config.idp_entity_id,
+                        config.idp_sso_url,
+                        config.public_key_pem,
+                        domains_json,
+                        mapping_json,
+                        config.default_role,
+                        config.want_assertions_signed,
+                        config.clock_skew_seconds,
+                        org_id_str,
+                        now_ts,
+                    ],
+                )
+            return config
+
         with self._lock:
             self._idps[(config.tenant_slug, config.idp_id)] = config
         return config
 
     def list_idps(self, tenant_slug: str) -> list[SamlIdpConfig]:
         require_enterprise_edition()
+        if can_use_postgres():
+            ensure_ee_tables()
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem, "
+                    "verified_domains_json, group_role_mapping_json, default_role, "
+                    "want_assertions_signed, clock_skew_seconds, organisation_id "
+                    "FROM ee_saml_idps WHERE tenant_slug = %s ORDER BY idp_id ASC",
+                    [tenant_slug],
+                )
+                rows = cur.fetchall()
+            return [_idp_from_row(row) for row in rows]
+
         with self._lock:
             return [cfg for (t_slug, _), cfg in sorted(self._idps.items()) if t_slug == tenant_slug]
 
     def get_idp(self, tenant_slug: str, idp_id: str) -> SamlIdpConfig:
         require_enterprise_edition()
-        with self._lock:
-            cfg = self._idps.get((tenant_slug, idp_id))
+        if can_use_postgres():
+            ensure_ee_tables()
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT tenant_slug, idp_id, idp_entity_id, idp_sso_url, public_key_pem, "
+                    "verified_domains_json, group_role_mapping_json, default_role, "
+                    "want_assertions_signed, clock_skew_seconds, organisation_id "
+                    "FROM ee_saml_idps WHERE tenant_slug = %s AND idp_id = %s",
+                    [tenant_slug, idp_id],
+                )
+                row = cur.fetchone()
+            cfg = _idp_from_row(row) if row is not None else None
+        else:
+            with self._lock:
+                cfg = self._idps.get((tenant_slug, idp_id))
+
         if cfg is None:
             raise SamlError(
                 "idp_not_found",
@@ -379,7 +527,7 @@ class SamlService:
             f"kodera-saml-relay-v1\x00{nonce}\x00{tenant_slug}\x00{idp_id}\x00"
             f"{request_id}\x00{return_path}\x00{expires_epoch}"
         ).encode()
-        digest = hmac.new(self._relay_secret, mac_input, hashlib.sha256).hexdigest()
+        digest = hmac.new(self._relay_hmac_key(), mac_input, hashlib.sha256).hexdigest()
         return f"{nonce}.{digest}"
 
     def create_authn_request(
@@ -398,7 +546,7 @@ class SamlService:
         entity_id = self.sp_entity_id(tenant_slug, norm_base)
         acs_url = self.sp_acs_url(tenant_slug, norm_base)
 
-        issued_at = (now or datetime.now(UTC)).astimezone(UTC)
+        issued_at = (now or datetime.now(UTC)).astimezone(UTC).replace(microsecond=0)
         expires_at = issued_at + timedelta(seconds=DEFAULT_AUTHN_REQUEST_TTL_S)
         expires_epoch = int(expires_at.timestamp())
 
@@ -444,11 +592,33 @@ class SamlService:
             sp_base_url=norm_base,
             expires_at=expires_at,
         )
-        with self._lock:
-            self._prune_pending_locked(issued_at)
-            self._pending_by_relay[relay_state] = pending
-            while len(self._pending_by_relay) > MAX_PENDING_REQUESTS:
-                self._pending_by_relay.popitem(last=False)
+        if can_use_postgres():
+            ensure_ee_tables()
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM ee_saml_pending_requests WHERE expires_at <= %s",
+                    [issued_at],
+                )
+                cur.execute(
+                    "INSERT INTO ee_saml_pending_requests ("
+                    "relay_state, tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at"
+                    ") VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    [
+                        relay_state,
+                        tenant_slug,
+                        idp.idp_id,
+                        request_id,
+                        clean_return,
+                        norm_base,
+                        expires_at,
+                    ],
+                )
+        else:
+            with self._lock:
+                self._prune_pending_locked(issued_at)
+                self._pending_by_relay[relay_state] = pending
+                while len(self._pending_by_relay) > MAX_PENDING_REQUESTS:
+                    self._pending_by_relay.popitem(last=False)
 
         return AuthnRequestBundle(
             tenant_slug=tenant_slug,
@@ -489,9 +659,41 @@ class SamlService:
         if not nonce:
             raise SamlError("invalid_relay_state", "Malformed SAML RelayState nonce", status=403)
 
-        with self._lock:
-            self._prune_pending_locked(now)
-            pending = self._pending_by_relay.pop(relay_state, None)
+        pending: _PendingRequest | None = None
+        if can_use_postgres():
+            ensure_ee_tables()
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM ee_saml_pending_requests WHERE expires_at <= %s",
+                    [now],
+                )
+                cur.execute(
+                    "DELETE FROM ee_saml_pending_requests "
+                    "WHERE relay_state = %s AND expires_at > %s "
+                    "RETURNING tenant_slug, idp_id, request_id, return_path, sp_base_url, expires_at",
+                    [relay_state, now],
+                )
+                row = cur.fetchone()
+            if row is not None:
+                exp_val = row[5]
+                exp_dt = (
+                    exp_val.astimezone(UTC)
+                    if isinstance(exp_val, datetime)
+                    else datetime.fromisoformat(str(exp_val)).astimezone(UTC)
+                )
+                pending = _PendingRequest(
+                    tenant_slug=str(row[0]),
+                    idp_id=str(row[1]),
+                    request_id=str(row[2]),
+                    relay_state=relay_state,
+                    return_path=str(row[3]),
+                    sp_base_url=str(row[4]),
+                    expires_at=exp_dt,
+                )
+        else:
+            with self._lock:
+                self._prune_pending_locked(now)
+                pending = self._pending_by_relay.pop(relay_state, None)
 
         if pending is None:
             raise SamlError(
@@ -526,6 +728,52 @@ class SamlService:
                 status=403,
             )
         return pending
+
+    def _record_assertion_once(
+        self,
+        *,
+        tenant_slug: str,
+        idp_entity_id: str,
+        assertion_id: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> None:
+        if can_use_postgres():
+            ensure_ee_tables()
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM ee_saml_replay_assertions WHERE expires_at <= %s",
+                    [now],
+                )
+                cur.execute(
+                    "INSERT INTO ee_saml_replay_assertions ("
+                    "tenant_slug, idp_entity_id, assertion_id, expires_at"
+                    ") VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (tenant_slug, idp_entity_id, assertion_id) DO NOTHING "
+                    "RETURNING assertion_id",
+                    [tenant_slug, idp_entity_id, assertion_id, expires_at],
+                )
+                inserted = cur.fetchone()
+            if inserted is None:
+                raise SamlError(
+                    "replayed_assertion_id",
+                    "SAML Assertion ID has already been consumed (replay detected)",
+                    status=403,
+                )
+            return
+
+        replay_key = (tenant_slug, idp_entity_id, assertion_id)
+        with self._lock:
+            self._prune_replay_locked(now)
+            if replay_key in self._replay_cache:
+                raise SamlError(
+                    "replayed_assertion_id",
+                    "SAML Assertion ID has already been consumed (replay detected)",
+                    status=403,
+                )
+            self._replay_cache[replay_key] = expires_at
+            while len(self._replay_cache) > MAX_REPLAY_ENTRIES:
+                self._replay_cache.popitem(last=False)
 
     def consume_saml_response(
         self,
@@ -736,29 +984,23 @@ class SamlService:
                     status=403,
                 )
 
-        # Atomic replay check on (tenant_slug, idp_entity_id, assertion_id)
-        replay_key = (tenant_slug, idp.idp_entity_id, assertion_id)
-        replay_expiry = max(cond_noa, subj_noa) + skew
-        with self._lock:
-            self._prune_replay_locked(current_time)
-            if replay_key in self._replay_cache:
-                raise SamlError(
-                    "replayed_assertion_id",
-                    "SAML Assertion ID has already been consumed (replay detected)",
-                    status=403,
-                )
-            self._replay_cache[replay_key] = replay_expiry
-            while len(self._replay_cache) > MAX_REPLAY_ENTRIES:
-                self._replay_cache.popitem(last=False)
-
-        # Extract attributes from verified Assertion ONLY
+        # Extract attributes from verified Assertion ONLY before committing replay & provisioning
         attrs = _extract_attributes(assertion_node)
         email = _resolve_verified_email(subject_name_id, attrs, idp.verified_domains)
         display_name = _resolve_display_name(attrs, email)
         groups = _resolve_groups(attrs)
         role = _resolve_mapped_role(groups, idp.group_role_mapping, idp.default_role)
 
-        principal = self._jit_upsert_principal(
+        replay_expiry = max(cond_noa, subj_noa) + skew
+        self._record_assertion_once(
+            tenant_slug=tenant_slug,
+            idp_entity_id=idp.idp_entity_id,
+            assertion_id=assertion_id,
+            expires_at=replay_expiry,
+            now=current_time,
+        )
+
+        return self._jit_upsert_principal(
             idp=idp,
             assertion_id=assertion_id,
             subject_name_id=subject_name_id,
@@ -769,7 +1011,6 @@ class SamlService:
             return_path=pending.return_path,
             authenticated_at=current_time,
         )
-        return principal
 
     def _jit_upsert_principal(
         self,
@@ -784,34 +1025,49 @@ class SamlService:
         return_path: str,
         authenticated_at: datetime,
     ) -> ProvisionedSamlPrincipal:
-        key = (idp.tenant_slug, email.lower())
-        with self._lock:
-            existing = self._provisioned_users.get(key)
-            user_id = existing.user_id if existing is not None else str(uuid4())
-            if idp.organisation_id is not None:
-                user_id = _sync_django_organisation_member(
-                    organisation_id=idp.organisation_id,
-                    idp_id=idp.idp_id,
-                    subject=subject_name_id,
-                    email=email.lower(),
-                    display_name=display_name,
-                    role=role,
-                )
-            record = ProvisionedSamlPrincipal(
-                user_id=user_id,
-                tenant_slug=idp.tenant_slug,
+        email_low = email.lower()
+        existing = self.get_provisioned_principal(idp.tenant_slug, email_low)
+        user_id = existing.user_id if existing is not None else str(uuid4())
+        if idp.organisation_id is not None:
+            user_id = _sync_django_organisation_member(
+                organisation_id=idp.organisation_id,
                 idp_id=idp.idp_id,
-                idp_entity_id=idp.idp_entity_id,
-                assertion_id=assertion_id,
-                subject_name_id=subject_name_id,
-                email=email.lower(),
+                subject=subject_name_id,
+                email=email_low,
                 display_name=display_name,
-                groups=groups,
                 role=role,
-                return_path=return_path,
-                authenticated_at=authenticated_at,
             )
-            self._provisioned_users[key] = record
+        record = ProvisionedSamlPrincipal(
+            user_id=user_id,
+            tenant_slug=idp.tenant_slug,
+            idp_id=idp.idp_id,
+            idp_entity_id=idp.idp_entity_id,
+            assertion_id=assertion_id,
+            subject_name_id=subject_name_id,
+            email=email_low,
+            display_name=display_name,
+            groups=groups,
+            role=role,
+            return_path=return_path,
+            authenticated_at=authenticated_at,
+        )
+        if can_use_postgres():
+            ensure_ee_tables()
+            payload_json = _principal_to_json(record)
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO ee_saml_principals ("
+                    "tenant_slug, email_lower, payload_json, updated_at"
+                    ") VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (tenant_slug, email_lower) DO UPDATE SET "
+                    "payload_json = EXCLUDED.payload_json, "
+                    "updated_at = EXCLUDED.updated_at",
+                    [idp.tenant_slug, email_low, payload_json, authenticated_at],
+                )
+            return record
+
+        with self._lock:
+            self._provisioned_users[(idp.tenant_slug, email_low)] = record
         return record
 
     def get_provisioned_principal(
@@ -820,8 +1076,20 @@ class SamlService:
         email: str,
     ) -> ProvisionedSamlPrincipal | None:
         require_enterprise_edition()
+        email_low = email.strip().lower()
+        if can_use_postgres():
+            ensure_ee_tables()
+            with connection.cursor() as cur:
+                cur.execute(
+                    "SELECT payload_json FROM ee_saml_principals "
+                    "WHERE tenant_slug = %s AND email_lower = %s",
+                    [tenant_slug, email_low],
+                )
+                row = cur.fetchone()
+            return _principal_from_json(str(row[0])) if row is not None else None
+
         with self._lock:
-            return self._provisioned_users.get((tenant_slug, email.strip().lower()))
+            return self._provisioned_users.get((tenant_slug, email_low))
 
 
 def _extract_attributes(assertion_node: XmlNode) -> dict[str, list[str]]:
@@ -952,7 +1220,6 @@ def _sync_django_organisation_member(
     """Sync federated SAML login into Django `Identity`/`User`/`Membership` when bound to an org."""
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership, Organisation
-    from django.db import transaction
     from django.utils import timezone
 
     with transaction.atomic():

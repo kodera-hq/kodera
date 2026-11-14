@@ -1,5 +1,9 @@
 """RFC 7643 / RFC 7644 SCIM 2.0 User & Group directory sync and instant deprovisioning.
 
+Persists SCIM directory users (`ee_scim_users`), groups (`ee_scim_groups`), active user sessions
+(`ee_scim_sessions`), and deprovisioning audit records (`ee_scim_deprovision_events`) in PostgreSQL
+under per-tenant advisory locks so all Gunicorn workers share consistent directory state.
+
 Governed by `ee/LICENSE` (`LicenseRef-Kodera-EE`).
 """
 
@@ -7,11 +11,15 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final
 from uuid import UUID, uuid4
+
+from django.db import connection, transaction
+from uuid6 import uuid7
 
 from ee.edition import require_enterprise_edition
 from ee.scim.auth import ScimTokenManager
@@ -22,6 +30,7 @@ from ee.scim.schemas import (
     SCIM_PATCH_OP_SCHEMA,
     SCIM_USER_SCHEMA,
 )
+from ee.store import can_use_postgres, ensure_ee_tables, reset_ee_tables
 
 MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 100
@@ -195,6 +204,241 @@ class DeprovisionRecord:
     reason: str
     revoked_sessions: tuple[str, ...]
     occurred_at: datetime
+
+
+@dataclass(slots=True)
+class _TenantScimState:
+    tenant_slug: str
+    users: dict[str, ScimUser] = field(default_factory=dict)
+    groups: dict[str, ScimGroup] = field(default_factory=dict)
+    sessions: dict[str, set[str]] = field(default_factory=dict)
+    deprovision_log: list[DeprovisionRecord] = field(default_factory=list)
+    new_deprovision_events: list[DeprovisionRecord] = field(default_factory=list)
+
+
+def _user_to_storage_json(user: ScimUser) -> str:
+    return json.dumps(
+        {
+            "id": user.id,
+            "tenant_slug": user.tenant_slug,
+            "user_name": user.user_name,
+            "external_id": user.external_id,
+            "display_name": user.display_name,
+            "given_name": user.given_name,
+            "family_name": user.family_name,
+            "emails": [
+                {"value": e.value, "type": e.type, "primary": e.primary} for e in user.emails
+            ],
+            "active": user.active,
+            "roles": list(user.roles),
+            "department": user.department,
+            "member_state": user.member_state,
+            "version": user.version,
+            "created_at": user.created_at.astimezone(UTC).isoformat(),
+            "updated_at": user.updated_at.astimezone(UTC).isoformat(),
+            "deprovisioned_at": user.deprovisioned_at.astimezone(UTC).isoformat()
+            if user.deprovisioned_at is not None
+            else None,
+            "django_user_id": user.django_user_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _user_from_storage_json(raw: str) -> ScimUser:
+    obj = json.loads(raw)
+    emails_raw = obj.get("emails", [])
+    emails = [
+        ScimEmail(
+            value=str(item["value"]),
+            type=str(item.get("type", "work")),
+            primary=bool(item.get("primary", False)),
+        )
+        for item in emails_raw
+        if isinstance(item, dict) and "value" in item
+    ]
+    roles_raw = obj.get("roles", [])
+    roles = [str(r) for r in roles_raw] if isinstance(roles_raw, list) else []
+    deprov_raw = obj.get("deprovisioned_at")
+    return ScimUser(
+        id=str(obj["id"]),
+        tenant_slug=str(obj["tenant_slug"]),
+        user_name=str(obj["user_name"]),
+        external_id=str(obj["external_id"]) if obj.get("external_id") is not None else None,
+        display_name=str(obj["display_name"]),
+        given_name=str(obj["given_name"]),
+        family_name=str(obj["family_name"]),
+        emails=emails,
+        active=bool(obj["active"]),
+        roles=roles,
+        department=str(obj["department"]) if obj.get("department") is not None else None,
+        member_state=str(obj["member_state"]),
+        version=int(obj["version"]),
+        created_at=datetime.fromisoformat(str(obj["created_at"])).astimezone(UTC),
+        updated_at=datetime.fromisoformat(str(obj["updated_at"])).astimezone(UTC),
+        deprovisioned_at=datetime.fromisoformat(str(deprov_raw)).astimezone(UTC)
+        if deprov_raw is not None
+        else None,
+        django_user_id=str(obj["django_user_id"])
+        if obj.get("django_user_id") is not None
+        else None,
+    )
+
+
+def _group_to_storage_json(group: ScimGroup) -> str:
+    return json.dumps(
+        {
+            "id": group.id,
+            "tenant_slug": group.tenant_slug,
+            "display_name": group.display_name,
+            "external_id": group.external_id,
+            "member_ids": list(group.member_ids),
+            "version": group.version,
+            "created_at": group.created_at.astimezone(UTC).isoformat(),
+            "updated_at": group.updated_at.astimezone(UTC).isoformat(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _group_from_storage_json(raw: str) -> ScimGroup:
+    obj = json.loads(raw)
+    mids_raw = obj.get("member_ids", [])
+    mids = [str(m) for m in mids_raw] if isinstance(mids_raw, list) else []
+    return ScimGroup(
+        id=str(obj["id"]),
+        tenant_slug=str(obj["tenant_slug"]),
+        display_name=str(obj["display_name"]),
+        external_id=str(obj["external_id"]) if obj.get("external_id") is not None else None,
+        member_ids=mids,
+        version=int(obj["version"]),
+        created_at=datetime.fromisoformat(str(obj["created_at"])).astimezone(UTC),
+        updated_at=datetime.fromisoformat(str(obj["updated_at"])).astimezone(UTC),
+    )
+
+
+def _load_postgres_tenant_state(cur: object, tenant_slug: str) -> _TenantScimState:
+    from typing import Any, cast
+
+    cursor = cast(Any, cur)
+    state = _TenantScimState(tenant_slug=tenant_slug)
+
+    cursor.execute(
+        "SELECT payload_json FROM ee_scim_users "
+        "WHERE tenant_slug = %s ORDER BY created_at ASC, user_id ASC",
+        [tenant_slug],
+    )
+    for (u_json,) in cursor.fetchall():
+        usr = _user_from_storage_json(str(u_json))
+        state.users[usr.id] = usr
+
+    cursor.execute(
+        "SELECT payload_json FROM ee_scim_groups "
+        "WHERE tenant_slug = %s ORDER BY created_at ASC, group_id ASC",
+        [tenant_slug],
+    )
+    for (g_json,) in cursor.fetchall():
+        grp = _group_from_storage_json(str(g_json))
+        state.groups[grp.id] = grp
+
+    cursor.execute(
+        "SELECT user_id, session_id FROM ee_scim_sessions WHERE tenant_slug = %s",
+        [tenant_slug],
+    )
+    for uid, sid in cursor.fetchall():
+        state.sessions.setdefault(str(uid), set()).add(str(sid))
+
+    cursor.execute(
+        "SELECT user_id, user_name, reason, revoked_sessions_json, occurred_at "
+        "FROM ee_scim_deprovision_events WHERE tenant_slug = %s "
+        "ORDER BY occurred_at ASC, event_id ASC",
+        [tenant_slug],
+    )
+    for uid, uname, reason, rev_json, occ in cursor.fetchall():
+        rev_list = json.loads(str(rev_json))
+        rev_tuple = tuple(str(s) for s in rev_list) if isinstance(rev_list, list) else ()
+        occ_dt = (
+            occ.astimezone(UTC)
+            if isinstance(occ, datetime)
+            else datetime.fromisoformat(str(occ)).astimezone(UTC)
+        )
+        state.deprovision_log.append(
+            DeprovisionRecord(
+                tenant_slug=tenant_slug,
+                user_id=str(uid),
+                user_name=str(uname),
+                reason=str(reason),
+                revoked_sessions=rev_tuple,
+                occurred_at=occ_dt,
+            )
+        )
+    return state
+
+
+def _flush_postgres_tenant_state(cur: object, state: _TenantScimState) -> None:
+    from typing import Any, cast
+
+    cursor = cast(Any, cur)
+    tenant_slug = state.tenant_slug
+
+    cursor.execute("DELETE FROM ee_scim_users WHERE tenant_slug = %s", [tenant_slug])
+    for usr in state.users.values():
+        cursor.execute(
+            "INSERT INTO ee_scim_users ("
+            "tenant_slug, user_id, user_name_lower, payload_json, created_at, updated_at"
+            ") VALUES (%s, %s, %s, %s, %s, %s)",
+            [
+                tenant_slug,
+                usr.id,
+                usr.user_name.lower(),
+                _user_to_storage_json(usr),
+                usr.created_at,
+                usr.updated_at,
+            ],
+        )
+
+    cursor.execute("DELETE FROM ee_scim_groups WHERE tenant_slug = %s", [tenant_slug])
+    for grp in state.groups.values():
+        cursor.execute(
+            "INSERT INTO ee_scim_groups ("
+            "tenant_slug, group_id, display_name_lower, payload_json, created_at, updated_at"
+            ") VALUES (%s, %s, %s, %s, %s, %s)",
+            [
+                tenant_slug,
+                grp.id,
+                grp.display_name.lower(),
+                _group_to_storage_json(grp),
+                grp.created_at,
+                grp.updated_at,
+            ],
+        )
+
+    cursor.execute("DELETE FROM ee_scim_sessions WHERE tenant_slug = %s", [tenant_slug])
+    for uid, sids in state.sessions.items():
+        for sid in sorted(sids):
+            cursor.execute(
+                "INSERT INTO ee_scim_sessions (tenant_slug, user_id, session_id) "
+                "VALUES (%s, %s, %s)",
+                [tenant_slug, uid, sid],
+            )
+
+    for evt in state.new_deprovision_events:
+        cursor.execute(
+            "INSERT INTO ee_scim_deprovision_events ("
+            "event_id, tenant_slug, user_id, user_name, reason, revoked_sessions_json, occurred_at"
+            ") VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            [
+                str(uuid7()),
+                tenant_slug,
+                evt.user_id,
+                evt.user_name,
+                evt.reason,
+                json.dumps(list(evt.revoked_sessions)),
+                evt.occurred_at,
+            ],
+        )
 
 
 def _parse_bool_value(raw: object) -> bool:
@@ -539,83 +783,135 @@ def _paginate(
     }
 
 
+def _groups_for_user(state: _TenantScimState, user_id: str) -> list[tuple[str, str]]:
+    return [
+        (grp.id, grp.display_name)
+        for _, grp in sorted(state.groups.items())
+        if user_id in grp.member_ids
+    ]
+
+
+def _member_names(state: _TenantScimState) -> dict[str, str]:
+    return {usr.id: (usr.display_name or usr.user_name) for usr in state.users.values()}
+
+
+def _deprovision_user(
+    state: _TenantScimState,
+    user: ScimUser,
+    *,
+    reason: str,
+    organisation_id: UUID | None,
+    now: datetime,
+) -> None:
+    revoked = tuple(sorted(state.sessions.pop(user.id, set())))
+    user.active = False
+    user.member_state = "deprovisioned"
+    user.deprovisioned_at = now
+    evt = DeprovisionRecord(
+        tenant_slug=user.tenant_slug,
+        user_id=user.id,
+        user_name=user.user_name,
+        reason=reason,
+        revoked_sessions=revoked,
+        occurred_at=now,
+    )
+    state.deprovision_log.append(evt)
+    state.new_deprovision_events.append(evt)
+    if organisation_id is not None and user.django_user_id is not None:
+        _sync_django_scim_deprovision(organisation_id, UUID(user.django_user_id))
+
+
+def _extract_member_ids(state: _TenantScimState, raw_members: object) -> list[str]:
+    if raw_members is None:
+        return []
+    if not isinstance(raw_members, list):
+        raise ScimError("Group members must be a list", status=400, scim_type="invalidValue")
+    member_ids: list[str] = []
+    seen: set[str] = set()
+    for entry in raw_members:
+        uid: str | None = None
+        if isinstance(entry, dict) and isinstance(entry.get("value"), str):
+            uid = entry["value"].strip()
+        elif isinstance(entry, str):
+            uid = entry.strip()
+        if not uid:
+            raise ScimError(
+                "Each group member entry requires a user 'value'",
+                status=400,
+                scim_type="invalidValue",
+            )
+        if uid not in state.users:
+            raise ScimError(
+                f"Member user {uid!r} does not exist in tenant {state.tenant_slug!r}",
+                status=400,
+                scim_type="invalidValue",
+            )
+        if uid not in seen:
+            seen.add(uid)
+            member_ids.append(uid)
+    return member_ids
+
+
 class ScimService:
-    """Tenant-isolated SCIM 2.0 User & Group directory service with instant session revocation."""
+    """Tenant-isolated SCIM 2.0 User & Group directory service with PostgreSQL persistence."""
 
     def __init__(self, *, tokens: ScimTokenManager | None = None) -> None:
         self._lock = threading.Lock()
         self.tokens = tokens if tokens is not None else ScimTokenManager()
-        self._users: dict[tuple[str, str], ScimUser] = {}
-        self._groups: dict[tuple[str, str], ScimGroup] = {}
-        self._active_sessions: dict[tuple[str, str], set[str]] = {}
-        self._deprovision_log: list[DeprovisionRecord] = []
+        self._mem_tenants: dict[str, _TenantScimState] = {}
 
     def reset(self) -> None:
         with self._lock:
-            self._users.clear()
-            self._groups.clear()
-            self._active_sessions.clear()
-            self._deprovision_log.clear()
+            self._mem_tenants.clear()
+        reset_ee_tables("scim")
         self.tokens.reset()
+
+    @contextmanager
+    def _tenant_scope(self, tenant_slug: str, *, write: bool = False) -> Iterator[_TenantScimState]:
+        if can_use_postgres():
+            ensure_ee_tables()
+            if write:
+                with transaction.atomic(), connection.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext('kodera_ee_scim:' || %s))",
+                        [tenant_slug],
+                    )
+                    state = _load_postgres_tenant_state(cur, tenant_slug)
+                    yield state
+                    _flush_postgres_tenant_state(cur, state)
+                return
+
+            with connection.cursor() as cur:
+                state = _load_postgres_tenant_state(cur, tenant_slug)
+            yield state
+            return
+
+        with self._lock:
+            mem_state = self._mem_tenants.get(tenant_slug)
+            if mem_state is None:
+                mem_state = _TenantScimState(tenant_slug=tenant_slug)
+                self._mem_tenants[tenant_slug] = mem_state
+            mem_state.new_deprovision_events.clear()
+            yield mem_state
 
     def register_session(self, tenant_slug: str, user_id: str, session_id: str) -> None:
         """Bind an active session identifier to a SCIM-managed user (revoked on deprovision)."""
         require_enterprise_edition()
-        with self._lock:
-            user = self._users.get((tenant_slug, user_id))
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            user = state.users.get(user_id)
             if user is None or not user.active:
                 raise ScimError("Cannot create session for inactive or unknown user", status=403)
-            self._active_sessions.setdefault((tenant_slug, user_id), set()).add(session_id)
+            state.sessions.setdefault(user_id, set()).add(session_id)
 
     def active_sessions(self, tenant_slug: str, user_id: str) -> frozenset[str]:
         require_enterprise_edition()
-        with self._lock:
-            return frozenset(self._active_sessions.get((tenant_slug, user_id), set()))
+        with self._tenant_scope(tenant_slug, write=False) as state:
+            return frozenset(state.sessions.get(user_id, set()))
 
     def deprovision_events(self, tenant_slug: str) -> list[DeprovisionRecord]:
         require_enterprise_edition()
-        with self._lock:
-            return [evt for evt in self._deprovision_log if evt.tenant_slug == tenant_slug]
-
-    def _groups_for_user_locked(self, tenant_slug: str, user_id: str) -> list[tuple[str, str]]:
-        return [
-            (grp.id, grp.display_name)
-            for (t_slug, _), grp in sorted(self._groups.items())
-            if t_slug == tenant_slug and user_id in grp.member_ids
-        ]
-
-    def _member_names_locked(self, tenant_slug: str) -> dict[str, str]:
-        return {
-            usr.id: (usr.display_name or usr.user_name)
-            for (t_slug, _), usr in self._users.items()
-            if t_slug == tenant_slug
-        }
-
-    def _deprovision_user_locked(
-        self,
-        user: ScimUser,
-        *,
-        reason: str,
-        organisation_id: UUID | None,
-        now: datetime,
-    ) -> None:
-        session_key = (user.tenant_slug, user.id)
-        revoked = tuple(sorted(self._active_sessions.pop(session_key, set())))
-        user.active = False
-        user.member_state = "deprovisioned"
-        user.deprovisioned_at = now
-        self._deprovision_log.append(
-            DeprovisionRecord(
-                tenant_slug=user.tenant_slug,
-                user_id=user.id,
-                user_name=user.user_name,
-                reason=reason,
-                revoked_sessions=revoked,
-                occurred_at=now,
-            )
-        )
-        if organisation_id is not None and user.django_user_id is not None:
-            _sync_django_scim_deprovision(organisation_id, UUID(user.django_user_id))
+        with self._tenant_scope(tenant_slug, write=False) as state:
+            return list(state.deprovision_log)
 
     def create_user(
         self,
@@ -662,9 +958,9 @@ class ScimService:
 
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._lock:
-            for (t_slug, _), existing in self._users.items():
-                if t_slug == tenant_slug and existing.user_name.lower() == user_name.lower():
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            for existing in state.users.values():
+                if existing.user_name.lower() == user_name.lower():
                     raise ScimError(
                         f"User with userName {user_name!r} already exists in tenant",
                         status=409,
@@ -706,15 +1002,16 @@ class ScimService:
                 deprovisioned_at=None if active else timestamp,
                 django_user_id=django_uid,
             )
-            self._users[(tenant_slug, user_id)] = user
+            state.users[user_id] = user
             if not active:
-                self._deprovision_user_locked(
+                _deprovision_user(
+                    state,
                     user,
                     reason="created_inactive",
                     organisation_id=organisation_id,
                     now=timestamp,
                 )
-            groups = self._groups_for_user_locked(tenant_slug, user_id)
+            groups = _groups_for_user(state, user_id)
             return user.to_scim_dict(base_url, groups)
 
     def get_user(
@@ -725,11 +1022,11 @@ class ScimService:
         base_url: str,
     ) -> dict[str, object]:
         require_enterprise_edition()
-        with self._lock:
-            user = self._users.get((tenant_slug, user_id))
+        with self._tenant_scope(tenant_slug, write=False) as state:
+            user = state.users.get(user_id)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
-            groups = self._groups_for_user_locked(tenant_slug, user.id)
+            groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
 
     def list_users(
@@ -743,21 +1040,15 @@ class ScimService:
     ) -> dict[str, object]:
         require_enterprise_edition()
         clauses = _parse_filter_clauses(filter_expr) if filter_expr else []
-        with self._lock:
-            tenant_users = [
-                usr
-                for (t_slug, _), usr in sorted(
-                    self._users.items(), key=lambda item: item[1].created_at
-                )
-                if t_slug == tenant_slug
-            ]
+        with self._tenant_scope(tenant_slug, write=False) as state:
+            tenant_users = sorted(state.users.values(), key=lambda usr: (usr.created_at, usr.id))
             matched: list[dict[str, object]] = []
             for usr in tenant_users:
                 if all(
                     _matches_single_clause(_user_attr_values(usr, attr), op, lit)
                     for attr, op, lit in clauses
                 ):
-                    groups = self._groups_for_user_locked(tenant_slug, usr.id)
+                    groups = _groups_for_user(state, usr.id)
                     matched.append(usr.to_scim_dict(base_url, groups))
         return _paginate(matched, start_index=start_index, count=count)
 
@@ -779,17 +1070,13 @@ class ScimService:
         new_active = _parse_bool_value(payload.get("active", True))
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._lock:
-            user = self._users.get((tenant_slug, user_id))
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            user = state.users.get(user_id)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
 
-            for (t_slug, uid), other in self._users.items():
-                if (
-                    t_slug == tenant_slug
-                    and uid != user_id
-                    and other.user_name.lower() == new_user_name.lower()
-                ):
+            for uid, other in state.users.items():
+                if uid != user_id and other.user_name.lower() == new_user_name.lower():
                     raise ScimError(
                         f"User with userName {new_user_name!r} already exists",
                         status=409,
@@ -834,7 +1121,8 @@ class ScimService:
             user.version += 1
             user.updated_at = timestamp
             if not new_active:
-                self._deprovision_user_locked(
+                _deprovision_user(
+                    state,
                     user,
                     reason="put_active_false",
                     organisation_id=organisation_id,
@@ -846,7 +1134,7 @@ class ScimService:
                 if organisation_id is not None and user.django_user_id is not None:
                     _sync_django_scim_reactivate(organisation_id, UUID(user.django_user_id))
 
-            groups = self._groups_for_user_locked(tenant_slug, user.id)
+            groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
 
     def patch_user(
@@ -874,8 +1162,8 @@ class ScimService:
             )
 
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._lock:
-            user = self._users.get((tenant_slug, user_id))
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            user = state.users.get(user_id)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
 
@@ -909,14 +1197,14 @@ class ScimService:
                             scim_type="invalidSyntax",
                         )
                     for k, v in value.items():
-                        deprov, reactiv = self._apply_user_field_op_locked(
-                            user, op=op, path=k, value=v
+                        deprov, reactiv = self._apply_user_field_op(
+                            state, user, op=op, path=k, value=v
                         )
                         deprovision_triggered = deprovision_triggered or deprov
                         reactivate_triggered = reactivate_triggered or reactiv
                 else:
-                    deprov, reactiv = self._apply_user_field_op_locked(
-                        user, op=op, path=path, value=value
+                    deprov, reactiv = self._apply_user_field_op(
+                        state, user, op=op, path=path, value=value
                     )
                     deprovision_triggered = deprovision_triggered or deprov
                     reactivate_triggered = reactivate_triggered or reactiv
@@ -924,7 +1212,8 @@ class ScimService:
             user.version += 1
             user.updated_at = timestamp
             if deprovision_triggered and not user.active:
-                self._deprovision_user_locked(
+                _deprovision_user(
+                    state,
                     user,
                     reason="patch_active_false",
                     organisation_id=organisation_id,
@@ -936,11 +1225,12 @@ class ScimService:
                 if organisation_id is not None and user.django_user_id is not None:
                     _sync_django_scim_reactivate(organisation_id, UUID(user.django_user_id))
 
-            groups = self._groups_for_user_locked(tenant_slug, user.id)
+            groups = _groups_for_user(state, user.id)
             return user.to_scim_dict(base_url, groups)
 
-    def _apply_user_field_op_locked(
+    def _apply_user_field_op(
         self,
+        state: _TenantScimState,
         user: ScimUser,
         *,
         op: str,
@@ -963,12 +1253,8 @@ class ScimService:
                     "userName requires a non-empty string", status=400, scim_type="invalidValue"
                 )
             candidate = value.strip()
-            for (t_slug, uid), other in self._users.items():
-                if (
-                    t_slug == user.tenant_slug
-                    and uid != user.id
-                    and other.user_name.lower() == candidate.lower()
-                ):
+            for uid, other in state.users.items():
+                if uid != user.id and other.user_name.lower() == candidate.lower():
                     raise ScimError(
                         "Duplicate userName in tenant", status=409, scim_type="uniqueness"
                     )
@@ -1051,53 +1337,24 @@ class ScimService:
     ) -> None:
         require_enterprise_edition()
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._lock:
-            user = self._users.pop((tenant_slug, user_id), None)
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            user = state.users.pop(user_id, None)
             if user is None:
                 raise ScimError(f"User {user_id!r} not found", status=404)
-            self._deprovision_user_locked(
+            _deprovision_user(
+                state,
                 user,
                 reason="delete_user",
                 organisation_id=organisation_id,
                 now=timestamp,
             )
-            for (t_slug, _), grp in self._groups.items():
-                if t_slug == tenant_slug and user_id in grp.member_ids:
+            for grp in state.groups.values():
+                if user_id in grp.member_ids:
                     grp.member_ids = [uid for uid in grp.member_ids if uid != user_id]
                     grp.version += 1
                     grp.updated_at = timestamp
 
     # ------------------------------------------------------------------ Groups
-
-    def _extract_member_ids_locked(self, tenant_slug: str, raw_members: object) -> list[str]:
-        if raw_members is None:
-            return []
-        if not isinstance(raw_members, list):
-            raise ScimError("Group members must be a list", status=400, scim_type="invalidValue")
-        member_ids: list[str] = []
-        seen: set[str] = set()
-        for entry in raw_members:
-            uid: str | None = None
-            if isinstance(entry, dict) and isinstance(entry.get("value"), str):
-                uid = entry["value"].strip()
-            elif isinstance(entry, str):
-                uid = entry.strip()
-            if not uid:
-                raise ScimError(
-                    "Each group member entry requires a user 'value'",
-                    status=400,
-                    scim_type="invalidValue",
-                )
-            if (tenant_slug, uid) not in self._users:
-                raise ScimError(
-                    f"Member user {uid!r} does not exist in tenant {tenant_slug!r}",
-                    status=400,
-                    scim_type="invalidValue",
-                )
-            if uid not in seen:
-                seen.add(uid)
-                member_ids.append(uid)
-        return member_ids
 
     def create_group(
         self,
@@ -1116,15 +1373,15 @@ class ScimService:
         external_id = ext_raw.strip() if isinstance(ext_raw, str) and ext_raw.strip() else None
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._lock:
-            for (t_slug, _), existing in self._groups.items():
-                if t_slug == tenant_slug and existing.display_name.lower() == display_name.lower():
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            for existing in state.groups.values():
+                if existing.display_name.lower() == display_name.lower():
                     raise ScimError(
                         f"Group {display_name!r} already exists in tenant",
                         status=409,
                         scim_type="uniqueness",
                     )
-            member_ids = self._extract_member_ids_locked(tenant_slug, payload.get("members"))
+            member_ids = _extract_member_ids(state, payload.get("members"))
             group_id = str(uuid4())
             group = ScimGroup(
                 id=group_id,
@@ -1136,8 +1393,8 @@ class ScimService:
                 created_at=timestamp,
                 updated_at=timestamp,
             )
-            self._groups[(tenant_slug, group_id)] = group
-            return group.to_scim_dict(base_url, self._member_names_locked(tenant_slug))
+            state.groups[group_id] = group
+            return group.to_scim_dict(base_url, _member_names(state))
 
     def get_group(
         self,
@@ -1147,11 +1404,11 @@ class ScimService:
         base_url: str,
     ) -> dict[str, object]:
         require_enterprise_edition()
-        with self._lock:
-            group = self._groups.get((tenant_slug, group_id))
+        with self._tenant_scope(tenant_slug, write=False) as state:
+            group = state.groups.get(group_id)
             if group is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
-            return group.to_scim_dict(base_url, self._member_names_locked(tenant_slug))
+            return group.to_scim_dict(base_url, _member_names(state))
 
     def list_groups(
         self,
@@ -1164,15 +1421,9 @@ class ScimService:
     ) -> dict[str, object]:
         require_enterprise_edition()
         clauses = _parse_filter_clauses(filter_expr) if filter_expr else []
-        with self._lock:
-            names = self._member_names_locked(tenant_slug)
-            tenant_groups = [
-                grp
-                for (t_slug, _), grp in sorted(
-                    self._groups.items(), key=lambda item: item[1].created_at
-                )
-                if t_slug == tenant_slug
-            ]
+        with self._tenant_scope(tenant_slug, write=False) as state:
+            names = _member_names(state)
+            tenant_groups = sorted(state.groups.values(), key=lambda grp: (grp.created_at, grp.id))
             matched: list[dict[str, object]] = []
             for grp in tenant_groups:
                 if all(
@@ -1198,16 +1449,12 @@ class ScimService:
         new_display = display_raw.strip()
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
 
-        with self._lock:
-            group = self._groups.get((tenant_slug, group_id))
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            group = state.groups.get(group_id)
             if group is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
-            for (t_slug, gid), other in self._groups.items():
-                if (
-                    t_slug == tenant_slug
-                    and gid != group_id
-                    and other.display_name.lower() == new_display.lower()
-                ):
+            for gid, other in state.groups.items():
+                if gid != group_id and other.display_name.lower() == new_display.lower():
                     raise ScimError(
                         "Duplicate group displayName in tenant", status=409, scim_type="uniqueness"
                     )
@@ -1216,10 +1463,10 @@ class ScimService:
             group.external_id = (
                 ext_raw.strip() if isinstance(ext_raw, str) and ext_raw.strip() else None
             )
-            group.member_ids = self._extract_member_ids_locked(tenant_slug, payload.get("members"))
+            group.member_ids = _extract_member_ids(state, payload.get("members"))
             group.version += 1
             group.updated_at = timestamp
-            return group.to_scim_dict(base_url, self._member_names_locked(tenant_slug))
+            return group.to_scim_dict(base_url, _member_names(state))
 
     def patch_group(
         self,
@@ -1245,8 +1492,8 @@ class ScimService:
             )
 
         timestamp = (now or datetime.now(UTC)).astimezone(UTC)
-        with self._lock:
-            group = self._groups.get((tenant_slug, group_id))
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            group = state.groups.get(group_id)
             if group is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
 
@@ -1266,9 +1513,9 @@ class ScimService:
 
                 if not path and isinstance(value, dict):
                     if "displayName" in value:
-                        self._set_group_display_name_locked(group, value["displayName"])
+                        self._set_group_display_name(state, group, value["displayName"])
                     if "members" in value:
-                        self._apply_group_members_op_locked(group, op=op, value=value["members"])
+                        self._apply_group_members_op(state, group, op=op, value=value["members"])
                     continue
 
                 if path.lower() == "displayname":
@@ -1278,11 +1525,11 @@ class ScimService:
                             status=400,
                             scim_type="mutability",
                         )
-                    self._set_group_display_name_locked(group, value)
+                    self._set_group_display_name(state, group, value)
                     continue
 
                 if path.lower() == "members":
-                    self._apply_group_members_op_locked(group, op=op, value=value)
+                    self._apply_group_members_op(state, group, op=op, value=value)
                     continue
 
                 target_uid = _parse_member_filter_path(path)
@@ -1296,27 +1543,29 @@ class ScimService:
 
             group.version += 1
             group.updated_at = timestamp
-            return group.to_scim_dict(base_url, self._member_names_locked(tenant_slug))
+            return group.to_scim_dict(base_url, _member_names(state))
 
-    def _set_group_display_name_locked(self, group: ScimGroup, raw_name: object) -> None:
+    def _set_group_display_name(
+        self,
+        state: _TenantScimState,
+        group: ScimGroup,
+        raw_name: object,
+    ) -> None:
         if not isinstance(raw_name, str) or not raw_name.strip():
             raise ScimError(
                 "displayName requires a non-empty string", status=400, scim_type="invalidValue"
             )
         candidate = raw_name.strip()
-        for (t_slug, gid), other in self._groups.items():
-            if (
-                t_slug == group.tenant_slug
-                and gid != group.id
-                and other.display_name.lower() == candidate.lower()
-            ):
+        for gid, other in state.groups.items():
+            if gid != group.id and other.display_name.lower() == candidate.lower():
                 raise ScimError(
                     "Duplicate group displayName in tenant", status=409, scim_type="uniqueness"
                 )
         group.display_name = candidate
 
-    def _apply_group_members_op_locked(
+    def _apply_group_members_op(
         self,
+        state: _TenantScimState,
         group: ScimGroup,
         *,
         op: str,
@@ -1339,7 +1588,7 @@ class ScimService:
             group.member_ids = [uid for uid in group.member_ids if uid not in remove_ids]
             return
 
-        new_ids = self._extract_member_ids_locked(group.tenant_slug, value)
+        new_ids = _extract_member_ids(state, value)
         if op == "replace":
             group.member_ids = new_ids
         elif op == "add":
@@ -1354,8 +1603,8 @@ class ScimService:
         group_id: str,
     ) -> None:
         require_enterprise_edition()
-        with self._lock:
-            removed = self._groups.pop((tenant_slug, group_id), None)
+        with self._tenant_scope(tenant_slug, write=True) as state:
+            removed = state.groups.pop(group_id, None)
             if removed is None:
                 raise ScimError(f"Group {group_id!r} not found", status=404)
 
@@ -1370,7 +1619,6 @@ def _sync_django_scim_provision(
 ) -> str:
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership, Organisation
-    from django.db import transaction
     from django.utils import timezone
 
     with transaction.atomic():
@@ -1430,7 +1678,6 @@ def _sync_django_scim_provision(
 def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> None:
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership
-    from django.db import transaction
 
     with transaction.atomic():
         User.objects.filter(id=user_uuid).update(enabled=False)
@@ -1445,7 +1692,6 @@ def _sync_django_scim_deprovision(organisation_id: UUID, user_uuid: UUID) -> Non
 def _sync_django_scim_reactivate(organisation_id: UUID, user_uuid: UUID) -> None:
     from apps.identity.models import Identity, User
     from apps.orgs.models import Membership
-    from django.db import transaction
 
     with transaction.atomic():
         User.objects.filter(id=user_uuid).update(enabled=True)
