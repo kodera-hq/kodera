@@ -34,7 +34,15 @@ import {
   TableRow,
 } from '../../ui/Table/Table'
 import { useToast } from '../../ui/Toast/Toast'
+import { billingCopy } from '../billing/billingMessages'
 import { HelpLink } from '../support/HelpLink'
+import { FacturXCreditNoteCard } from './FacturXCreditNoteCard'
+import {
+  fetchBillingVatStatus,
+  fetchInvoiceArtifactDownloadLink,
+  type BillingVatStatus,
+  type CreditNote,
+} from './facturxApi'
 import { canPayInvoices } from './permissions'
 import { InvoicesAreaGuard } from './InvoicesAreaGuard'
 import { payOnline } from './payment'
@@ -58,11 +66,27 @@ const PILL_STATE: Record<RowStatusKind['kind'], StatusPillState> = {
   draft: 'neutral',
 }
 
+const VIES_PILL_STATE: Record<BillingVatStatus['status'], StatusPillState> = {
+  valid: 'success',
+  unavailable: 'warning',
+  invalid: 'danger',
+  not_checked: 'neutral',
+}
+
 type PaymentUiState = 'idle' | 'creating' | 'started' | 'failed'
 
-function InvoiceDetailContent() {
-  const { t } = useTranslation()
+export interface InvoiceDetailScreenProps {
+  initialCreditNote?: CreditNote | null | undefined
+  initialVatStatus?: BillingVatStatus | null | undefined
+}
+
+function InvoiceDetailContent({
+  initialCreditNote,
+  initialVatStatus,
+}: InvoiceDetailScreenProps) {
+  const { t, i18n } = useTranslation()
   const locale = useLocale()
+  const copy = billingCopy(i18n.resolvedLanguage)
   const notify = useToast()
   const [returnedAction, setReturnedAction] = useState<ReturnedInvoiceAction>()
   const { org, invoiceId } = invoiceDetailRoute.useParams()
@@ -73,6 +97,8 @@ function InvoiceDetailContent() {
   const invoiceQuery = useInvoiceQuery(invoiceId, membership.organisation.id)
   const [paymentUiState, setPaymentUiState] = useState<PaymentUiState>('idle')
   const [downloading, setDownloading] = useState(false)
+  const [downloadingXml, setDownloadingXml] = useState(false)
+  const [fetchedVatStatus, setFetchedVatStatus] = useState<BillingVatStatus | null>(null)
 
   // §5's "Payment return": the console draws no conclusion from `?payment=return`
   // beyond refetching — the render below reads `invoiceQuery.data.state`, never the
@@ -81,6 +107,41 @@ function InvoiceDetailContent() {
     if (search.payment === 'return') void invoiceQuery.refetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, on the return redirect only
   }, [search.payment])
+
+  const currentRegime = invoiceQuery.data?.vat_regime
+
+  useEffect(() => {
+    if (initialVatStatus !== undefined) return
+    if (currentRegime !== 'eu_reverse_charge') return
+    let active = true
+    try {
+      void fetchBillingVatStatus(membership.organisation.id).then(
+        (loaded) => {
+          if (active) setFetchedVatStatus(loaded)
+        },
+        (error: unknown) => {
+          if (active && error instanceof ApiProblem && error.status === 503) {
+            setFetchedVatStatus({
+              vat_number: null,
+              country_code: null,
+              status: 'unavailable',
+              checked_at: null,
+              next_check_at: null,
+              evidence_id: null,
+            })
+          }
+        }
+      )
+    } catch {
+      // Omit background VIES lookup in unconfigured isolated unit tests.
+    }
+    return () => {
+      active = false
+    }
+  }, [currentRegime, initialVatStatus, membership.organisation.id])
+
+  const vatStatus =
+    initialVatStatus !== undefined ? initialVatStatus : fetchedVatStatus
 
   async function handlePayOnline() {
     const isCurrent = beginAction()
@@ -126,6 +187,23 @@ function InvoiceDetailContent() {
       notify({ kind: 'error', title: t('console.invoices.detail.error-pdf-download-failed') })
     } finally {
       if (isCurrent()) setDownloading(false)
+    }
+  }
+
+  async function handleDownloadXml() {
+    const isCurrent = beginAction()
+    if (!isCurrent()) return
+    setDownloadingXml(true)
+    try {
+      const link = await fetchInvoiceArtifactDownloadLink(invoiceId, 'xml')
+      if (!isCurrent()) return
+      setReturnedAction({ url: link.url, expires_at: link.expires_at, kind: 'pdf', isCurrent })
+      window.open(link.url, '_blank', 'noopener,noreferrer')
+    } catch {
+      if (!isCurrent()) return
+      notify({ kind: 'error', title: copy.facturxXmlDownloadFailed })
+    } finally {
+      if (isCurrent()) setDownloadingXml(false)
     }
   }
 
@@ -184,6 +262,14 @@ function InvoiceDetailContent() {
     canPayInvoices(membership.role) && (invoice.state === 'issued' || invoice.state === 'overdue')
   const regimeKey = vatRegimeSentenceKey(invoice.vat_regime)
   const pdfAvailable = invoice.pdf_available !== false
+  const xmlAvailable = invoice.xml_available === true || invoice.artifacts?.xml !== undefined
+  const invoiceDigest = invoice.artifacts?.pdf?.sha256 ?? invoice.snapshot_sha256
+  const invoiceFilename = invoice.artifacts?.pdf?.filename
+  const hasFacturXMetadata =
+    invoice.facturx_type_code === '380' ||
+    xmlAvailable ||
+    invoiceDigest !== undefined ||
+    invoiceFilename !== undefined
   // The failed payment card offers the PDF itself; the one below would repeat it.
   const offersPdfInPaymentCard = canPay && paymentUiState === 'failed' && pdfAvailable
 
@@ -200,8 +286,16 @@ function InvoiceDetailContent() {
         <h1 className={PAGE_TITLE}>
           {t('console.invoices.detail.title', { number: invoice.number ?? invoice.id })}
         </h1>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <StatusPill state={PILL_STATE[status.kind]}>{statusLabel}</StatusPill>
+          {invoice.vat_regime !== undefined ? (
+            <StatusPill state="neutral">{copy.taxRegimes[invoice.vat_regime]}</StatusPill>
+          ) : null}
+          {vatStatus !== null ? (
+            <StatusPill state={VIES_PILL_STATE[vatStatus.status]}>
+              {copy.viesBadges[vatStatus.status]}
+            </StatusPill>
+          ) : null}
           {invoice.due_at ? (
             <span className="text-sm text-c-ink-3">
               {t('console.invoices.detail.label-due', { date: formatDate(invoice.due_at, locale) })}
@@ -209,6 +303,10 @@ function InvoiceDetailContent() {
           ) : null}
         </div>
       </div>
+
+      {vatStatus?.status === 'unavailable' ? (
+        <InlineAlert kind="warning">{copy.viesHoldNotice}</InlineAlert>
+      ) : null}
 
       <ReturnedInvoiceLink action={returnedAction} />
 
@@ -391,6 +489,71 @@ function InvoiceDetailContent() {
         </CardBody>
       </Card>
 
+      {hasFacturXMetadata ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-md font-semibold text-c-ink">{copy.facturxSectionTitle}</h2>
+              <StatusPill state="info">{copy.facturxInvoiceBadge}</StatusPill>
+            </div>
+          </CardHeader>
+          <CardBody className="flex flex-col gap-3">
+            <DefinitionList
+              items={[
+                {
+                  term: copy.facturxDocRefLabel,
+                  description: <span className="font-mono">{invoice.number ?? invoice.id}</span>,
+                },
+                ...(invoiceFilename
+                  ? [
+                      {
+                        term: copy.facturxFilenameLabel,
+                        description: (
+                          <span className="font-mono text-xs">{invoiceFilename}</span>
+                        ),
+                      },
+                    ]
+                  : []),
+                ...(invoiceDigest
+                  ? [
+                      {
+                        term: copy.facturxSha256Label,
+                        description: (
+                          <span className="font-mono text-xs break-all">{invoiceDigest}</span>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+            {xmlAvailable ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="secondary"
+                  loading={downloadingXml}
+                  onClick={() => void handleDownloadXml()}
+                >
+                  {copy.facturxDownloadInvoiceXml}
+                </Button>
+              </div>
+            ) : null}
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {invoice.credit_note_id || initialCreditNote ? (
+        <FacturXCreditNoteCard
+          creditNoteId={invoice.credit_note_id ?? initialCreditNote!.id}
+          organisationId={membership.organisation.id}
+          invoiceId={invoice.id}
+          initialCreditNote={initialCreditNote}
+          onDownloadOpened={(url, expiresAt) => {
+            const isCurrent = beginAction()
+            setReturnedAction({ url, expires_at: expiresAt, kind: 'pdf', isCurrent })
+          }}
+        />
+      ) : null}
+
       <div className="flex flex-col gap-2">
         <p className="text-sm text-c-ink-3">
           {invoice.issued_at
@@ -435,13 +598,14 @@ function InvoiceDetailContent() {
   )
 }
 
-export function InvoiceDetailScreen() {
+export function InvoiceDetailScreen(props: InvoiceDetailScreenProps = {}) {
   const { org, invoiceId } = invoiceDetailRoute.useParams()
   const { membership } = orgRoute.useLoaderData()
   return (
     <InvoicesAreaGuard>
       <InvoiceDetailContent
         key={JSON.stringify([org, invoiceId, membership.organisation.id, membership.role])}
+        {...props}
       />
     </InvoicesAreaGuard>
   )

@@ -28,6 +28,36 @@ export interface ExtensionsCatalogPanelProps {
     ((extensionId: OfficialExtensionId, normalizedUrl: string) => void) | undefined
 }
 
+const PANEL_COPY = {
+  fr: {
+    heading: "Catalogue d'extensions Kodera v1",
+    schemaLabel: 'Schéma de manifeste :',
+    schemaSuffix: '• Moindre privilège et signature HMAC-SHA256',
+    filterGroupLabel: "Filtrer par catégorie d'extension",
+    verifiedBadge: 'Schéma v1 vérifié',
+    inspectorRegionLabel: 'Inspecteur de commande slash et de webhook',
+    registeredCommands: 'Commandes slash enregistrées',
+    webhookLabel:
+      'URL de destination du webhook (HTTPS public uniquement, protection anti-SSRF)',
+    verifyWebhookButton: "Vérifier l'URL du webhook",
+    rejectedUrl: 'URL refusée',
+    allowedEndpoint: 'Point de terminaison HTTPS autorisé :',
+  },
+  en: {
+    heading: 'Kodera v1 extension catalogue',
+    schemaLabel: 'Manifest schema:',
+    schemaSuffix: '• Least privilege and HMAC-SHA256 signing',
+    filterGroupLabel: 'Filter by extension category',
+    verifiedBadge: 'Verified v1 schema',
+    inspectorRegionLabel: 'Slash command and webhook inspector',
+    registeredCommands: 'Registered slash commands',
+    webhookLabel: 'Webhook destination URL (public HTTPS only, anti-SSRF guard)',
+    verifyWebhookButton: 'Verify webhook URL',
+    rejectedUrl: 'URL rejected',
+    allowedEndpoint: 'Allowed HTTPS endpoint:',
+  },
+} as const
+
 export function ExtensionsCatalogPanel({
   extensions = OFFICIAL_EXTENSIONS_CATALOG,
   defaultSelectedId = 'io.kodera.ext.hello-webhook',
@@ -36,7 +66,9 @@ export function ExtensionsCatalogPanel({
   onSelectExtension,
   onWebhookValidated,
 }: ExtensionsCatalogPanelProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const isEn = Boolean(i18n.resolvedLanguage?.startsWith('en'))
+  const copy = isEn ? PANEL_COPY.en : PANEL_COPY.fr
   const headingId = useId()
   const webhookInputId = useId()
 
@@ -102,14 +134,14 @@ export function ExtensionsCatalogPanel({
               </span>
               <div className="flex flex-col gap-1">
                 <h2 id={headingId} className="text-lg font-semibold text-c-ink">
-                  Catalogue d&apos;extensions Kodera v1
+                  {copy.heading}
                 </h2>
                 <p className="text-sm font-regular text-c-ink-2">
-                  Schéma de manifeste :{' '}
+                  {copy.schemaLabel}{' '}
                   <span className="font-mono font-medium text-c-ink">
                     {EXTENSION_SCHEMA_VERSION}
                   </span>{' '}
-                  • Moindre privilège et signature HMAC-SHA256
+                  {copy.schemaSuffix}
                 </p>
                 {/* What the list is, said where it is drawn: starters to adapt, connected to no
                     account. Not an endorsement by the services they name. */}
@@ -125,7 +157,7 @@ export function ExtensionsCatalogPanel({
 
           <div
             role="group"
-            aria-label="Filtrer par catégorie d'extension"
+            aria-label={copy.filterGroupLabel}
             className="flex flex-wrap items-center gap-2"
           >
             {EXTENSION_CATEGORY_FILTERS.map((filter) => {
@@ -143,7 +175,7 @@ export function ExtensionsCatalogPanel({
                       : 'rounded-full border border-c-border-soft bg-c-surface px-3 py-1 text-xs font-medium text-c-ink-2 hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
                   }
                 >
-                  {filter.label}
+                  {isEn ? filter.labelEn : filter.label}
                 </button>
               )
             })}
@@ -155,6 +187,13 @@ export function ExtensionsCatalogPanel({
           >
             {filteredExtensions.map((ext) => {
               const isSelected = ext.id === selectedExtension.id
+              const displayName = isEn ? ext.nameEn : ext.name
+              const displayDescription =
+                ext.slug === 'frameio-review-bridge'
+                  ? t('console.onboarding.studio.frameio')
+                  : isEn
+                    ? ext.descriptionEn
+                    : ext.description
               return (
                 <li key={ext.id}>
                   <button
@@ -176,20 +215,26 @@ export function ExtensionsCatalogPanel({
                             : 'text-sm font-semibold text-c-ink'
                         }
                       >
-                        {ext.name}
+                        {displayName}
                       </span>
                       <span className="rounded-sm bg-c-muted px-2 py-1 font-mono text-xs font-semibold text-c-ink">
                         {ext.slashCommand}
                       </span>
                     </div>
 
-                    <span className="font-mono text-xs text-c-ink-3">{ext.id}</span>
+                    <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                      <span className="font-mono text-xs text-c-ink-3">{ext.id}</span>
+                      {ext.verifiedManifest ? (
+                        <span
+                          data-testid={`extension-verified-${ext.slug}`}
+                          className="rounded-full border border-c-ok-border bg-c-ok-soft px-2 py-1 text-xs font-medium text-c-ok-ink"
+                        >
+                          {copy.verifiedBadge}
+                        </span>
+                      ) : null}
+                    </div>
 
-                    <p className="text-xs font-regular text-c-ink-2">
-                      {ext.slug === 'frameio-review-bridge'
-                        ? t('console.onboarding.studio.frameio')
-                        : ext.description}
-                    </p>
+                    <p className="text-xs font-regular text-c-ink-2">{displayDescription}</p>
 
                     <div className="flex flex-wrap items-center gap-1">
                       {ext.scopes.map((scope) => (
@@ -209,33 +254,39 @@ export function ExtensionsCatalogPanel({
 
           <div
             role="region"
-            aria-label="Inspecteur de commande slash et de webhook"
+            aria-label={copy.inspectorRegionLabel}
             className="flex flex-col gap-3 rounded-md border border-c-border bg-c-sunken p-4"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <BrandIcon name={EXTENSION_BRANDS[selectedExtension.id]} decorative />
               <div className="flex flex-col gap-1">
                 <span className="text-md font-semibold text-c-ink">
-                  {selectedExtension.name} ({selectedExtension.slashCommand})
+                  {isEn ? selectedExtension.nameEn : selectedExtension.name} (
+                  {selectedExtension.slashCommand})
                 </span>
                 <span className="font-mono text-xs text-c-ink-3">
                   {selectedExtension.id} • v{selectedExtension.version}
                 </span>
               </div>
-              <StatusPill state="info">{selectedExtension.slashCommand}</StatusPill>
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedExtension.verifiedManifest ? (
+                  <StatusPill state="success">{copy.verifiedBadge}</StatusPill>
+                ) : null}
+                <StatusPill state="info">{selectedExtension.slashCommand}</StatusPill>
+              </div>
             </div>
 
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-c-ink-2">
-                Commandes slash enregistrées
-              </span>
+              <span className="text-xs font-semibold text-c-ink-2">{copy.registeredCommands}</span>
               {selectedExtension.commands.map((cmd) => (
                 <div
                   key={cmd.name}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs"
                 >
                   <span className="font-mono font-semibold text-c-ink">{cmd.usage}</span>
-                  <span className="text-c-ink-2">{cmd.description}</span>
+                  <span className="text-c-ink-2">
+                    {isEn ? cmd.descriptionEn : cmd.description}
+                  </span>
                 </div>
               ))}
             </div>
@@ -243,7 +294,7 @@ export function ExtensionsCatalogPanel({
             <div className="flex flex-col gap-2 border-t border-c-border-soft pt-3">
               <div className="flex flex-col gap-1">
                 <label htmlFor={webhookInputId} className="text-xs font-medium text-c-ink-2">
-                  URL de destination du webhook (HTTPS public uniquement, protection anti-SSRF)
+                  {copy.webhookLabel}
                 </label>
                 <div className="flex flex-wrap items-center gap-2">
                   <input
@@ -258,7 +309,7 @@ export function ExtensionsCatalogPanel({
                     className="h-8 flex-1 rounded-md border border-c-border-input bg-c-surface px-3 font-mono text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
                   />
                   <Button size="sm" variant="primary" onClick={handleValidateWebhook}>
-                    Vérifier l&apos;URL du webhook
+                    {copy.verifyWebhookButton}
                   </Button>
                 </div>
               </div>
@@ -270,7 +321,7 @@ export function ExtensionsCatalogPanel({
                   className="flex flex-col gap-1 rounded-md border border-c-bad bg-c-bad-soft px-3 py-2 text-xs font-medium text-c-bad-ink"
                 >
                   <span>
-                    URL refusée ({validationResult.code}) : {validationResult.message}
+                    {copy.rejectedUrl} ({validationResult.code}) : {validationResult.message}
                   </span>
                 </div>
               ) : null}
@@ -282,7 +333,7 @@ export function ExtensionsCatalogPanel({
                   data-testid="extension-webhook-valid"
                   className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-ok-border bg-c-ok-soft px-3 py-2 text-xs font-medium text-c-ok-ink"
                 >
-                  <span>Point de terminaison HTTPS autorisé :</span>
+                  <span>{copy.allowedEndpoint}</span>
                   <span className="font-mono text-c-ok-ink">{validationResult.normalizedUrl}</span>
                 </div>
               ) : null}

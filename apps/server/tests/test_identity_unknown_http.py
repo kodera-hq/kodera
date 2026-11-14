@@ -281,9 +281,39 @@ CASES = (
             ("getCreditNote", "credit_note", "get", {"credit_note_id": ROW}),
             ("getPaymentLink", "payment_link", "get", {"invoice_id": ROW}),
             ("createPaymentLink", "payment_link", "post", {"invoice_id": ROW}),
-            ("getInvoiceDownloadLink", "invoice_download", "get", {"invoice_id": ROW}),
             ("getDunning", "dunning", "get", ORG),
         )
+    ),
+    *(
+        Case(
+            operation,
+            "apps.billing.api.downloads." + view,
+            "get",
+            ids,
+            "apps.billing.callers.BillingCallerUnknownError",
+            ("apps.billing.api.downloads.read_as_member",),
+        )
+        for operation, view, ids in (
+            ("getInvoiceDownloadLink", "invoice_download", {"invoice_id": ROW}),
+            ("getCreditNoteDownloadLink", "credit_note_download", {"credit_note_id": ROW}),
+        )
+    ),
+    Case(
+        "getBillingVatStatus",
+        "apps.billing.api.vat_status.billing_vat",
+        "get",
+        ORG,
+        "apps.billing.callers.BillingCallerUnknownError",
+        (BILLING + ".read_as_member",),
+        verifier=BILLING,
+    ),
+    Case(
+        "validateBillingVat",
+        "apps.billing.api.vat_status.billing_vat",
+        "post",
+        ORG,
+        "apps.billing.callers.BillingCallerUnknownError",
+        ("apps.billing.api.vat_status.read_as_member",),
     ),
     *(
         Case(

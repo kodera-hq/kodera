@@ -18,6 +18,7 @@ import hmac
 import json
 import re
 import secrets
+import string
 import struct
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -79,11 +80,17 @@ CURSOR_DOMAIN = b"invitation-list-cursor-v1\x00"
 _SECRET = re.compile(r"[A-Za-z0-9_-]{43}\Z", re.ASCII)
 # The outbox sender's conservative address (apps/outbox/sender.py RECIPIENT, which the API image
 # does not carry): an invitation is never written for an address the mail could not be sent to.
+# `_deliverable` below reads the same language in one pass: the address comes from the request,
+# and this pattern's nested quantifiers backtrack polynomially on a long near-match.
 _ADDRESS = re.compile(
     r"[a-z0-9_%+-]+(?:\.[a-z0-9_%+-]+)*@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
     r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\Z",
     re.ASCII,
 )
+# The three character sets _ADDRESS names — lowercase only, as the caller lowercases first.
+_ATEXT = frozenset(string.ascii_lowercase + string.digits + "_%+-")
+_ALNUM = frozenset(string.ascii_lowercase + string.digits)
+_LABEL = _ALNUM | {"-"}
 _STATES = ("pending", "accepted", "revoked", "expired")
 _CURSOR = struct.Struct("!16s16sB16s")
 
@@ -280,6 +287,33 @@ def _display_name(value: object) -> str | None:
     return value.strip() or None
 
 
+def _deliverable(address: str) -> bool:
+    """`atom(.atom)*@label(.label)+`, the language _ADDRESS names, read in one linear pass.
+
+    Every character is looked at a bounded number of times, so a long near-miss costs what a
+    valid address costs rather than growing with the square of its length.
+    """
+    if len(address) > 254 or address.count("@") != 1:
+        return False
+    local, _, domain = address.partition("@")
+    # No 64-character bound on the local part: _ADDRESS carries none, and the sender is what
+    # has the last word on what it will deliver to.
+    if not local:
+        return False
+    for atom in local.split("."):
+        if not atom or not set(atom) <= _ATEXT:
+            return False
+    labels = domain.split(".")
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not 0 < len(label) <= 63 or label[0] not in _ALNUM or label[-1] not in _ALNUM:
+            return False
+        if not set(label[1:-1]) <= _LABEL:
+            return False
+    return True
+
+
 def parse_batch(raw: bytes) -> Batch:
     body = _object(raw)
     if set(body) - {"invitations", "send_email", "locale"} or "invitations" not in body:
@@ -302,7 +336,7 @@ def parse_batch(raw: bytes) -> Batch:
             raise InvitationInputError()
         name = _display_name(item.get("display_name"))
         address = email.strip().lower()
-        if len(address) > 254 or not _ADDRESS.fullmatch(address):
+        if not _deliverable(address):
             rows.append(email)
         else:
             rows.append(Row(address, str(role), name))

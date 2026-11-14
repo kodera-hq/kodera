@@ -2,10 +2,11 @@
 // (§6): the copy states plainly that the space opens within one business
 // day, and never implies otherwise. `Order.invoice_id` absent is
 // `billing_pending` — not an error (§6) — and a payment link that cannot be
-// created falls back to bank transfer with a retry, never a dead end. Its
-// support action goes through Aide like every other (06-support.md §4.0),
-// and offers the existing People preparation route to managers. Domain
-// setup remains withheld while it provides only a read-only slice.
+// created or fails checkout host validation falls back to bank transfer with
+// a retry, never a dead end. Its support action goes through Aide like every
+// other (06-support.md §4.0), and offers the existing People preparation
+// route to managers. Domain setup remains withheld while it provides only a
+// read-only slice.
 
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -18,6 +19,10 @@ import { Card, CardBody } from '../../ui/Card/Card'
 import { DefinitionList } from '../../ui/DefinitionList/DefinitionList'
 import { LinkButton } from '../../ui/LinkButton/LinkButton'
 import { Skeleton } from '../../ui/Skeleton/Skeleton'
+import {
+  isAllowedCheckoutRedirectUrl,
+  isSafePresignedDownloadUrl,
+} from '../billing/checkoutUrl'
 import { useInvoiceQuery, useOrderQuery } from './api'
 import { useCreatePaymentLinkMutation } from './mutations'
 import { HelpLink } from '../support/HelpLink'
@@ -38,7 +43,9 @@ function useInvoiceDownload() {
       return data
     },
     onSuccess: (data) => {
-      if (data?.url !== undefined) window.open(data.url, '_blank', 'noopener,noreferrer')
+      if (data !== undefined && isSafePresignedDownloadUrl(data.url, data.expires_at)) {
+        window.open(data.url, '_blank', 'noopener,noreferrer')
+      }
     },
   })
 }
@@ -102,6 +109,16 @@ export function ConfirmationStep({
   }
 
   const billingPending = order.invoice_id === null || order.invoice_id === undefined
+  const verifiedCheckoutUrl =
+    paymentLink.isSuccess &&
+    paymentLink.data !== undefined &&
+    paymentLink.data.state === 'active' &&
+    isSafePresignedDownloadUrl(paymentLink.data.url, paymentLink.data.expires_at) &&
+    isAllowedCheckoutRedirectUrl(paymentLink.data.url)
+      ? paymentLink.data.url
+      : null
+  const paymentLinkFailed =
+    paymentLink.isError || (paymentLink.isSuccess && verifiedCheckoutUrl === null)
 
   return (
     <Card>
@@ -138,13 +155,13 @@ export function ConfirmationStep({
               >
                 {t('console.order.confirmation.action-download-invoice')}
               </Button>
-              {paymentLink.isSuccess && paymentLink.data !== undefined ? (
-                <LinkButton href={paymentLink.data.url} target="_blank">
+              {verifiedCheckoutUrl !== null ? (
+                <LinkButton href={verifiedCheckoutUrl} target="_blank">
                   {t('console.order.confirmation.action-pay')}
                 </LinkButton>
               ) : null}
             </div>
-            {paymentLink.isError ? (
+            {paymentLinkFailed ? (
               <Banner
                 kind="incident"
                 headline={t('console.order.confirmation.error-payment-link')}

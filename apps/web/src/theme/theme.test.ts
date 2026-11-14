@@ -153,7 +153,9 @@ describe('public/theme.js', () => {
 })
 
 describe('index.html', () => {
-  const scripts = [...INDEX_HTML.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)]
+  // Parsed, not pattern-matched: a regex over markup misses `<SCRIPT>`, attribute
+  // values holding `>`, and bodies split across lines.
+  const scripts = Array.from(new DOMParser().parseFromString(INDEX_HTML, 'text/html').scripts)
 
   it('declares only the external bootstrap without an eager theme or inline script', () => {
     const assertEntry = (markup: string) => {
@@ -199,9 +201,9 @@ describe('index.html', () => {
 
   it('carries no inline script, so a script-src of self alone still allows the page', () => {
     expect(scripts.length).toBeGreaterThan(0)
-    for (const [, attributes, body] of scripts) {
-      expect(attributes).toMatch(/\bsrc="/)
-      expect(body?.trim()).toBe('')
+    for (const script of scripts) {
+      expect(script.getAttribute('src')).toBeTruthy()
+      expect(script.textContent?.trim()).toBe('')
     }
   })
 })

@@ -1,0 +1,36 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.renderfarm",
+  "name": "Render Farm Queue Monitor (Flamenco & Deadline)",
+  "version": "0.1.0",
+  "description": "Blender Flamenco and Thinkbox Deadline render-queue webhook reference implementation surfacing shot codes, frame ranges, average frame render times, worker OOM kills, and sanitized output URIs.",
+  "permissions": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "incidents:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "incident.opened",
+    "incident.resolved",
+    "ci.workflow_failed"
+  ],
+  "commands": [
+    {
+      "command": "/render",
+      "name": "/render",
+      "description": "Inspect Flamenco or Deadline render queue status, shot progress, or worker nodes"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/renderfarm"
+}

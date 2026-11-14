@@ -4,7 +4,7 @@
 
 This is a source-oriented local pre-cutover reference for kodera-hq/kodera. Linked source URLs identify the target repository; public publication and community.kodera.io availability are not confirmed. Read the linked guides for scope and integration limits.
 
-Core API 0.44.0; Agent API 0.6.0; OpenAPI 3.1. The console calls authenticated Core only. Matrix/Synapse rooms and LiveKit grants are control-plane responsibilities, not local-preview authority.
+Core API 0.44.1; Agent API 0.6.0; OpenAPI 3.1. The console calls authenticated Core only. Matrix/Synapse rooms and LiveKit grants are control-plane responsibilities, not local-preview authority.
 
 Community uses Docker Compose and an external operator-owned HTTPS OIDC issuer/public trust registry. It brings no identity provider. No installation-time or memory-footprint claim is made.
 
@@ -12,17 +12,17 @@ The create-kodera package is a local pre-release. Run node packages/create-koder
 
 @kodera/extension-sdk 0.1.0 uses HMAC-SHA256, v1= signatures over timestamp.rawBody, a 300-second window, bounded in-memory signature/delivery replay protection and signed body routing metadata. Native GitHub sha256= signs rawBody and is not wire-compatible. Production needs durable idempotency and resolved-address egress policy; lexical SSRF checks do not pin DNS.
 
-synapse-policy 0.1.5 enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and ProximityFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.
+synapse-policy 0.1.6 enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and ProximityFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.
 
 Clients/Rust/SDK: Apache-2.0. Server and Synapse policy: AGPL-3.0-or-later. Enterprise Edition: separate commercial licence. Never commit environment secrets, private keys or real tenant identifiers. No secrets belong in prompts, example payloads or theme codes.
 
-Exactly ten reference connector implementations are indexed below; this is not a list of live connected accounts. Linear, Stripe and Sentry are potential custom SDK integrations, not additional reference connectors in this checkout.
+Exactly twenty-two reference connector implementations are indexed below; this is not a list of live connected accounts. External providers outside this list remain potential custom SDK integrations, not additional reference connectors in this checkout.
 
 ## Developer guides
 
 - [Quickstart & self-hosting](/developer-docs/en/quickstart.md): Prepare your workspace. Keep identity and deployment under your control.
 
-- [Extension SDK & 10 connectors](/developer-docs/en/extensions.md): Bring signed events into channels, with explicit trust boundaries.
+- [Extension SDK & 22 connectors](/developer-docs/en/extensions.md): Bring signed events into channels, with explicit trust boundaries.
 
 - [API reference & webhooks](/developer-docs/en/api.md): Read the pinned contracts before sending a request.
 
@@ -32,7 +32,7 @@ Exactly ten reference connector implementations are indexed below; this is not a
 
 - [Quickstart & auto-hébergement](/developer-docs/fr/quickstart.md): Préparez votre espace. Gardez la maîtrise de l’identité et du déploiement.
 
-- [Extension SDK & 10 connecteurs](/developer-docs/fr/extensions.md): Amenez les événements signés dans les salons, avec des frontières de confiance explicites.
+- [Extension SDK & 22 connecteurs](/developer-docs/fr/extensions.md): Amenez les événements signés dans les salons, avec des frontières de confiance explicites.
 
 - [Référence API & webhooks](/developer-docs/fr/api.md): Lisez les contrats épinglés avant d’envoyer une requête.
 
@@ -59,6 +59,30 @@ Exactly ten reference connector implementations are indexed below; this is not a
 - [Social Pulse Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/social-pulse-bridge/manifest.json): social-pulse-bridge
 
 - [Frame.io Review Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/frameio-review-bridge/README.md): frameio-review-bridge
+
+- [Frame.io Timecode & OTIO](https://github.com/kodera-hq/kodera/blob/main/extensions/frameio/README.md): frameio
+
+- [Render-Farm Monitor (Flamenco & Deadline)](https://github.com/kodera-hq/kodera/blob/main/extensions/renderfarm/README.md): renderfarm
+
+- [GitHub Dev & PR Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/github/README.md): github
+
+- [GitLab MR & Pipeline Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/gitlab/README.md): gitlab
+
+- [Linear Issue & Cycle Triage](https://github.com/kodera-hq/kodera/blob/main/extensions/linear/README.md): linear
+
+- [Sentry Issue & Regression Triage](https://github.com/kodera-hq/kodera/blob/main/extensions/sentry/README.md): sentry
+
+- [Alertmanager & Grafana Incident Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/alertmanager/README.md): alertmanager
+
+- [RSS & Security Advisories Digest](https://github.com/kodera-hq/kodera/blob/main/extensions/rss-advisories/README.md): rss-advisories
+
+- [Release Notes & Triage Assistant](https://github.com/kodera-hq/kodera/blob/main/extensions/release-assistant/README.md): release-assistant
+
+- [OpenProject & Jira Work Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/openproject/README.md): openproject
+
+- [Cal.com Scheduling & Voice Bridge](https://github.com/kodera-hq/kodera/blob/main/extensions/calcom/README.md): calcom
+
+- [Billing & Quota Ops Webhooks](https://github.com/kodera-hq/kodera/blob/main/extensions/billing-webhooks/README.md): billing-webhooks
 
 ## Optional
 

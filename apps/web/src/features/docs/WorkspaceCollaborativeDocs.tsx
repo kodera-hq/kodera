@@ -1,4 +1,13 @@
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/ui/Button/Button'
 import { InlineAlert } from '@/ui/InlineAlert/InlineAlert'
@@ -7,6 +16,8 @@ import { TOUCH_TARGET } from '@/ui/touchTarget'
 import { BacklinksFooter } from './BacklinksFooter'
 import { CollaborativeBlockEditor } from './CollaborativeBlockEditor'
 import { CollaboratorPresence } from './CollaboratorPresence'
+import { getCollectionCopy } from './collectionMessages'
+import type { CollectionAssigneeMember } from './collectionSchema'
 import {
   CollabSessionController,
   maySeedFromMarkdown,
@@ -53,6 +64,10 @@ export interface WorkspacePageRecord {
   readonly order?: number | undefined
 }
 
+export type WorkspaceEditorSurface = 'blocks' | 'markdown' | 'collections'
+
+const LazyDocsCollectionView = lazy(() => import('./DocsCollectionView'))
+
 export interface WorkspaceCollaborativeDocsProps {
   readonly organisationId?: string | undefined
   readonly currentUser?:
@@ -61,6 +76,8 @@ export interface WorkspaceCollaborativeDocsProps {
         readonly name: string
       }
     | undefined
+  readonly members?: readonly CollectionAssigneeMember[] | undefined
+  readonly initialSurface?: WorkspaceEditorSurface | undefined
   readonly activeDocumentId?: string | undefined
   readonly onActiveDocumentChange?: ((documentId: string) => void) | undefined
   readonly onDocumentsLoaded?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
@@ -146,6 +163,8 @@ class CollabControllerBridge {
 export function WorkspaceCollaborativeDocs({
   organisationId,
   currentUser = { id: 'local-member', name: 'Member' },
+  members = [],
+  initialSurface = 'blocks',
   activeDocumentId,
   onActiveDocumentChange,
   onDocumentsLoaded,
@@ -154,6 +173,7 @@ export function WorkspaceCollaborativeDocs({
   webSocketFactory,
 }: WorkspaceCollaborativeDocsProps) {
   const { t, i18n } = useTranslation()
+  const collectionCopy = getCollectionCopy(i18n.resolvedLanguage)
   const templateSelectId = useId()
   const parentSelectId = useId()
   const titleInputId = useId()
@@ -178,7 +198,7 @@ export function WorkspaceCollaborativeDocs({
   }
 
   const [templateKey, setTemplateKey] = useState<DocumentTemplateKey>('blank')
-  const [editorSurface, setEditorSurface] = useState<'blocks' | 'markdown'>('blocks')
+  const [editorSurface, setEditorSurface] = useState<WorkspaceEditorSurface>(initialSurface)
   const [treeError, setTreeError] = useState<string | null>(null)
   const [remoteBacklinksEntry, setRemoteBacklinksEntry] = useState<{
     readonly docId: string
@@ -427,6 +447,63 @@ export function WorkspaceCollaborativeDocs({
     selectDocument(created.id)
   }
 
+  const handleCreateCollectionEntry = async (rawTitle: string): Promise<string | null> => {
+    const trimmed = rawTitle.trim()
+    if (trimmed.length === 0 || trimmed.length > 120) return null
+    setTreeError(null)
+    const tpl = getDocumentStarterTemplate('blank', i18n.resolvedLanguage)
+
+    if (isRemoteMode && organisationId) {
+      try {
+        const { document: created, etag } = await createWorkspaceDocument(organisationId, {
+          title: trimmed,
+          parentId: null,
+        })
+        if (etag) etagsRef.current.set(created.id, etag)
+        const record: WorkspacePageRecord = {
+          id: created.id,
+          parentId: created.parentId,
+          title: created.title,
+          markdown: created.markdown || tpl.markdown,
+          role: created.role,
+          updatedAt: created.updatedAt,
+          order: docs.length,
+        }
+        commitDocs((prev) => [...prev, record])
+        if (!selectedId) setSelectedId(record.id)
+        return record.id
+      } catch {
+        setTreeError(t('console.docs.collab.error-save'))
+        return null
+      }
+    }
+
+    const created: WorkspacePageRecord = {
+      id: crypto.randomUUID(),
+      parentId: null,
+      title: trimmed,
+      markdown: tpl.markdown,
+      role: 'editor',
+      updatedAt: new Date().toISOString(),
+      order: docs.length,
+    }
+    commitDocs((prev) => [...prev, created])
+    if (!selectedId) setSelectedId(created.id)
+    return created.id
+  }
+
+  const effectiveMembers = useMemo<readonly CollectionAssigneeMember[]>(() => {
+    const seen = new Set<string>()
+    const merged: CollectionAssigneeMember[] = []
+    for (const candidate of [{ id: currentUser.id, name: currentUser.name }, ...members]) {
+      if (!seen.has(candidate.id)) {
+        seen.add(candidate.id)
+        merged.push(candidate)
+      }
+    }
+    return merged
+  }, [currentUser.id, currentUser.name, members])
+
   const scheduleRemotePatch = (
     docId: string,
     patch: { title?: string; markdown?: string; parentId?: string | null }
@@ -654,7 +731,12 @@ export function WorkspaceCollaborativeDocs({
                       data-testid={`docs-tree-item-${node.doc.id}`}
                       data-depth={node.depth}
                       aria-current={isSelected ? 'page' : undefined}
-                      onClick={() => selectDocument(node.doc.id)}
+                      onClick={() => {
+                        selectDocument(node.doc.id)
+                        if (editorSurface === 'collections') {
+                          setEditorSurface('blocks')
+                        }
+                      }}
                       className={cx(
                         'flex min-h-8 w-full items-center justify-between gap-2 rounded-md pr-2 py-1 text-left text-xs focus-visible:ring focus-visible:outline-hidden',
                         TOUCH_TARGET,
@@ -697,10 +779,11 @@ export function WorkspaceCollaborativeDocs({
                 />
 
                 <div role="group" className="flex flex-wrap items-center gap-1">
-                  {(['blocks', 'markdown'] as const).map((mode) => (
+                  {(['blocks', 'markdown', 'collections'] as const).map((mode) => (
                     <button
                       key={mode}
                       type="button"
+                      data-testid={`docs-surface-${mode}`}
                       aria-pressed={editorSurface === mode}
                       onClick={() => setEditorSurface(mode)}
                       className={cx(
@@ -713,7 +796,9 @@ export function WorkspaceCollaborativeDocs({
                     >
                       {mode === 'blocks'
                         ? t('console.docs.collab.mode-blocks')
-                        : t('console.docs.collab.mode-markdown')}
+                        : mode === 'markdown'
+                          ? t('console.docs.collab.mode-markdown')
+                          : collectionCopy.modeCollections}
                     </button>
                   ))}
                 </div>
@@ -793,7 +878,33 @@ export function WorkspaceCollaborativeDocs({
               </div>
             </header>
 
-            {editorSurface === 'blocks' ? (
+            {editorSurface === 'collections' ? (
+              <Suspense
+                fallback={
+                  <p role="status" className="py-4 text-xs text-c-ink-3">
+                    {collectionCopy.loadingCollections}
+                  </p>
+                }
+              >
+                <LazyDocsCollectionView
+                  organisationId={isRemoteMode ? organisationId : undefined}
+                  documents={docs.map((d) => ({
+                    id: d.id,
+                    title: d.title,
+                    updatedAt: d.updatedAt,
+                    role: d.role,
+                  }))}
+                  members={effectiveMembers}
+                  activeDocumentId={currentDoc.id}
+                  accessRole={effectiveRole}
+                  onOpenDocument={(docId) => {
+                    selectDocument(docId)
+                    setEditorSurface('blocks')
+                  }}
+                  onCreateDocument={handleCreateCollectionEntry}
+                />
+              </Suspense>
+            ) : editorSurface === 'blocks' ? (
               <CollaborativeBlockEditor
                 key={currentDoc.id}
                 documentId={currentDoc.id}
@@ -825,15 +936,65 @@ export function WorkspaceCollaborativeDocs({
               />
             )}
 
-            <BacklinksFooter
-              backlinks={effectiveBacklinks}
-              onSelectDocument={(docId) => selectDocument(docId)}
-            />
+            {editorSurface !== 'collections' ? (
+              <BacklinksFooter
+                backlinks={effectiveBacklinks}
+                onSelectDocument={(docId) => selectDocument(docId)}
+              />
+            ) : null}
           </>
         ) : (
-          <p className="py-8 text-center text-sm text-c-ink-3">
-            {t('console.docs.collab.empty-workspace')}
-          </p>
+          <>
+            <div className="flex flex-wrap items-center justify-end gap-1 border-b border-c-border-soft pb-3">
+              <div role="group" className="flex flex-wrap items-center gap-1">
+                {(['blocks', 'collections'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    data-testid={`docs-surface-${mode}`}
+                    aria-pressed={editorSurface === mode}
+                    onClick={() => setEditorSurface(mode)}
+                    className={cx(
+                      'inline-flex min-h-8 items-center justify-center rounded-md border px-3 py-1 text-xs font-semibold focus-visible:ring focus-visible:outline-hidden',
+                      TOUCH_TARGET,
+                      editorSurface === mode
+                        ? 'border-c-accent-ink bg-c-accent-soft text-c-accent-ink'
+                        : 'border-c-border bg-c-surface text-c-ink-2 hover:bg-c-muted'
+                    )}
+                  >
+                    {mode === 'blocks'
+                      ? t('console.docs.collab.mode-blocks')
+                      : collectionCopy.modeCollections}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {editorSurface === 'collections' ? (
+              <Suspense
+                fallback={
+                  <p role="status" className="py-4 text-xs text-c-ink-3">
+                    {collectionCopy.loadingCollections}
+                  </p>
+                }
+              >
+                <LazyDocsCollectionView
+                  organisationId={isRemoteMode ? organisationId : undefined}
+                  documents={[]}
+                  members={effectiveMembers}
+                  accessRole="editor"
+                  onOpenDocument={(docId) => {
+                    selectDocument(docId)
+                    setEditorSurface('blocks')
+                  }}
+                  onCreateDocument={handleCreateCollectionEntry}
+                />
+              </Suspense>
+            ) : (
+              <p className="py-8 text-center text-sm text-c-ink-3">
+                {t('console.docs.collab.empty-workspace')}
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>

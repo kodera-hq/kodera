@@ -1,0 +1,34 @@
+{
+  "schema": "kodera.extension.v1",
+  "schemaVersion": "kodera.extension.v1",
+  "id": "io.kodera.ext.github",
+  "name": "GitHub PR, CI & Triage Bridge",
+  "version": "0.1.0",
+  "description": "Bidirectional pull request review, check suite and workflow run summary, issue triage, and release reference implementation with X-Hub-Signature-256 verification.",
+  "permissions": [
+    "messages:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "scopes": [
+    "messages:write",
+    "threads:write",
+    "webhooks:incoming",
+    "commands:register"
+  ],
+  "events": [
+    "command.invoked",
+    "release.published",
+    "ci.workflow_failed",
+    "message.created"
+  ],
+  "commands": [
+    {
+      "command": "/gh",
+      "name": "/gh",
+      "description": "Inspect pull requests, CI checks, or triage issues for a GitHub repository"
+    }
+  ],
+  "webhookUrl": "https://extensions.example.invalid/hooks/github"
+}

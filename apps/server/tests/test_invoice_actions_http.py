@@ -470,7 +470,7 @@ def test_mutation_control_the_checks_pass_with_the_routes(w, placed, fake):
 def test_mutation_without_the_download_route_the_conflict_is_a_404(
     w, placed, monkeypatch, restore_urls
 ):
-    _without(monkeypatch, "/download")
+    _without(monkeypatch, "invoices/<uuid:invoice_id>/download")
     assert download(w, w.owner, placed.invoice.id).status_code == 404
 
 

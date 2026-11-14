@@ -9,44 +9,78 @@ export type ExtensionCatalogScope =
   | 'incidents:write'
   | 'threads:write'
 
-export type ExtensionCategory = 'devops' | 'finance' | 'productivity' | 'social'
+export type ExtensionCategory = 'devops' | 'studio' | 'finance' | 'productivity' | 'social'
 
 export type ExtensionCategoryFilter = 'all' | ExtensionCategory
 
 export interface ExtensionCategoryFilterDescriptor {
   readonly id: ExtensionCategoryFilter
   readonly label: string
+  readonly labelEn: string
 }
 
 export const EXTENSION_CATEGORY_FILTERS: readonly ExtensionCategoryFilterDescriptor[] =
   Object.freeze([
-    Object.freeze({ id: 'all', label: 'Toutes' }),
-    Object.freeze({ id: 'devops', label: 'DevOps & Code' }),
-    Object.freeze({ id: 'finance', label: 'Finance (Qonto)' }),
-    Object.freeze({ id: 'productivity', label: 'Productivité (Docs / Notion / GDrive)' }),
-    Object.freeze({ id: 'social', label: 'Réseaux Sociaux (X / Mastodon / Insta)' }),
+    Object.freeze({ id: 'all', label: 'Toutes', labelEn: 'All' }),
+    Object.freeze({ id: 'devops', label: 'DevOps & Code', labelEn: 'DevOps & Code' }),
+    Object.freeze({ id: 'studio', label: 'Studio & Production', labelEn: 'Studio & Production' }),
+    Object.freeze({ id: 'finance', label: 'Finance (Qonto)', labelEn: 'Finance & Billing' }),
+    Object.freeze({
+      id: 'productivity',
+      label: 'Productivité (Docs / Notion / GDrive)',
+      labelEn: 'Productivity & Docs',
+    }),
+    Object.freeze({
+      id: 'social',
+      label: 'Réseaux Sociaux (X / Mastodon / Insta)',
+      labelEn: 'Social & Community',
+    }),
   ])
 
 export type OfficialExtensionId =
   | 'io.kodera.ext.frameio-review-bridge'
+  | 'io.kodera.ext.frameio'
+  | 'io.kodera.ext.renderfarm'
   | 'io.kodera.ext.hello-webhook'
+  | 'io.kodera.ext.github'
+  | 'io.kodera.ext.gitlab'
+  | 'io.kodera.ext.linear'
+  | 'io.kodera.ext.sentry'
+  | 'io.kodera.ext.alertmanager'
+  | 'io.kodera.ext.rss-advisories'
+  | 'io.kodera.ext.release-assistant'
   | 'io.kodera.ext.github-release-notifier'
   | 'io.kodera.ext.uptime-incident-bridge'
   | 'io.kodera.ext.docs-collab-announcer'
+  | 'io.kodera.ext.openproject'
+  | 'io.kodera.ext.calcom'
   | 'io.kodera.ext.github-repo-tracker'
   | 'io.kodera.ext.qonto-treasury-feed'
+  | 'io.kodera.ext.billing-webhooks'
   | 'io.kodera.ext.notion-workspace-bridge'
   | 'io.kodera.ext.gdrive-document-share'
   | 'io.kodera.ext.social-pulse-bridge'
 
 export type OfficialSlashCommand =
   | '/frameio-review'
+  | '/dailies'
+  | '/render'
   | '/hello'
+  | '/gh'
+  | '/gitlab'
+  | '/linear'
+  | '/sentry'
+  | '/alerts'
+  | '/advisories'
+  | '/release-draft'
   | '/release-notes'
   | '/incident'
   | '/doc-pad'
+  | '/work'
+  | '/schedule'
   | '/github-track'
   | '/qonto-feed'
+  | '/billing-ops'
   | '/notion-page'
   | '/gdrive-share'
   | '/social-post'
@@ -56,6 +90,7 @@ export interface ExtensionSlashCommandDescriptor {
   readonly slashCommand: OfficialSlashCommand
   readonly usage: string
   readonly description: string
+  readonly descriptionEn: string
 }
 
 export interface OfficialExtensionDescriptor {
@@ -63,9 +98,12 @@ export interface OfficialExtensionDescriptor {
   readonly id: OfficialExtensionId
   readonly slug: string
   readonly name: string
+  readonly nameEn: string
   readonly version: string
   readonly category: ExtensionCategory
+  readonly verifiedManifest: true
   readonly description: string
+  readonly descriptionEn: string
   readonly slashCommand: OfficialSlashCommand
   readonly scopes: readonly ExtensionCatalogScope[]
   readonly events: readonly string[]
@@ -106,9 +144,12 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     id: 'io.kodera.ext.frameio-review-bridge',
     slug: 'frameio-review-bridge',
     name: 'Frame.io Review Bridge',
+    nameEn: 'Frame.io Review Bridge',
     version: '0.1.0',
-    category: 'productivity',
+    category: 'studio',
+    verifiedManifest: true,
     description: 'Production review events in #post-production and #dailies-rushes',
+    descriptionEn: 'Production review events in #post-production and #dailies-rushes.',
     slashCommand: '/frameio-review',
     scopes: ['messages:write', 'commands:register', 'webhooks:incoming'],
     events: ['asset.ready', 'comment.created', 'review.status_changed'],
@@ -118,19 +159,84 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/frameio-review',
         usage: '/frameio-review https://app.frame.io/reviews/project',
         description: 'Share a production review',
+        descriptionEn: 'Share a production review link in the channel.',
       },
     ],
     defaultWebhookExample: 'https://extensions.example.kodera.io/hooks/frameio-review-bridge',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.frameio',
+    slug: 'frameio',
+    name: 'Frame.io & Timecode Dailies',
+    nameEn: 'Frame.io & Timecode Dailies',
+    version: '0.1.0',
+    category: 'studio',
+    verifiedManifest: true,
+    description:
+      'Commentaires synchronisés au timecode SMPTE, marqueurs de montage et signature HMAC-SHA256 horodatée.',
+    descriptionEn:
+      'Timecode-synced dailies notes, timeline marker summaries, and timestamped HMAC-SHA256 verification.',
+    slashCommand: '/dailies',
+    scopes: ['messages:write', 'threads:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'message.created'],
+    commands: [
+      {
+        name: 'dailies',
+        slashCommand: '/dailies',
+        usage: '/dailies [timecode|otio|reviews|status] [--frame=1800 --fps=24]',
+        description: 'Convertit un timecode SMPTE ou inspecte les notes de dailies du montage.',
+        descriptionEn: 'Format SMPTE timecodes or inspect active dailies review notes.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/frameio',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.renderfarm',
+    slug: 'renderfarm',
+    name: 'Supervision Render Farm & VFX',
+    nameEn: 'Render Farm & VFX Queue Bridge',
+    version: '0.1.0',
+    category: 'studio',
+    verifiedManifest: true,
+    description:
+      "Suit les files de rendu 3D et VFX (plages d'images, temps moyen par image, alertes mémoire des nœuds).",
+    descriptionEn:
+      'Tracks 3D and VFX render queues with shot codes, frame ranges, average frame times, and worker alerts.',
+    slashCommand: '/render',
+    scopes: [
+      'messages:write',
+      'incidents:write',
+      'threads:write',
+      'commands:register',
+      'webhooks:incoming',
+    ],
+    events: ['command.invoked', 'incident.opened', 'incident.resolved', 'ci.workflow_failed'],
+    commands: [
+      {
+        name: 'render',
+        slashCommand: '/render',
+        usage: '/render [queue|shot|workers|status] [--shot=SH010 --frames=1001-1120]',
+        description: "Affiche l'état des files de rendu, d'un plan VFX ou des nœuds de calcul.",
+        descriptionEn: 'Inspect render queue status, shot frame progress, or worker nodes.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/renderfarm',
   }),
   Object.freeze({
     schemaVersion: EXTENSION_SCHEMA_VERSION,
     id: 'io.kodera.ext.hello-webhook',
     slug: 'hello-webhook',
     name: 'Hello Webhook (Diagnostic & Echo)',
-    version: '1.0.0',
+    nameEn: 'Hello Webhook (Diagnostic & Echo)',
+    version: '0.1.0',
     category: 'devops',
+    verifiedManifest: true,
     description:
       'Extension de référence vérifiant la signature HMAC-SHA256 des webhooks entrants et répondant à la commande /hello.',
+    descriptionEn:
+      'Starter reference verifying incoming HMAC-SHA256 webhook signatures and replying to /hello.',
     slashCommand: '/hello',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -144,19 +250,225 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/hello' as const,
         usage: '/hello [message]',
         description: 'Vérifie la connectivité du bot et publie un accusé signé dans le salon.',
+        descriptionEn: 'Check bot connectivity and post a signed echo in the channel.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/hello',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.github',
+    slug: 'github',
+    name: 'Pont GitHub (PR, CI & Triage)',
+    nameEn: 'GitHub PR, CI & Triage Bridge',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      'Revues de pull requests en fil dédié, synthèses CI et triage structuré avec vérification HMAC-SHA256.',
+    descriptionEn:
+      'Threaded pull request reviews, CI workflow summaries, and issue triage with HMAC-SHA256 verification.',
+    slashCommand: '/gh',
+    scopes: ['messages:write', 'threads:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'release.published', 'ci.workflow_failed', 'message.created'],
+    commands: [
+      {
+        name: 'gh',
+        slashCommand: '/gh',
+        usage: '/gh [pr|checks|triage|status] <owner/repo>',
+        description: 'Inspecte les pull requests, statuts CI ou tickets GitHub du dépôt.',
+        descriptionEn: 'Inspect pull requests, CI checks, or triage issues for a GitHub repository.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/github',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.gitlab',
+    slug: 'gitlab',
+    name: 'Pont GitLab CE & Auto-hébergé',
+    nameEn: 'GitLab & Self-Hosted CE Bridge',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      'Suit les merge requests, étapes de pipeline CI/CD et livraisons pour instances GitLab.',
+    descriptionEn:
+      'Tracks merge requests, CI/CD pipeline stages, and releases across GitLab instances.',
+    slashCommand: '/gitlab',
+    scopes: ['messages:write', 'threads:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'release.published', 'ci.workflow_failed', 'message.created'],
+    commands: [
+      {
+        name: 'gitlab',
+        slashCommand: '/gitlab',
+        usage: '/gitlab [mr|pipelines|issues|status] <group/project>',
+        description: "Consulte les merge requests et pipelines d'un projet GitLab.",
+        descriptionEn: 'Inspect merge requests, pipeline stages, or issues for a GitLab project.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/gitlab',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.linear',
+    slug: 'linear',
+    name: 'Pont Produit & Cycles Linear',
+    nameEn: 'Linear Issue & Cycle Bridge',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      'Synchronise le cycle de vie des tickets, commentaires et bilans de santé projet Linear.',
+    descriptionEn:
+      'Synchronises issue transitions, comment previews, cycles, and project health updates.',
+    slashCommand: '/linear',
+    scopes: ['messages:write', 'threads:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'message.created'],
+    commands: [
+      {
+        name: 'linear',
+        slashCommand: '/linear',
+        usage: '/linear [issue|triage|cycle|project|status]',
+        description: 'Inspecte ou trie les tickets et cycles Linear depuis le salon.',
+        descriptionEn: 'Inspect or triage Linear issues, cycles, and project updates.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/linear',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.sentry',
+    slug: 'sentry',
+    name: "Pont d'erreurs Sentry",
+    nameEn: 'Sentry Error Alert Bridge',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      "Remonte les régressions applicatives et aperçus de pile d'exécution nettoyés en cartes d'incident.",
+    descriptionEn:
+      'Surfaces application regressions and sanitized stack previews into structured incident cards.',
+    slashCommand: '/sentry',
+    scopes: [
+      'messages:write',
+      'incidents:write',
+      'threads:write',
+      'commands:register',
+      'webhooks:incoming',
+    ],
+    events: ['command.invoked', 'incident.opened', 'incident.resolved', 'message.created'],
+    commands: [
+      {
+        name: 'sentry',
+        slashCommand: '/sentry',
+        usage: '/sentry [inspect|resolve|status] [--issue=<id>]',
+        description: "Examine ou résout une alerte d'erreur applicative Sentry.",
+        descriptionEn: 'Inspect, triage, or resolve Sentry application error alerts.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/sentry',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.alertmanager',
+    slug: 'alertmanager',
+    name: 'Alertes Supervision & Métriques',
+    nameEn: 'Monitoring & Metrics Alert Bridge',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      "Transforme les alertes d'infrastructure en cartes d'incident corrélées avec validation HTTPS des runbooks.",
+    descriptionEn:
+      'Transforms infrastructure firing and resolved alerts into threaded incident cards with validated runbooks.',
+    slashCommand: '/alerts',
+    scopes: [
+      'messages:write',
+      'incidents:write',
+      'threads:write',
+      'commands:register',
+      'webhooks:incoming',
+    ],
+    events: ['command.invoked', 'incident.opened', 'incident.resolved', 'message.created'],
+    commands: [
+      {
+        name: 'alerts',
+        slashCommand: '/alerts',
+        usage: '/alerts [firing|runbooks|status]',
+        description: "Liste les alertes actives et vérifie l'acheminement d'astreinte.",
+        descriptionEn: 'List firing alerts, inspect runbooks, or check routing status.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/alertmanager',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.rss-advisories',
+    slug: 'rss-advisories',
+    name: 'Veille Flux & Avis de Sécurité',
+    nameEn: 'Security Advisory & Feed Monitor',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      'Normalise les flux syndiqués et avis de vulnérabilités logicielles avec déduplication bornée.',
+    descriptionEn:
+      'Normalizes syndicated feeds and upstream dependency security advisories with bounded deduplication.',
+    slashCommand: '/advisories',
+    scopes: ['messages:write', 'incidents:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'incident.opened', 'release.published', 'message.created'],
+    commands: [
+      {
+        name: 'advisories',
+        slashCommand: '/advisories',
+        usage: '/advisories [list|sources|status]',
+        description: 'Consulte les derniers avis de sécurité des composants suivis.',
+        descriptionEn: 'Inspect upstream security advisories and tracked dependency sources.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/rss-advisories',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.release-assistant',
+    slug: 'release-assistant',
+    name: 'Assistant Notes de Version Bilingue',
+    nameEn: 'Opt-In Bilingual Release Assistant',
+    version: '0.1.0',
+    category: 'devops',
+    verifiedManifest: true,
+    description:
+      'Génère sur activation par salon des notes de version bilingues déterministes à partir des commits et PR, sans télémétrie.',
+    descriptionEn:
+      'Opt-in per-room deterministic bilingual release-notes formatter from commits and pull requests with zero telemetry.',
+    slashCommand: '/release-draft',
+    scopes: ['messages:write', 'ephemeral:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'release.published'],
+    commands: [
+      {
+        name: 'release-draft',
+        slashCommand: '/release-draft',
+        usage: '/release-draft [draft|opt-in-check|status] [--tag=v1.0.0]',
+        description: 'Rédige un brouillon bilingue de notes de version dans un salon autorisé.',
+        descriptionEn: 'Generate deterministic bilingual release notes in an opted-in room.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/release-assistant',
   }),
   Object.freeze({
     schemaVersion: EXTENSION_SCHEMA_VERSION,
     id: 'io.kodera.ext.github-release-notifier',
     slug: 'github-release-notifier',
     name: 'Notificateur de versions Git & CI',
-    version: '1.0.0',
+    nameEn: 'Git Release & CI Notifier',
+    version: '0.1.0',
     category: 'devops',
+    verifiedManifest: true,
     description:
       'Publie automatiquement les notes de version et alertes de pipeline CI dans le salon dédié.',
+    descriptionEn:
+      'Publishes signed release announcements and CI workflow failure alerts to the room.',
     slashCommand: '/release-notes',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -170,6 +482,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/release-notes' as const,
         usage: '/release-notes [tag]',
         description: 'Affiche la dernière version publiée et le statut du pipeline associé.',
+        descriptionEn: 'Preview the latest published tag and associated CI status.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/releases',
@@ -179,10 +492,14 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     id: 'io.kodera.ext.uptime-incident-bridge',
     slug: 'uptime-incident-bridge',
     name: "Pont d'incidents & supervision",
-    version: '1.0.0',
+    nameEn: 'Uptime & Incident Bridge',
+    version: '0.1.0',
     category: 'devops',
+    verifiedManifest: true,
     description:
       "Relie les sondes de disponibilité aux salons d'astreinte avec cartes d'incident structurées.",
+    descriptionEn:
+      'Connects availability probes to on-call rooms with structured incident lifecycle cards.',
     slashCommand: '/incident',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -202,6 +519,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/incident' as const,
         usage: '/incident [open|ack|resolve] <titre>',
         description: "Déclare, acquitte ou résout un incident d'exploitation dans le salon.",
+        descriptionEn: 'Declare, acknowledge, or resolve an operational incident in the room.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/incidents',
@@ -211,10 +529,14 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     id: 'io.kodera.ext.docs-collab-announcer',
     slug: 'docs-collab-announcer',
     name: 'Annonceur de pads collaboratifs Docs',
-    version: '1.0.0',
+    nameEn: 'Collaborative Docs Pad Announcer',
+    version: '0.1.0',
     category: 'productivity',
+    verifiedManifest: true,
     description:
       'Partage et épingle les documents collaboratifs Docs directement depuis une commande slash.',
+    descriptionEn:
+      'Shares and pins collaborative Docs pads directly from a slash command.',
     slashCommand: '/doc-pad',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -228,19 +550,78 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/doc-pad' as const,
         usage: '/doc-pad <titre-du-document>',
         description: 'Crée ou annonce un pad collaboratif Docs lié au salon courant.',
+        descriptionEn: 'Create or announce a collaborative Docs pad linked to the current room.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/docs-collab',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.openproject',
+    slug: 'openproject',
+    name: 'Suivi de Travaux & Sprints',
+    nameEn: 'Sovereign Work & Sprint Bridge',
+    version: '0.1.0',
+    category: 'productivity',
+    verifiedManifest: true,
+    description:
+      'Unifie les lots de travaux et tickets de sprint en cartes chronologiques avec validation HTTPS anti-SSRF.',
+    descriptionEn:
+      'Normalizes work packages and sprint tickets into unified timeline cards with anti-SSRF link checks.',
+    slashCommand: '/work',
+    scopes: ['messages:write', 'threads:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'message.created'],
+    commands: [
+      {
+        name: 'work',
+        slashCommand: '/work',
+        usage: '/work [inspect|sprint|triage|status] [--key=OP-1042]',
+        description: "Inspecte un lot de travaux, un ticket ou l'avancement du sprint actif.",
+        descriptionEn: 'Inspect work packages, sprint timelines, or triage item status.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/openproject',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.calcom',
+    slug: 'calcom',
+    name: 'Planification & Salons Vocaux',
+    nameEn: 'Scheduling & Voice Room Bridge',
+    version: '0.1.0',
+    category: 'productivity',
+    verifiedManifest: true,
+    description:
+      'Publie les créneaux réservés validés en UTC avec accès direct vers le salon vocal Kodera dédié.',
+    descriptionEn:
+      'Posts UTC-validated booking cards with a one-click jump action to the designated Kodera voice room.',
+    slashCommand: '/schedule',
+    scopes: ['messages:write', 'threads:write', 'commands:register', 'webhooks:incoming'],
+    events: ['command.invoked', 'message.created'],
+    commands: [
+      {
+        name: 'schedule',
+        slashCommand: '/schedule',
+        usage: '/schedule [upcoming|room|booking|status] [--room=office-hours]',
+        description: 'Consulte les prochains créneaux ou associe un salon vocal Kodera.',
+        descriptionEn: 'Inspect upcoming booking windows or link a target Kodera voice room.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/calcom',
   }),
   Object.freeze({
     schemaVersion: EXTENSION_SCHEMA_VERSION,
     id: 'io.kodera.ext.github-repo-tracker',
     slug: 'github-repo-tracker',
     name: 'Suivi de dépôt GitHub (Issues, PR, CI & Sécurité)',
-    version: '1.0.0',
+    nameEn: 'GitHub Repository Tracker (Issues, PR & CI)',
+    version: '0.1.0',
     category: 'devops',
+    verifiedManifest: true,
     description:
       "Suit l'activité d'un dépôt GitHub (issues, pull requests, workflow runs, releases, avis de sécurité) dans le salon.",
+    descriptionEn:
+      'Tracks GitHub repository activity (issues, pull requests, CI runs, releases, advisories) in the room.',
     slashCommand: '/github-track',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -259,6 +640,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/github-track' as const,
         usage: '/github-track <owner/repo> [--events=issues,pull_requests,security_advisories]',
         description: "Configure ou affiche le suivi d'un dépôt GitHub (owner/repo) dans le salon.",
+        descriptionEn: 'Configure or inspect tracking for a GitHub repository in the room.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/github-track',
@@ -268,10 +650,14 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     id: 'io.kodera.ext.qonto-treasury-feed',
     slug: 'qonto-treasury-feed',
     name: 'Flux de trésorerie Qonto (IBAN masqué)',
-    version: '1.0.0',
+    nameEn: 'Qonto Treasury Feed (Masked IBAN)',
+    version: '0.1.0',
     category: 'finance',
+    verifiedManifest: true,
     description:
       'Suit les mouvements bancaires Qonto (virements, justificatifs manquants, seuils de dépense) avec masquage déterministe des IBAN.',
+    descriptionEn:
+      'Tracks Qonto treasury movements, missing receipts, and spend thresholds with deterministic IBAN masking.',
     slashCommand: '/qonto-feed',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -286,19 +672,59 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         usage: '/qonto-feed [status|alerts|threshold|missing-invoices]',
         description:
           'Consulte le flux de trésorerie Qonto, les seuils de dépense ou les justificatifs manquants.',
+        descriptionEn: 'Check Qonto treasury status, spend alerts, or missing invoice receipts.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/qonto-feed',
+  }),
+  Object.freeze<OfficialExtensionDescriptor>({
+    schemaVersion: EXTENSION_SCHEMA_VERSION,
+    id: 'io.kodera.ext.billing-webhooks',
+    slug: 'billing-webhooks',
+    name: 'Facturation & Quotas (Sans Données Personnelles)',
+    nameEn: 'Billing & Quota Ops Webhooks (PII-Redacted)',
+    version: '0.1.0',
+    category: 'finance',
+    verifiedManifest: true,
+    description:
+      "Achemine l'état des factures, abonnements et quotas vers les salons d'exploitation autorisés en supprimant toute coordonnée client ou carte.",
+    descriptionEn:
+      'Routes invoice, subscription, and quota alerts to authorized ops rooms while stripping all customer PII and card data.',
+    slashCommand: '/billing-ops',
+    scopes: [
+      'messages:write',
+      'ephemeral:write',
+      'incidents:write',
+      'commands:register',
+      'webhooks:incoming',
+    ],
+    events: ['command.invoked', 'incident.opened'],
+    commands: [
+      {
+        name: 'billing-ops',
+        slashCommand: '/billing-ops',
+        usage: '/billing-ops [summary|quotas|policy|status] [--workspace=<slug>]',
+        description:
+          "Vérifie le palier d'abonnement ou les seuils de quotas sans exposer de données personnelles.",
+        descriptionEn:
+          'Inspect redacted workspace plan, invoice status, or quota thresholds in ops rooms.',
+      },
+    ],
+    defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/billing-webhooks',
   }),
   Object.freeze({
     schemaVersion: EXTENSION_SCHEMA_VERSION,
     id: 'io.kodera.ext.notion-workspace-bridge',
     slug: 'notion-workspace-bridge',
     name: 'Pont Notion Workspace & Bases de données',
-    version: '1.0.0',
+    nameEn: 'Notion Workspace & Database Bridge',
+    version: '0.1.0',
     category: 'productivity',
+    verifiedManifest: true,
     description:
       'Partage et synchronise les pages et entrées de bases Notion dans un salon aux côtés de Docs.',
+    descriptionEn:
+      'Shares and synchronises Notion workspace pages and database entries alongside Docs.',
     slashCommand: '/notion-page',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -312,6 +738,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         slashCommand: '/notion-page' as const,
         usage: '/notion-page [share|sync|database] --page=<id> --title=<titre>',
         description: 'Partage ou synchronise une page ou base Notion aux côtés de Docs.',
+        descriptionEn: 'Share or sync a Notion page or database entry alongside Docs.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/notion-bridge',
@@ -321,10 +748,14 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     id: 'io.kodera.ext.gdrive-document-share',
     slug: 'gdrive-document-share',
     name: 'Partage Google Drive (Fichiers & Dossiers)',
-    version: '1.0.0',
+    nameEn: 'Google Drive Document & Folder Share',
+    version: '0.1.0',
     category: 'productivity',
+    verifiedManifest: true,
     description:
       "Partage des fichiers et dossiers Google Drive avec badges de droits d'accès (lecture, commentaire, édition) et validation HTTPS anti-SSRF.",
+    descriptionEn:
+      'Shares Google Drive files and folders with access permission badges and anti-SSRF HTTPS validation.',
     slashCommand: '/gdrive-share',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -339,6 +770,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         usage: '/gdrive-share [lecture|commentaire|édition] --id=<fileId> --title=<titre>',
         description:
           'Partage un fichier ou dossier Google Drive avec badge de permission structuré.',
+        descriptionEn: 'Share a Google Drive file or folder with a structured permission badge.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/gdrive-share',
@@ -348,10 +780,14 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
     id: 'io.kodera.ext.social-pulse-bridge',
     slug: 'social-pulse-bridge',
     name: 'Veille & Syndication Sociale (X, Mastodon, Instagram)',
-    version: '1.0.0',
+    nameEn: 'Social Syndication Bridge (X, Mastodon, Instagram)',
+    version: '0.1.0',
     category: 'social',
+    verifiedManifest: true,
     description:
       'Diffuse les publications X / Twitter, Mastodon / Fédiverse et Instagram sans pixel tiers et supprime automatiquement les paramètres de pistage.',
+    descriptionEn:
+      'Syndicates X, Mastodon, and Instagram posts with zero third-party pixels and automatic tracking-parameter removal.',
     slashCommand: '/social-post',
     scopes: Object.freeze<readonly ExtensionCatalogScope[]>([
       'messages:write',
@@ -366,6 +802,7 @@ export const OFFICIAL_EXTENSIONS_CATALOG: readonly OfficialExtensionDescriptor[]
         usage: '/social-post --url=<https://...> [--network=x|mastodon|instagram]',
         description:
           'Partage une publication X / Twitter, Mastodon / Fédiverse ou Instagram nettoyée de tout pistage.',
+        descriptionEn: 'Share a tracking-stripped X, Mastodon, or Instagram post in the room.',
       }),
     ]),
     defaultWebhookExample: 'https://hooks.exemple-organisation.fr/kodera/social-pulse',
