@@ -259,6 +259,23 @@ def billing_enabled(environment: Mapping[str, str]) -> bool:
     raise ImproperlyConfigured("KODERA_BILLING_ENABLED must be true, false or unset")
 
 
+EDITIONS = frozenset({"community", "enterprise"})
+
+
+def edition(environment: Mapping[str, str]) -> str:
+    """Which product edition serves HTTP, from KODERA_EDITION (GOVERNANCE.md §1).
+
+    Unset or empty is `community`, the open-source default. Setting `enterprise` activates the
+    clean-room `/api/v1/ee/*` dispatcher when the `ee/` package is installed. Anything else is
+    refused at start without reflecting the caller's value."""
+    value = environment.get("KODERA_EDITION", "").strip()
+    if value == "":
+        return "community"
+    if value in EDITIONS:
+        return value
+    raise ImproperlyConfigured("KODERA_EDITION must be community, enterprise or unset")
+
+
 STAFF_REALM_SUFFIX = "/realms/kodera-staff"
 
 
