@@ -44,6 +44,7 @@ MAX_STATUS_NOTE_CHARS = 80
 MAX_HANDLE_CHARS = 32
 MAX_RESOLVE_TOKENS = 32
 MAX_ACTIVE_CHECKINS = 8192
+MAX_REPLAY_BINDINGS = MAX_ACTIVE_CHECKINS * 2
 
 TOKEN_MAGIC = b"KT"
 TOKEN_VERSION = 1
@@ -402,6 +403,9 @@ class ProximityBroker:
         self._by_principal: dict[tuple[UUID, str, str], VoluntaryCheckInRecord] = {}
         self._by_token: dict[tuple[UUID, str, str], tuple[UUID, str, str]] = {}
         self._by_pseudonym: dict[tuple[UUID, str, int, str], tuple[UUID, str, str]] = {}
+        # Bind counters to their principal through the entire cryptographic validity window,
+        # including after checkout. Removing presence must not make captured tokens reusable.
+        self._replay_bindings: dict[tuple[UUID, str, int, str], tuple[str, int]] = {}
 
     def workspace_beacon_key(self, workspace_id: UUID, event_scope: str = "default") -> bytes:
         scope = validate_event_scope(event_scope)
@@ -494,6 +498,22 @@ class ProximityBroker:
         with self._lock:
             self._purge_expired_locked(now)
 
+            binding = self._replay_bindings.get(pseudonym_key)
+            if binding is not None:
+                owner, highest_counter = binding
+                if owner != principal_key:
+                    raise ProximityRefusalError(
+                        409, kind="conflict", reason="beacon_pseudonym_already_claimed"
+                    )
+                if verified.counter <= highest_counter:
+                    raise ProximityRefusalError(
+                        409, kind="conflict", reason="beacon_counter_replayed"
+                    )
+            elif len(self._replay_bindings) >= MAX_REPLAY_BINDINGS:
+                raise ProximityRefusalError(
+                    503, kind="service-unavailable", reason="broker_replay_capacity_reached"
+                )
+
             # Prevent another principal in the same workspace from reusing an already-bound token.
             existing_token_owner = self._by_token.get(token_key)
             if existing_token_owner is not None and existing_token_owner != record_key:
@@ -532,6 +552,7 @@ class ProximityBroker:
             self._by_principal[record_key] = record
             self._by_token[token_key] = record_key
             self._by_pseudonym[pseudonym_key] = record_key
+            self._replay_bindings[pseudonym_key] = (principal_key, verified.counter)
 
         return {
             "workspace_id": str(workspace_id),
@@ -701,8 +722,17 @@ class ProximityBroker:
             self._by_principal.clear()
             self._by_token.clear()
             self._by_pseudonym.clear()
+            self._replay_bindings.clear()
 
     def _purge_expired_locked(self, now_unix_secs: int) -> None:
+        expired_bindings = [
+            key
+            for key in self._replay_bindings
+            if (key[2] + 1) * PROXIMITY_EPOCH_ROTATION_SECS + PROXIMITY_EPOCH_CLOCK_SKEW_SECS
+            <= now_unix_secs
+        ]
+        for replay_key in expired_bindings:
+            del self._replay_bindings[replay_key]
         expired = [
             key for key, record in self._by_principal.items() if record.expires_at <= now_unix_secs
         ]
