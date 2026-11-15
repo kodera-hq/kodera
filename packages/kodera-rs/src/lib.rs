@@ -33,7 +33,13 @@ pub use proximity_beacon_v2::{
 #[cfg(feature = "openmls-engine")]
 mod mls_engine;
 #[cfg(feature = "openmls-engine")]
-pub use mls_engine::{MlsCommitBundle, OpenMlsMember, OpenMlsSession, SealedMlsState};
+pub use mls_engine::{
+    InitialMlsRoomWrite, MlsCommitBundle, MlsDeviceScope, MlsDeviceStore, MlsDeviceStoreError,
+    MlsDeviceWrappingKeys, MlsDeviceWrite, OpenMlsDevice, OpenMlsMember, OpenMlsSession,
+    PendingMlsPackageId, PendingMlsWelcome, PreparedMlsKeyPackage, RelayAlgorithm, RelayId,
+    RelayStatement, SealedMlsDeviceState, SealedMlsState, SignedRelayRequest,
+    MAX_SEALED_MLS_DEVICE_BYTES,
+};
 
 #[cfg(feature = "megolm-engine")]
 mod megolm_engine;
