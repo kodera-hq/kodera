@@ -199,6 +199,7 @@ def selftest():
     assert configured['modules'][1] == {'module': MODULE, 'config': {
         'agent_user_id': '@kodera-agent:chat.example.org',
         'room_access_user_id': '@kodera-rooms:chat.example.org',
+        'federation_domain_allowlist': [], 'federation_mode': 'closed',
     }}
     assert configure(configured) == configured and len(configured['modules']) == 2
     community_environment = {

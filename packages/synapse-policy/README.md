@@ -8,13 +8,13 @@ A Synapse module that keeps a Kodera instance's rooms under its control plane's 
 
 | Callback | Refuses |
 |---|---|
-| `user_may_create_room` | every room creation with `m.room.encryption` in its initial state, the agent's included (a room's initial state never reaches `check_event_for_spam`); every other creation, except a private direct message with one to eight distinct local invitees, and except by the agent |
+| `user_may_create_room` | encryption in ordinary rooms, including agent requests; confidential initial encryption requires the trusted immutable marker described below. Other creation requires the agent or a validated private local direct message |
 | `on_create_room` | pins internal room creation to `m.federate: false` and a local-server ACL; requires explicit trusted policy for partner rooms; binds validated DM invitees to immutable creation content |
 | `user_may_invite` | every invite to or from a service account (`agent_user_id`, `room_access_user_id`, except when the agent itself invites a regular user) or with a malformed Matrix user ID; every other invite, except (1) by the agent, (2) by a joined member (`membership == "join"`) of a room whose `io.kodera.room.policy` state event sets `allow_member_invites: true` (for local users, or for external federated Matrix users when `allow_federated_invites: true` is also set), and (3) the validated initial local invitees of a member's new direct message |
 | `user_may_send_3pid_invite`, `user_may_create_room_alias` | invites by e-mail or phone, and room aliases, except by the agent |
 | `user_may_publish_room` | publishing any room to the directory |
-| `check_event_allowed` (third-party rules) | `m.room.encryption` and `m.room.encrypted` in any event Synapse creates, with no exemption. Synapse skips `user_may_create_room` for a server admin, and the agent's account is one, so this is what holds for the agent's own room creations, for encryption a server setting would force on, and for the state an upgrade copies. `m.room.encrypted` is ciphertext: a client can post it in a room where encryption is off, with the keys shared by to-device message, so it is refused as a timeline event and as state, in channels and direct messages |
-| `check_event_for_spam` | `m.room.encryption` and `m.room.encrypted` from anyone, as timeline or state: Synapse (v1.163.0) runs this callback, not `check_event_allowed`, on events from other servers. From anyone but the agent: a join rule other than `invite`, a world-readable history, aliases, third-party invites, server ACLs, room upgrades, space links and a room's policy (`io.kodera.room.policy`). From anyone but the agent and the room-access service: a room's audio occupancy (`io.kodera.room.occupancy`). Power levels do not cover these two: in a direct message its creator holds every level, and could otherwise declare it an audio room |
+| `check_event_allowed` (third-party rules) | encryption events in ordinary rooms, cleartext timeline payloads in confidential rooms, malformed or mismatched ciphertext envelopes, and governance violations; the same boundary applies to the administrative account |
+| `check_event_for_spam` | the same encryption, confidentiality and governance boundary for incoming federation events. From anyone but the agent: public join rules, world-readable history, aliases, third-party invites, ACLs, upgrades, space links and policy. Occupancy requires the agent or room-access service |
 
 **Bounded direct conversations.** Member-created rooms require `is_direct: true`,
 `preset: "private_chat"`, `visibility: "private"`, and one to eight distinct local
@@ -58,10 +58,33 @@ channels cannot be widened. See [deployment instructions](../../deploy/community
 A partner room deliberately shares its history with invited partners under Matrix's `shared`
 history setting. Removing a participant does not recall data already delivered. Server ACLs
 also do not establish retroactive outbound isolation for a formerly federated room; explicit
-replacement is required for a closed room. This policy does not change encryption restrictions
+replacement is required for a closed room. Federation mode does not change encryption restrictions
 or grant any foreign identity Core workspace/document privileges.
 
-**To-device messages are not room events**, and Synapse (v1.163.0) offers a module no callback for them. A client can still send encrypted to-device messages, but without `m.room.encrypted` no room carries ciphertext.
+**Explicit open transport (SRV-ADR-0026, Proposed).** `federation_mode: open` removes the global
+partner server list. Every room still requires the exact bounded public server list, trusted
+immutable partner creation, invite-only joins and exact ACL described above. This permits
+operator-selected rooms to admit arbitrary public peers without a homeserver-wide partner list;
+it does not make room membership unrestricted. `closed` refuses remote admission even when old
+partner room state remains. The Community renderer accepts `KODERA_FEDERATION_MODE` and pins
+federation rate/concurrency limits, TLS verification and private-address filtering. Its narrow
+overlay generator accepts `--mode open`; explicit room selection and operator review remain
+mandatory. Callback/configuration tests do not prove live federation abuse limits.
+
+**Confidential-room primitive (SRV-ADR-0026, Proposed).** Only the agent may create a room whose
+immutable `io.kodera.room.confidential` marker names `m.megolm.v1.aes-sha2` or `io.kodera.mls.v1`;
+exactly one matching initial `m.room.encryption` state is mandatory. Both event callbacks refuse
+cleartext timeline payloads, including reactions, custom events and agent posts. Ciphertext
+must use the selected algorithm's bounded exact envelope; it obeys mute, read-only and
+membership policy. Arbitrary timeline payloads cannot be smuggled through state keys. Only
+enumerated room metadata/control state is permitted; that metadata remains visible. The server
+cannot verify cryptographic ciphertext without possessing the keys: clients must authenticate it.
+
+Status: Planned — real Synapse confidential-room integration, encrypted envelope API, client
+key persistence, browser/native interoperability and LiveKit frame transforms. No user-facing
+confidential-room capability is qualified by these callback tests alone.
+
+**To-device messages are not room events**, and Synapse (v1.163.0) offers a module no callback for them. This policy's timeline boundary does not inspect to-device key distribution.
 
 **Community governance supplements room power levels.** The tenant agent writes
 additive `read_only`, `audience`, `members` and `exempt` fields to
