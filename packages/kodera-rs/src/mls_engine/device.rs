@@ -194,15 +194,17 @@ fn signer(
 ) -> Result<SignatureKeyPair, NativeCryptoError> {
     let signer = SignatureKeyPair::read(provider.storage(), expected, SUITE.signature_algorithm())
         .ok_or(NativeCryptoError::Storage)?;
+    // The storage identifier does not validate a deserialized signer's scheme.
+    // Reject foreign bindings before invoking any private signing operation.
+    if signer.signature_scheme() != SUITE.signature_algorithm() || signer.public() != expected {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
     let challenge = b"kodera-native-mls-device-possession-v1\0";
     let signature = signer.sign(challenge).map_err(failed)?;
     provider
         .crypto()
         .verify_signature(SUITE.signature_algorithm(), challenge, expected, &signature)
         .map_err(failed)?;
-    if signer.public() != expected {
-        return Err(NativeCryptoError::AuthenticationFailed);
-    }
     Ok(signer)
 }
 
@@ -1611,5 +1613,93 @@ pub(super) mod tests {
         // The original authenticated state remains usable after all refusals.
         assert_eq!(restore(&own, &store).pending.len(), 2);
         assert!(!own.quarantined);
+    }
+
+    #[test]
+    fn authenticated_foreign_scheme_vault_refuses_before_private_signing() {
+        let mut store = TestStore::default();
+        let key = store.wrapping_key;
+        let own = finish(OpenMlsDevice::create_and_persist(
+            scope(),
+            b"public restored-signer fixture",
+            &key,
+            &mut store,
+        ))
+        .unwrap();
+        let expected = own.device_key();
+        let original = store.sealed.as_ref().unwrap().clone();
+        let provider = own.identity.provider();
+        let private =
+            tls_codec::SecretVLBytes::new(provider.rand().random_array::<31>().unwrap().to_vec());
+        let poison: SignatureKeyPair = serde_json::from_value(serde_json::json!({
+            "private": private.as_slice(),
+            "public": expected,
+            "signature_scheme": SignatureScheme::ECDSA_SECP256R1_SHA256,
+        }))
+        .unwrap();
+        {
+            let mut values = provider.storage().values.write().unwrap();
+            let entry = values
+                .values_mut()
+                .find(|value| {
+                    serde_json::from_slice::<SignatureKeyPair>(value).is_ok_and(|signer| {
+                        signer.public() == expected
+                            && signer.signature_scheme() == SUITE.signature_algorithm()
+                    })
+                })
+                .unwrap();
+            // Keep the genuine Ed25519 storage identifier and public key; only
+            // the serialized signer value is foreign and deliberately invalid.
+            *entry = serde_json::to_vec(&poison).unwrap();
+        }
+        let loaded =
+            SignatureKeyPair::read(provider.storage(), &expected, SUITE.signature_algorithm())
+                .unwrap();
+        assert_eq!(loaded.public(), expected);
+        assert_eq!(
+            loaded.signature_scheme(),
+            SignatureScheme::ECDSA_SECP256R1_SHA256
+        );
+        // Pinned upstream sign converts its P-256 private slice to exactly32
+        // bytes before signing. This31byte poison panics if that branch runs.
+        // Establish the oracle on this exact deserialized fixture, not a mock.
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            loaded.sign(b"public poison control")
+        }))
+        .is_err());
+
+        // Real AEAD and correct original metadata: framing/authentication alone
+        // cannot reject this record. seal_device generates a fresh CSPRNG nonce.
+        let malformed = own.seal_device(store.generation, None, &[], &key).unwrap();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            OpenMlsDevice::restore_device(
+                scope(),
+                expected,
+                None,
+                store.generation,
+                &malformed,
+                &key,
+            )
+        }));
+        assert!(matches!(
+            outcome,
+            Ok(Err(NativeCryptoError::AuthenticationFailed))
+        ));
+        let restored = OpenMlsDevice::restore_device(
+            scope(),
+            expected,
+            None,
+            store.generation,
+            &original,
+            &key,
+        )
+        .unwrap();
+        assert_eq!(restored.device_key(), expected);
+        assert!(restored.registration_request().is_ok());
+        assert_eq!(
+            store.sealed.as_ref().unwrap().as_bytes(),
+            original.as_bytes()
+        );
+        assert_eq!(store.attempts, 1);
     }
 }
