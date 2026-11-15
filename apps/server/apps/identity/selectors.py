@@ -120,6 +120,37 @@ def realm_subjects(*, organisation_id: UUID) -> tuple[tuple[UUID, str, bool], ..
     )
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ActiveOrganisationIdentity:
+    id: UUID
+    user_id: UUID
+    organisation_id: UUID
+    issuer: str
+    realm: str
+
+
+def identity_user_ids(*, identity_ids: set[UUID]) -> set[UUID]:
+    """Every person id referenced by `identity_ids`, including disabled or soft-deleted rows."""
+    return set(Identity.objects.filter(id__in=identity_ids).values_list("user_id", flat=True))
+
+
+def active_organisation_identities(
+    *, identity_ids: set[UUID]
+) -> tuple[ActiveOrganisationIdentity, ...]:
+    """Enabled customer identities with enabled persons for `identity_ids`."""
+    return tuple(
+        ActiveOrganisationIdentity(*row)
+        for row in Identity.objects.filter(
+            id__in=identity_ids,
+            enabled=True,
+            deleted_at__isnull=True,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+            organisation__isnull=False,
+        ).values_list("id", "user_id", "organisation_id", "issuer", "realm")
+    )
+
+
 def person_contacts(*, user_ids: tuple[UUID, ...]) -> tuple[PersonSnapshot, ...]:
     """Bounded descriptive contacts, including disabled retained people; never authority."""
     if len(user_ids) > 200:

@@ -100,6 +100,7 @@ ACCOUNT_DOMAINS = frozenset(
         "private_exports",
         "account_message_outbox",
         "account_extension_subjects",
+        "proximity_ephemeral",
     }
 )
 

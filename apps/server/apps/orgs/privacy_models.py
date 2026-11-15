@@ -90,6 +90,7 @@ class ErasureReceipt(StoredModel):
                         "identity_provider",
                         "private_exports",
                         "external_extension_receivers",
+                        "proximity_ephemeral",
                     ]
                 ),
                 name="erasure_domain",
@@ -160,6 +161,7 @@ class AccountErasureReceipt(StoredModel):
                         "private_exports",
                         "account_message_outbox",
                         "account_extension_subjects",
+                        "proximity_ephemeral",
                     ]
                 ),
                 name="account_erasure_receipt_domain",

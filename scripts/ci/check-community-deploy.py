@@ -281,6 +281,62 @@ def parse_env_example(env_text: str) -> tuple[dict[str, str], list[str]]:
     return env_map, errors
 
 
+def proximity_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
+    """Hold the shared RAM-only broker and its private socket boundary to their reviewed shape."""
+    errors: list[str] = []
+    server = services.get("server")
+    broker = services.get("proximity-broker")
+    initializer = services.get("proximity-socket-init")
+    if server is None or broker is None or initializer is None:
+        return ["proximity requires the API, shared broker and private socket initializer"]
+    if server.environment.get("KODERA_PROXIMITY_BROKER_SOCKET") != "/run/proximity/broker.sock":
+        errors.append("proximity API must select the private shared broker socket")
+    if section_entries(server, "volumes") != ["- proximity_socket:/run/proximity:ro"]:
+        errors.append("proximity API must mount only its read-only private socket directory")
+    if server.depends_on_conditions.get("proximity-broker") != "service_healthy":
+        errors.append("proximity API must wait for the shared broker healthcheck")
+    for component in (broker, initializer):
+        if component.environment or section_entries(component, "ports"):
+            errors.append("proximity broker components admit no environment credentials or published ports")
+        if section_entries(component, "volumes") != ["- proximity_socket:/run/proximity"]:
+            errors.append("proximity broker components may mount only the socket directory")
+    block = "\n".join(broker.raw_lines)
+    if 'command: ["python", "-m", "apps.proximity.broker_rpc", "/run/proximity/broker.sock"]' not in block or not broker.has_healthcheck:
+        errors.append("proximity broker must run the reviewed socket service with a healthcheck")
+    if broker.depends_on_conditions.get("proximity-socket-init") != "service_completed_successfully":
+        errors.append("proximity broker must wait for private socket ownership initialization")
+    init_block = "\n".join(initializer.raw_lines)
+    if "os.chmod('/run/proximity', 0o700); os.chown('/run/proximity', 10001, 10001)" not in init_block or 'user: "0:0"' not in init_block or initializer.restart != '"no"':
+        errors.append("proximity socket initializer must establish owner-only runtime access and exit")
+    for required in ('read_only: true', 'cap_drop: ["ALL"]', 'cap_add: ["CHOWN", "FOWNER"]', 'security_opt: ["no-new-privileges:true"]'):
+        if required not in init_block:
+            errors.append("proximity socket initializer must retain the reviewed least-privilege sandbox")
+    return errors
+
+
+def run_proximity_selftest(compose_text: str) -> int:
+    cases = (
+        ("socket configuration removed", "KODERA_PROXIMITY_BROKER_SOCKET: /run/proximity/broker.sock", "KODERA_PROXIMITY_BROKER_SOCKET: /missing.sock", "proximity API must select the private shared broker socket"),
+        ("API socket mount writable", "proximity_socket:/run/proximity:ro", "proximity_socket:/run/proximity", "proximity API must mount only its read-only private socket directory"),
+        ("socket directory public", "os.chmod('/run/proximity', 0o700)", "os.chmod('/run/proximity', 0o777)", "proximity socket initializer must establish owner-only runtime access and exit"),
+        ("broker command replaced", '"-m", "apps.proximity.broker_rpc"', '"-m", "unreviewed.service"', "proximity broker must run the reviewed socket service with a healthcheck"),
+        ("broker publishes a port", "  proximity-broker:\n    mem_limit", "  proximity-broker:\n    ports:\n      - 8099:8099\n    mem_limit", "proximity broker components admit no environment credentials or published ports"),
+        ("broker receives credentials", "  proximity-broker:\n    mem_limit", "  proximity-broker:\n    environment:\n      UNREVIEWED_SECRET: synthetic\n    mem_limit", "proximity broker components admit no environment credentials or published ports"),
+    )
+    cases += (
+        ("initializer writable root", "    read_only: true", "    read_only: false", "proximity socket initializer must retain the reviewed least-privilege sandbox"),
+        ("initializer ambient capabilities", '    cap_drop: ["ALL"]', '    cap_drop: []', "proximity socket initializer must retain the reviewed least-privilege sandbox"),
+        ("initializer excess capability", '    cap_add: ["CHOWN", "FOWNER"]', '    cap_add: ["CHOWN", "FOWNER", "SYS_ADMIN"]', "proximity socket initializer must retain the reviewed least-privilege sandbox"),
+        ("initializer privilege escalation", '    security_opt: ["no-new-privileges:true"]', '    security_opt: []', "proximity socket initializer must retain the reviewed least-privilege sandbox"),
+    )
+    for label, old, new, expected in cases:
+        if old not in compose_text or expected not in proximity_runtime_errors(parse_compose_services(compose_text.replace(old, new, 1))):
+            print(f"[FAIL] proximity mutation {label} did not trigger {expected}", file=sys.stderr)
+            return 1
+    print(f"OK: private shared proximity broker, {len(cases)} isolation mutations refused by name.")
+    return 0
+
+
 def check_community_deploy(
     compose_text: str,
     env_text: str,
@@ -350,6 +406,7 @@ def check_community_deploy(
         errors.append(f"{SYNAPSE_OIDC_ISSUER_ENV_NAME} must be empty in .env.example: it has no usable default")
 
     services = parse_compose_services(compose_text)
+    errors.extend(proximity_runtime_errors(services))
     for svc in services.values():
         for env_key, env_value in svc.environment.items():
             if SECRET_SHAPED_NAME_RE.search(env_key.upper()) and "${" not in env_value:
@@ -705,6 +762,7 @@ REVIEWED_SERVICE_KEYS = frozenset({
 })
 BLOCK_ONLY_SERVICE_KEYS = frozenset({"build", "environment", "volumes", "depends_on", "healthcheck", "ports"})
 REVIEWED_BIND_MOUNTS = frozenset({
+    "proximity_socket:/run/proximity:ro",
     "./Caddyfile:/etc/caddy/Caddyfile:ro",
     "./Caddyfile.split:/etc/caddy/Caddyfile:ro",
     "./livekit.yaml:/etc/livekit.yaml:ro",
@@ -816,7 +874,7 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             section = key
             if key == "network_mode":
                 errors.append(f"service '{service}' must not publish a port: network_mode is refused, every service stays on the stack's own network")
-            elif key not in REVIEWED_SERVICE_KEYS:
+            elif key not in REVIEWED_SERVICE_KEYS and not (service == "proximity-socket-init" and key in {"read_only", "cap_drop", "cap_add", "security_opt"}):
                 errors.append(f"service '{service}' uses an unreviewed key '{key}'")
             elif key == "ports" and service not in PUBLISHING_SERVICES:
                 errors.append(
@@ -3052,7 +3110,8 @@ def main() -> int:
                 return 1
         print(f"OK: livekit.yaml is its reviewed text byte for byte, {len(livekit_mutations)} mutations refused by name.")
         return (
-            run_synapse_config_selftest(policy_source)
+            run_proximity_selftest(compose_text)
+            or run_synapse_config_selftest(policy_source)
             or run_scaffolder_selftest()
             or run_split_selftest(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
             or run_collaboration_selftest(compose_text, env_text, caddyfile_text, texts["docker-compose.split.yml"], texts["Caddyfile.split"])

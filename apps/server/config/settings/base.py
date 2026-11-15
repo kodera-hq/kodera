@@ -4,6 +4,7 @@ import ipaddress
 import os
 
 ROOT_URLCONF = "config.urls"
+KODERA_PROXIMITY_BROKER_SOCKET = os.environ.get("KODERA_PROXIMITY_BROKER_SOCKET") or None
 WSGI_APPLICATION = "config.wsgi.application"
 INSTALLED_APPS = ["rest_framework"]
 MIDDLEWARE = [

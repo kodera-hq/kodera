@@ -1,6 +1,9 @@
 """Scoped workspace values and caller-owned transaction fences."""
 
+from collections.abc import Iterable
 from uuid import UUID
+
+from django.db.models import Q
 
 from .models import Workspace, WorkspaceMemberRestriction
 
@@ -70,3 +73,17 @@ def passport_unrestricted_workspaces(
         if (ws_id, membership_id) not in restricted_pairs:
             result[org_id] = ws_id
     return result
+
+
+def restricted_workspace_membership_ids(
+    *, workspace_id: UUID, membership_ids: Iterable[UUID]
+) -> set[UUID]:
+    """Membership ids banned or kicked in `workspace_id`."""
+    return set(
+        WorkspaceMemberRestriction.objects.filter(
+            workspace_id=workspace_id,
+            membership_id__in=membership_ids,
+        )
+        .filter(Q(banned=True) | Q(kicked=True))
+        .values_list("membership_id", flat=True)
+    )

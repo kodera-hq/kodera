@@ -17,7 +17,14 @@ from core.db.ids import new_uuid7
 from .privacy_models import ErasureReceipt, PrivacyErasure
 
 DOMAINS = frozenset(
-    {"matrix", "objects", "identity_provider", "private_exports", "external_extension_receivers"}
+    {
+        "matrix",
+        "objects",
+        "identity_provider",
+        "private_exports",
+        "external_extension_receivers",
+        "proximity_ephemeral",
+    }
 )
 
 

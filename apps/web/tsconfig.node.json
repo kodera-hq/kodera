@@ -4,6 +4,7 @@
     "lib": ["ES2023"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     // "vite/client" alongside "node": tests/unit imports browser-side src
     // modules (e.g. src/i18n, which reads import.meta.env.PROD) into this
     // Node-context program, and each tsconfig type-checks a shared file with

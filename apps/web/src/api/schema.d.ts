@@ -3831,6 +3831,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proximity/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bootstrap voluntary proximity
+         * @description Current authenticated customer membership in the exact workspace is checked on every request; staff and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker. Coordinates/GPS fields are refused. No durable customer location is stored. This ephemeral protocol explicitly takes no Idempotency-Key and stores no durable response replay; checkin rejects duplicate/decreasing token counters, checkout is naturally repeatable, and bootstrap/resolve are current-authority reads.
+         */
+        post: operations["bootstrapProximity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proximity/checkin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Checkin voluntary proximity
+         * @description Current authenticated customer membership in the exact workspace is checked on every request; staff and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker. Coordinates/GPS fields are refused. No durable customer location is stored. This ephemeral protocol explicitly takes no Idempotency-Key and stores no durable response replay; checkin rejects duplicate/decreasing token counters, checkout is naturally repeatable, and bootstrap/resolve are current-authority reads.
+         */
+        post: operations["checkInProximity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proximity/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve voluntary proximity
+         * @description Current authenticated customer membership in the exact workspace is checked on every request; staff and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker. Coordinates/GPS fields are refused. No durable customer location is stored. Caller must be actively opted in within the same workspace and event scope. This ephemeral protocol explicitly takes no Idempotency-Key and stores no durable response replay; checkin rejects duplicate/decreasing token counters, checkout is naturally repeatable, and bootstrap/resolve are current-authority reads.
+         */
+        post: operations["resolveProximityTokens"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proximity/nearby": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Nearby voluntary proximity
+         * @description Current authenticated customer membership in the exact workspace is checked on every request; staff and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker. Coordinates/GPS fields are refused. No durable customer location is stored. Caller must be actively opted in within the same workspace and event scope.
+         */
+        get: operations["getNearbyProximity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proximity/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Checkout voluntary proximity
+         * @description Current authenticated customer membership in the exact workspace is checked on every request; staff and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker. Coordinates/GPS fields are refused. No durable customer location is stored. Omitting event_scope checks out all scopes for this principal in the workspace. This ephemeral protocol explicitly takes no Idempotency-Key and stores no durable response replay; checkin rejects duplicate/decreasing token counters, checkout is naturally repeatable, and bootstrap/resolve are current-authority reads.
+         */
+        post: operations["checkOutProximity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -10909,6 +11009,253 @@ export interface components {
             event_type: string;
             /** @enum {string} */
             status: "applied" | "duplicate" | "ignored" | "ignored_event_type" | "unmatched" | "stale" | "deferred" | "mismatch";
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default"
+         *     }
+         */
+        ProximityRadioScopeRequest: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+        };
+        /**
+         * @description Authenticated current-epoch capability only; never a workspace master key. epoch=floor(current Unix seconds/900), epoch_expires_at=(epoch+1)*900. Clients must validate exact workspace/scope and current epoch, stop and wipe at expiry without extending consent, and rebootstrap under current membership before continuing. Server token skew does not extend this lease. Offline revocation is bounded by this issued epoch, not instantaneous.
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default",
+         *       "epoch": 2000000,
+         *       "epoch_mac_key": "c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a",
+         *       "epoch_expires_at": 1800000900,
+         *       "epoch_rotation_seconds": 900
+         *     }
+         */
+        ProximityEpochLease: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+            epoch: number;
+            epoch_mac_key: string;
+            /** @description Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps. */
+            epoch_expires_at: number;
+            /** @constant */
+            epoch_rotation_seconds: 900;
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default",
+         *       "beacon_token": "4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775",
+         *       "ttl_seconds": 1800
+         *     }
+         */
+        ProximityRadioCheckInRequest: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+            beacon_token: string;
+            /** @default 1800 */
+            ttl_seconds: number;
+            status_note?: string | null;
+            handle?: string | null;
+            /**
+             * @default hybrid
+             * @enum {string}
+             */
+            transport: "ble" | "mdns_quic" | "hybrid";
+            /**
+             * @default near
+             * @enum {string}
+             */
+            distance_band: "immediate" | "near" | "ambient";
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default",
+         *       "handle": "nearby-person",
+         *       "status_note": "",
+         *       "rolling_pseudonym": "7e5f21610c812e05",
+         *       "epoch": 2000000,
+         *       "ttl_seconds": 1800,
+         *       "expires_at": 1800001900,
+         *       "gps_persisted": false
+         *     }
+         */
+        ProximityRadioCheckIn: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+            handle: string;
+            status_note: string;
+            rolling_pseudonym: string;
+            epoch: number;
+            ttl_seconds: number;
+            /** @description Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps. */
+            expires_at: number;
+            /** @constant */
+            gps_persisted: false;
+        };
+        /**
+         * @example {
+         *       "beacon_token": "4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775"
+         *     }
+         */
+        ProximityRadioObservation: {
+            beacon_token: string;
+            /** @enum {string} */
+            transport?: "ble" | "mdns_quic" | "hybrid";
+            /** @enum {string} */
+            distance_band?: "immediate" | "near" | "ambient";
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default",
+         *       "observed_tokens": [
+         *         {
+         *           "beacon_token": "4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775"
+         *         }
+         *       ]
+         *     }
+         */
+        ProximityRadioResolveRequest: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+            observed_tokens: components["schemas"]["ProximityRadioObservation"][];
+        };
+        /**
+         * @example {
+         *       "handle": "nearby-person",
+         *       "status_note": "",
+         *       "rolling_pseudonym": "7e5f21610c812e05",
+         *       "transport": "hybrid",
+         *       "distance_band": "near",
+         *       "expires_in_seconds": 1800,
+         *       "expires_at": 1800001900
+         *     }
+         */
+        ProximityRadioPeer: {
+            handle: string;
+            status_note: string;
+            rolling_pseudonym: string;
+            /** @enum {string} */
+            transport: "ble" | "mdns_quic" | "hybrid";
+            /** @enum {string} */
+            distance_band: "immediate" | "near" | "ambient";
+            expires_in_seconds: number;
+            /** @description Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps. */
+            expires_at: number;
+        };
+        /**
+         * @example {
+         *       "handle": "nearby-person",
+         *       "status_note": "",
+         *       "expires_in_seconds": 1800,
+         *       "expires_at": 1800001900
+         *     }
+         */
+        ProximityRadioSelf: {
+            handle: string;
+            status_note: string;
+            expires_in_seconds: number;
+            /** @description Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps. */
+            expires_at: number;
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "checked_out": true,
+         *       "purged_records": 1
+         *     }
+         */
+        ProximityRadioCheckout: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @constant */
+            checked_out: true;
+            purged_records: number;
+        };
+        /**
+         * @description RFC9457 proximity refusal. Uses only the canonical Core ProblemType registry. Voluntary opt-in refusal uses forbidden with caller_not_checked_in; coordinate refusal uses validation-error with gps_coordinates_forbidden. No authentication or tenant detail is disclosed.
+         * @example {
+         *       "type": "https://kodera.io/problems/forbidden",
+         *       "title": "Proximity request refused",
+         *       "status": 403,
+         *       "request_id": "synthetic-request",
+         *       "reason": "caller_not_checked_in"
+         *     }
+         */
+        ProximityRadioProblem: {
+            type: components["schemas"]["ProblemType"];
+            title: string;
+            /** @enum {integer} */
+            status: 400 | 401 | 403 | 404 | 405 | 409 | 422 | 503;
+            request_id: string;
+            reason?: string;
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default",
+         *       "peers": [
+         *         {
+         *           "handle": "nearby-person",
+         *           "status_note": "",
+         *           "rolling_pseudonym": "7e5f21610c812e05",
+         *           "transport": "hybrid",
+         *           "distance_band": "near",
+         *           "expires_in_seconds": 1800,
+         *           "expires_at": 1800001900
+         *         }
+         *       ]
+         *     }
+         */
+        ProximityRadioResolved: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+            peers: components["schemas"]["ProximityRadioPeer"][];
+        };
+        /**
+         * @example {
+         *       "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+         *       "event_scope": "default",
+         *       "self": {
+         *         "handle": "nearby-person",
+         *         "status_note": "",
+         *         "expires_in_seconds": 1800,
+         *         "expires_at": 1800001900
+         *       },
+         *       "peers": [
+         *         {
+         *           "handle": "nearby-person",
+         *           "status_note": "",
+         *           "rolling_pseudonym": "7e5f21610c812e05",
+         *           "transport": "hybrid",
+         *           "distance_band": "near",
+         *           "expires_in_seconds": 1800,
+         *           "expires_at": 1800001900
+         *         }
+         *       ]
+         *     }
+         */
+        ProximityRadioNearby: {
+            /** Format: uuid */
+            workspace_id: string;
+            /** @default default */
+            event_scope: string;
+            self: components["schemas"]["ProximityRadioSelf"];
+            peers: components["schemas"]["ProximityRadioPeer"][];
         };
     };
     responses: {
@@ -19283,6 +19630,485 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    bootstrapProximity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProximityRadioScopeRequest"];
+            };
+        };
+        responses: {
+            /** @description Current ephemeral proximity response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProximityEpochLease"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            401: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+        };
+    };
+    checkInProximity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProximityRadioCheckInRequest"];
+            };
+        };
+        responses: {
+            /** @description Current ephemeral proximity response. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProximityRadioCheckIn"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            401: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+        };
+    };
+    resolveProximityTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProximityRadioResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Current ephemeral proximity response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProximityRadioResolved"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            401: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+        };
+    };
+    getNearbyProximity: {
+        parameters: {
+            query: {
+                workspace_id: string;
+                event_scope?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current ephemeral proximity response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProximityRadioNearby"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            401: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+        };
+    };
+    checkOutProximity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProximityRadioScopeRequest"];
+            };
+        };
+        responses: {
+            /** @description Current ephemeral proximity response. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProximityRadioCheckout"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            400: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            401: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            403: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            404: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            409: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            422: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+            /** @description Current authentication, workspace, opt-in, validation, replay or backend refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProximityRadioProblem"];
                 };
             };
         };
