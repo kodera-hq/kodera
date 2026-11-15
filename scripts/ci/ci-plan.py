@@ -26,6 +26,7 @@ AREAS: dict[str, str] = {
     "web": r"\.nvmrc$|package\.json$|package-lock\.json$|apps/web/|apps/server/|packages/design-tokens/"
     r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
+    r"|security/backports/glib-0\.18\.5/|scripts/ci/qualify-glib-iterator\.py$"
     r"|scripts/ci/(check-release-workflow\.py|assemble-release-sbom\.py|package-desktop-release\.mjs)$"
     r"|\.nvmrc$|\.github/workflows/(ci-rust-desktop|release-binaries)\.yml$",
     "mobile": r"apps/ios/|apps/android/|packages/kodera-rs/|packages/design-tokens/"
@@ -74,6 +75,10 @@ def selftest() -> None:
         ("unknown base runs all", None, dict.fromkeys(AREAS, True)),
         ("orchestrator runs all", [".github/workflows/ci.yml"], dict.fromkeys(AREAS, True)),
         ("plan runs all", ["scripts/ci/ci-plan.py"], dict.fromkeys(AREAS, True)),
+        ("GLib backport-only change runs Rust", ["security/backports/glib-0.18.5/src/variant_iter.rs"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("GLib qualifier-only change runs Rust", ["scripts/ci/qualify-glib-iterator.py"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
         ("docs only runs none", ["README.md", "docs/x.md"], dict.fromkeys(AREAS, False)),
         (
             "web only",
