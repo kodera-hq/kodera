@@ -318,7 +318,11 @@ impl OpenMlsSession {
             SUITE.signature_algorithm(),
         )
         .ok_or(NativeCryptoError::Storage)?;
-        if signer.public() != expected_device {
+        // A matching storage identifier does not validate the decoded scheme.
+        // Check both bindings before any private possession signature.
+        if signer.signature_scheme() != SUITE.signature_algorithm()
+            || signer.public() != expected_device
+        {
             return Err(NativeCryptoError::AuthenticationFailed);
         }
         let mut possession = b"kodera-native-mls-checkpoint-possession-v1\0".to_vec();
@@ -541,6 +545,90 @@ mod tests {
             &key
         )
         .is_err());
+    }
+
+    #[test]
+    fn authenticated_foreign_scheme_checkpoint_refuses_before_private_signing() {
+        let (alice, mut bob, roster) = pair();
+        let key = wrapping_key();
+        let expected = alice.device_key();
+        let epoch = alice.epoch();
+        let original = alice.seal_checkpoint(1, &key).unwrap();
+        let private = tls_codec::SecretVLBytes::new(
+            alice.provider.rand().random_array::<31>().unwrap().to_vec(),
+        );
+        let poison: SignatureKeyPair = serde_json::from_value(serde_json::json!({
+            "private": private.as_slice(),
+            "public": expected,
+            "signature_scheme": SignatureScheme::ECDSA_SECP256R1_SHA256,
+        }))
+        .unwrap();
+        {
+            let mut values = alice.provider.storage().values.write().unwrap();
+            let entry = values
+                .values_mut()
+                .find(|value| {
+                    serde_json::from_slice::<SignatureKeyPair>(value).is_ok_and(|signer| {
+                        signer.public() == expected
+                            && signer.signature_scheme() == SUITE.signature_algorithm()
+                    })
+                })
+                .unwrap();
+            // Preserve the Ed25519 storage key and expected public key while
+            // replacing only its decoded signature scheme and invalid scalar.
+            *entry = serde_json::to_vec(&poison).unwrap();
+        }
+        let loaded = SignatureKeyPair::read(
+            alice.provider.storage(),
+            &expected,
+            SUITE.signature_algorithm(),
+        )
+        .unwrap();
+        assert_eq!(loaded.public(), expected);
+        assert_eq!(
+            loaded.signature_scheme(),
+            SignatureScheme::ECDSA_SECP256R1_SHA256
+        );
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            loaded.sign(b"public checkpoint poison control")
+        }))
+        .is_err());
+
+        // A genuine reseal includes the poisoned map under the correct expected
+        // scope/key/epoch/generation and a freshly generated CSPRNG nonce.
+        let malformed = alice.seal_checkpoint(1, &key).unwrap();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            OpenMlsSession::restore_checkpoint(
+                scope(1),
+                expected,
+                epoch,
+                1,
+                roster.clone(),
+                &malformed,
+                &key,
+            )
+        }));
+        assert!(matches!(
+            outcome,
+            Ok(Err(NativeCryptoError::AuthenticationFailed))
+        ));
+        let mut restored = OpenMlsSession::restore_checkpoint(
+            scope(1),
+            expected,
+            epoch,
+            1,
+            roster,
+            &original,
+            &key,
+        )
+        .unwrap();
+        let message = restored
+            .seal(b"valid signer survives foreign-scheme refusal")
+            .unwrap();
+        assert_eq!(
+            bob.open(&message).unwrap(),
+            b"valid signer survives foreign-scheme refusal"
+        );
     }
 
     #[test]
