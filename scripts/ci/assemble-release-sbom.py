@@ -463,6 +463,18 @@ def collect_android_components(android_sbom_path: Path) -> list[dict[str, object
     return sorted(components, key=lambda item: str(item["bom-ref"]))
 
 
+def is_workspace_local_npm_component(comp: dict[str, object]) -> bool:
+    props = comp.get("properties")
+    if not isinstance(props, list):
+        return False
+    for prop in props:
+        if isinstance(prop, dict) and prop.get("name") == "cdx:npm:package:path":
+            raw_path = str(prop.get("value") or "").strip().replace("\\", "/")
+            segments = [seg for seg in raw_path.split("/") if seg and seg != "."]
+            return bool(segments) and "node_modules" not in segments and ".." not in segments
+    return False
+
+
 def collect_npm_components(
     npm_sbom_path: Path,
 ) -> tuple[list[dict[str, object]], dict[str, list[str]]]:
@@ -483,11 +495,13 @@ def collect_npm_components(
         version = str(comp.get("version") or "").strip()
         if not (ref and name and version) or ref in seen_refs:
             continue
-        # Workspace local packages inside the monorepo may carry internal server licences;
-        # external npm packages must pass SPDX checks.
-        is_external = "node_modules" in ref or str(comp.get("purl", "")).startswith("pkg:npm/")
+        # Workspace-local packages inside the monorepo are identified by cdx:npm:package:path
+        # without a node_modules segment; external npm packages must carry an acceptable SPDX license.
+        is_external = not is_workspace_local_npm_component(comp)
         lic_str = extract_cyclonedx_license_str(comp)
-        if is_external and lic_str and not release_spdx_expression_acceptable(
+        if is_external and not lic_str:
+            raise ValueError(f"npm SBOM component {ref} missing license metadata")
+        if is_external and not release_spdx_expression_acceptable(
             lic_str, allow_reviewed_mpl20=False
         ):
             raise ValueError(f"npm SBOM component {ref} carries refused license '{lic_str}'")
@@ -822,8 +836,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         # of the strengthened SPDX parser.
         for ecosystem, (path, original) in original_inputs.items():
             for mutation in ("empty", "missing-license", "missing-digest"):
-                if ecosystem == "npm" and mutation != "empty":
-                    continue  # Existing npm collection retains upstream inventory semantics.
+                if ecosystem == "npm" and mutation == "missing-digest":
+                    continue  # npm sbom omits tarball SHA-256 digests; missing-license still fails closed.
                 changed = json.loads(json.dumps(original))
                 selected_lock = cargo_lock
                 if mutation == "empty":
@@ -848,6 +862,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
                 finally:
                     path.write_text(json.dumps(original), encoding="utf-8")
                 assert not refused_output.exists()
+
+        # Verify workspace-local cdx:npm:package:path detection vs nested node_modules external enforcement.
+        ws_npm_sbom = scratch / "npm-workspace-boundary.cdx.json"
+        ws_npm_sbom.write_text(
+            json.dumps(
+                {
+                    "bomFormat": "CycloneDX",
+                    "specVersion": "1.5",
+                    "version": 1,
+                    "components": [
+                        {
+                            "type": "library",
+                            "bom-ref": "@kodera/internal-ws@0.1.0",
+                            "name": "@kodera/internal-ws",
+                            "version": "0.1.0",
+                            "purl": "pkg:npm/%40kodera/internal-ws@0.1.0",
+                            "properties": [{"name": "cdx:npm:package:path", "value": "apps/server"}],
+                        },
+                        {
+                            "type": "library",
+                            "bom-ref": "nested-dep@1.0.0",
+                            "name": "nested-dep",
+                            "version": "1.0.0",
+                            "purl": "pkg:npm/nested-dep@1.0.0",
+                            "properties": [
+                                {"name": "cdx:npm:package:path", "value": "apps/web/node_modules/nested-dep"}
+                            ],
+                            "licenses": [{"license": {"id": "MIT"}}],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ws_comps, _ = collect_npm_components(ws_npm_sbom)
+        assert len(ws_comps) == 2, ws_comps
+        ws_bad_doc = json.loads(ws_npm_sbom.read_text(encoding="utf-8"))
+        ws_bad_doc["components"][1].pop("licenses")
+        ws_npm_sbom.write_text(json.dumps(ws_bad_doc), encoding="utf-8")
+        try:
+            collect_npm_components(ws_npm_sbom)
+        except ValueError as err:
+            assert "missing license metadata" in str(err), err
+        else:
+            raise AssertionError("nested node_modules package missing license was not refused")
 
         # Verify reviewed release SPDX extensions, reviewed Cargo MPL-2.0 scope, and
         # [patch.crates-io] path-patched third-party crate inventory + symlink refusal.
@@ -951,7 +1010,9 @@ checksum = "{hpke_sha}"
             pkg_lock_doc = json.loads(pkg_lock_path.read_text(encoding="utf-8"))
             checked_npm = 0
             for pkg_path, pkg_meta in pkg_lock_doc.get("packages", {}).items():
-                if not str(pkg_path).startswith("node_modules/") or not isinstance(pkg_meta, dict):
+                pkg_path_str = str(pkg_path).replace("\\", "/")
+                is_node_module = pkg_path_str.startswith("node_modules/") or "/node_modules/" in pkg_path_str
+                if not is_node_module or not isinstance(pkg_meta, dict):
                     continue
                 if pkg_meta.get("dev") is True or pkg_meta.get("link") is True:
                     continue
@@ -963,7 +1024,29 @@ checksum = "{hpke_sha}"
                         f"live package-lock.json production dependency {pkg_path} carries unreviewed license {lic!r}"
                     )
                 checked_npm += 1
-            assert checked_npm > 0, "expected production packages in live package-lock.json"
+            assert checked_npm >= 150, (
+                f"expected root and workspace-nested production packages in live package-lock.json, got {checked_npm}"
+            )
+            if shutil.which("npm"):
+                npm_proc = subprocess.run(
+                    [
+                        "npm",
+                        "sbom",
+                        "--omit=dev",
+                        "--sbom-format=cyclonedx",
+                        "--package-lock-only",
+                        "--workspaces",
+                        "--include-workspace-root",
+                    ],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                live_npm_sbom_path = scratch / "live-npm-sbom.cdx.json"
+                live_npm_sbom_path.write_text(npm_proc.stdout, encoding="utf-8")
+                live_npm_components, _ = collect_npm_components(live_npm_sbom_path)
+                assert len(live_npm_components) >= 150, len(live_npm_components)
 
         live_cargo_lock = repo_root / "Cargo.lock"
         live_cargo_toml = repo_root / "Cargo.toml"
@@ -999,7 +1082,7 @@ checksum = "{hpke_sha}"
     print(
         "OK: assemble-release-sbom.py selftest passed "
         f"(merge, checksum/copyleft guards, {len(expressions)} canonical SPDX comparisons, "
-        f"{refusal_count} unreviewed-license assembly refusals, 7 collector guards, and live lockfile verification)."
+        f"{refusal_count} unreviewed-license assembly refusals, 8 collector guards, and live lockfile verification)."
     )
     return 0
 

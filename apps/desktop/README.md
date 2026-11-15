@@ -93,7 +93,7 @@ The fallback stylesheet is generated from `@kodera/design-tokens` by `scripts/ge
 
 ### Native GUI Window vs Headless CLI Execution
 
-- **GUI Launch (default installer entrypoint)**: Invoking `kodera-desktop` with no arguments (or `--gui`, macOS LaunchServices `-psn_*`, or a bare `kodera://` / `matrix:` protocol URI) opens the native OS WebView window titled `"Kodera"` (`1280x820`, min `900x600`), serving bundled `apps/web/dist` assets or the CSP-verified bootstrap shell over `kodera-asset://localhost/index.html` with `window.__TAURI_INTERNALS__` + `window.koderaDesktop` IPC bridged to `DesktopShellHost` and fail-closed navigation validation (`validate_navigation_url`).
+- **GUI Launch (default installer entrypoint)**: Invoking `kodera-desktop` with no arguments (or `--gui`, macOS LaunchServices `-psn_*`, or a bare `kodera://` / `matrix:` protocol URI) opens the native OS WebView window titled `"Kodera"` (`1280x820`, min `960x640`), serving bundled `apps/web/dist` assets or the CSP-verified bootstrap shell over `kodera-asset://localhost/index.html` with `window.__TAURI_INTERNALS__` + `window.koderaDesktop` IPC bridged to `DesktopShellHost` and fail-closed navigation validation (`validate_navigation_url`).
 - **Headless CLI / RPC flags**: `--health` / `--self-check`, `--stdio-rpc` / `--ipc-stdio`, `--open-url <uri>` / `--deep-link <uri>`, `--print-runtime-metadata`, `--version` / `-V`, `--help` / `-h`.
 - **Linux system packages** (Ubuntu / Debian): `pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`.
 

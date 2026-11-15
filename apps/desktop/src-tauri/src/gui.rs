@@ -100,7 +100,7 @@ const BOOTSTRAP_INDEX_HTML: &str = r#"<!doctype html>
       </header>
       <p class="lead">
         Native desktop host active with strict Content Security Policy, deep-link filtering,
-        OS keychain isolation, and multi-monitor window state protection.
+        zeroized process credential isolation, and multi-monitor window state protection.
       </p>
       <dl class="meta-grid">
         <div>
