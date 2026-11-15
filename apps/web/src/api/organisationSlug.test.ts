@@ -88,6 +88,17 @@ const LOCATIONS: readonly [string, Segments][] = [
     'RealmDiscoveryResult.oneOf[1].realm',
     ['components', 'schemas', 'RealmDiscoveryResult', 'oneOf', 1, 'properties', 'realm', 'pattern'],
   ],
+  [
+    'PassportWorkspaceEntry.organisation_slug',
+    [
+      'components',
+      'schemas',
+      'PassportWorkspaceEntry',
+      'properties',
+      'organisation_slug',
+      'pattern',
+    ],
+  ],
 ]
 
 describe('ORGANISATION_SLUG_PATTERN', () => {

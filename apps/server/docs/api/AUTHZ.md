@@ -80,7 +80,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `Organisation` | read, update own | read, update own | read own | read own | create (intake), read, update all | read all | read all | — |
 | `OrganisationBootstrap` | — | — | — | — | read all | read all | — | — |
 | `OwnerClaim` | — | — | — | — | read, revoke all | read all | — | — |
-| `Identity` | read, update self | read, update self | read, update self | read, update self | read all, update self | read all, update self | read, update self | — |
+| `Identity` | read, update, act self | read, update, act self | read, update, act self | read, update, act self | read all, update self | read all, update self | read, update self | — |
 | `Membership` | create, read, update role, delete own | create, read, update role, delete own (members and admins only) | — | read own | read all | read all | — | — |
 | `Invitation` | full own | full own | — | — | read, revoke all | read all | — | — |
 | `EnrolmentToken` | create, read, revoke own | create, read, revoke own | — | — | read all | read all | — | — |

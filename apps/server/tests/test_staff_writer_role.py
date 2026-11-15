@@ -453,6 +453,15 @@ def test_writer_role_serves_staff_v1_read_triage_ops_and_hash_chained_audit(writ
             "gen_random_uuid(), gen_random_uuid(), 'staff_security', 'grant', gen_random_uuid()"
             ")"
         ),
+        # Column-restricted legal_acceptance PII/network columns & unpermitted billing_subscription writes:
+        "SELECT source_ip_trunc FROM legal_acceptance LIMIT 0",
+        "SELECT user_agent FROM legal_acceptance LIMIT 0",
+        "SELECT accepted_by_name FROM legal_acceptance LIMIT 0",
+        "SELECT identity_id FROM legal_acceptance LIMIT 0",
+        "UPDATE billing_subscription SET total_excl_vat_minor = 0",
+        "UPDATE billing_subscription SET organisation_id = gen_random_uuid()",
+        "DELETE FROM billing_subscription",
+        "TRUNCATE billing_subscription",
     ],
 )
 def test_writer_role_cannot_update_or_delete_audit_entries_or_exceed_staff_grants(
@@ -489,6 +498,52 @@ def test_writer_role_cannot_update_or_delete_audit_entries_or_exceed_staff_grant
             cursor.execute(
                 "TRUNCATE staff_api_audit_entry, staff_api_role_grant, staff_api_deal_card CASCADE"
             )
+
+
+def test_writer_role_enforces_legal_acceptance_column_boundary_and_shared_subscription_policy(
+    writer: str,
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+              has_table_privilege(%s, 'billing_subscription', 'SELECT'),
+              has_column_privilege(%s, 'billing_subscription', 'organisation_id', 'SELECT'),
+              has_table_privilege(%s, 'legal_acceptance', 'SELECT')
+            """,
+            [writer, writer, writer],
+        )
+        sub_table_select, sub_org_col_select, legal_table_select = cursor.fetchone()
+        assert sub_table_select is True
+        assert sub_org_col_select is True
+        assert legal_table_select is False
+
+    with acting_as(writer):
+        assert current_user() == writer
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, organisation_id, order_id, tenant_id, document_id, dpa_id "
+                "FROM legal_acceptance LIMIT 0"
+            )
+            assert cursor.fetchall() == []
+            cursor.execute(
+                "SELECT state, billing_period, total_excl_vat_minor "
+                "FROM billing_subscription LIMIT 0"
+            )
+            assert cursor.fetchall() == []
+
+        for forbidden_sql in (
+            "SELECT source_ip_trunc FROM legal_acceptance LIMIT 0",
+            "SELECT user_agent FROM legal_acceptance LIMIT 0",
+            "SELECT accepted_by_name FROM legal_acceptance LIMIT 0",
+            "SELECT accepted_by_role FROM legal_acceptance LIMIT 0",
+            "SELECT identity_id FROM legal_acceptance LIMIT 0",
+            "UPDATE billing_subscription SET total_excl_vat_minor = 0",
+            "UPDATE billing_subscription SET organisation_id = gen_random_uuid()",
+            "DELETE FROM billing_subscription",
+            "TRUNCATE billing_subscription",
+        ):
+            assert refused(forbidden_sql) == INSUFFICIENT_PRIVILEGE, forbidden_sql
 
 
 def test_writer_role_enforces_for_share_caller_fence_against_stale_caller(writer: str) -> None:
@@ -546,4 +601,3 @@ def test_writer_role_enforces_for_share_caller_fence_against_stale_caller(writer
     finally:
         with connection.cursor() as cursor:
             cursor.execute("TRUNCATE staff_api_audit_entry, staff_api_role_grant CASCADE")
-

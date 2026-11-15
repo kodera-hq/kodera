@@ -82,6 +82,7 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_PUSH_VAPID_PUBLIC_KEY",  # public P-256 discovery point
         "KODERA_CONTACT_SEAL_KEY",  # application secrets
         "KODERA_OUTBOX_SEAL_KEY",
+        "KODERA_EE_INTERNAL_TOKEN",
         "KODERA_MEMBERSHIP_CURSOR_KEY",
         "KODERA_DISCOVERY_HMAC_KEY",
         "KODERA_EE_AUDIT_SIGNING_SEED",  # application audit-export signing seed
@@ -670,4 +671,3 @@ def staff_ops_hosts(
             )
         validated.append(entry)
     return tuple(dict.fromkeys(validated))
-

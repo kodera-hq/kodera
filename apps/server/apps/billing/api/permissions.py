@@ -51,3 +51,6 @@ COUNT_MEMBERSHIPS = Operation(
 GET_HELP_CONTEXT = Operation(
     method="GET", operation_id="getHelpContext", scope="support_ticket:read"
 )
+RECEIVE_STRIPE_WEBHOOK = Operation(
+    method="POST", operation_id="receiveStripeWebhook", scope="payment:act"
+)

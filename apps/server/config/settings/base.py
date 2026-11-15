@@ -19,6 +19,7 @@ MIDDLEWARE = [
     "core.staff_api.middleware.StaffPlaneMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "core.api.ee_billing.EnterpriseBillingMiddleware",
     "core.api.edition.EnterpriseEditionMiddleware",
 ]
 REST_FRAMEWORK = {
@@ -81,7 +82,6 @@ KODERA_DEFAULT_COMMUNITY_ISSUER = os.environ.get("KODERA_DEFAULT_COMMUNITY_ISSUE
 KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
     "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID", ""
 )
-
 # Zero-trust /staff/v1/* C1 plane and mobile Universal/App Links (/.well-known/*); fail-closed (503) when unset.
 KODERA_STAFF_OIDC_ISSUER: str | None = None
 KODERA_STAFF_OIDC_JWKS_URL: str | None = None
@@ -89,3 +89,5 @@ KODERA_STAFF_OPS_HOSTS: tuple[str, ...] = ()
 KODERA_STAFF_ADMIN_ORIGINS: str | None = None
 KODERA_IOS_APP_IDS: tuple[str, ...] = ()
 KODERA_ANDROID_ASSETLINKS_SHA256: tuple[str, ...] = ()
+# Optional explicit sign-in link URL on an allowed Console origin for Passport magic-link mails.
+KODERA_PASSPORT_MAGIC_LINK: str | None = None
