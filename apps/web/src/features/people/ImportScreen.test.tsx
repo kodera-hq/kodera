@@ -705,6 +705,13 @@ describe('Import a list (03-people.md §4.3)', () => {
         )
       }
       await advance(4000)
+      await settle('terminal retry failure settled before the UI notification tick', () =>
+        readAt.length === 5 && queryState()?.fetchFailureCount === 4 &&
+        queryState()?.status === 'error' && queryState()?.fetchStatus === 'idle'
+      )
+      // A nested zero-delay notification can be due on the next fake millisecond.
+      // Advance only after retries have stopped; the remaining window accounts for it.
+      await advance(1)
       await settle('actual final failure stopped fetching and reached the screen', () =>
         readAt.length === 5 && queryState()?.fetchFailureCount === 4 &&
         queryState()?.status === 'error' && queryState()?.fetchStatus === 'idle' &&
