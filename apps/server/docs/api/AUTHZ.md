@@ -111,6 +111,7 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `MemberImport` | full own | full own | — | — | read, delete all | — | — | — |
 | `FederationProvider` | full own | full own | — | read own | full all | read all | — | — |
 | `FederationTest` | create, read own | create, read own | — | read own | full all | read all | — | — |
+| `Proximity` | read own, act own | read own, act own | read own, act own | read own, act own | — | — | — | — |
 | `Workspace`, `Category`, `Channel` | read own, create own, update own, delete own, act own (initialise, archive) | read own, create own, update own, delete own, act own (initialise, archive) | read own | read own | — | — | — | — |
 | `WorkspaceModeration` | read, act own | read, act own | read, act own (moderator grant) | read, act own (moderator grant) | — | — | — | — |
 | `WorkspaceReport` | full own | full own | create, read, update own (queue requires moderator grant) | create, read, update own (queue requires moderator grant) | — | — | — | — |
@@ -346,3 +347,9 @@ Authorisation failures are evidence, so they are recorded, not only logged.
 - §5's `Tenant` row gives `org_owner` `create own` for contract 0.35.0's `createTenant` (`tenant:create`), on a deployment that does not bill only; a rule under the matrix says so and that no staff role holds it.
 - §2 step 6, §4's `invited` row and §5: `invited` reaches a second operation, `previewInvitation` (`POST /invitations/preview`, contract 0.37.0), the read-only invitation card, with the same five roles as `acceptInvitation` and for the same reason. The override sentence now covers both operations, and the matrix check holds each to it.
 - §2 step 5: a customer-lane token must carry, as `azp`, one of the allowed OAuth clients (`KODERA_ALLOWED_OIDC_CLIENT_IDS`, default `console,kodera-ios,kodera-android`, plus `KODERA_CONSOLE_CLIENT_ID` when set); one with none, or another client's, is `401 unauthenticated`. A deployed profile refuses to start when the list resolves to no client.
+
+## Voluntary proximity protocol
+
+Status: Active
+
+The five customer `/api/v1/proximity` operations use `proximity:read` for bootstrap, resolve and nearby, and `proximity:act` for checkin and checkout. All four customer roles require current active membership in the exact workspace; staff is refused. Resolve and nearby additionally require active voluntary opt-in within the same scope. Each request rechecks authority. A current epoch key grants offline MAC capability only until that epoch ends; revoked members cannot bootstrap later epochs, but offline revocation is not instantaneous.

@@ -12,6 +12,11 @@
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/archive"
     },
     {
+      "operation_id": "bootstrapProximity",
+      "method": "POST",
+      "path": "/proximity/bootstrap"
+    },
+    {
       "operation_id": "cancelOrder",
       "method": "POST",
       "path": "/orders/{order_id}/actions/cancel"
@@ -20,6 +25,16 @@
       "operation_id": "changeMembershipRole",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
+    },
+    {
+      "operation_id": "checkInProximity",
+      "method": "POST",
+      "path": "/proximity/checkin"
+    },
+    {
+      "operation_id": "checkOutProximity",
+      "method": "POST",
+      "path": "/proximity/checkout"
     },
     {
       "operation_id": "checkSlugAvailability",
@@ -205,6 +220,11 @@
       "operation_id": "getMembership",
       "method": "GET",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
+    },
+    {
+      "operation_id": "getNearbyProximity",
+      "method": "GET",
+      "path": "/proximity/nearby"
     },
     {
       "operation_id": "getNoticeContacts",
@@ -490,6 +510,11 @@
       "operation_id": "resolveAbuseReport",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/workspace/reports/{report_id}"
+    },
+    {
+      "operation_id": "resolveProximityTokens",
+      "method": "POST",
+      "path": "/proximity/resolve"
     },
     {
       "operation_id": "revokeInvitation",

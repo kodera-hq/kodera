@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
 import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,6 +20,8 @@ import io.kodera.android.client.AccessTokenException
 import io.kodera.android.client.CoreMeClient
 import io.kodera.android.client.CoreRequester
 import io.kodera.android.client.CoreWorkspaceClient
+import io.kodera.android.client.CoreProximityClient
+import io.kodera.android.client.ProximityBootstrap
 import io.kodera.android.client.WorkspaceFailure
 import io.kodera.android.client.WorkspaceOutcome
 import io.kodera.android.client.WorkspaceSnapshot
@@ -34,6 +37,11 @@ import io.kodera.android.client.SignInFailure
 import io.kodera.android.client.SignInService
 import io.kodera.android.entry.Deployment
 import io.kodera.android.entry.DeploymentConfiguration
+import io.kodera.android.proximity.AndroidBleGattProximityDriver
+import io.kodera.android.proximity.AndroidNsdMdnsProximityDriver
+import io.kodera.android.proximity.RuntimeProximityPermissionChecker
+import io.kodera.android.proximity.VoluntaryProximitySessionController
+import java.security.SecureRandom
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
@@ -118,12 +126,15 @@ class SessionController internal constructor(
     private val fetchMember: (CoreMeClient) -> MeOutcome = CoreMeClient::fetch,
     /** Returns an already-decoded answer; tests can hold it across session/foreground transitions. */
     private val fetchWorkspace: (CoreWorkspaceClient, String) -> WorkspaceOutcome = CoreWorkspaceClient::fetch,
+    val voluntaryProximityController: VoluntaryProximitySessionController? = null,
+    private val fetchProximity: (CoreProximityClient, String) -> ProximityBootstrap? = CoreProximityClient::bootstrap,
 ) : AutoCloseable {
     // Exact service-issued receipt returned by the accepted sign-in or restore.
     @Volatile private var generation: AcceptedOwner? = null
     private var readTicket = Any()
     private var targetOrganisation: String? = null
     private var loading = false
+    private var proximityPermissionPause: Any? = null
     private var resumed = false
     private var closed = false
     /** The signed-in session's Core clients; null when signed out or when Core is not configured. */
@@ -131,6 +142,11 @@ class SessionController internal constructor(
     private var started = false
     /** The sign-in in flight was cancelled because no Activity could receive its result, not by the member. */
     private var stranded = false
+    private var proximityTicket = Any()
+    var proximityPreparing by mutableStateOf(false)
+        private set
+    var proximityMessage by mutableStateOf<Int?>(null)
+        private set
 
     var phase by mutableStateOf<SessionPhase>(SessionPhase.Restoring)
         private set
@@ -268,6 +284,7 @@ class SessionController internal constructor(
         requireMain()
         if (closed || resumed) return
         resumed = true
+        voluntaryProximityController?.onForegroundChanged(true)
         proximityV2Controller.onForeground()
         invalidateRead()
         if (phase is SessionPhase.SignedIn) loadMember(refreshFirst = false)
@@ -276,8 +293,10 @@ class SessionController internal constructor(
     /** Obsolete physical calls may finish; their publication binding is already invalid. */
     fun onBackground() {
         requireMain()
-        if (closed || !resumed) return
+        if (closed || (!resumed && proximityPermissionPause == null)) return
+        proximityPermissionPause = null
         resumed = false
+        voluntaryProximityController?.onForegroundChanged(false)
         proximityV2Controller.onBackground()
         inviteCoordinator.dismissSheet(null)
         invalidateRead()
@@ -290,6 +309,11 @@ class SessionController internal constructor(
     }
 
     private fun invalidateRead() {
+        proximityPermissionPause = null
+        proximityTicket = Any()
+        proximityPreparing = false
+        proximityMessage = null
+        voluntaryProximityController?.clearProvisioning()
         readTicket = Any()
         targetOrganisation = null
         loading = false
@@ -412,10 +436,112 @@ class SessionController internal constructor(
     }
 
     /** Complete controller publication fence; the held-answer calibration targets this whole predicate. */
-    private fun isCurrentPublication(binding: PublicationBinding): Boolean =
-        !closed && resumed && phase is SessionPhase.SignedIn && !binding.generation.isRetired && generation === binding.generation &&
+    private fun isCurrentPublication(binding: PublicationBinding): Boolean = resumed && isCurrentOwnerScope(binding)
+
+    private fun isCurrentOwnerScope(binding: PublicationBinding): Boolean =
+        !closed && phase is SessionPhase.SignedIn && !binding.generation.isRetired && generation === binding.generation &&
             readTicket === binding.ticket && targetOrganisation == binding.organisation &&
             core?.requester === binding.requester && !binding.requester.isClosed
+
+    internal class ProximityConsentRequest(
+        val permissions: Array<String>,
+        val pauseForDialog: () -> Boolean,
+        val resumeAfterDialog: () -> Boolean,
+        val cancel: () -> Unit,
+        val complete: () -> Unit,
+    )
+
+    /** Created only by an explicit consent gesture; permission answers retain this exact owner/scope. */
+    internal fun proximityConsentRequest(): ProximityConsentRequest? {
+        requireMain()
+        val radio = voluntaryProximityController ?: return null
+        val snapshot = (workspace as? WorkspaceViewState.Loaded)?.snapshot ?: return null
+        val workspaceId = snapshot.id ?: return null
+        val owner = generation ?: return null
+        val clients = core ?: return null
+        val organisation = targetOrganisation ?: return null
+        val binding = PublicationBinding(owner, readTicket, organisation, clients.requester)
+        if (!isCurrentPublication(binding) || snapshot.organisationId != organisation || proximityPreparing) return null
+        val ticket = Any()
+        proximityTicket = ticket
+        var answered = false
+        return ProximityConsentRequest(
+            permissions = radio.refreshPermissionState().toTypedArray(),
+            pauseForDialog = {
+                requireMain()
+                val current = !answered && proximityTicket === ticket && isCurrentPublication(binding) &&
+                    (workspace as? WorkspaceViewState.Loaded)?.snapshot?.id == workspaceId
+                if (current) {
+                    // The system permission dialog is visible; no radio capability survives focus loss.
+                    proximityPermissionPause = ticket
+                    resumed = false
+                    radio.onForegroundChanged(false)
+                    radio.clearProvisioning()
+                    proximityV2Controller.onBackground()
+                    inviteCoordinator.dismissSheet(null)
+                }
+                current
+            },
+            resumeAfterDialog = {
+                requireMain()
+                val current = !answered && proximityPermissionPause === ticket && proximityTicket === ticket &&
+                    isCurrentOwnerScope(binding) && (workspace as? WorkspaceViewState.Loaded)?.snapshot?.id == workspaceId
+                if (current) {
+                    proximityPermissionPause = null
+                    resumed = true
+                    radio.onForegroundChanged(true)
+                    proximityV2Controller.onForeground()
+                }
+                current
+            },
+            cancel = {
+                requireMain()
+                if (proximityPermissionPause === ticket) invalidateRead()
+                else if (proximityTicket === ticket) {
+                    proximityTicket = Any()
+                    proximityPreparing = false
+                    radio.clearProvisioning()
+                }
+            },
+            complete = complete@{
+                requireMain()
+                if (answered) return@complete
+                answered = true
+                if (proximityTicket === ticket && isCurrentPublication(binding) &&
+                    (workspace as? WorkspaceViewState.Loaded)?.snapshot?.id == workspaceId) {
+                    if (radio.refreshPermissionState().isNotEmpty()) {
+                        proximityMessage = R.string.proximity_voluntary_permissions_missing
+                    } else {
+                        proximityPreparing = true
+                        proximityMessage = null
+                        workers.execute {
+                            val material = runCatching { fetchProximity(clients.proximity, workspaceId) }.getOrNull()
+                            main.execute publish@{
+                                try {
+                                    if (proximityTicket !== ticket || !isCurrentPublication(binding) ||
+                                        (workspace as? WorkspaceViewState.Loaded)?.snapshot?.id != workspaceId) return@publish
+                                    proximityPreparing = false
+                                    if (material == null || material.workspaceId != workspaceId || radio.refreshPermissionState().isNotEmpty()) {
+                                        proximityMessage = R.string.proximity_voluntary_bootstrap_unavailable
+                                    } else {
+                                        val seed = ByteArray(32).also(SecureRandom()::nextBytes)
+                                        try {
+                                            radio.provisionEpoch(workspaceId, material.scopeTag, material.epoch,
+                                                material.epochExpiresAtUnixSeconds, material.epochMacKey, seed)
+                                            radio.grantForegroundConsent()
+                                        } catch (_: Exception) {
+                                            radio.clearProvisioning()
+                                            proximityMessage = R.string.proximity_voluntary_bootstrap_unavailable
+                                        } finally { seed.fill(0) }
+                                    }
+                                } finally { material?.epochMacKey?.fill(0) }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+    }
 
     private fun workspaceAnswered(binding: PublicationBinding, outcome: WorkspaceOutcome) {
         if (!isCurrentPublication(binding)) return
@@ -440,7 +566,7 @@ class SessionController internal constructor(
         val origin = deployment.coreApiOrigin ?: return null
         val requester = try { CoreRequester(origin, DevelopmentBuild.loopback, owner) }
             catch (_: IllegalArgumentException) { return null }
-        return CoreClients(requester, CoreMeClient(requester), CoreWorkspaceClient(requester))
+        return CoreClients(requester, CoreMeClient(requester), CoreWorkspaceClient(requester), CoreProximityClient(requester))
     }
 
     private fun configureSessionCoordinators(organisationId: String?) {
@@ -470,11 +596,13 @@ class SessionController internal constructor(
         endCore()
         telecomCoordinator.stop()
         proximityV2Controller.close()
+        voluntaryProximityController?.close()
         inviteCoordinator.stop()
         passkeyCoordinator.clear()
     }
 
-    private class CoreClients(val requester: CoreRequester, val me: CoreMeClient, val workspace: CoreWorkspaceClient)
+    private class CoreClients(val requester: CoreRequester, val me: CoreMeClient, val workspace: CoreWorkspaceClient,
+        val proximity: CoreProximityClient)
 
     /** IN_PROGRESS has no notice: another sign-in is already open, and its own outcome will speak. */
     @StringRes
@@ -505,8 +633,13 @@ class SessionController internal constructor(
             val handler = Handler(Looper.getMainLooper())
             // Process-wide and never shut down; idle threads time out.
             val workers = Executors.newCachedThreadPool { task -> Thread(task, "kodera-session").apply { isDaemon = true } }
+            val radio = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val permissions = RuntimeProximityPermissionChecker(context)
+                VoluntaryProximitySessionController(AndroidBleGattProximityDriver(context, permissions),
+                    AndroidNsdMdnsProximityDriver(context, permissions), permissions)
+            } else null
             return SessionController(deployment, backend, service, Executor { task -> handler.post(task) },
-                { Looper.myLooper() == Looper.getMainLooper() }, workers)
+                { Looper.myLooper() == Looper.getMainLooper() }, workers, voluntaryProximityController = radio)
         }
     }
 }

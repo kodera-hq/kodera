@@ -3,9 +3,10 @@ import UIKit
 import KoderaAuth
 import KoderaClient
 import KoderaDomain
+import CryptoKit
 
-/// Whether the member is signed in, and what Core says about them. Holds no token: those stay inside
-/// the sign-in service and the Keychain.
+/// Whether the member is signed in, and what Core says about them. Authentication tokens stay inside
+/// the sign-in service and Keychain; foreground radio capabilities are volatile and epoch-bounded.
 @MainActor
 final class AppSessionModel: ObservableObject {
     enum Phase: Equatable {
@@ -31,6 +32,15 @@ final class AppSessionModel: ObservableObject {
     private let defaults: UserDefaults
     typealias RequesterFactory = @MainActor (String, LoopbackPolicy, any SignInService) throws -> CoreRequester
     private let requesterFactory: RequesterFactory
+    let proximityRadioSession = VoluntaryProximityRadioSession(
+        gattDriver: CoreBluetoothGattRadioDriver(), bonjourDriver: NetworkBonjourProximityDriver()
+    )
+    @Published private(set) var isPreparingProximity = false
+    @Published private(set) var proximityPreparationErrorKey: String?
+    private var proximityTask: Task<Void, Never>?
+    private var proximityAttempt = UUID()
+    private var proximityScope: (organisation: String, workspace: String)?
+    private var isForegroundActive = false
     /// Completion includes the coordinator reducer and synchronous App effects; actions remain Void.
     private(set) var signInTask: Task<Void, Never>?
     private(set) var signOutTask: Task<Void, Never>?
@@ -40,7 +50,10 @@ final class AppSessionModel: ObservableObject {
         // A requester let go of, by leaving its session or by a replacement, is invalidated on the spot: a
         // client that still holds it sends nothing more, so no bearer outlives the session that owned it.
         didSet {
-            if let left = oldValue?.requester, left !== core?.requester { left.invalidate() }
+            if let left = oldValue?.requester, left !== core?.requester {
+                left.invalidate()
+                resetProximity()
+            }
         }
     }
 
@@ -76,9 +89,19 @@ final class AppSessionModel: ObservableObject {
         self.defaults = defaults
         self.channels = channels
         self.requesterFactory = requesterFactory
+        proximityRadioSession.onAuthenticatedRebootstrapRequired = { [weak self] deadline in
+            self?.prepareProximity(renewUntil: deadline)
+        }
         channels.onChange = { [weak self] state in
             self?.member = state.member
             self?.workspace = state.workspace
+            if let self, let scope = self.proximityScope {
+                guard case .loaded = state.member, case let .loaded(snapshot) = state.workspace,
+                      snapshot.organisationId == scope.organisation, snapshot.id == scope.workspace else {
+                    self.resetProximity()
+                    return
+                }
+            }
         }
         channels.onEffect = { [weak self] effect in
             guard let self else { return }
@@ -180,7 +203,69 @@ final class AppSessionModel: ObservableObject {
     func reloadMember() { channels.retry() }
     func checkMemberAgain() { channels.checkAgain() }
     func retryChannels() { channels.retry() }
-    func setForeground(_ active: Bool) { channels.setForeground(active) }
+    func setForeground(_ active: Bool) {
+        isForegroundActive = active
+        proximityRadioSession.handleSceneForegroundChange(isActive: active)
+        if !active { resetProximity() }
+        channels.setForeground(active)
+    }
+
+    /// An explicit consent action obtains fresh current-member radio material; no automatic scan.
+    func prepareProximity() {
+        prepareProximity(renewUntil: nil)
+    }
+
+    private func prepareProximity(renewUntil: UInt64?) {
+        guard isForegroundActive, case .signedIn = phase, case .loaded = member,
+              case let .loaded(snapshot) = workspace, snapshot.state == .initialised,
+              snapshot.setup.state == .ready, let workspaceId = snapshot.id, let clients = core else { return }
+        if let renewUntil {
+            guard renewUntil > ProximityBounds.currentUnixSeconds(),
+                  proximityScope?.organisation == snapshot.organisationId, proximityScope?.workspace == workspaceId else { return }
+        }
+        resetProximity()
+        let attempt = proximityAttempt
+        proximityScope = (snapshot.organisationId, workspaceId)
+        isPreparingProximity = true
+        proximityTask = Task { [weak self] in
+            do {
+                let material = try await CoreProximityClient(requester: clients.requester).bootstrap(workspaceId: workspaceId)
+                guard !Task.isCancelled, let self, self.proximityAttempt == attempt,
+                      self.isForegroundActive, self.core?.requester === clients.requester,
+                      case .signedIn = self.phase, case .loaded = self.member,
+                      case let .loaded(current) = self.workspace,
+                      current.organisationId == snapshot.organisationId, current.id == workspaceId else { return }
+                let seed = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+                try self.proximityRadioSession.provisionEpoch(
+                    organisationId: material.workspaceId, scopeTag: material.scopeTag,
+                    epoch: material.epoch, epochExpiresAtUnixSeconds: material.epochExpiresAtUnixSeconds,
+                    epochMacKey: material.epochMacKey, deviceSeed: seed
+                )
+                try self.proximityRadioSession.grantForegroundConsent()
+                if let renewUntil {
+                    try self.proximityRadioSession.startVoluntarySession(consentExpiresAtUnixSeconds: renewUntil)
+                }
+                self.isPreparingProximity = false
+                self.proximityTask = nil
+            } catch {
+                guard let self, self.proximityAttempt == attempt else { return }
+                self.proximityRadioSession.clearProvisioning()
+                self.isPreparingProximity = false
+                self.proximityPreparationErrorKey = "proximity.voluntary_unavailable"
+                self.proximityTask = nil
+            }
+        }
+    }
+
+    private func resetProximity() {
+        proximityAttempt = UUID()
+        proximityTask?.cancel()
+        proximityTask = nil
+        proximityScope = nil
+        isPreparingProximity = false
+        proximityPreparationErrorKey = nil
+        proximityRadioSession.clearProvisioning()
+    }
 
     func signOut() {
         guard let context = channels.beginSignOut(), let service else { return }

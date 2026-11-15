@@ -109,3 +109,38 @@ def resolve_member_authority(*, verified: VerifiedAccessToken) -> MemberAuthorit
                 )
             )
         return read_member_authority_in_snapshot(verified=verified)
+
+
+def active_organisation_member_ids(*, organisation_id: UUID, user_ids: set[UUID]) -> list[UUID]:
+    """Active accepted membership ids for `user_ids` in `organisation_id`."""
+    return list(
+        Membership.objects.filter(
+            organisation_id=organisation_id,
+            user_id__in=user_ids,
+            state="active",
+            accepted_at__isnull=False,
+            deleted_at__isnull=True,
+        ).values_list("id", flat=True)
+    )
+
+
+def active_organisation_memberships_by_user(
+    *, organisation_id: UUID, user_ids: set[UUID]
+) -> dict[UUID, UUID]:
+    """Map `user_id -> membership_id` for active accepted memberships with a known role."""
+    return dict(
+        Membership.objects.filter(
+            organisation_id=organisation_id,
+            user_id__in=user_ids,
+            state="active",
+            accepted_at__isnull=False,
+            deleted_at__isnull=True,
+            role__in=Membership.Role.values,
+        ).values_list("user_id", "id")
+    )
+
+
+def organisation_issuer_realm(*, organisation_id: UUID) -> tuple[str, str]:
+    """Return `(issuer, realm)` for `organisation_id`."""
+    row = Organisation.objects.values_list("issuer", "realm").get(id=organisation_id)
+    return str(row[0]), str(row[1])

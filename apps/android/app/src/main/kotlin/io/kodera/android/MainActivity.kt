@@ -23,6 +23,37 @@ class MainActivity : ComponentActivity() {
     private lateinit var model: OrganisationEntryViewModel
     private lateinit var session: SessionController
     private val lifecycleToken = Any()
+    private var pendingProximityConsent: SessionController.ProximityConsentRequest? = null
+    private var proximityPermissionsAnswered = false
+    private val proximityPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        proximityPermissionsAnswered = pendingProximityConsent != null
+        completeProximityPermissionWhenResumed()
+    }
+
+    private fun completeProximityPermissionWhenResumed() {
+        if (!proximityPermissionsAnswered || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        val request = pendingProximityConsent
+        pendingProximityConsent = null
+        proximityPermissionsAnswered = false
+        request?.complete?.invoke()
+    }
+
+    private fun cancelProximityPermission() {
+        pendingProximityConsent?.cancel?.invoke()
+        pendingProximityConsent = null
+        proximityPermissionsAnswered = false
+    }
+
+    private fun requestProximityConsent() {
+        if (pendingProximityConsent != null || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return
+        val request = session.proximityConsentRequest() ?: return
+        if (request.permissions.isEmpty()) request.complete()
+        else {
+            pendingProximityConsent = request
+            try { proximityPermissions.launch(request.permissions) }
+            catch (_: Exception) { cancelProximityPermission() }
+        }
+    }
 
     // Registered before STARTED, so a result survives this Activity being recreated while the browser is
     // open. The controller outlives the Activity; after a process death it says the sign-in was interrupted.
@@ -58,6 +89,10 @@ class MainActivity : ComponentActivity() {
                         onSignOut = session::signOut,
                         telecomCoordinator = session.telecomCoordinator,
                         proximityV2Controller = session.proximityV2Controller,
+                        voluntaryProximityController = session.voluntaryProximityController,
+                        proximityPreparing = session.proximityPreparing,
+                        proximityMessage = session.proximityMessage,
+                        onProximityConsent = ::requestProximityConsent,
                         inviteCoordinator = session.inviteCoordinator,
                         passkeyCoordinator = session.passkeyCoordinator,
                     )
@@ -74,8 +109,25 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStart() { super.onStart(); model.activate(lifecycleToken) }
     // Exactly one current /me→channels chain for each resumed entry; obsolete answers cannot publish.
-    override fun onResume() { super.onResume(); session.onForeground() }
-    override fun onPause() { session.onBackground(); super.onPause() }
-    override fun onStop() { model.deactivate(lifecycleToken); super.onStop() }
-    override fun onDestroy() { session.detachPresenter(presenter); super.onDestroy() }
+    override fun onResume() {
+        super.onResume()
+        if (pendingProximityConsent?.resumeAfterDialog?.invoke() != true) session.onForeground()
+    }
+    // Lifecycle RESUMED is delivered after onResume; never bootstrap from a STARTED result callback.
+    override fun onPostResume() { super.onPostResume(); completeProximityPermissionWhenResumed() }
+    override fun onPause() {
+        if (pendingProximityConsent?.pauseForDialog?.invoke() != true) session.onBackground()
+        super.onPause()
+    }
+    override fun onStop() {
+        cancelProximityPermission()
+        session.onBackground()
+        model.deactivate(lifecycleToken)
+        super.onStop()
+    }
+    override fun onDestroy() {
+        cancelProximityPermission()
+        session.detachPresenter(presenter)
+        super.onDestroy()
+    }
 }

@@ -80,8 +80,10 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.42.0: directory privacy, proximity and the theme vocabulary; discovery is
 # unchanged.
 # Rebound for additive workspace surfaces; discovery remains unchanged.
-# Rebound at 0.45.0: Kodera Passport magic-link/workspace routes (including 409 conflict) and Stripe webhook (including deferred receipt); discovery is unchanged.
-UNCHANGED_SHA = "47a09ef525437ee0542a5c0a7dae31fa864551517c499b84bc721b326e932445"
+# Rebound at 0.46.0: additive Passport/webhook and proximity operations; discovery unchanged.
+# Rebound for PR132 at 94c19b5: Passport request 503 and explicit Stripe version/event contract.
+# Rebound for frozen PR132 canonical507 at 6194653b: three Passport conflict responses.
+UNCHANGED_SHA = "297b28e0e84df5711fc3ea9922e2b2c3b47041b632e7358bfae46f35fa577f86"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

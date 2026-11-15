@@ -5793,6 +5793,126 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "bootstrapProximity": {
+    operationId: "bootstrapProximity",
+    method: "post",
+    path: "/proximity/bootstrap",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+      "event_scope": "default",
+      "epoch": 2000000,
+      "epoch_mac_key": "c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a",
+      "epoch_expires_at": 1800000900,
+      "epoch_rotation_seconds": 900
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "checkInProximity": {
+    operationId: "checkInProximity",
+    method: "post",
+    path: "/proximity/checkin",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+      "event_scope": "default",
+      "handle": "nearby-person",
+      "status_note": "",
+      "rolling_pseudonym": "7e5f21610c812e05",
+      "epoch": 2000000,
+      "ttl_seconds": 1800,
+      "expires_at": 1800001900,
+      "gps_persisted": false
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "resolveProximityTokens": {
+    operationId: "resolveProximityTokens",
+    method: "post",
+    path: "/proximity/resolve",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+      "event_scope": "default",
+      "peers": [
+        {
+          "handle": "nearby-person",
+          "status_note": "",
+          "rolling_pseudonym": "7e5f21610c812e05",
+          "transport": "hybrid",
+          "distance_band": "near",
+          "expires_in_seconds": 1800,
+          "expires_at": 1800001900
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getNearbyProximity": {
+    operationId: "getNearbyProximity",
+    method: "get",
+    path: "/proximity/nearby",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+      "event_scope": "default",
+      "self": {
+        "handle": "nearby-person",
+        "status_note": "",
+        "expires_in_seconds": 1800,
+        "expires_at": 1800001900
+      },
+      "peers": [
+        {
+          "handle": "nearby-person",
+          "status_note": "",
+          "rolling_pseudonym": "7e5f21610c812e05",
+          "transport": "hybrid",
+          "distance_band": "near",
+          "expires_in_seconds": 1800,
+          "expires_at": 1800001900
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "checkOutProximity": {
+    operationId: "checkOutProximity",
+    method: "post",
+    path: "/proximity/checkout",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+      "checked_out": true,
+      "purged_records": 1
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
 } satisfies Record<string, OperationExample>
 
 export type OperationId = keyof typeof EXAMPLES

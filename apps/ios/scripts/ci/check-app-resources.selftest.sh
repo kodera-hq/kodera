@@ -22,6 +22,72 @@ check="$here/check-app-resources.py"
 [ -f "$root/project.yml" ] || { echo "self-test FAILED: $root/project.yml is missing" >&2; exit 1; }
 [ -d "$root/packages" ] || { echo "self-test FAILED: $root/packages is missing" >&2; exit 1; }
 
+# Association tests copy only the small public plist/project inputs. They can
+# also run alone while build/runtime resource admission is held.
+association_selftests() {
+  python3 - "$check" "$root" <<'PY'
+import pathlib, plistlib, runpy, sys, tempfile
+
+check, root = sys.argv[1], pathlib.Path(sys.argv[2])
+gate = runpy.run_path(check, run_name="association_selftest")["association_findings"]
+project = (root / "project.yml").read_text()
+entitlements = plistlib.loads((root / "App/Kodera.entitlements").read_bytes())
+domains = "com.apple.developer.associated-domains"
+cases = [
+    ("missing entitlement file", "missing", None, "regular, nonsymlink", 1),
+    ("malformed entitlement plist", "malformed", None, "valid associated-domains plist", 1),
+    ("truncated XML entitlement plist", "truncated", None, "valid associated-domains plist", 1),
+    ("missing associated domains", {}, None, "declare only associated domains", 1),
+    ("unqualified push entitlement", {**entitlements, "aps-environment": "production"}, None, "declare only associated domains", 1),
+    ("unqualified background entitlement", {**entitlements, "UIBackgroundModes": ["voip"]}, None, "declare only associated domains", 1),
+    ("missing approved domain", {domains: entitlements[domains][:-1]}, None, "exactly the three", 1),
+    ("extra domain", {domains: entitlements[domains] + ["applinks:extra.kodera.io"]}, None, "exactly the three", 1),
+    ("wildcard domain", {domains: ["webcredentials:*.kodera.io", *entitlements[domains][1:]]}, None, "exactly the three", 1),
+    ("foreign domain", {domains: ["webcredentials:auth.example.org", *entitlements[domains][1:]]}, None, "exactly the three", 1),
+    ("duplicate domain", {domains: entitlements[domains] + [entitlements[domains][0]]}, None, "exactly the three", 1),
+    ("non-array domains", {domains: entitlements[domains][0]}, None, "exactly the three", 1),
+    ("wrong association service", {domains: ["applinks:auth.kodera.io", *entitlements[domains][1:]]}, None, "exactly the three", 1),
+    ("missing entitlement binding", entitlements, project.replace("        CODE_SIGN_ENTITLEMENTS: App/Kodera.entitlements\n", ""), "CODE_SIGN_ENTITLEMENTS exactly", 1),
+    ("wrong entitlement binding", entitlements, project.replace("CODE_SIGN_ENTITLEMENTS: App/Kodera.entitlements", "CODE_SIGN_ENTITLEMENTS: App/Other.entitlements"), "CODE_SIGN_ENTITLEMENTS exactly", 1),
+    ("missing team binding", entitlements, project.replace("        DEVELOPMENT_TEAM: UF5852SF57\n", ""), "DEVELOPMENT_TEAM exactly", 1),
+    ("foreign team binding", entitlements, project.replace("DEVELOPMENT_TEAM: UF5852SF57", "DEVELOPMENT_TEAM: ABCDE12345"), "DEVELOPMENT_TEAM exactly", 1),
+    ("team behind configuration override", entitlements, project + "\n# Configuration override\nDEVELOPMENT_TEAM: ABCDE12345\n", "DEVELOPMENT_TEAM exactly", 1),
+    ("entitlement behind configuration override", entitlements, project + "\nCODE_SIGN_ENTITLEMENTS: App/Other.entitlements\n", "CODE_SIGN_ENTITLEMENTS exactly", 1),
+    ("team binding is only a comment", entitlements, project.replace("        DEVELOPMENT_TEAM:", "        # DEVELOPMENT_TEAM:"), "DEVELOPMENT_TEAM exactly", 1),
+    ("missing source exclusion", entitlements, project.replace("          - Kodera.entitlements\n", ""), "exclude Kodera.entitlements", 1),
+    ("source exclusion in wrong block", entitlements, project.replace("          - Kodera.entitlements\n", "") + "\n          - Kodera.entitlements\n", "exclude Kodera.entitlements", 1),
+]
+with tempfile.TemporaryDirectory(prefix="ios-association-selftest-") as scratch:
+    test_root = pathlib.Path(scratch)
+    (test_root / "App").mkdir()
+    def write(plist, yaml):
+        (test_root / "project.yml").write_text(yaml or project)
+        p = test_root / "App/Kodera.entitlements"
+        if plist == "missing":
+            p.unlink(missing_ok=True)
+        elif plist == "malformed":
+            p.write_bytes(b"not a plist")
+        elif plist == "truncated":
+            p.write_bytes(b'<?xml version="1.0"?><plist version="1.0"><dict>')
+        else:
+            p.write_bytes(plistlib.dumps(plist))
+    write(entitlements, project)
+    assert gate(test_root) == [], "the current association source was refused"
+    for label, plist, yaml, message, count in cases:
+        write(plist, yaml)
+        errors = gate(test_root)
+        assert len(errors) == count and any(message in error for error in errors), (label, errors)
+    write(entitlements, project)
+    assert gate(test_root) == [], "restored association source was refused"
+assert len(cases) == 22, "association refusal coverage changed"
+print("association self-test passed: 22 refusals and 2 positive cases")
+PY
+}
+
+association_selftests
+if [ "${1:-}" = "--associations-only" ]; then exit 0; fi
+[ "$#" -eq 0 ] || { echo "usage: $0 [--associations-only]" >&2; exit 2; }
+
 work="$(mktemp -d "${TMPDIR:-/tmp}/app-resources-selftest.XXXXXX")"
 trap 'rm -r -- "$work"' EXIT
 
@@ -199,6 +265,22 @@ expect_refusal "a missing licence notice" 1 \
   "expected 2 OFL font licence notices in Resources/Licenses, found 1"
 
 # ── Info.plist capabilities and deployment ────────────────────────────────
+fresh; edit_plist Info.plist 'del d["NSBluetoothAlwaysUsageDescription"]'
+expect_refusal "missing Bluetooth consent description" 1 \
+  "Info.plist lacks the foreground proximity permission description NSBluetoothAlwaysUsageDescription"
+
+fresh; edit_json Resources/InfoPlist.xcstrings 'del d["strings"]["NSLocalNetworkUsageDescription"]["localizations"]["fr"]'
+expect_refusal "missing local-network consent translation" 1 \
+  "InfoPlist.xcstrings: NSLocalNetworkUsageDescription has no fr translation"
+
+fresh; edit_plist Info.plist 'd["NSBonjourServices"] = ["_http._tcp"]'
+expect_refusal "unexpected Bonjour service" 1 \
+  "Info.plist must declare only the foreground proximity Bonjour service"
+
+fresh; edit_plist Info.plist 'd["NSLocationWhenInUseUsageDescription"] = "Unexpected location request"'
+expect_refusal "location permission is not proximity" 1 \
+  "Info.plist requests location access; proximity uses no location permission"
+
 fresh; edit_plist Info.plist 'd["CFBundleURLTypes"] = [{"CFBundleURLSchemes": ["io.kodera.app"]}]'
 expect_refusal "a registered callback scheme" 1 \
   "Info.plist declares CFBundleURLTypes, a capability this app has not qualified"
@@ -569,6 +651,6 @@ fresh
 expect_clean "the copy passes again once restored"
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=115
+expected_cases=119
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

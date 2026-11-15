@@ -101,6 +101,40 @@ services:
       db:
         condition: service_healthy
 
+  # This volume holds only a Unix socket and empty ownership lock; all presence/key data is RAM-only.
+  proximity-socket-init:
+    mem_limit: 64m
+    build:
+      context: ../../apps/server
+      dockerfile: Dockerfile
+    user: "0:0"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["python", "-c", "import os; os.chmod('/run/proximity', 0o700); os.chown('/run/proximity', 10001, 10001)"]
+    restart: "no"
+    volumes:
+      - proximity_socket:/run/proximity
+
+  proximity-broker:
+    mem_limit: 128m
+    build:
+      context: ../../apps/server
+      dockerfile: Dockerfile
+    command: ["python", "-m", "apps.proximity.broker_rpc", "/run/proximity/broker.sock"]
+    restart: unless-stopped
+    volumes:
+      - proximity_socket:/run/proximity
+    depends_on:
+      proximity-socket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(1); s.connect('/run/proximity/broker.sock'); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   server:
     mem_limit: 768m
     build:
@@ -124,7 +158,12 @@ services:
       KODERA_MEMBERSHIP_CURSOR_KEY: ${KODERA_MEMBERSHIP_CURSOR_KEY:?Set KODERA_MEMBERSHIP_CURSOR_KEY in .env}
       KODERA_DISCOVERY_HMAC_KEY: ${KODERA_DISCOVERY_HMAC_KEY:?Set KODERA_DISCOVERY_HMAC_KEY in .env}
       DATABASE_URL: postgresql://kodera_api:${KODERA_API_DATABASE_PASSWORD:?Set the isolated API database password}@db:5432/${POSTGRES_DB:-kodera_server}
+      KODERA_PROXIMITY_BROKER_SOCKET: /run/proximity/broker.sock
+    volumes:
+      - proximity_socket:/run/proximity:ro
     depends_on:
+      proximity-broker:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
       yjs-collab:
@@ -331,6 +370,7 @@ services:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
 volumes:
+  proximity_socket:
   agent_state:
   caddy_data:
   caddy_config:

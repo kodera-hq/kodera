@@ -486,3 +486,15 @@ its isolated replacement; do not weaken Synapse policy to recover access. A poli
 downgrade that removes additive governance fields needs an explicit review because
 it removes the independent room-policy defense. Re-run canonical bootstrap and
 the two-account negative checks after reconciliation before reopening traffic.
+
+## Shared ephemeral proximity state
+
+The customer API keeps two Gunicorn workers. Both delegate proximity bootstrap, check-in, resolution, checkout and replay admission to the `proximity-broker` process over `/run/proximity/broker.sock`. The socket directory is owner-only and mounted read-only by the API; it holds only the socket and an empty lifetime ownership lock. No beacon key, handle, status note or proximity presence is written there or into PostgreSQL. The broker has no published port, database credential or provider credential.
+
+Missing socket configuration, an unavailable broker or a malformed/oversized response produces a fail-closed `503`; HTTP workers never create a replacement local broker. Broker restart erases all presence/replay state and replaces its random beacon key, so clients must bootstrap and opt in again. A lifetime lock refuses a second broker on the same socket. This topology shares state among processes mounting that socket; multi-host proximity brokerage is not implemented. Physical BLE/LAN interoperability remains a separate acceptance requirement.
+
+Bootstrap exports only the current epoch MAC capability, with strict expiry at the next 900-second boundary. It never exports the workspace master key. Clients stop and clear their owned key material at expiry; offline revocation is bounded by the issued epoch. Fresh authenticated provisioning never extends the member's voluntary consent deadline.
+
+Proximity operations keep current authority fences through the broker call and response construction. Successful peer disclosure reconciles every target and is bounded to 512 distinct identities; excess capacity returns `503`, never a partial authorization snapshot. The broker retains opaque identity UUIDs rather than raw issuer/subject claims. Ordinary departure removes presence while preserving the short replay tombstone; permanent erasure removes both.
+
+Every newly admitted workspace/account erasure inventory requires the `proximity_ephemeral` receipt. A separately configured erasure worker must mount the same private socket with the reviewed UID and explicitly supply `ProximityWorkspaceErasureAdapter` or `ProximityAccountErasureAdapter`. No missing-service-as-empty fallback exists. The receipt covers logical absence from this live RAM-only service; it does not qualify other replicas, forensic RAM zeroization, physical radio interoperability or immediate offline revocation. Existing immutable erasure journals are not rewritten or retroactively certified by the new inventory migration.

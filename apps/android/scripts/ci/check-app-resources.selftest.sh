@@ -250,13 +250,19 @@ expect_refusal "a network security configuration" 1 \
   "AndroidManifest.xml sets android:networkSecurityConfig; only the debug source set may"
 
 fresh; printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/></manifest>\n' > "$work/$M/AndroidManifest.xml"
-expect_refusal "a manifest with no application element" 4 'AndroidManifest.xml does not set android:allowBackup="false"'
+expect_refusal "a manifest with no application element" 5 'AndroidManifest.xml does not set android:allowBackup="false"'
 
 fresh; replace $M/AndroidManifest.xml '<application' '<uses-permission android:name="android.permission.CAMERA"/><application'
-expect_refusal "an extra permission" 1 "AndroidManifest.xml asks for permissions other than exactly INTERNET"
+expect_refusal "an extra permission" 1 "AndroidManifest.xml permissions differ from the reviewed foreground radio allowlist"
 
 fresh; replace $M/AndroidManifest.xml '<application' '<uses-permission-sdk-23 android:name="android.permission.CAMERA"/><application'
-expect_refusal "an extra API 23+ permission" 1 "AndroidManifest.xml asks for permissions other than exactly INTERNET"
+expect_refusal "an extra API 23+ permission" 1 "AndroidManifest.xml permissions differ from the reviewed foreground radio allowlist"
+
+fresh; replace $M/AndroidManifest.xml 'android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"' 'android:name="android.permission.BLUETOOTH_SCAN"'
+expect_refusal "Bluetooth scan location assertion missing" 1 "AndroidManifest.xml android.permission.BLUETOOTH_SCAN must assert neverForLocation"
+
+fresh; replace $M/AndroidManifest.xml 'android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation"' 'android:name="android.permission.NEARBY_WIFI_DEVICES"'
+expect_refusal "nearby Wi-Fi location assertion missing" 1 "AndroidManifest.xml android.permission.NEARBY_WIFI_DEVICES must assert neverForLocation"
 
 # Each clause of the launcher filter guard, alone.
 fresh; replace $M/AndroidManifest.xml '<action android:name="android.intent.action.MAIN" />' '<action android:name="android.intent.action.MAIN" /><action android:name="android.intent.action.VIEW" />'
@@ -883,6 +889,6 @@ printf '%s\n' "$_out" | grep -qF "Nothing was checked." || fail "--merged: a mal
 cases=$((cases + 1)); printf '  ok  --merged: a malformed manifest is could not look (exit 2)\n'
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=163
+expected_cases=165
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

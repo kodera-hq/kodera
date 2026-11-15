@@ -10,7 +10,7 @@ Gradle and AGP do not fail a build on any of these, and each ships silently:
 - a font file that drifted from its source hash, one that is not bound, or a
   binding to another face; a font licence notice that is missing or drifted;
 - an AndroidManifest.xml that allows backup or cleartext traffic, names a
-  network security configuration, asks for a permission other than INTERNET,
+  network security configuration, asks for a permission outside the reviewed foreground radio allowlist,
   declares an intent filter other than the MAIN/LAUNCHER entry (AppAuth's
   redirect activity arrives through the merger and is allowlisted there), or
   exports a provider, receiver or service;
@@ -89,7 +89,10 @@ PINNED_COPY = {
 }
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
-ALLOWED_PERMISSIONS = ["android.permission.INTERNET"]
+ALLOWED_PERMISSIONS = ["android.permission.INTERNET", "android.permission.BLUETOOTH_ADVERTISE",
+    "android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.NEARBY_WIFI_DEVICES"]
+PROXIMITY_LOCATION_FREE = {"android.permission.BLUETOOTH_SCAN", "android.permission.NEARBY_WIFI_DEVICES"}
 LAUNCHER_ACTIONS = {"android.intent.action.MAIN"}
 LAUNCHER_CATEGORIES = {"android.intent.category.LAUNCHER"}
 DEPLOYMENT_KEYS = ("io.kodera.android.CORE_ORIGIN", "io.kodera.android.ISSUER_ORIGINS")
@@ -140,7 +143,7 @@ EXAMPLE_VALUES = {
 
 # The merged debug manifest: everything the dependencies add. A component is
 # exposed when it is exported, or carries an intent filter without saying.
-MERGED_PERMISSIONS = ["android.permission.INTERNET", "io.kodera.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]
+MERGED_PERMISSIONS = [*ALLOWED_PERMISSIONS, "io.kodera.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"]
 # androidx.core declares this one, signature-protected, for its own receivers.
 MERGED_DECLARED_PERMISSIONS = {"io.kodera.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION": "signature"}
 PROFILE_ACTIONS = ("INSTALL_PROFILE", "SKIP_FILE", "SAVE_PROFILE", "BENCHMARK_OPERATION")
@@ -351,7 +354,11 @@ def findings(root):
     permissions = [p.get(ANDROID + "name") for tag in ("uses-permission", "uses-permission-sdk-23")
                    for p in manifest.findall(tag)]
     if permissions != ALLOWED_PERMISSIONS:
-        errors.append("AndroidManifest.xml asks for permissions other than exactly INTERNET")
+        errors.append("AndroidManifest.xml permissions differ from the reviewed foreground radio allowlist")
+    for declaration in manifest.findall("uses-permission"):
+        name = declaration.get(ANDROID + "name")
+        if name in PROXIMITY_LOCATION_FREE and declaration.get(ANDROID + "usesPermissionFlags") != "neverForLocation":
+            errors.append(f"AndroidManifest.xml {name} must assert neverForLocation")
     for intent_filter in manifest.iter("intent-filter"):
         actions = {a.get(ANDROID + "name") for a in intent_filter.findall("action")}
         categories = {c.get(ANDROID + "name") for c in intent_filter.findall("category")}
@@ -547,6 +554,10 @@ def merged_findings(path, release=False):
     for name in permissions:
         if name not in MERGED_PERMISSIONS:
             errors.append(f"merged manifest asks for {name}, outside the allowlist")
+    for declaration in manifest.findall("uses-permission"):
+        name = declaration.get(ANDROID + "name")
+        if name in PROXIMITY_LOCATION_FREE and declaration.get(ANDROID + "usesPermissionFlags") != "neverForLocation":
+            errors.append(f"merged manifest {name} must assert neverForLocation")
     for declared in manifest.findall("permission"):
         name = declared.get(ANDROID + "name")
         if name not in MERGED_DECLARED_PERMISSIONS or MERGED_DECLARED_PERMISSIONS[name] != declared.get(ANDROID + "protectionLevel"):

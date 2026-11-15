@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.45.0
+  version: 0.46.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -11,7 +11,11 @@ info:
     ## Conventions
 
     - Base path `/api/v1`. Every breaking change ships as `/api/v2`; additive changes stay in v1.
-    - Every `POST` but `previewInvitation` requires an `Idempotency-Key` header. Except `discoverRealm`, whose
+    - The ephemeral proximity bootstrap, checkin, resolve and checkout protocol is a named
+      exception: no Idempotency-Key or durable response replay; each request checks current
+      membership, checkin counters reject replay, and checkout is naturally repeatable.
+      Proximity epoch_expires_at and presence expires_at are bounded integer Unix seconds.
+    - Every other `POST` but `previewInvitation` requires an `Idempotency-Key` header. Except `discoverRealm`, whose
       dedicated parameter specifies compatibility-only semantics for a non-mutating lookup,
       the key is stored with the request fingerprint; same key/body replays the first
       response and changed body returns `idempotency-key-reuse`. `discoverRealm` stores
@@ -113,6 +117,8 @@ tags:
     description: The commercial and legal entity that buys a tenant.
   - name: Memberships
     description: People in an organisation, their roles, their invitations, on-site enrolment.
+  - name: Proximity
+    description: Voluntary, ephemeral workspace presence and epoch-limited radio capabilities.
   - name: Workspace
     description: The organisation's workspace structure, its categories and channels; never their content.
   - name: Catalog
@@ -8524,6 +8530,534 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+
+  /proximity/bootstrap:
+    post:
+      operationId: bootstrapProximity
+      summary: Bootstrap voluntary proximity
+      description: Current authenticated customer membership in the exact workspace is checked on every request; staff
+        and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker.
+        Coordinates/GPS fields are refused. No durable customer location is stored. This ephemeral protocol explicitly
+        takes no Idempotency-Key and stores no durable response replay; checkin rejects duplicate/decreasing token
+        counters, checkout is naturally repeatable, and bootstrap/resolve are current-authority reads.
+      tags:
+      - Proximity
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: proximity:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProximityRadioScopeRequest'
+      responses:
+        '200':
+          description: Current ephemeral proximity response.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProximityEpochLease'
+        '400':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '401':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '403':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '404':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '409':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '422':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '503':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+  /proximity/checkin:
+    post:
+      operationId: checkInProximity
+      summary: Checkin voluntary proximity
+      description: Current authenticated customer membership in the exact workspace is checked on every request; staff
+        and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker.
+        Coordinates/GPS fields are refused. No durable customer location is stored. This ephemeral protocol explicitly
+        takes no Idempotency-Key and stores no durable response replay; checkin rejects duplicate/decreasing token
+        counters, checkout is naturally repeatable, and bootstrap/resolve are current-authority reads.
+      tags:
+      - Proximity
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: proximity:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProximityRadioCheckInRequest'
+      responses:
+        '201':
+          description: Current ephemeral proximity response.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioCheckIn'
+        '400':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '401':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '403':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '404':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '409':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '422':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '503':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+  /proximity/resolve:
+    post:
+      operationId: resolveProximityTokens
+      summary: Resolve voluntary proximity
+      description: Current authenticated customer membership in the exact workspace is checked on every request; staff
+        and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker.
+        Coordinates/GPS fields are refused. No durable customer location is stored. Caller must be actively opted
+        in within the same workspace and event scope. This ephemeral protocol explicitly takes no Idempotency-Key
+        and stores no durable response replay; checkin rejects duplicate/decreasing token counters, checkout is naturally
+        repeatable, and bootstrap/resolve are current-authority reads.
+      tags:
+      - Proximity
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: proximity:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProximityRadioResolveRequest'
+      responses:
+        '200':
+          description: Current ephemeral proximity response.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioResolved'
+        '400':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '401':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '403':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '404':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '409':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '422':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '503':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+  /proximity/nearby:
+    get:
+      operationId: getNearbyProximity
+      summary: Nearby voluntary proximity
+      description: 'Current authenticated customer membership in the exact workspace is checked on every request;
+        staff and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral
+        broker. Coordinates/GPS fields are refused. No durable customer location is stored. Caller must be actively
+        opted in within the same workspace and event scope. '
+      tags:
+      - Proximity
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: proximity:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - name: workspace_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+      - name: event_scope
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+      responses:
+        '200':
+          description: Current ephemeral proximity response.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioNearby'
+        '400':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '401':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '403':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '404':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '409':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '422':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '503':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+  /proximity/checkout:
+    post:
+      operationId: checkOutProximity
+      summary: Checkout voluntary proximity
+      description: Current authenticated customer membership in the exact workspace is checked on every request; staff
+        and other tenants are refused. Presence, replay admission and keys live only in the shared ephemeral broker.
+        Coordinates/GPS fields are refused. No durable customer location is stored. Omitting event_scope checks out
+        all scopes for this principal in the workspace. This ephemeral protocol explicitly takes no Idempotency-Key
+        and stores no durable response replay; checkin rejects duplicate/decreasing token counters, checkout is naturally
+        repeatable, and bootstrap/resolve are current-authority reads.
+      tags:
+      - Proximity
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: proximity:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProximityRadioScopeRequest'
+      responses:
+        '200':
+          description: Current ephemeral proximity response.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioCheckout'
+        '400':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '401':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '403':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '404':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '409':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '422':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
+        '503':
+          description: Current authentication, workspace, opt-in, validation, replay or backend refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProximityRadioProblem'
 
 components:
   x-audit-action-registry:
@@ -17119,3 +17653,462 @@ components:
         event_id: evt_synthetic_0001
         event_type: checkout.session.completed
         status: applied
+    ProximityRadioScopeRequest:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+    ProximityEpochLease:
+      type: object
+      additionalProperties: false
+      description: Authenticated current-epoch capability only; never a workspace master key. epoch=floor(current Unix
+        seconds/900), epoch_expires_at=(epoch+1)*900. Clients must validate exact workspace/scope and current epoch,
+        stop and wipe at expiry without extending consent, and rebootstrap under current membership before continuing.
+        Server token skew does not extend this lease. Offline revocation is bounded by this issued epoch, not instantaneous.
+      required:
+      - workspace_id
+      - event_scope
+      - epoch
+      - epoch_mac_key
+      - epoch_expires_at
+      - epoch_rotation_seconds
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 4294967295
+        epoch_mac_key:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        epoch_expires_at:
+          type: integer
+          minimum: 0
+          maximum: 3865470566400
+          description: Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps.
+        epoch_rotation_seconds:
+          type: integer
+          const: 900
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+        epoch: 2000000
+        epoch_mac_key: c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a
+        epoch_expires_at: 1800000900
+        epoch_rotation_seconds: 900
+    ProximityRadioCheckInRequest:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      - beacon_token
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+        beacon_token:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 7200
+          default: 1800
+        status_note:
+          type:
+          - string
+          - 'null'
+          maxLength: 80
+        handle:
+          type:
+          - string
+          - 'null'
+          pattern: ^[a-z0-9][a-z0-9_-]{1,31}$
+        transport:
+          type: string
+          enum:
+          - ble
+          - mdns_quic
+          - hybrid
+          default: hybrid
+        distance_band:
+          type: string
+          enum:
+          - immediate
+          - near
+          - ambient
+          default: near
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+        beacon_token: 4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775
+        ttl_seconds: 1800
+    ProximityRadioCheckIn:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      - event_scope
+      - handle
+      - status_note
+      - rolling_pseudonym
+      - epoch
+      - ttl_seconds
+      - expires_at
+      - gps_persisted
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+        handle:
+          type: string
+        status_note:
+          type: string
+          maxLength: 80
+        rolling_pseudonym:
+          type: string
+          pattern: ^[0-9a-f]{16}$
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 4294967295
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 7200
+        expires_at:
+          type: integer
+          minimum: 0
+          maximum: 3865470566400
+          description: Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps.
+        gps_persisted:
+          type: boolean
+          const: false
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+        handle: nearby-person
+        status_note: ''
+        rolling_pseudonym: 7e5f21610c812e05
+        epoch: 2000000
+        ttl_seconds: 1800
+        expires_at: 1800001900
+        gps_persisted: false
+    ProximityRadioObservation:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - beacon_token
+      properties:
+        beacon_token:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: ^[0-9a-f]{64}$
+        transport:
+          type: string
+          enum:
+          - ble
+          - mdns_quic
+          - hybrid
+        distance_band:
+          type: string
+          enum:
+          - immediate
+          - near
+          - ambient
+      examples:
+      - beacon_token: 4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775
+    ProximityRadioResolveRequest:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      - observed_tokens
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+        observed_tokens:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/ProximityRadioObservation'
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+        observed_tokens:
+        - beacon_token: 4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775
+    ProximityRadioPeer:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - handle
+      - status_note
+      - rolling_pseudonym
+      - transport
+      - distance_band
+      - expires_in_seconds
+      - expires_at
+      properties:
+        handle:
+          type: string
+        status_note:
+          type: string
+          maxLength: 80
+        rolling_pseudonym:
+          type: string
+          pattern: ^[0-9a-f]{16}$
+        transport:
+          type: string
+          enum:
+          - ble
+          - mdns_quic
+          - hybrid
+        distance_band:
+          type: string
+          enum:
+          - immediate
+          - near
+          - ambient
+        expires_in_seconds:
+          type: integer
+          minimum: 0
+          maximum: 7200
+        expires_at:
+          type: integer
+          minimum: 0
+          maximum: 3865470566400
+          description: Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps.
+      examples:
+      - handle: nearby-person
+        status_note: ''
+        rolling_pseudonym: 7e5f21610c812e05
+        transport: hybrid
+        distance_band: near
+        expires_in_seconds: 1800
+        expires_at: 1800001900
+    ProximityRadioSelf:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - handle
+      - status_note
+      - expires_in_seconds
+      - expires_at
+      properties:
+        handle:
+          type: string
+        status_note:
+          type: string
+          maxLength: 80
+        expires_in_seconds:
+          type: integer
+          minimum: 0
+          maximum: 7200
+        expires_at:
+          type: integer
+          minimum: 0
+          maximum: 3865470566400
+          description: Unix seconds, an explicit proximity protocol exception to RFC3339 payload timestamps.
+      examples:
+      - handle: nearby-person
+        status_note: ''
+        expires_in_seconds: 1800
+        expires_at: 1800001900
+    ProximityRadioCheckout:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      - checked_out
+      - purged_records
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        checked_out:
+          type: boolean
+          const: true
+        purged_records:
+          type: integer
+          minimum: 0
+          maximum: 8192
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        checked_out: true
+        purged_records: 1
+    ProximityRadioProblem:
+      type: object
+      additionalProperties: false
+      description: RFC9457 proximity refusal. Uses only the canonical Core ProblemType registry. Voluntary opt-in refusal
+        uses forbidden with caller_not_checked_in; coordinate refusal uses validation-error with gps_coordinates_forbidden.
+        No authentication or tenant detail is disclosed.
+      required:
+      - type
+      - title
+      - status
+      - request_id
+      properties:
+        type:
+          $ref: '#/components/schemas/ProblemType'
+        title:
+          type: string
+        status:
+          type: integer
+          enum:
+          - 400
+          - 401
+          - 403
+          - 404
+          - 405
+          - 409
+          - 422
+          - 503
+        request_id:
+          type: string
+        reason:
+          type: string
+      examples:
+      - type: https://kodera.io/problems/forbidden
+        title: Proximity request refused
+        status: 403
+        request_id: synthetic-request
+        reason: caller_not_checked_in
+    ProximityRadioResolved:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      - event_scope
+      - peers
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+        peers:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/ProximityRadioPeer'
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+        peers:
+        - handle: nearby-person
+          status_note: ''
+          rolling_pseudonym: 7e5f21610c812e05
+          transport: hybrid
+          distance_band: near
+          expires_in_seconds: 1800
+          expires_at: 1800001900
+    ProximityRadioNearby:
+      type: object
+      additionalProperties: false
+      description: ''
+      required:
+      - workspace_id
+      - event_scope
+      - self
+      - peers
+      properties:
+        workspace_id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          not:
+            const: 00000000-0000-0000-0000-000000000000
+        event_scope:
+          type: string
+          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$
+          default: default
+        self:
+          $ref: '#/components/schemas/ProximityRadioSelf'
+        peers:
+          type: array
+          maxItems: 8191
+          items:
+            $ref: '#/components/schemas/ProximityRadioPeer'
+      examples:
+      - workspace_id: 01950000-0000-7000-8000-0000000000a1
+        event_scope: default
+        self:
+          handle: nearby-person
+          status_note: ''
+          expires_in_seconds: 1800
+          expires_at: 1800001900
+        peers:
+        - handle: nearby-person
+          status_note: ''
+          rolling_pseudonym: 7e5f21610c812e05
+          transport: hybrid
+          distance_band: near
+          expires_in_seconds: 1800
+          expires_at: 1800001900

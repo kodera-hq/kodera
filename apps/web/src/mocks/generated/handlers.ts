@@ -274,4 +274,9 @@ export const handlers: HttpHandler[] = [
   http.get(BASE + "/me/privacy/exports/:request_id/download", () => answer(EXAMPLES["getAccountExportDownloadLink"])),
   http.post(BASE + "/me/privacy/deletions", ({ request }) => answerIdempotent(EXAMPLES["requestAccountDeletion"], request)),
   http.get(BASE + "/me/privacy/deletions/:request_id", () => answer(EXAMPLES["getAccountDeletion"])),
+  http.post(BASE + "/proximity/bootstrap", () => answer(EXAMPLES["bootstrapProximity"])),
+  http.post(BASE + "/proximity/checkin", () => answer(EXAMPLES["checkInProximity"])),
+  http.post(BASE + "/proximity/resolve", () => answer(EXAMPLES["resolveProximityTokens"])),
+  http.get(BASE + "/proximity/nearby", () => answer(EXAMPLES["getNearbyProximity"])),
+  http.post(BASE + "/proximity/checkout", () => answer(EXAMPLES["checkOutProximity"])),
 ]

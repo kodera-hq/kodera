@@ -1,0 +1,15 @@
+{
+  "reference_workspace_master_key": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "device_seed": "4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60",
+  "now_unix_seconds": 1800000100,
+  "counter": 7,
+  "bootstrap": {
+    "workspace_id": "01950000-0000-7000-8000-0000000000a1",
+    "event_scope": "default",
+    "epoch": 2000000,
+    "epoch_mac_key": "c8cd9f607c5ec478b461588173cf777b2a54ca74bd936c48e92329139f092a0a",
+    "epoch_expires_at": 1800000900,
+    "epoch_rotation_seconds": 900
+  },
+  "token_hex": "4b540100001e8480000000077e5f21610c812e0536afe918ab24f63e712c4775"
+}
