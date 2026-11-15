@@ -27,6 +27,8 @@ AREAS: dict[str, str] = {
     r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
     r"|security/backports/glib-0\.18\.5/|scripts/ci/qualify-glib-iterator\.py$"
+    r"|apps/web/tests/wasm/|apps/web/src/features/confidential/local-state\.ts$"
+    r"|scripts/ci/build-wasm-browser-proof(-selftest)?\.py$|package(-lock)?\.json$|apps/web/package\.json$"
     r"|scripts/ci/(check-release-workflow\.py|assemble-release-sbom\.py|package-desktop-release\.mjs)$"
     r"|\.nvmrc$|\.github/workflows/(ci-rust-desktop|release-binaries)\.yml$",
     "mobile": r"apps/ios/|apps/android/|packages/kodera-rs/|packages/design-tokens/"
@@ -79,6 +81,20 @@ def selftest() -> None:
          {"server": False, "web": False, "rust": True, "mobile": False}),
         ("GLib qualifier-only change runs Rust", ["scripts/ci/qualify-glib-iterator.py"],
          {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("generated browser fixture reaches web and Rust", ["apps/web/tests/wasm/fixtures/host-adapter.mjs"],
+         {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("generated build owner reaches Rust", ["scripts/ci/build-wasm-browser-proof.py"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("generated owner tests reach Rust", ["scripts/ci/build-wasm-browser-proof-selftest.py"],
+         {"server": False, "web": False, "rust": True, "mobile": False}),
+        ("real device store reaches the generated consumer", ["apps/web/src/features/confidential/local-state.ts"],
+         {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("browser dependency lock reaches the generated consumer", ["package-lock.json"],
+         {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("browser workspace metadata reaches the generated consumer", ["apps/web/package.json"],
+         {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("lookalike fixture path does not run Rust", ["apps/web/tests/wasm-other/file.mjs"],
+         {"server": False, "web": True, "rust": False, "mobile": False}),
         ("docs only runs none", ["README.md", "docs/x.md"], dict.fromkeys(AREAS, False)),
         (
             "web only",
