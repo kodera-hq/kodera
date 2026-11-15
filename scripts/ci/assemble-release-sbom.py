@@ -27,7 +27,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -65,6 +69,38 @@ KNOWN_NONPERMISSIVE = frozenset(
         "LGPL-3.0-or-later",
         "AGPL-3.0-only",
         "AGPL-3.0-or-later",
+    }
+)
+# Reviewed permissive SPDX identifiers carried by locked web/Rust release dependencies
+# (`@fontsource/*` design-system fonts, Unicode ICU tables, `dunce`, `fiat-crypto`).
+REVIEWED_RELEASE_PERMISSIVE_EXTRAS = frozenset(
+    {
+        "BSD-1-Clause",
+        "MIT-0",
+        "OFL-1.1",
+        "Unicode-3.0",
+        "Unicode-DFS-2016",
+    }
+)
+# Reviewed `(license_id, exception_id)` pairs admitted in release binaries (`target-lexicon`, `wasi`).
+REVIEWED_WITH_EXCEPTIONS = frozenset(
+    {
+        ("Apache-2.0", "LLVM-exception"),
+    }
+)
+# Unmodified file-level weak-copyleft MPL-2.0 Cargo crates reviewed under `security/backports/OPENMLS.md`.
+# Any unreviewed MPL-2.0 crate, npm package, or Maven artifact remains refused by default.
+REVIEWED_MPL20_CARGO_CRATES = frozenset(
+    {
+        "cssparser",
+        "cssparser-macros",
+        "dtoa-short",
+        "hpke-rs",
+        "hpke-rs-crypto",
+        "hpke-rs-libcrux",
+        "hpke-rs-rust-crypto",
+        "option-ext",
+        "selectors",
     }
 )
 
@@ -133,6 +169,125 @@ def spdx_expression_acceptable(expression: str) -> bool:
         return False
 
 
+def release_spdx_expression_acceptable(
+    expression: str,
+    *,
+    allow_reviewed_mpl20: bool = False,
+) -> bool:
+    """Evaluate SPDX expressions for unified release SBOMs with fail-closed unknown-ID refusal."""
+    if (
+        not isinstance(expression, str)
+        or not 0 < len(expression) <= 512
+        or not all(ord(char) >= 32 for char in expression)
+    ):
+        return False
+    tokens = re.findall(r"\(|\)|[^\s()]+", expression)
+    if len(tokens) > 128:
+        return False
+
+    admitted = PERMISSIVE | REVIEWED_RELEASE_PERMISSIVE_EXTRAS
+    nonpermissive = set(KNOWN_NONPERMISSIVE)
+    if allow_reviewed_mpl20:
+        admitted = admitted | frozenset({"MPL-2.0"})
+    else:
+        nonpermissive.add("MPL-2.0")
+
+    index = 0
+
+    def primary(depth: int) -> bool:
+        nonlocal index
+        if depth > 16 or index == len(tokens):
+            raise ValueError
+        token = tokens[index]
+        index += 1
+        if token == "(":
+            result = either(depth + 1)
+            if index == len(tokens) or tokens[index] != ")":
+                raise ValueError
+            index += 1
+            return result
+        if token in {"AND", "OR", "WITH", ")"}:
+            raise ValueError
+        if index < len(tokens) and tokens[index] == "WITH":
+            index += 1
+            if index == len(tokens) or tokens[index] in {"(", ")", "AND", "OR", "WITH"}:
+                raise ValueError
+            exception_id = tokens[index]
+            index += 1
+            if (token, exception_id) not in REVIEWED_WITH_EXCEPTIONS:
+                raise ValueError
+            return True
+        if token not in admitted and token not in nonpermissive:
+            raise ValueError
+        return token in admitted
+
+    def both(depth: int) -> bool:
+        nonlocal index
+        result = primary(depth)
+        while index < len(tokens) and tokens[index] == "AND":
+            index += 1
+            right = primary(depth)
+            result = result and right
+        return result
+
+    def either(depth: int) -> bool:
+        nonlocal index
+        result = both(depth)
+        while index < len(tokens) and tokens[index] == "OR":
+            index += 1
+            right = both(depth)
+            result = result or right
+        return result
+
+    try:
+        result = either(0)
+        return index == len(tokens) and result
+    except ValueError:
+        return False
+
+
+def sha256_crate_directory(crate_dir: Path) -> str:
+    """Compute a deterministic SHA-256 digest over a path-patched third-party crate directory."""
+    try:
+        dir_stat = os.lstat(crate_dir)
+    except OSError as exc:
+        raise ValueError(f"path-patched crate directory missing: {crate_dir}") from exc
+    if stat.S_ISLNK(dir_stat.st_mode) or not stat.S_ISDIR(dir_stat.st_mode):
+        raise ValueError(f"path-patched crate path must be a real directory: {crate_dir}")
+
+    collected: list[tuple[str, bytes]] = []
+
+    def walk_dir(current: Path, rel_prefix: str) -> None:
+        for name in sorted(os.listdir(current)):
+            if name in {".git", "target"}:
+                continue
+            child = current / name
+            st = os.lstat(child)
+            rel_posix = f"{rel_prefix}/{name}" if rel_prefix else name
+            if stat.S_ISLNK(st.st_mode):
+                raise ValueError(f"refused symlink inside path-patched crate: {child}")
+            if stat.S_ISDIR(st.st_mode):
+                walk_dir(child, rel_posix)
+            elif stat.S_ISREG(st.st_mode):
+                collected.append((rel_posix, child.read_bytes()))
+            else:
+                raise ValueError(f"unsupported special file inside path-patched crate: {child}")
+
+    walk_dir(crate_dir, "")
+    if not collected or not any(rel == "Cargo.toml" for rel, _ in collected):
+        raise ValueError(f"path-patched crate directory lacks Cargo.toml: {crate_dir}")
+
+    hasher = hashlib.sha256(b"kodera-crate-dir-v1\0")
+    for rel_posix, raw_bytes in collected:
+        hasher.update(rel_posix.encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(str(len(raw_bytes)).encode("ascii"))
+        hasher.update(b"\0")
+        hasher.update(raw_bytes)
+        hasher.update(b"\0")
+    return hasher.hexdigest()
+
+
 def cyclonedx_license_choice(spdx_expr: str) -> dict[str, object]:
     if " " in spdx_expr or "(" in spdx_expr or ")" in spdx_expr:
         return {"expression": spdx_expr}
@@ -197,17 +352,38 @@ def collect_cargo_components(
     meta_pkgs = metadata_doc.get("packages", [])
     if not isinstance(meta_pkgs, list) or not meta_pkgs:
         raise ValueError(f"cargo metadata contains no packages: {cargo_metadata_path}")
+    raw_ws_members = metadata_doc.get("workspace_members", [])
+    workspace_members = (
+        {str(member) for member in raw_ws_members}
+        if isinstance(raw_ws_members, list)
+        else set()
+    )
 
     components: list[dict[str, object]] = []
     seen_refs: set[str] = set()
     for pkg in meta_pkgs:
-        if not isinstance(pkg, dict) or pkg.get("source") is None:
+        if not isinstance(pkg, dict):
             continue
+        pkg_id = str(pkg.get("id") or "")
+        source = pkg.get("source")
+        manifest_path_raw = pkg.get("manifest_path")
+        if source is None:
+            if pkg_id and pkg_id in workspace_members:
+                continue
+            if not workspace_members and not manifest_path_raw:
+                continue
+            if not isinstance(manifest_path_raw, str) or not manifest_path_raw.strip():
+                raise ValueError(
+                    f"non-workspace path crate lacks manifest_path in cargo metadata: {pkg!r}"
+                )
         name = str(pkg.get("name", "")).strip()
         version = str(pkg.get("version", "")).strip()
         if not (name and version):
             raise ValueError(f"incomplete package entry in cargo metadata: {pkg!r}")
-        checksum = checksum_by_key.get((name, version))
+        if source is None:
+            checksum = sha256_crate_directory(Path(str(manifest_path_raw)).parent)
+        else:
+            checksum = checksum_by_key.get((name, version))
         if not checksum:
             raise ValueError(f"missing Cargo.lock SHA-256 checksum for crate {name}@{version}")
 
@@ -215,7 +391,10 @@ def collect_cargo_components(
         spdx_expr = normalize_cargo_spdx(raw_license)
         if not spdx_expr:
             raise ValueError(f"missing SPDX license in cargo metadata for crate {name}@{version}")
-        if not spdx_expression_acceptable(spdx_expr):
+        if not release_spdx_expression_acceptable(
+            spdx_expr,
+            allow_reviewed_mpl20=(name in REVIEWED_MPL20_CARGO_CRATES),
+        ):
             raise ValueError(
                 f"refused non-permissive SPDX license '{spdx_expr}' on crate {name}@{version}"
             )
@@ -263,7 +442,7 @@ def collect_android_components(android_sbom_path: Path) -> list[dict[str, object
             raise ValueError(
                 f"Android SBOM component missing ref, identity, SHA-256 hash, or SPDX license: {comp!r}"
             )
-        if not spdx_expression_acceptable(lic_str):
+        if not release_spdx_expression_acceptable(lic_str, allow_reviewed_mpl20=False):
             raise ValueError(
                 f"Android SBOM component {ref} carries non-permissive license '{lic_str}'"
             )
@@ -308,7 +487,9 @@ def collect_npm_components(
         # external npm packages must pass SPDX checks.
         is_external = "node_modules" in ref or str(comp.get("purl", "")).startswith("pkg:npm/")
         lic_str = extract_cyclonedx_license_str(comp)
-        if is_external and lic_str and not spdx_expression_acceptable(lic_str):
+        if is_external and lic_str and not release_spdx_expression_acceptable(
+            lic_str, allow_reviewed_mpl20=False
+        ):
             raise ValueError(f"npm SBOM component {ref} carries refused license '{lic_str}'")
         seen_refs.add(ref)
         cleaned = dict(comp)
@@ -668,10 +849,157 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
                     path.write_text(json.dumps(original), encoding="utf-8")
                 assert not refused_output.exists()
 
+        # Verify reviewed release SPDX extensions, reviewed Cargo MPL-2.0 scope, and
+        # [patch.crates-io] path-patched third-party crate inventory + symlink refusal.
+        for expr in (
+            "OFL-1.1",
+            "Unicode-3.0",
+            "(MIT OR Apache-2.0) AND Unicode-3.0",
+            "CC0-1.0 OR MIT-0 OR Apache-2.0",
+            "MIT OR Apache-2.0 OR BSD-1-Clause",
+            "Apache-2.0 WITH LLVM-exception",
+            "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+            "MIT OR MPL-2.0",
+        ):
+            assert release_spdx_expression_acceptable(expr, allow_reviewed_mpl20=False), expr
+        assert not release_spdx_expression_acceptable("MPL-2.0", allow_reviewed_mpl20=False)
+        assert release_spdx_expression_acceptable("MPL-2.0", allow_reviewed_mpl20=True)
+        for bad_expr in (
+            "Apache-2.0 WITH Unreviewed-exception",
+            "MIT OR (GPL-3.0-only WITH Classpath-exception-2.0)",
+            "MIT OR LicenseRef-Private",
+            "MIT OR SSPL-1.0",
+        ):
+            assert not release_spdx_expression_acceptable(bad_expr, allow_reviewed_mpl20=True), (
+                bad_expr
+            )
+
+        backport_dir = scratch / "backport-glib"
+        backport_dir.mkdir()
+        (backport_dir / "Cargo.toml").write_text('[package]\nname = "glib"\nversion = "0.18.5"\n', encoding="utf-8")
+        (backport_dir / "lib.rs").write_text("pub fn patched() {}\n", encoding="utf-8")
+        hpke_sha = hashlib.sha256(b"hpke-rs-crate-bytes").hexdigest()
+        patched_lock = scratch / "Cargo-patched.lock"
+        patched_lock.write_text(
+            f"""version = 4
+[[package]]
+name = "kodera-desktop"
+version = "0.1.0"
+[[package]]
+name = "glib"
+version = "0.18.5"
+[[package]]
+name = "hpke-rs"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "{hpke_sha}"
+""",
+            encoding="utf-8",
+        )
+        patched_meta = scratch / "cargo-patched-meta.json"
+        patched_meta.write_text(
+            json.dumps(
+                {
+                    "workspace_members": ["path+file:///ws/kodera-desktop#0.1.0"],
+                    "packages": [
+                        {
+                            "id": "path+file:///ws/kodera-desktop#0.1.0",
+                            "name": "kodera-desktop",
+                            "version": "0.1.0",
+                            "source": None,
+                            "manifest_path": str(scratch / "ws" / "Cargo.toml"),
+                            "license": "Apache-2.0",
+                        },
+                        {
+                            "id": "path+file:///ws/security/backports/glib#0.18.5",
+                            "name": "glib",
+                            "version": "0.18.5",
+                            "source": None,
+                            "manifest_path": str(backport_dir / "Cargo.toml"),
+                            "license": "MIT",
+                        },
+                        {
+                            "id": "registry+https://github.com/rust-lang/crates.io-index#hpke-rs@0.8.0",
+                            "name": "hpke-rs",
+                            "version": "0.8.0",
+                            "source": "registry+https://github.com/rust-lang/crates.io-index",
+                            "license": "MPL-2.0",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        patched_components = collect_cargo_components(patched_lock, patched_meta)
+        patched_refs = {str(c["bom-ref"]) for c in patched_components}
+        assert patched_refs == {"pkg:cargo/glib@0.18.5", "pkg:cargo/hpke-rs@0.8.0"}, patched_refs
+
+        (backport_dir / "evil-link").symlink_to(backport_dir / "lib.rs")
+        try:
+            collect_cargo_components(patched_lock, patched_meta)
+        except ValueError as err:
+            assert "symlink" in str(err)
+        else:
+            raise AssertionError("symlink inside path-patched crate was not refused")
+        finally:
+            (backport_dir / "evil-link").unlink()
+
+        # Live repository lockfile verification so unreviewed licenses fail on PRs before tag push.
+        repo_root = Path(__file__).resolve().parents[2]
+        pkg_lock_path = repo_root / "package-lock.json"
+        if pkg_lock_path.is_file():
+            pkg_lock_doc = json.loads(pkg_lock_path.read_text(encoding="utf-8"))
+            checked_npm = 0
+            for pkg_path, pkg_meta in pkg_lock_doc.get("packages", {}).items():
+                if not str(pkg_path).startswith("node_modules/") or not isinstance(pkg_meta, dict):
+                    continue
+                if pkg_meta.get("dev") is True or pkg_meta.get("link") is True:
+                    continue
+                lic = str(pkg_meta.get("license") or "").strip()
+                if not lic or not release_spdx_expression_acceptable(
+                    lic, allow_reviewed_mpl20=False
+                ):
+                    raise AssertionError(
+                        f"live package-lock.json production dependency {pkg_path} carries unreviewed license {lic!r}"
+                    )
+                checked_npm += 1
+            assert checked_npm > 0, "expected production packages in live package-lock.json"
+
+        live_cargo_lock = repo_root / "Cargo.lock"
+        live_cargo_toml = repo_root / "Cargo.toml"
+        if live_cargo_lock.is_file() and live_cargo_toml.is_file() and shutil.which("cargo"):
+            proc = subprocess.run(
+                [
+                    "cargo",
+                    "metadata",
+                    "--locked",
+                    "--all-features",
+                    "--format-version",
+                    "1",
+                    "--manifest-path",
+                    str(live_cargo_toml),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            live_meta_path = scratch / "live-cargo-metadata.json"
+            live_meta_path.write_text(proc.stdout, encoding="utf-8")
+            live_cargo_components = collect_cargo_components(live_cargo_lock, live_meta_path)
+            live_cargo_refs = {str(c["bom-ref"]) for c in live_cargo_components}
+            for expected_backport in (
+                "pkg:cargo/glib@0.18.5",
+                "pkg:cargo/openmls_basic_credential@0.6.0",
+                "pkg:cargo/openmls_rust_crypto@0.6.0",
+            ):
+                assert expected_backport in live_cargo_refs, (
+                    f"missing backported crate {expected_backport} in live Cargo SBOM"
+                )
+
     print(
         "OK: assemble-release-sbom.py selftest passed "
         f"(merge, checksum/copyleft guards, {len(expressions)} canonical SPDX comparisons, "
-        f"{refusal_count} unreviewed-license assembly refusals and 7 existing collector guards)."
+        f"{refusal_count} unreviewed-license assembly refusals, 7 collector guards, and live lockfile verification)."
     )
     return 0
 

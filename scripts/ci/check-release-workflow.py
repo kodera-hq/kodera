@@ -191,6 +191,14 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append(
             "desktop-release Linux step must install a SHA256-verified Type-2 ELF runtime and export KODERA_APPIMAGE_RUNTIME_PATH"
         )
+    if (
+        "NSIS_ZIP_SHA256:" not in desktop_block
+        or "Get-FileHash -Path $nsisZip -Algorithm SHA256" not in desktop_block
+        or "KODERA_NSIS_MAKENSIS_PATH=" not in desktop_block
+    ):
+        errors.append(
+            "desktop-release Windows step must install a SHA256-verified NSIS packager and export KODERA_NSIS_MAKENSIS_PATH"
+        )
     if "scripts/ci/package-desktop-release.mjs" not in desktop_block:
         errors.append("desktop-release must invoke scripts/ci/package-desktop-release.mjs")
     if not (root / "scripts" / "ci" / "package-desktop-release.mjs").is_file():
@@ -313,12 +321,14 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         )
     if (
         "name: release-android-sbom" not in publish_block
+        or "npm sbom --omit=dev --sbom-format=cyclonedx" not in publish_block
+        or "cargo metadata --locked --all-features --format-version 1" not in publish_block
         or "python3 scripts/ci/assemble-release-sbom.py" not in publish_block
         or "--cargo-lock Cargo.lock" not in publish_block
         or "--android-sbom release-staging/android-sbom/sbom.cdx.json" not in publish_block
     ):
         errors.append(
-            "publish-release must merge npm, Cargo.lock, and Android SBOMs via scripts/ci/assemble-release-sbom.py"
+            "publish-release must merge production npm (--omit=dev), all-features Cargo.lock, and Android SBOMs via scripts/ci/assemble-release-sbom.py"
         )
     if not (root / "scripts" / "ci" / "assemble-release-sbom.py").is_file():
         errors.append("helper script scripts/ci/assemble-release-sbom.py is missing from repository")
@@ -473,13 +483,27 @@ def run_selftest(baseline: str) -> int:
             "android-release must protect keystore material with umask 077, chmod 600, and EXIT cleanup trap",
         ),
         (
+            "removed SHA256-verified Windows NSIS packager",
+            lambda s: s.replace("KODERA_NSIS_MAKENSIS_PATH=", "UNUSED_NSIS_PATH=", 1),
+            "desktop-release Windows step must install a SHA256-verified NSIS packager",
+        ),
+        (
+            "omitted --omit=dev from npm sbom in publish-release",
+            lambda s: s.replace(
+                "npm sbom --omit=dev --sbom-format=cyclonedx",
+                "npm sbom --sbom-format=cyclonedx",
+                1,
+            ),
+            "publish-release must merge production npm (--omit=dev)",
+        ),
+        (
             "removed multi-ecosystem SBOM assembly in publish-release",
             lambda s: s.replace(
                 "python3 scripts/ci/assemble-release-sbom.py \\",
                 "true \\",
                 1,
             ),
-            "publish-release must merge npm, Cargo.lock, and Android SBOMs via scripts/ci/assemble-release-sbom.py",
+            "publish-release must merge production npm (--omit=dev), all-features Cargo.lock, and Android SBOMs via scripts/ci/assemble-release-sbom.py",
         ),
         (
             "removed iOS simulator verification",

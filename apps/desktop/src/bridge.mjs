@@ -656,6 +656,7 @@ export function createDesktopClient(options = {}) {
         return {
           stored: false,
           nativeKeychain: false,
+          ephemeralProcessVault: false,
           serviceName: `io.kodera.desktop.${input.secretKind}`,
         };
       }
@@ -675,9 +676,11 @@ export function createDesktopClient(options = {}) {
       const response = /** @type {Record<string, unknown> | null} */ (
         await internals.invoke('store_keychain_credential', args)
       );
+      const persistedToOsKeychain = response?.native_keychain === true;
       return {
         stored: true,
-        nativeKeychain: true,
+        nativeKeychain: persistedToOsKeychain,
+        ephemeralProcessVault: !persistedToOsKeychain,
         serviceName:
           typeof response?.service_name === 'string'
             ? response.service_name
@@ -698,6 +701,7 @@ export function createDesktopClient(options = {}) {
         return {
           present: false,
           nativeKeychain: false,
+          ephemeralProcessVault: false,
           serviceName: `io.kodera.desktop.${secretKind}`,
         };
       }
@@ -709,9 +713,11 @@ export function createDesktopClient(options = {}) {
           matrix_user_id: matrixUserId,
         })
       );
+      const persistedToOsKeychain = response?.native_keychain === true;
       return {
         present: Boolean(response?.present),
-        nativeKeychain: true,
+        nativeKeychain: persistedToOsKeychain,
+        ephemeralProcessVault: !persistedToOsKeychain,
         serviceName:
           typeof response?.service_name === 'string'
             ? response.service_name
@@ -732,6 +738,7 @@ export function createDesktopClient(options = {}) {
         return {
           present: false,
           nativeKeychain: false,
+          ephemeralProcessVault: false,
           serviceName: `io.kodera.desktop.${secretKind}`,
         };
       }
@@ -743,9 +750,11 @@ export function createDesktopClient(options = {}) {
           matrix_user_id: matrixUserId,
         })
       );
+      const persistedToOsKeychain = response?.native_keychain === true;
       return {
         present: Boolean(response?.present),
-        nativeKeychain: true,
+        nativeKeychain: persistedToOsKeychain,
+        ephemeralProcessVault: !persistedToOsKeychain,
         serviceName:
           typeof response?.service_name === 'string'
             ? response.service_name

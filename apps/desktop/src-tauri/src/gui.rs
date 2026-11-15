@@ -34,11 +34,11 @@ pub const GUI_DEFAULT_WIDTH: u32 = 1280;
 /// Default logical desktop window height (`820px`).
 pub const GUI_DEFAULT_HEIGHT: u32 = 820;
 
-/// Minimum logical desktop window width (`900px`).
-pub const GUI_MIN_WIDTH: u32 = 900;
+/// Minimum logical desktop window width (`960px`, aligned with `tauri.conf.json` and `window_state`).
+pub const GUI_MIN_WIDTH: u32 = crate::window_state::MIN_WINDOW_WIDTH;
 
-/// Minimum logical desktop window height (`600px`).
-pub const GUI_MIN_HEIGHT: u32 = 600;
+/// Minimum logical desktop window height (`640px`, aligned with `tauri.conf.json` and `window_state`).
+pub const GUI_MIN_HEIGHT: u32 = crate::window_state::MIN_WINDOW_HEIGHT;
 
 /// Custom asset protocol scheme registered on the native OS WebView.
 pub const CUSTOM_ASSET_SCHEME: &str = "kodera-asset";

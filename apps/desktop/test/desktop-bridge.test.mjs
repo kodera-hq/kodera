@@ -133,10 +133,13 @@ test('browser fallback executes safe no-ops without touching Web Storage and sti
   });
   assert.equal(stored.stored, false);
   assert.equal(stored.nativeKeychain, false);
+  assert.equal(stored.ephemeralProcessVault, false);
   assert.equal(storageTouched, false);
 
   const loaded = await client.loadSecureCredentialStatus('matrix-session', '@alice:kodera.io');
   assert.equal(loaded.present, false);
+  assert.equal(loaded.nativeKeychain, false);
+  assert.equal(loaded.ephemeralProcessVault, false);
 
   const oidcStart = await client.beginOidcPkceLoopback({
     issuerOrigin: 'https://auth.kodera.io',
@@ -281,13 +284,18 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
     rawSecret: SAMPLE_SECRET,
   });
   assert.equal(stored.stored, true);
-  assert.equal(stored.nativeKeychain, true);
+  assert.equal(stored.nativeKeychain, false);
+  assert.equal(stored.ephemeralProcessVault, true);
 
   const loaded = await client.loadSecureCredentialStatus('matrix-session', '@alice:kodera.io');
   assert.equal(loaded.present, true);
+  assert.equal(loaded.nativeKeychain, false);
+  assert.equal(loaded.ephemeralProcessVault, true);
 
   const deleted = await client.deleteSecureCredential('matrix-session', '@alice:kodera.io');
   assert.equal(deleted.present, true);
+  assert.equal(deleted.nativeKeychain, false);
+  assert.equal(deleted.ephemeralProcessVault, true);
 
   /** @type {string[]} */
   const trayEvents = [];
