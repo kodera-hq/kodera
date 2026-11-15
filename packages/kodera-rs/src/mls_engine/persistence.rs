@@ -365,6 +365,13 @@ mod tests {
     use crate::{OrganisationId, UuidV7};
     use openmls_traits::types::AeadType;
 
+    fn wrapping_key() -> [u8; 32] {
+        OpenMlsRustCrypto::default()
+            .rand()
+            .random_array::<32>()
+            .unwrap()
+    }
+
     fn scope(index: u8) -> NativeRoomScope {
         NativeRoomScope::new(
             OrganisationId::parse("00000000-0000-4000-8000-000000000001").unwrap(),
@@ -391,6 +398,7 @@ mod tests {
     #[test]
     fn real_mls_checkpoint_roundtrip_preserves_ratchets_signer_and_replay_state() {
         let (mut alice, mut bob, roster) = pair();
+        let key = wrapping_key();
         let message = alice.seal(b"private message before checkpoint").unwrap();
         assert_eq!(
             bob.open(&message).unwrap(),
@@ -398,18 +406,11 @@ mod tests {
         );
         let device = bob.device_key();
         let epoch = bob.epoch();
-        let sealed = bob.seal_checkpoint(9, &[7; 32]).unwrap();
+        let sealed = bob.seal_checkpoint(9, &key).unwrap();
         let imported = SealedMlsState::from_bytes(sealed.as_bytes()).unwrap();
-        let mut restored = OpenMlsSession::restore_checkpoint(
-            scope(1),
-            device,
-            epoch,
-            9,
-            roster,
-            &imported,
-            &[7; 32],
-        )
-        .unwrap();
+        let mut restored =
+            OpenMlsSession::restore_checkpoint(scope(1), device, epoch, 9, roster, &imported, &key)
+                .unwrap();
         assert!(restored.open(&message).is_err());
         let next = alice.seal(b"private message after checkpoint").unwrap();
         assert_eq!(
@@ -427,11 +428,12 @@ mod tests {
     #[test]
     fn checkpoint_exposes_only_ciphertext_and_uses_fresh_nonces() {
         let (alice, _, _) = pair();
+        let key = wrapping_key();
         let storage = alice.provider.storage().values.read().unwrap();
         let private_record = storage.values().max_by_key(|value| value.len()).unwrap();
         assert!(private_record.len() >= 64);
-        let first = alice.seal_checkpoint(1, &[5; 32]).unwrap();
-        let second = alice.seal_checkpoint(1, &[5; 32]).unwrap();
+        let first = alice.seal_checkpoint(1, &key).unwrap();
+        let second = alice.seal_checkpoint(1, &key).unwrap();
         assert_ne!(
             &first.as_bytes()[MAGIC.len()..HEADER_BYTES],
             &second.as_bytes()[MAGIC.len()..HEADER_BYTES]
@@ -447,15 +449,18 @@ mod tests {
     #[test]
     fn expected_scope_device_epoch_generation_key_and_ciphertext_are_authenticated() {
         let (alice, bob, roster) = pair();
-        let sealed = alice.seal_checkpoint(3, &[8; 32]).unwrap();
+        let key = wrapping_key();
+        let mut wrong_key = key;
+        wrong_key[0] ^= 1;
+        let sealed = alice.seal_checkpoint(3, &key).unwrap();
         let device = alice.device_key();
         let epoch = alice.epoch();
         for (wanted_scope, wanted_device, wanted_epoch, wanted_generation, key) in [
-            (scope(2), device, epoch, 3, [8; 32]),
-            (scope(1), bob.device_key(), epoch, 3, [8; 32]),
-            (scope(1), device, epoch + 1, 3, [8; 32]),
-            (scope(1), device, epoch, 4, [8; 32]),
-            (scope(1), device, epoch, 3, [9; 32]),
+            (scope(2), device, epoch, 3, key),
+            (scope(1), bob.device_key(), epoch, 3, key),
+            (scope(1), device, epoch + 1, 3, key),
+            (scope(1), device, epoch, 4, key),
+            (scope(1), device, epoch, 3, wrong_key),
         ] {
             assert!(matches!(
                 OpenMlsSession::restore_checkpoint(
@@ -481,7 +486,7 @@ mod tests {
             3,
             roster.clone(),
             &damaged,
-            &[8; 32]
+            &key
         )
         .is_err());
         let truncated =
@@ -493,7 +498,7 @@ mod tests {
             3,
             roster,
             &truncated,
-            &[8; 32]
+            &key
         )
         .is_err());
         let mut wrong_magic = sealed.as_bytes().to_vec();
@@ -503,7 +508,7 @@ mod tests {
             Err(NativeCryptoError::InvalidInput)
         ));
         assert!(matches!(
-            alice.seal_checkpoint(0, &[8; 32]),
+            alice.seal_checkpoint(0, &key),
             Err(NativeCryptoError::InvalidInput)
         ));
         // A failed restore does not consume or mutate the original session.
@@ -513,19 +518,14 @@ mod tests {
     #[test]
     fn authenticated_peer_store_cannot_impersonate_another_local_signer() {
         let (alice, bob, roster) = pair();
+        let key = wrapping_key();
         let plaintext = encode_store(&bob).unwrap();
-        let nonce = [4; NONCE_BYTES]; // Deliberate malformed-record fixture, never the sealing API.
+        let nonce = bob.provider.rand().random_array::<NONCE_BYTES>().unwrap();
         let binding = aad(&scope(1), &alice.device_key(), alice.epoch(), 1);
         let cipher = bob
             .provider
             .crypto()
-            .aead_encrypt(
-                AeadType::Aes256Gcm,
-                &[6; 32],
-                &plaintext.0,
-                &nonce,
-                &binding,
-            )
+            .aead_encrypt(AeadType::Aes256Gcm, &key, &plaintext.0, &nonce, &binding)
             .unwrap();
         let mut bytes = MAGIC.to_vec();
         bytes.extend_from_slice(&nonce);
@@ -538,7 +538,7 @@ mod tests {
             1,
             roster,
             &sealed,
-            &[6; 32]
+            &key
         )
         .is_err());
     }
@@ -546,11 +546,12 @@ mod tests {
     #[test]
     fn restore_needs_fresh_local_authority_and_keeps_revoked_leaves_blocked_until_removal() {
         let (alice, bob, _) = pair();
+        let key = wrapping_key();
         let a = alice.device_key();
         let b = bob.device_key();
         let old_epoch = alice.epoch();
         let old_media = alice.export_media_key().unwrap();
-        let checkpoint = alice.seal_checkpoint(1, &[3; 32]).unwrap();
+        let checkpoint = alice.seal_checkpoint(1, &key).unwrap();
         let revoked = HashSet::from([a]);
         assert!(matches!(
             OpenMlsSession::restore_checkpoint(
@@ -560,7 +561,7 @@ mod tests {
                 1,
                 HashSet::from([b]),
                 &checkpoint,
-                &[3; 32]
+                &key
             ),
             Err(NativeCryptoError::UnauthorisedDevice)
         ));
@@ -571,7 +572,7 @@ mod tests {
             1,
             revoked.clone(),
             &checkpoint,
-            &[3; 32],
+            &key,
         )
         .unwrap();
         assert_eq!(
@@ -584,7 +585,7 @@ mod tests {
         ));
         restored.remove_member(&b).unwrap();
         assert_ne!(restored.export_media_key().unwrap(), old_media);
-        let current = restored.seal_checkpoint(2, &[3; 32]).unwrap();
+        let current = restored.seal_checkpoint(2, &key).unwrap();
         assert!(OpenMlsSession::restore_checkpoint(
             scope(1),
             a,
@@ -592,7 +593,7 @@ mod tests {
             2,
             revoked.clone(),
             &checkpoint,
-            &[3; 32]
+            &key
         )
         .is_err());
         let final_state = OpenMlsSession::restore_checkpoint(
@@ -602,7 +603,7 @@ mod tests {
             2,
             revoked,
             &current,
-            &[3; 32],
+            &key,
         )
         .unwrap();
         assert_eq!(
@@ -614,6 +615,7 @@ mod tests {
     #[test]
     fn restored_three_member_group_can_atomically_remove_two_revoked_devices() {
         let (mut alice, mut bob, mut roster) = pair();
+        let key = wrapping_key();
         let charlie = OpenMlsMember::new(b"public-checkpoint-c").unwrap();
         let c = charlie.device_key();
         let a = alice.device_key();
@@ -628,7 +630,7 @@ mod tests {
             .unwrap();
         let before_epoch = alice.epoch();
         let before_media = alice.export_media_key().unwrap();
-        let checkpoint = alice.seal_checkpoint(1, &[3; 32]).unwrap();
+        let checkpoint = alice.seal_checkpoint(1, &key).unwrap();
         let mut restored = OpenMlsSession::restore_checkpoint(
             scope(1),
             a,
@@ -636,7 +638,7 @@ mod tests {
             1,
             HashSet::from([a]),
             &checkpoint,
-            &[3; 32],
+            &key,
         )
         .unwrap();
         for keys in [vec![], vec![b, b], vec![a], vec![[0; 32]]] {
@@ -649,14 +651,14 @@ mod tests {
         assert_eq!(restored.epoch(), before_epoch);
         assert!(restored.seal(b"blocked until both removals").is_err());
         assert!(restored.export_media_key().is_err());
-        assert!(restored.seal_checkpoint(2, &[3; 32]).is_err());
+        assert!(restored.seal_checkpoint(2, &key).is_err());
         let removal = restored.remove_members(&[b, c]).unwrap();
         assert_eq!(removal.epoch, before_epoch + 1);
         assert_ne!(restored.export_media_key().unwrap(), before_media);
         let after = restored.seal(b"only the remaining device").unwrap();
         assert!(bob.open(&after).is_err());
         assert!(charlie.open(&after).is_err());
-        let updated = restored.seal_checkpoint(2, &[3; 32]).unwrap();
+        let updated = restored.seal_checkpoint(2, &key).unwrap();
         assert!(OpenMlsSession::restore_checkpoint(
             scope(1),
             a,
@@ -664,7 +666,7 @@ mod tests {
             2,
             HashSet::from([a]),
             &updated,
-            &[3; 32],
+            &key,
         )
         .is_ok());
     }
