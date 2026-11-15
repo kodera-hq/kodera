@@ -2,7 +2,7 @@
 // overdue invoice and an amount due — the next-invoice card's overdue
 // variant. Compose over `home.default`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

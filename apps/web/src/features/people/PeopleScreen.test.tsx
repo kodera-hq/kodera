@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '../../i18n'
 import { server } from '../../mocks/server'
@@ -21,7 +21,7 @@ import { QueryClient, QueryClientProvider, type InfiniteData } from '@tanstack/r
 import { ToastProvider } from '../../ui/Toast/Toast'
 import { peopleKeys, type Invitation } from './queries'
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 beforeEach(signInSynthetic)

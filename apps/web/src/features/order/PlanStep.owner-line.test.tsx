@@ -6,7 +6,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { configure, render, screen, waitFor } from '@testing-library/react'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { server } from '@/mocks/server'
@@ -20,7 +20,7 @@ import type { OrderRole } from './PlanStep'
 configure({ asyncUtilTimeout: 10_000 })
 vi.setConfig({ testTimeout: 30_000 })
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 beforeEach(() => {
   vi.stubEnv('VITE_CORE_API_URL', 'https://core.test/api/v1')
   server.use(...catalogueHandlers)

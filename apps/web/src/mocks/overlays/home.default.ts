@@ -5,7 +5,7 @@
 // baseline composes over — an active subscription, no pending invitation,
 // `overall: operational`, and a capacity gauge at 62 %.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

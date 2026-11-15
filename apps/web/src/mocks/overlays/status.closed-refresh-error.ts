@@ -1,5 +1,5 @@
 // Synthetic last-known maintenance observation followed by failed refreshes.
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { tenantStatusBody, tenantsListBody } from './support/status-fixtures'
 let reads = 0
 export const handlers = [

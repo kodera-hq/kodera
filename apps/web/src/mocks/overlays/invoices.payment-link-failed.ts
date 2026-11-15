@@ -4,7 +4,7 @@
 // `GET` here answers `404 not-found` — no link exists yet — to reach the
 // `POST` this overlay is actually about.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { problem } from '../problem'
 import { baseInvoice, INVOICE_ID, invoicesPage, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 

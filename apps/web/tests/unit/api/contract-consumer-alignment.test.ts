@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { http } from 'msw'
+import { http } from 'msw/http'
 import ts from 'typescript'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parse } from 'yaml'
@@ -381,7 +381,7 @@ describe('the immutable contract consumer', () => {
       'src/mocks/generated/examples.ts':
         'e3c15454c9fec4682160c4b4aea0d6cbef707a4cde5f92354f9e3cffd792bddd',
       'src/mocks/generated/handlers.ts':
-        'f1330176b9fe9d66da8c7f9dfff7a1be79877f7fa0c7c32b787546ad5e4be3d4',
+        'a1a746afc15bffeac81dcbc0df468175b48cd49938fa2337b3ed00f591c7d6ce',
       'src/api/schema.d.ts': 'e1815cc8428122b28f38eb6c07fbd017604dfafec506a6d0b0a8e8fcb80a06e2',
     }
     for (const [path, expected] of Object.entries(hashes)) {
@@ -540,7 +540,7 @@ function sameIntent(first: CapturedIntent, second: CapturedIntent) {
 
 describe('the unchanged client under a bounded consume503', () => {
   const base = 'https://core.test/api/v1'
-  beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+  beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
   beforeEach(() => {
     vi.stubEnv('VITE_CORE_API_URL', base)
     setTokenProvider(() => undefined)

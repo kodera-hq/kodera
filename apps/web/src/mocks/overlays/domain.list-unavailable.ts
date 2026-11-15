@@ -11,7 +11,7 @@
 // succeed") would tie this file to the query client's retry count and turn a
 // change of that number into a test that silently never sees the error.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { mixedAddresses, pageOf, pageRequest } from '../fixtures/domainFixtures'
 import { EXAMPLES } from '../generated/examples'
 import { PROBLEM_TYPES } from '../generated/problems'

@@ -6,7 +6,7 @@
 // failure the acceptance test describes — "the DPA document body fails to
 // render" — reached through the call this screen actually makes.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { problem } from '../problem'
 
 const BASE = '*/api/v1'

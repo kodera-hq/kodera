@@ -3,7 +3,7 @@
 // which carries the accepted CGV and DPA. The order answers with the contract's own example.
 // The flags live as long as the page.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { EXAMPLES } from '../generated/examples'
 import { problem } from '../problem'
 import {

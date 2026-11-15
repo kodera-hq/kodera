@@ -6,7 +6,7 @@
 // IN-FLIGHT and retried requests fail the same way a truly disconnected
 // network would, not only the ones a browser-level flag can intercept.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 
 const BASE = '*/api/v1'
 

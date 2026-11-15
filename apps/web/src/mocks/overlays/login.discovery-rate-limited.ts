@@ -2,7 +2,7 @@
 // `retry_after_s` — too many discovery attempts from this IP or for this
 // submitted value.
 
-import { http } from 'msw'
+import { http } from 'msw/http'
 import { problem } from '../problem'
 
 const BASE = '*/api/v1'

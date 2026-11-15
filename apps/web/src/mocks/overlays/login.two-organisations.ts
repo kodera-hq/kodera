@@ -2,7 +2,7 @@
 // and two entries in `candidates[]` — the "one email, several organisations"
 // case (§4.2), whose wireframe names ACME Construction and ACME Holding.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 
 const BASE = '*/api/v1'
 

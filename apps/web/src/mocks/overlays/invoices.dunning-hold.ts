@@ -1,6 +1,6 @@
 // §7: "`dunning.hold_until` set while a billing dispute is open."
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { baseInvoice, INVOICE_ID, invoicesPage, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 
 const BASE = '*/api/v1'

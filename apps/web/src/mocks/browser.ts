@@ -8,8 +8,9 @@
 // of this, the worker script and `./auth`'s handlers included, ships in a
 // build that never boots MSW (`scripts/check-production-bundle.sh`).
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import { setupWorker } from 'msw/browser'
+import { HttpNetworkFrame } from 'msw/experimental'
 import { authMode } from '../config'
 import { authHandlers } from './auth'
 import { DEMO_SCENARIO, DEMO_SLUG } from './demo/seed'
@@ -151,6 +152,22 @@ export function isDevelopmentAsset(
   )
 }
 
+/** MSW 3 intercepts the mock provider's HTML round trip as well as API requests. */
+export function isMockIdentityNavigation(
+  request: Pick<Request, 'url' | 'method' | 'mode'>,
+  origin: string,
+  mode = authMode()
+): boolean {
+  if (mode !== 'mock' || request.method !== 'GET' || request.mode !== 'navigate') return false
+  const url = new URL(request.url)
+  return (
+    url.origin === origin &&
+    !url.username &&
+    !url.password &&
+    ['/__mock-idp/authorize', '/auth/callback', '/auth/claim-callback'].includes(url.pathname)
+  )
+}
+
 function registerDemoRuntime(): void {
   // The demo organisation's own mark, registered from inside the mock tree so
   // it can only ever exist where this module does (`src/app/demoBranding.ts`
@@ -224,9 +241,14 @@ export async function startMockWorker(): Promise<void> {
     // from what the console actually calls — silently falling through to the
     // network would either hang (no such host reachable) or, worse, reach a
     // real one (docs/dev/TESTING.md).
-    onUnhandledRequest(request, print) {
-      if (isDevelopmentAsset(request, window.location.origin, true)) return
-      print.error()
+    onUnhandledFrame({ frame, defaults }) {
+      if (
+        frame instanceof HttpNetworkFrame &&
+        (isDevelopmentAsset(frame.data.request, window.location.origin, true) ||
+          isMockIdentityNavigation(frame.data.request, window.location.origin))
+      )
+        return
+      defaults.error()
     },
     quiet: true,
   })

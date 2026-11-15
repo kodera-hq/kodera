@@ -273,7 +273,7 @@ export async function runWorkspaceVisualDiagnostic(
     primaryFailed = true
     primaryError = error
   }
-  let outcome: Outcome = 'guard-health'
+  let outcome: Outcome
   let stage: Outcome = 'guard-health'
   let first: Buffer | undefined
   let second: Buffer | undefined
@@ -330,9 +330,11 @@ export async function runWorkspaceVisualDiagnostic(
       }
     }
   } finally {
+    /* eslint-disable no-useless-assignment -- Release diagnostic buffers before reporting the outcome. */
     first = undefined
     second = undefined
     encoded = undefined
+    /* eslint-enable no-useless-assignment */
     samples.length = 0
   }
   try {

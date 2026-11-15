@@ -5,7 +5,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import '@/i18n'
+import i18n from '@/i18n'
 import { OrganisationSwitchContext } from '../../app/organisationSwitch'
 import type { OrganisationSwitch } from '../../app/organisationSwitch'
 import { OrganisationHeader } from './OrganisationHeader'
@@ -39,7 +39,7 @@ describe('OrganisationHeader', () => {
       )
     )
     expect(
-      screen.getByRole('button', { name: 'ACME Construction, changer d’organisation' })
+      screen.getByRole('button', { name: 'AC ACME Construction, changer d’organisation' })
     ).toBeInTheDocument()
   })
 
@@ -54,11 +54,11 @@ describe('OrganisationHeader', () => {
     )
 
     await user.click(
-      screen.getByRole('button', { name: 'ACME Construction, changer d’organisation' })
+      screen.getByRole('button', { name: 'AC ACME Construction, changer d’organisation' })
     )
     // Radix names the menu after the button that opened it.
     expect(
-      screen.getByRole('menu', { name: 'ACME Construction, changer d’organisation' })
+      screen.getByRole('menu', { name: 'AC ACME Construction, changer d’organisation' })
     ).toBeInTheDocument()
     expect(screen.getByRole('menuitemradio', { name: /ACME Construction/ })).toHaveAttribute(
       'aria-checked',
@@ -97,6 +97,48 @@ it('names the community by the deployment’s own base domain', () => {
     render(<OrganisationHeader name="Kodera Community" slug="community" />)
     expect(screen.getByText('community.example.org')).toBeInTheDocument()
     expect(screen.queryByText('community.kodera.io')).toBeNull()
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
+it.each([
+  ['fr', 'AC ACME Construction, changer d’organisation'],
+  ['en', 'AC ACME Construction, switch organisation'],
+])('keeps the complete visible identity in the %s trigger name', async (language, label) => {
+  await i18n.changeLanguage(language)
+  try {
+    render(
+      withSwitch(
+        { memberships: [ACME], onSwitch: vi.fn() },
+        <OrganisationHeader name={ACME.name} slug={ACME.slug} />
+      )
+    )
+    const button = screen.getByRole('button', { name: label })
+    expect(button.textContent?.replace(/\s+/g, ' ').trim()).toBe('AC ACME Construction')
+  } finally {
+    await i18n.changeLanguage('fr')
+  }
+})
+
+it('includes the visible deployment hostname in the community trigger name', () => {
+  vi.stubEnv('VITE_MATRIX_DOMAIN', 'example.org')
+  try {
+    render(
+      withSwitch(
+        {
+          memberships: [{ slug: 'community', name: 'Kodera Community', current: true }],
+          onSwitch: vi.fn(),
+        },
+        <OrganisationHeader name="Kodera Community" slug="community" />
+      )
+    )
+    const button = screen.getByRole('button', {
+      name: 'KC Kodera Community community.example.org, changer d’organisation',
+    })
+    expect(button.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'KC Kodera Community community.example.org'
+    )
   } finally {
     vi.unstubAllEnvs()
   }

@@ -14,7 +14,7 @@ const isInvitationEntry = (path: string): boolean =>
 
 /** Removes the fragment and verifies it is gone; `keep` receives it, undecoded, before removal. */
 function cleanLocation(keep?: (fragment: string) => void): boolean {
-  let opaqueFragment = ''
+  let opaqueFragment: string
   try {
     // Capture once without decoding. No secret escapes this short lexical scope.
     opaqueFragment = location.hash
@@ -27,6 +27,7 @@ function cleanLocation(keep?: (fragment: string) => void): boolean {
   } catch {
     return false
   } finally {
+    // eslint-disable-next-line no-useless-assignment -- Drop the captured fragment before returning.
     opaqueFragment = ''
   }
 }
@@ -176,6 +177,7 @@ async function startEntry(): Promise<void> {
     // Bounded as the contract bounds the token (32–256), and otherwise opaque.
     const match = invitationPath.exec(location.pathname)
     if (match === null || !/^[!-~]{32,256}$/.test(secret)) {
+      // eslint-disable-next-line no-useless-assignment -- Clear the fragment before recovery UI.
       secret = ''
       showRecovery()
       return
@@ -186,6 +188,7 @@ async function startEntry(): Promise<void> {
       organisationSlug: match[2]!,
       secret,
     }
+    // eslint-disable-next-line no-useless-assignment -- Only the admitted entry retains the secret across the await.
     secret = ''
     try {
       await releaseOrdinaryPage(entry)
@@ -208,6 +211,7 @@ async function startEntry(): Promise<void> {
       organisationSlug: match[2]!,
       secret,
     }
+    // eslint-disable-next-line no-useless-assignment -- Only the admitted entry retains the secret across the await.
     secret = ''
     try {
       await releaseOrdinaryPage(entry)
