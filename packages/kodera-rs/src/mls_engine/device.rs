@@ -896,8 +896,9 @@ pub(super) mod tests {
         CommitThenError,
     }
 
-    #[derive(Default)]
     pub(in crate::mls_engine) struct TestStore {
+        wrapping_key: [u8; 32],
+        room_wrapping_key: [u8; 32],
         pub(super) generation: u64,
         pub(super) sealed: Option<SealedMlsDeviceState>,
         scope: Option<MlsDeviceScope>,
@@ -907,6 +908,27 @@ pub(super) mod tests {
         attempts: usize,
     }
 
+    impl Default for TestStore {
+        fn default() -> Self {
+            Self {
+                wrapping_key: OpenMlsRustCrypto::default()
+                    .rand()
+                    .random_array::<32>()
+                    .unwrap(),
+                room_wrapping_key: OpenMlsRustCrypto::default()
+                    .rand()
+                    .random_array::<32>()
+                    .unwrap(),
+                generation: 0,
+                sealed: None,
+                scope: None,
+                device_key: None,
+                rooms: BTreeMap::new(),
+                mode: WriteMode::Normal,
+                attempts: 0,
+            }
+        }
+    }
     impl TestStore {
         fn apply(&mut self, write: &MlsDeviceWrite<'_>) -> Result<(), MlsDeviceStoreError> {
             if write.expected_generation != self.generation
@@ -983,24 +1005,18 @@ pub(super) mod tests {
     }
     pub(in crate::mls_engine) fn fixture(index: u8) -> (OpenMlsDevice, TestStore) {
         let mut store = TestStore::default();
+        let vault_key = store.wrapping_key;
         let mut own = finish(OpenMlsDevice::create_and_persist(
             scope(),
             b"public lifecycle fixture",
-            &[7; 32],
+            &vault_key,
             &mut store,
         ))
         .unwrap();
         let public = own.device_key();
-        finish(own.admit_and_persist(admitted(index), public, &[7; 32], &mut store)).unwrap();
+        finish(own.admit_and_persist(admitted(index), public, &vault_key, &mut store)).unwrap();
         (own, store)
     }
-    pub(in crate::mls_engine) fn keys() -> MlsDeviceWrappingKeys<'static> {
-        MlsDeviceWrappingKeys {
-            device: &[7; 32],
-            room: &[8; 32],
-        }
-    }
-
     fn restore(own: &OpenMlsDevice, store: &TestStore) -> OpenMlsDevice {
         OpenMlsDevice::restore_device(
             own.scope.clone(),
@@ -1008,7 +1024,7 @@ pub(super) mod tests {
             own.admitted.clone(),
             store.generation,
             store.sealed.as_ref().unwrap(),
-            &[7; 32],
+            &store.wrapping_key,
         )
         .unwrap()
     }
@@ -1016,12 +1032,18 @@ pub(super) mod tests {
     #[test]
     fn one_admitted_signer_and_independent_packages_work_in_two_real_rooms_after_restart() {
         let (mut alice, mut a_store) = fixture(10);
+        let a_vault_key = a_store.wrapping_key;
+        let a_room_key = a_store.room_wrapping_key;
         let (mut bob, mut b_store) = fixture(11);
+        let b_vault_key = b_store.wrapping_key;
+        let b_room_key = b_store.room_wrapping_key;
         let a = alice.device_key();
         let b = bob.device_key();
         let roster = HashSet::from([a, b]);
-        let first = finish(bob.prepare_key_package_and_persist(&[7; 32], &mut b_store)).unwrap();
-        let second = finish(bob.prepare_key_package_and_persist(&[7; 32], &mut b_store)).unwrap();
+        let first =
+            finish(bob.prepare_key_package_and_persist(&b_vault_key, &mut b_store)).unwrap();
+        let second =
+            finish(bob.prepare_key_package_and_persist(&b_vault_key, &mut b_store)).unwrap();
         assert_ne!(first.id(), second.id());
         drop(bob);
         let mut bob = OpenMlsDevice::restore_device(
@@ -1030,12 +1052,19 @@ pub(super) mod tests {
             Some(admitted(11)),
             b_store.generation,
             b_store.sealed.as_ref().unwrap(),
-            &[7; 32],
+            &b_vault_key,
         )
         .unwrap();
         for (scope, package) in [(room(1), first), (room(2), second)] {
-            let mut a_session =
-                finish(alice.create_room_and_persist(scope.clone(), keys(), &mut a_store)).unwrap();
+            let mut a_session = finish(alice.create_room_and_persist(
+                scope.clone(),
+                MlsDeviceWrappingKeys {
+                    device: &a_vault_key,
+                    room: &a_room_key,
+                },
+                &mut a_store,
+            ))
+            .unwrap();
             assert_eq!(a_session.device_key(), a);
             a_session.replace_authorised_roster(roster.clone()).unwrap();
             let addition = a_session.add_member(package.as_bytes(), &b).unwrap();
@@ -1047,7 +1076,10 @@ pub(super) mod tests {
                     welcome: addition.welcome.as_ref().unwrap(),
                     authorised: roster.clone(),
                 },
-                keys(),
+                MlsDeviceWrappingKeys {
+                    device: &b_vault_key,
+                    room: &b_room_key,
+                },
                 &mut b_store,
             ))
             .unwrap();
@@ -1072,7 +1104,10 @@ pub(super) mod tests {
                         welcome: addition.welcome.as_ref().unwrap(),
                         authorised: roster.clone()
                     },
-                    keys(),
+                    MlsDeviceWrappingKeys {
+                        device: &b_vault_key,
+                        room: &b_room_key
+                    },
                     &mut b_store
                 )),
                 Err(NativeCryptoError::Replay)
@@ -1086,11 +1121,23 @@ pub(super) mod tests {
     #[test]
     fn malformed_or_wrong_scope_welcome_is_retryable_before_any_host_cas() {
         let (mut alice, mut a_store) = fixture(10);
+        let a_vault_key = a_store.wrapping_key;
+        let a_room_key = a_store.room_wrapping_key;
         let (mut bob, mut b_store) = fixture(11);
-        let package = finish(bob.prepare_key_package_and_persist(&[7; 32], &mut b_store)).unwrap();
+        let b_vault_key = b_store.wrapping_key;
+        let b_room_key = b_store.room_wrapping_key;
+        let package =
+            finish(bob.prepare_key_package_and_persist(&b_vault_key, &mut b_store)).unwrap();
         let roster = HashSet::from([alice.device_key(), bob.device_key()]);
-        let mut session =
-            finish(alice.create_room_and_persist(room(1), keys(), &mut a_store)).unwrap();
+        let mut session = finish(alice.create_room_and_persist(
+            room(1),
+            MlsDeviceWrappingKeys {
+                device: &a_vault_key,
+                room: &a_room_key,
+            },
+            &mut a_store,
+        ))
+        .unwrap();
         session.replace_authorised_roster(roster.clone()).unwrap();
         let addition = session
             .add_member(package.as_bytes(), &bob.device_key())
@@ -1117,7 +1164,10 @@ pub(super) mod tests {
                     welcome,
                     authorised: roster.clone()
                 },
-                keys(),
+                MlsDeviceWrappingKeys {
+                    device: &b_vault_key,
+                    room: &b_room_key
+                },
                 &mut b_store
             ))
             .is_err());
@@ -1133,7 +1183,10 @@ pub(super) mod tests {
                 welcome: addition.welcome.as_ref().unwrap(),
                 authorised: roster
             },
-            keys(),
+            MlsDeviceWrappingKeys {
+                device: &b_vault_key,
+                room: &b_room_key
+            },
             &mut b_store
         ))
         .is_ok());
@@ -1149,14 +1202,16 @@ pub(super) mod tests {
             WriteMode::CommitThenError,
         ] {
             let (mut own, mut store) = fixture(10);
+            let vault_key = store.wrapping_key;
+
             let before = own.generation;
             store.mode = mode;
             match mode {
                 WriteMode::Pending | WriteMode::CommitThenPending => {
-                    poll_pending_once(own.prepare_key_package_and_persist(&[7; 32], &mut store))
+                    poll_pending_once(own.prepare_key_package_and_persist(&vault_key, &mut store))
                 }
                 _ => assert!(
-                    finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)).is_err()
+                    finish(own.prepare_key_package_and_persist(&vault_key, &mut store)).is_err()
                 ),
             }
             assert!(own.quarantined);
@@ -1172,7 +1227,7 @@ pub(super) mod tests {
                 Err(NativeCryptoError::Storage)
             ));
             assert!(matches!(
-                finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)),
+                finish(own.prepare_key_package_and_persist(&vault_key, &mut store)),
                 Err(NativeCryptoError::Storage)
             ));
             let mut current = restore(&own, &store);
@@ -1195,19 +1250,33 @@ pub(super) mod tests {
                     .is_ok());
             }
             assert_eq!(current.generation, before + u64::from(committed));
-            assert!(finish(current.prepare_key_package_and_persist(&[7; 32], &mut store)).is_ok());
+            assert!(
+                finish(current.prepare_key_package_and_persist(&vault_key, &mut store)).is_ok()
+            );
         }
     }
 
     #[test]
     fn committed_but_cancelled_join_recovers_room_and_consumed_package_atomically() {
         let (mut alice, mut a_store) = fixture(10);
+        let a_vault_key = a_store.wrapping_key;
+        let a_room_key = a_store.room_wrapping_key;
         let (mut bob, mut b_store) = fixture(11);
-        let package = finish(bob.prepare_key_package_and_persist(&[7; 32], &mut b_store)).unwrap();
+        let b_vault_key = b_store.wrapping_key;
+        let b_room_key = b_store.room_wrapping_key;
+        let package =
+            finish(bob.prepare_key_package_and_persist(&b_vault_key, &mut b_store)).unwrap();
         let old = b_store.sealed.as_ref().unwrap().clone();
         let roster = HashSet::from([alice.device_key(), bob.device_key()]);
-        let mut a_session =
-            finish(alice.create_room_and_persist(room(1), keys(), &mut a_store)).unwrap();
+        let mut a_session = finish(alice.create_room_and_persist(
+            room(1),
+            MlsDeviceWrappingKeys {
+                device: &a_vault_key,
+                room: &a_room_key,
+            },
+            &mut a_store,
+        ))
+        .unwrap();
         a_session.replace_authorised_roster(roster.clone()).unwrap();
         let addition = a_session
             .add_member(package.as_bytes(), &bob.device_key())
@@ -1221,7 +1290,10 @@ pub(super) mod tests {
                 welcome: addition.welcome.as_ref().unwrap(),
                 authorised: roster.clone(),
             },
-            keys(),
+            MlsDeviceWrappingKeys {
+                device: &b_vault_key,
+                room: &b_room_key,
+            },
             &mut b_store,
         ));
         assert!(bob.quarantined);
@@ -1233,7 +1305,7 @@ pub(super) mod tests {
             Some(admitted(11)),
             b_store.generation,
             &old,
-            &[7; 32]
+            &b_vault_key
         )
         .is_err());
         let mut current = restore(&bob, &b_store);
@@ -1247,7 +1319,10 @@ pub(super) mod tests {
                     welcome: addition.welcome.as_ref().unwrap(),
                     authorised: roster.clone()
                 },
-                keys(),
+                MlsDeviceWrappingKeys {
+                    device: &b_vault_key,
+                    room: &b_room_key
+                },
                 &mut b_store
             )),
             Err(NativeCryptoError::Replay)
@@ -1260,7 +1335,7 @@ pub(super) mod tests {
             1,
             roster,
             checkpoint,
-            &[8; 32],
+            &b_room_key,
         )
         .unwrap();
         let message = a_session
@@ -1275,9 +1350,11 @@ pub(super) mod tests {
     #[test]
     fn pending_cancellation_and_room_conflict_preserve_host_atomicity() {
         let (mut own, mut store) = fixture(10);
-        let package = finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)).unwrap();
+        let vault_key = store.wrapping_key;
+        let room_key = store.room_wrapping_key;
+        let package = finish(own.prepare_key_package_and_persist(&vault_key, &mut store)).unwrap();
         let old = store.sealed.as_ref().unwrap().clone();
-        finish(own.cancel_package_and_persist(package.id(), &[7; 32], &mut store)).unwrap();
+        finish(own.cancel_package_and_persist(package.id(), &vault_key, &mut store)).unwrap();
         assert!(own.pending.is_empty());
         assert!(OpenMlsDevice::restore_device(
             scope(),
@@ -1285,18 +1362,33 @@ pub(super) mod tests {
             Some(admitted(10)),
             store.generation,
             &old,
-            &[7; 32]
+            &vault_key
         )
         .is_err());
         assert!(matches!(
-            finish(own.cancel_package_and_persist(package.id(), &[7; 32], &mut store)),
+            finish(own.cancel_package_and_persist(package.id(), &vault_key, &mut store)),
             Err(NativeCryptoError::Replay)
         ));
-        let _session = finish(own.create_room_and_persist(room(1), keys(), &mut store)).unwrap();
+        let _session = finish(own.create_room_and_persist(
+            room(1),
+            MlsDeviceWrappingKeys {
+                device: &vault_key,
+                room: &room_key,
+            },
+            &mut store,
+        ))
+        .unwrap();
         let generation = store.generation;
         let sealed = store.sealed.as_ref().unwrap().as_bytes().to_vec();
         assert!(matches!(
-            finish(own.create_room_and_persist(room(1), keys(), &mut store)),
+            finish(own.create_room_and_persist(
+                room(1),
+                MlsDeviceWrappingKeys {
+                    device: &vault_key,
+                    room: &room_key
+                },
+                &mut store
+            )),
             Err(NativeCryptoError::Replay)
         ));
         assert!(own.quarantined);
@@ -1308,7 +1400,9 @@ pub(super) mod tests {
     #[test]
     fn vault_ciphertext_is_bound_redacted_bounded_and_never_rebinds_admission() {
         let (mut own, mut store) = fixture(10);
-        let package = finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)).unwrap();
+        let vault_key = store.wrapping_key;
+
+        let package = finish(own.prepare_key_package_and_persist(&vault_key, &mut store)).unwrap();
         let sealed = store.sealed.as_ref().unwrap();
         assert_eq!(format!("{own:?}"), "OpenMlsDevice([redacted])");
         assert_eq!(format!("{sealed:?}"), "SealedMlsDeviceState([redacted])");
@@ -1317,41 +1411,43 @@ pub(super) mod tests {
             .as_bytes()
             .windows(raw.0.len())
             .any(|window| window == raw.0.as_slice()));
+        let mut wrong_key = vault_key;
+        wrong_key[0] ^= 1;
         for (wanted_scope, wanted_key, wanted_admitted, generation, key) in [
             (
                 MlsDeviceScope::new(scope().organisation.clone(), admitted(99)),
                 own.device_key(),
                 Some(admitted(10)),
                 store.generation,
-                [7; 32],
+                vault_key,
             ),
             (
                 scope(),
                 [0; 32],
                 Some(admitted(10)),
                 store.generation,
-                [7; 32],
+                vault_key,
             ),
             (
                 scope(),
                 own.device_key(),
                 Some(admitted(99)),
                 store.generation,
-                [7; 32],
+                vault_key,
             ),
             (
                 scope(),
                 own.device_key(),
                 Some(admitted(10)),
                 store.generation + 1,
-                [7; 32],
+                vault_key,
             ),
             (
                 scope(),
                 own.device_key(),
                 Some(admitted(10)),
                 store.generation,
-                [9; 32],
+                wrong_key,
             ),
         ] {
             assert!(OpenMlsDevice::restore_device(
@@ -1374,7 +1470,7 @@ pub(super) mod tests {
             Some(admitted(10)),
             store.generation,
             &damaged,
-            &[7; 32]
+            &vault_key
         )
         .is_err());
         assert!(
@@ -1382,7 +1478,7 @@ pub(super) mod tests {
         );
         let own_key = own.device_key();
         assert!(matches!(
-            finish(own.admit_and_persist(admitted(99), own_key, &[7; 32], &mut store)),
+            finish(own.admit_and_persist(admitted(99), own_key, &vault_key, &mut store)),
             Err(NativeCryptoError::UnauthorisedDevice)
         ));
         assert!(!own.quarantined);
@@ -1391,33 +1487,42 @@ pub(super) mod tests {
     #[test]
     fn unadmitted_device_never_exposes_packages_or_rooms_and_capacity_refuses_before_cas() {
         let mut store = TestStore::default();
+        let vault_key = store.wrapping_key;
+        let room_key = store.room_wrapping_key;
         let mut own = finish(OpenMlsDevice::create_and_persist(
             scope(),
             b"public fixture",
-            &[7; 32],
+            &vault_key,
             &mut store,
         ))
         .unwrap();
         assert!(own.registration_request().is_ok());
         let before = store.attempts;
         assert!(matches!(
-            finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)),
+            finish(own.prepare_key_package_and_persist(&vault_key, &mut store)),
             Err(NativeCryptoError::UnauthorisedDevice)
         ));
         assert!(matches!(
-            finish(own.create_room_and_persist(room(1), keys(), &mut store)),
+            finish(own.create_room_and_persist(
+                room(1),
+                MlsDeviceWrappingKeys {
+                    device: &vault_key,
+                    room: &room_key
+                },
+                &mut store
+            )),
             Err(NativeCryptoError::UnauthorisedDevice)
         ));
         assert_eq!(store.attempts, before);
         let key = own.device_key();
-        finish(own.admit_and_persist(admitted(10), key, &[7; 32], &mut store)).unwrap();
+        finish(own.admit_and_persist(admitted(10), key, &vault_key, &mut store)).unwrap();
         assert!(own.registration_request().is_err());
         for _ in 0..MAX_PENDING {
-            finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)).unwrap();
+            finish(own.prepare_key_package_and_persist(&vault_key, &mut store)).unwrap();
         }
         let before = store.attempts;
         assert!(matches!(
-            finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)),
+            finish(own.prepare_key_package_and_persist(&vault_key, &mut store)),
             Err(NativeCryptoError::Capacity)
         ));
         assert_eq!(store.attempts, before);
@@ -1427,14 +1532,16 @@ pub(super) mod tests {
     #[test]
     fn authenticated_malformed_vault_framing_is_refused_before_private_decode() {
         let (mut own, mut store) = fixture(10);
+        let vault_key = store.wrapping_key;
+
         for _ in 0..2 {
-            finish(own.prepare_key_package_and_persist(&[7; 32], &mut store)).unwrap();
+            finish(own.prepare_key_package_and_persist(&vault_key, &mut store)).unwrap();
         }
         let sealed = store.sealed.as_ref().unwrap();
         let tag_start = sealed.0.len() - TAG_BYTES;
         let mut plain = CheckpointBuffer(sealed.0[HEADER_BYTES..tag_start].to_vec());
         let aad = binding(&scope(), &own.device_key(), store.generation);
-        Aes256Gcm::new_from_slice(&[7; 32])
+        Aes256Gcm::new_from_slice(&vault_key)
             .unwrap()
             .decrypt_in_place_detached(
                 Nonce::from_slice(&sealed.0[MAGIC.len()..HEADER_BYTES]),
@@ -1482,10 +1589,13 @@ pub(super) mod tests {
             (excessive, NativeCryptoError::Capacity),
             (excessive_map, NativeCryptoError::Capacity),
         ] {
-            // Fixed nonce belongs only to distinct malformed test records, never
-            // to the public sealing path. The fixture key is public test data.
-            let nonce = [41; NONCE_BYTES];
-            let tag = Aes256Gcm::new_from_slice(&[7; 32])
+            // Retain the generated fixture key, but use a fresh nonce for each
+            // distinct authenticated malformed record.
+            let nonce = OpenMlsRustCrypto::default()
+                .rand()
+                .random_array::<NONCE_BYTES>()
+                .unwrap();
+            let tag = Aes256Gcm::new_from_slice(&vault_key)
                 .unwrap()
                 .encrypt_in_place_detached(Nonce::from_slice(&nonce), &aad, &mut broken.0)
                 .unwrap();
@@ -1495,7 +1605,7 @@ pub(super) mod tests {
             bytes.extend_from_slice(&tag);
             let broken = SealedMlsDeviceState::from_bytes(&bytes).unwrap();
             assert!(
-                matches!(OpenMlsDevice::restore_device(scope(),own.device_key(),Some(admitted(10)),store.generation,&broken,&[7;32]),Err(error) if error==expected)
+                matches!(OpenMlsDevice::restore_device(scope(),own.device_key(),Some(admitted(10)),store.generation,&broken,&vault_key),Err(error) if error==expected)
             );
         }
         // The original authenticated state remains usable after all refusals.

@@ -14,6 +14,16 @@ use crate::{
     NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES,
 };
 
+mod session;
+pub use session::{
+    DurableMlsAccess, DurableMlsAuthority, DurableMlsBinding, DurableMlsCacheHandoff,
+    DurableMlsCapability, DurableMlsChange, DurableMlsCommitMarker, DurableMlsCommitObligation,
+    DurableMlsCommitResolution, DurableMlsDelivery, DurableMlsEnvelopeKind, DurableMlsError,
+    DurableMlsIncoming, DurableMlsInitialCursor, DurableMlsLogicalId, DurableMlsOutcome,
+    DurableMlsPendingSend, DurableMlsReadItem, DurableMlsReadObligation, DurableMlsRequest,
+    DurableMlsRetirement, DurableMlsRoom, DurableMlsRoster, DurableMlsStore, DurableMlsWrite,
+    SealedDurableMlsRoom,
+};
 mod persistence;
 pub use persistence::SealedMlsState;
 mod device;

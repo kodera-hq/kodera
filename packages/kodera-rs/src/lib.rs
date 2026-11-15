@@ -34,10 +34,16 @@ pub use proximity_beacon_v2::{
 mod mls_engine;
 #[cfg(feature = "openmls-engine")]
 pub use mls_engine::{
+    DurableMlsAccess, DurableMlsAuthority, DurableMlsBinding, DurableMlsCacheHandoff,
+    DurableMlsCapability, DurableMlsChange, DurableMlsCommitMarker, DurableMlsCommitObligation,
+    DurableMlsCommitResolution, DurableMlsDelivery, DurableMlsEnvelopeKind, DurableMlsError,
+    DurableMlsIncoming, DurableMlsInitialCursor, DurableMlsLogicalId, DurableMlsOutcome,
+    DurableMlsPendingSend, DurableMlsReadItem, DurableMlsReadObligation, DurableMlsRequest,
+    DurableMlsRetirement, DurableMlsRoom, DurableMlsRoster, DurableMlsStore, DurableMlsWrite,
     InitialMlsRoomWrite, MlsCommitBundle, MlsDeviceScope, MlsDeviceStore, MlsDeviceStoreError,
     MlsDeviceWrappingKeys, MlsDeviceWrite, OpenMlsDevice, OpenMlsMember, OpenMlsSession,
     PendingMlsPackageId, PendingMlsWelcome, PreparedMlsKeyPackage, RelayAlgorithm, RelayId,
-    RelayStatement, SealedMlsDeviceState, SealedMlsState, SignedRelayRequest,
+    RelayStatement, SealedDurableMlsRoom, SealedMlsDeviceState, SealedMlsState, SignedRelayRequest,
     MAX_SEALED_MLS_DEVICE_BYTES,
 };
 
