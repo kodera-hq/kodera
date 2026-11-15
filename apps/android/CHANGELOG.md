@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Retain only the original owner/workspace receipt across a visible system permission dialog while stopping radios on focus loss; cancel it on stop, recreation or revalidation. Validate canonical event scope grammar before direct epoch MAC use. Expire prepared epoch material before a scan starts, bound peer/replay/RSSI state to 256 entries, and refuse self-beacons across both transports.
+
+- Wire voluntary proximity into the signed-in workspace screen with explicit Android nearby permissions and authenticated workspace-scoped, current-epoch-only bootstrap. Export no workspace master key; stop and wipe at strict epoch expiry and require fresh authenticated bootstrap and consent to continue. Late permission/bootstrap results are fenced across owner, workspace, background and membership revalidation; sign-out/background wipes provisioning. Radio starts only after the member explicitly joins. Physical BLE/mDNS/QUIC interoperability remains unqualified.
+
+- Rotate foreground proximity tokens across both transports with automatic session expiry and stale-timer fences. Advertise only the service UUID and exchange the token through bounded GATT reads; surface asynchronous radio failures. The adapter requires Android 12 or newer and Bluetooth connection permission, without legacy location permission. Physical interoperability and default app radio provisioning remain unqualified.
+
 - Preserve consumed BLE duty across failed same-organisation provisioning, retire replaced scan windows before new radio operations, and keep an admitted call controllable when another push is refused. These paths are qualified with local fake adapters; device radio and native call qualification remain pending.
 
 - Adopt the `ciel` (light) and `cielNuit` (dark) generated design-token palettes and frost glass panel materials (`CielGlassCard`, `CielBadgePill`, IBM Plex Mono bindings) across the entry, signed-in, voice/telecom, passkey, community and `#proximity` surfaces without modifying generated `KoderaTokens.kt`.

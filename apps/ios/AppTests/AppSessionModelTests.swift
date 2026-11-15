@@ -128,8 +128,9 @@ private final class HarnessProtocol: URLProtocol, @unchecked Sendable {
         }
         let entry = HarnessRequest(path: request.url?.path ?? "", bearer: request.value(forHTTPHeaderField: "Authorization") ?? "")
         stateLock.withLock { self.entry = entry }
-        let valid = request.url?.scheme == "https" && request.url?.host == "core.kodera.test" &&
-            request.httpMethod == "GET" && [HarnessHTTP.memberPath, HarnessHTTP.workspacePath].contains(entry.path) &&
+        let route = (request.httpMethod == "GET" && [HarnessHTTP.memberPath, HarnessHTTP.workspacePath].contains(entry.path)) ||
+            (request.httpMethod == "POST" && entry.path == HarnessHTTP.proximityPath)
+        let valid = request.url?.scheme == "https" && request.url?.host == "core.kodera.test" && route &&
             ["Bearer synthetic-G1", "Bearer synthetic-G2"].contains(entry.bearer)
         let accepting = scenario.record(entry, valid: valid)
         guard valid && accepting else {
@@ -162,6 +163,7 @@ private final class HarnessHTTP: @unchecked Sendable {
     static let organisation = "6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f"
     static let memberPath = "/api/v1/me"
     static let workspacePath = "/api/v1/organisations/\(organisation)/workspace"
+    static let proximityPath = "/api/v1/proximity/bootstrap"
     private let lock = NSLock()
     private var queued: [HarnessRequest] = []
     private var waiter: CheckedContinuation<HarnessRequest?, Never>?
@@ -213,6 +215,12 @@ private final class HarnessHTTP: @unchecked Sendable {
         for entry in snapshot.0 { entry.gate.release() }
     }
     func body(for entry: HarnessRequest) -> Data {
+        if entry.path == Self.proximityPath {
+            let epoch = ProximityBounds.currentUnixSeconds() / 900
+            return Data("""
+            {"workspace_id":"0192f3a4-5b6c-7d8e-9f01-23456789abcd","event_scope":"default","epoch_mac_key":"\(String(repeating: "ab", count: 32))","epoch":\(epoch),"epoch_expires_at":\((epoch + 1) * 900),"epoch_rotation_seconds":900}
+            """.utf8)
+        }
         let label = entry.bearer.hasSuffix("G2") ? "G2" : "G1"
         if entry.path == Self.memberPath {
             return Data("""
@@ -547,6 +555,67 @@ final class AppSessionModelTests: XCTestCase {
             let calls = await backend.snapshot()
             XCTAssertEqual(calls.authorized, 0); XCTAssertTrue(calls.forced.isEmpty)
             XCTAssertTrue(factory.requesters.isEmpty)
+        }
+    }
+}
+
+@MainActor
+final class ProximityCompositionTests: XCTestCase {
+    private func exercise(_ body: @MainActor (AppHarness) async throws -> Void) async throws {
+        let fixture = try AppHarness()
+        do { try await body(fixture) }
+        catch { try await fixture.cleanup(); throw error }
+        try await fixture.cleanup()
+    }
+
+    private func awaitPreparation(_ model: AppSessionModel) async throws {
+        for _ in 0..<500 {
+            if !model.isPreparingProximity { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("bounded authenticated radio preparation did not settle")
+        throw HarnessFailure()
+    }
+
+    func testExplicitConsentBindsWorkspaceMaterialAndBackgroundClearsItWithoutScanning() async throws {
+        try await exercise { fixture in
+            try await fixture.start()
+            try await fixture.signIn()
+            try await fixture.load("G1")
+            XCTAssertNil(fixture.model.proximityRadioSession.organisationId)
+            fixture.model.prepareProximity()
+            let request = try await fixture.next(HarnessHTTP.proximityPath, token: "G1")
+            request.gate.release()
+            try await fixture.wait(request.finished)
+            try await awaitPreparation(fixture.model)
+            XCTAssertNil(fixture.model.proximityPreparationErrorKey)
+            XCTAssertEqual(fixture.model.proximityRadioSession.organisationId, "0192f3a4-5b6c-7d8e-9f01-23456789abcd")
+            XCTAssertTrue(fixture.model.proximityRadioSession.hasForegroundConsent)
+            XCTAssertFalse(fixture.model.proximityRadioSession.isSessionActive)
+            fixture.model.setForeground(false)
+            XCTAssertNil(fixture.model.proximityRadioSession.organisationId)
+            XCTAssertFalse(fixture.model.proximityRadioSession.hasForegroundConsent)
+            XCTAssertNil(fixture.model.proximityRadioSession.activeTokenHex)
+        }
+    }
+
+    func testOldOwnerBootstrapCannotGrantRadioConsentToReplacementSession() async throws {
+        try await exercise { fixture in
+            try await fixture.start()
+            try await fixture.signIn()
+            try await fixture.load("G1")
+            fixture.model.prepareProximity()
+            let old = try await fixture.next(HarnessHTTP.proximityPath, token: "G1")
+            fixture.model.signOut()
+            try await fixture.processed(try XCTUnwrap(fixture.model.signOutTask))
+            try await fixture.signIn()
+            try await fixture.load("G2")
+            old.gate.release()
+            try await fixture.wait(old.finished)
+            XCTAssertFalse(fixture.model.isPreparingProximity)
+            XCTAssertNil(fixture.model.proximityRadioSession.organisationId)
+            XCTAssertFalse(fixture.model.proximityRadioSession.hasForegroundConsent)
+            fixture.assertLoaded("G2")
         }
     }
 }

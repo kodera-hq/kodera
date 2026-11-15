@@ -20,6 +20,8 @@ Xcode does not fail a build on any of these, and each ships silently:
 - a Config/Local.xcconfig.example whose values are not loopback-only;
 - a KODERA_ setting in project.yml or in any .xcconfig but those two (the
   untracked Config/Local.xcconfig excepted);
+- missing or broadened associated domains, another entitlement, or a project
+  binding that differs from the approved public app/team identity;
 - in any App/**/*.swift: an http:// or https:// literal (any case), a client
   ID literal (`clientID: "…"`, any case, or "kodera-ios"/"kodera-android"),
   or a string literal passed to SignInConfiguration, CoreRequester or
@@ -46,6 +48,7 @@ import plistlib
 import re
 import sys
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 # The qualified token producer. Regenerating the tokens from another revision
 # is a deliberate act: update this pin in the same change.
@@ -67,6 +70,13 @@ PINNED_COPY = {
 }
 
 FORBIDDEN_PLIST_KEYS = ("CFBundleURLTypes", "NSAppTransportSecurity", "UIBackgroundModes")
+ASSOCIATED_DOMAINS = (
+    "webcredentials:auth.kodera.io",
+    "applinks:community.kodera.io",
+    "applinks:app.kodera.io",
+)
+APP_ENTITLEMENTS = "App/Kodera.entitlements"
+APP_TEAM_ID = "UF5852SF57"
 # Each deployment key is present ONLY as the reference to its build setting.
 DEPLOYMENT_PLIST_KEYS = {
     "KoderaCoreOrigin": "KODERA_CORE_ORIGIN",
@@ -272,10 +282,55 @@ def stray_setting_findings(root):
     return errors
 
 
+def association_findings(root):
+    """Check the exact public capability and its canonical application-target binding."""
+    errors = []
+    path = root / APP_ENTITLEMENTS
+    if not path.is_file() or path.is_symlink():
+        return ["App/Kodera.entitlements must be a regular, nonsymlink associated-domains plist"]
+    try:
+        entitlements = plistlib.loads(read_bytes(path))
+    except (plistlib.InvalidFileException, ValueError, ExpatError):
+        return ["App/Kodera.entitlements must be a valid associated-domains plist"]
+    if not isinstance(entitlements, dict) or set(entitlements) != {
+        "com.apple.developer.associated-domains"
+    }:
+        errors.append("App/Kodera.entitlements must declare only associated domains; no push or other entitlement is admitted")
+    elif entitlements["com.apple.developer.associated-domains"] != list(ASSOCIATED_DOMAINS):
+        errors.append("App/Kodera.entitlements must declare exactly the three approved associated domains")
+
+    project = read_bytes(root / "project.yml").decode("utf-8", "replace")
+    # This gate intentionally admits the checked-in XcodeGen block form, not YAML
+    # aliases or configuration overrides that could silently change the signed target.
+    active = "\n".join(line.split("#", 1)[0] for line in project.splitlines())
+    target = re.search(r"^  Kodera:\n(.*?)(?=^  \S|\Z)", active, re.MULTILINE | re.DOTALL)
+    settings = re.search(
+        r"^    settings:\n      base:\n(.*?)(?=^ {0,6}\S|\Z)",
+        target.group(1) if target else "",
+        re.MULTILINE | re.DOTALL,
+    )
+    base = settings.group(1) if settings else ""
+    for key, value in (("CODE_SIGN_ENTITLEMENTS", APP_ENTITLEMENTS), ("DEVELOPMENT_TEAM", APP_TEAM_ID)):
+        occurrences = re.findall(r"\b" + key + r"\b", active)
+        if len(occurrences) != 1 or not re.search(
+            r"^        " + key + ": " + re.escape(value) + r"[ \t]*$", base, re.MULTILINE
+        ):
+            errors.append(f"project.yml must bind Kodera settings.base {key} exactly to {value}, without overrides")
+    exclusions = re.search(
+        r"^    sources:\n      - path: App\n        excludes:\n((?:          - [^\n]+\n)+)",
+        target.group(1) if target else "",
+        re.MULTILINE,
+    )
+    if not exclusions or not re.search(r"^          - Kodera\.entitlements[ \t]*$", exclusions.group(1), re.MULTILINE):
+        errors.append("project.yml must exclude Kodera.entitlements from the App source copy")
+    return errors
+
+
 def findings(root):
     app = root / "App"
     errors = config_findings(root / "Config")
     errors += stray_setting_findings(root)
+    errors += association_findings(root)
 
     pin = read_json(app / "Generated/TokenProvenance.json")
     tokens = app / "Generated/KoderaTokens.swift"
@@ -335,6 +390,27 @@ def findings(root):
     for key in FORBIDDEN_PLIST_KEYS:
         if key in info:
             errors.append(f"Info.plist declares {key}, a capability this app has not qualified")
+    if info.get("NSBonjourServices") != ["_kodera-prox._udp"]:
+        errors.append("Info.plist must declare only the foreground proximity Bonjour service")
+    for key in info:
+        if key.startswith("NSLocation"):
+            errors.append("Info.plist requests location access; proximity uses no location permission")
+    privacy = read_json(app / "Resources/InfoPlist.xcstrings")
+    privacy_keys = {"NSBluetoothAlwaysUsageDescription", "NSLocalNetworkUsageDescription"}
+    if privacy.get("sourceLanguage") != SOURCE_LANGUAGE or set(privacy.get("strings", {})) != privacy_keys:
+        errors.append("InfoPlist.xcstrings must contain exactly the French-source proximity permission descriptions")
+    for key in sorted(privacy_keys):
+        if not isinstance(info.get(key), str) or not info[key].strip():
+            errors.append(f"Info.plist lacks the foreground proximity permission description {key}")
+        for language in LANGUAGES:
+            unit = privacy.get("strings", {}).get(key, {}).get("localizations", {}).get(language, {}).get("stringUnit", {})
+            if unit.get("state") != "translated" or not unit.get("value"):
+                errors.append(f"InfoPlist.xcstrings: {key} has no {language} translation")
+        english = privacy.get("strings", {}).get(key, {}).get("localizations", {}).get("en", {}).get("stringUnit", {}).get("value")
+        if info.get(key) and english and info[key] != english:
+            errors.append(f"Info.plist {key} differs from its English permission description")
+    if "path: App/Resources/InfoPlist.xcstrings" not in read_bytes(root / "project.yml").decode("utf-8"):
+        errors.append("project.yml must bundle the localized proximity permission descriptions")
     for key, setting in DEPLOYMENT_PLIST_KEYS.items():
         reference = f"$({setting})"
         if key not in info:

@@ -6,6 +6,8 @@ import io.kodera.android.domain.LoopbackPolicy
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -134,11 +136,21 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
      * failure.
      */
     internal fun <T> get(path: String, read: (Response) -> T): CoreReply<T> {
+        return send(path, null, read)
+    }
+
+    /** Bounded JSON POST through the same accepted-owner and response policy as GET. */
+    internal fun <T> post(path: String, jsonBody: ByteArray, read: (Response) -> T): CoreReply<T> {
+        if (jsonBody.size > BODY_LIMIT) return CoreReply.Unsendable
+        return send(path, jsonBody.copyOf(), read)
+    }
+
+    private fun <T> send(path: String, jsonBody: ByteArray?, read: (Response) -> T): CoreReply<T> {
         if (!staysOnOrigin(path)) return CoreReply.PathRefused
         if (closed) return CoreReply.Transport(TransportFailure.OTHER)
         val url = origin + path
         val first = try { accessToken(false) } catch (error: AccessTokenException) { return reply(error) }
-        when (val result = attempt(url, first, read)) {
+        when (val result = attempt(url, first, jsonBody, read)) {
             is Attempt.Done -> return result.reply
             Attempt.Unauthorized -> Unit
         }
@@ -146,7 +158,7 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
         // nothing more.
         if (closed) return CoreReply.Transport(TransportFailure.OTHER)
         val second = try { accessToken(true) } catch (error: AccessTokenException) { return reply(error) }
-        return when (val result = attempt(url, second, read)) {
+        return when (val result = attempt(url, second, jsonBody, read)) {
             is Attempt.Done -> result.reply
             Attempt.Unauthorized -> endSession(second)
         }
@@ -186,11 +198,13 @@ class CoreRequester private constructor(coreApiOrigin: String, loopback: Loopbac
         data object Unauthorized : Attempt<Nothing>
     }
 
-    private fun <T> attempt(url: String, token: AccessToken, read: (Response) -> T): Attempt<T> {
+    private fun <T> attempt(url: String, token: AccessToken, jsonBody: ByteArray?, read: (Response) -> T): Attempt<T> {
         // Checked before each send: the requester may have been closed while the token was fetched.
         if (closed) return Attempt.Done(CoreReply.Transport(TransportFailure.OTHER))
         val request = try {
-            Request.Builder().url(url).get().header("Authorization", "Bearer ${token.value}")
+            Request.Builder().url(url).apply {
+                if (jsonBody == null) get() else post(jsonBody.toRequestBody("application/json".toMediaType()))
+            }.header("Authorization", "Bearer ${token.value}")
                 .header("Accept", "application/json, application/problem+json")
                 .header("Accept-Encoding", "identity").header("Cache-Control", "no-store").build()
         } catch (_: IllegalArgumentException) { return Attempt.Done(CoreReply.Unsendable) }

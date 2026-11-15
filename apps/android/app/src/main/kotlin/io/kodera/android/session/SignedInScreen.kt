@@ -51,6 +51,8 @@ import io.kodera.android.client.WorkspaceState
 import io.kodera.android.domain.ChannelKind
 import io.kodera.android.domain.CommunityChannelVisibility
 import io.kodera.android.domain.CommunityWorkspaceBlueprint
+import io.kodera.android.proximity.ProximityVoluntaryCheckInScreen
+import io.kodera.android.proximity.VoluntaryProximitySessionController
 import io.kodera.android.ui.theme.CielBadgePill
 import io.kodera.android.ui.theme.CielGlassCard
 import io.kodera.android.ui.theme.LocalKoderaPalette
@@ -74,6 +76,10 @@ fun SignedInScreen(
     workspacePreferencesSession: WorkspacePreferencesSession? = null,
     telecomCoordinator: TelecomPushCoordinator? = null,
     proximityV2Controller: ProximityV2CheckInController? = null,
+    voluntaryProximityController: VoluntaryProximitySessionController? = null,
+    proximityPreparing: Boolean = false,
+    proximityMessage: Int? = null,
+    onProximityConsent: (() -> Unit)? = null,
     inviteCoordinator: ChannelInviteCoordinator? = null,
     passkeyCoordinator: PasskeySessionCoordinator? = null,
     onCopyInviteText: ((String) -> Unit)? = null,
@@ -109,6 +115,13 @@ fun SignedInScreen(
                 }
                 if (member is MemberState.Loaded && workspace != WorkspaceViewState.Hidden) {
                     PasskeyDeviceBindingCard(coordinator = passkeyCoordinator)
+                    if (workspace is WorkspaceViewState.Loaded && workspace.snapshot.id != null &&
+                        voluntaryProximityController != null && (voluntaryProximityController.organisationId == null ||
+                            voluntaryProximityController.organisationId == workspace.snapshot.id)) {
+                        ProximityVoluntaryCheckInScreen(controller = voluntaryProximityController,
+                            onPrepareConsent = onProximityConsent, preparing = proximityPreparing,
+                            statusMessage = proximityMessage)
+                    }
                     ProximityCheckInCard(
                         session = proximitySession?.takeIf {
                             workspace is WorkspaceViewState.Loaded && it.organisationId == workspace.snapshot.organisationId
