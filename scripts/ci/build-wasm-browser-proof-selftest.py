@@ -75,6 +75,95 @@ class CompressedReadControls(unittest.TestCase):
                 M.CompressedInput(io.BytesIO(b'public')).read(2**63)
 
 
+class AllocationSocketControls(unittest.TestCase):
+    @contextlib.contextmanager
+    def owned_socket(self, root, relative):
+        import socket
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        channel = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            channel.bind(str(path))
+            yield path
+        finally:
+            channel.close()
+            path.unlink(missing_ok=True)
+
+    def test_real_owned_tmp_socket_is_counted_only_with_private_root_opt_in(self):
+        with tempfile.TemporaryDirectory(prefix='wasm-ipc-', dir='/tmp') as name:
+            root = Path(name).resolve()
+            with self.owned_socket(root, 'tmp/browser/ipc') as channel:
+                (root / 'public').write_bytes(b'public allocation fixture')
+                self.assertTrue(M.stat.S_ISSOCK(channel.lstat().st_mode))
+                expected = root.lstat().st_blocks * 512 + sum(
+                    item.lstat().st_blocks * 512 for item in root.rglob('*'))
+                self.assertGreaterEqual(M.physical(root, allow_tmp_sockets=True), expected)
+                with self.assertRaisesRegex(M.Refused, 'Special allocation kind=socket path="tmp/browser/ipc"'):
+                    M.physical(root)
+
+    def test_real_socket_outside_private_tmp_and_fifo_inside_tmp_are_refused_with_path_kind(self):
+        with tempfile.TemporaryDirectory(prefix='wasm-ipc-', dir='/tmp') as name:
+            root = Path(name).resolve()
+            (root / 'tmp').mkdir()
+            with self.owned_socket(root, 'logs/not-tmp'):
+                with self.assertRaisesRegex(M.Refused, 'Special allocation kind=socket path="logs/not-tmp"'):
+                    M.physical(root, allow_tmp_sockets=True)
+            fifo = root / 'tmp/pipe'
+            os.mkfifo(fifo, 0o600)
+            try:
+                with self.assertRaisesRegex(M.Refused, 'Special allocation kind=fifo path="tmp/pipe"'):
+                    M.physical(root, allow_tmp_sockets=True)
+            finally:
+                fifo.unlink()
+
+    def test_real_socket_with_foreign_uid_metadata_is_refused_before_accounting(self):
+        with tempfile.TemporaryDirectory(prefix='wasm-ipc-', dir='/tmp') as name:
+            root = Path(name).resolve()
+            with self.owned_socket(root, 'tmp/ipc') as channel:
+                original = Path.lstat
+                def foreign(path, *args, **kwargs):
+                    value = original(path, *args, **kwargs)
+                    if path == channel:
+                        return types.SimpleNamespace(st_uid=os.getuid() + 1, st_dev=value.st_dev,
+                                                     st_mode=value.st_mode, st_blocks=value.st_blocks)
+                    return value
+                with patch.object(Path, 'lstat', foreign):
+                    with self.assertRaisesRegex(M.Refused, 'Foreign allocation'):
+                        M.physical(root, allow_tmp_sockets=True)
+
+    def test_tmp_directory_alias_is_refused_before_socket_walk(self):
+        with tempfile.TemporaryDirectory(prefix='wasm-ipc-', dir='/tmp') as name:
+            root = Path(name).resolve()
+            (root / 'elsewhere').mkdir()
+            (root / 'tmp').symlink_to(root / 'elsewhere', target_is_directory=True)
+            with self.assertRaisesRegex(M.Refused, 'Owned directory identity'):
+                M.physical(root, allow_tmp_sockets=True)
+
+    def test_guard_enables_socket_accounting_only_for_its_private_root_partition(self):
+        with tempfile.TemporaryDirectory(prefix='wasm-ipc-', dir='/tmp') as name:
+            root = Path(name).resolve()
+            guard = M.Guard.__new__(M.Guard)
+            guard.root = root
+            guard.ident = M.identity(root)
+            guard.started = 0
+            guard.minimum_free = M.STOP + 1
+            guard.last_sample = float('-inf')
+            guard.peaks = {}
+            guard.env = {key: str(root / key) for key in ('CARGO_TARGET_DIR', 'RUSTUP_HOME', 'CARGO_HOME')}
+            guard.npm_roots = [root / 'node_modules']
+            observed = []
+            def measure(path, *, allow_tmp_sockets=False):
+                observed.append((path, allow_tmp_sockets))
+                return 0
+            with patch.object(M.time, 'monotonic', return_value=1), \
+                 patch.object(M.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=M.STOP + 1)), \
+                 patch.object(M, 'physical', side_effect=measure):
+                guard.tick()
+            self.assertEqual(observed, [(Path(guard.env['CARGO_TARGET_DIR']), False),
+                (Path(guard.env['RUSTUP_HOME']), False), (Path(guard.env['CARGO_HOME']), False),
+                (root, True), (root / 'node_modules', False)])
+
+
 class ArtifactControls(unittest.TestCase):
     def setUp(self):
         patcher=patch.object(M.shutil,'disk_usage',return_value=types.SimpleNamespace(free=M.STOP+32*M.MIB))

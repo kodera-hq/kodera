@@ -123,11 +123,14 @@ def identity(path):
     return value.st_dev, value.st_ino
 
 
-def physical(path):
+def physical(path, *, allow_tmp_sockets=False):
     """Bounded sampled scan; not a quota or an open-unlinked-FD guarantee."""
     if not path.exists():
         return 0
     expected = identity(path)
+    socket_root = path / 'tmp' if allow_tmp_sockets else None
+    socket_identity = identity(socket_root) if socket_root is not None else None
+    need(socket_identity is None or socket_identity[0] == expected[0], 'Foreign allocation tmp')
     peak = 0
     deadline = time.monotonic() + 2
     for _ in range(3):
@@ -145,10 +148,30 @@ def physical(path):
                     need(count <= 250000, 'Allocation entries')
                     value = item.lstat()
                     need(value.st_dev == expected[0] and value.st_uid == os.getuid(), 'Foreign allocation')
-                    need(stat.S_ISREG(value.st_mode) or stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode),
-                         'Special allocation')
+                    ordinary = stat.S_ISREG(value.st_mode) or stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode)
+                    if not ordinary:
+                        relative = item.relative_to(path)
+                        kind = ('socket' if stat.S_ISSOCK(value.st_mode) else
+                                'fifo' if stat.S_ISFIFO(value.st_mode) else
+                                'character-device' if stat.S_ISCHR(value.st_mode) else
+                                'block-device' if stat.S_ISBLK(value.st_mode) else
+                                'mode-' + format(stat.S_IFMT(value.st_mode), 'o'))
+                        detail = ' kind=' + kind + ' path=' + json.dumps(relative.as_posix()[:512], ensure_ascii=True)
+                        allowed = (socket_root is not None and stat.S_ISSOCK(value.st_mode) and
+                                   len(relative.parts) > 1 and relative.parts[0] == 'tmp')
+                        need(allowed, 'Special allocation' + detail)
+                        need(identity(socket_root) == socket_identity, 'Allocation tmp changed' + detail)
+                        # Never follow a directory alias to classify a socket as private tmp IPC.
+                        ancestor = item.parent
+                        while ancestor != path:
+                            need(time.monotonic() <= deadline, 'Allocation sample deadline')
+                            parent_value = ancestor.lstat()
+                            need(stat.S_ISDIR(parent_value.st_mode) and parent_value.st_uid == os.getuid() and
+                                 parent_value.st_dev == expected[0], 'Socket allocation ancestor' + detail)
+                            ancestor = ancestor.parent
                     total += value.st_blocks * 512
                     peak = max(peak, total)
+            need(socket_root is None or identity(socket_root) == socket_identity, 'Allocation tmp changed')
             need(identity(path) == expected and time.monotonic() <= deadline, 'Allocation changed or deadline')
             return max(peak, total)
         except FileNotFoundError as exc:
@@ -323,7 +346,7 @@ class Guard:
                 'private': (self.root, int(1.25 * GIB))}
         measured = {}
         for key, (path, cap) in rows.items():
-            size = physical(path)
+            size = physical(path, allow_tmp_sockets=key == 'private')
             self.peaks[key] = max(self.peaks.get(key, 0), size)
             measured[key] = self.peaks[key] if key == 'target' else size
             need(measured[key] + (64 * MIB if key == 'target' else 0) <= cap, 'Partition ' + key)
