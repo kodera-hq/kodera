@@ -30,10 +30,19 @@ fn fresh_signer(crypto: &RustCrypto, scheme: SignatureScheme) -> (SecretVLBytes,
 }
 
 fn refusal<T>(operation: impl FnOnce() -> Result<T, CryptoError>) -> CryptoError {
+    refusal_at("provider input", operation)
+}
+
+fn refusal_at<T>(
+    stage: &'static str,
+    operation: impl FnOnce() -> Result<T, CryptoError>,
+) -> CryptoError {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)) {
         Ok(Err(error)) => error,
-        Ok(Ok(_)) => panic!("malformed provider input was accepted"),
-        Err(_) => panic!("malformed provider input panicked instead of returning a typed error"),
+        Ok(Ok(_)) => panic!("malformed provider input was accepted at {stage}"),
+        Err(_) => panic!(
+            "malformed provider input panicked instead of returning a typed error at {stage}"
+        ),
     }
 }
 
@@ -503,46 +512,50 @@ fn hpke_exporter(kind: KemCase) {
         .expect("valid setup with different info");
     assert!(sent[..] != changed_info[..]);
     assert_eq!(
-        refusal(|| crypto.hpke_setup_sender_and_export(
-            kind.config(),
-            &recipient.public[..public_len - 1],
-            INFO,
-            AAD,
-            32
-        )),
+        refusal_at("HPKE exporter sender public-key length", || crypto
+            .hpke_setup_sender_and_export(
+                kind.config(),
+                &recipient.public[..public_len - 1],
+                INFO,
+                AAD,
+                32
+            )),
         CryptoError::SenderSetupError
     );
     assert_eq!(
-        refusal(|| crypto.hpke_setup_receiver_and_export(
-            kind.config(),
-            &enc[..enc.len() - 1],
-            &recipient.private,
-            INFO,
-            AAD,
-            32
-        )),
+        refusal_at("HPKE exporter receiver encapsulation length", || crypto
+            .hpke_setup_receiver_and_export(
+                kind.config(),
+                &enc[..enc.len() - 1],
+                &recipient.private,
+                INFO,
+                AAD,
+                32
+            )),
         CryptoError::ReceiverSetupError
     );
     let short_private: SecretVLBytes = recipient.private[..private_len - 1].to_vec().into();
     assert_eq!(
-        refusal(|| crypto.hpke_setup_receiver_and_export(
-            kind.config(),
-            &enc,
-            short_private.as_slice(),
-            INFO,
-            AAD,
-            32
-        )),
+        refusal_at("HPKE exporter receiver private-key length", || crypto
+            .hpke_setup_receiver_and_export(
+                kind.config(),
+                &enc,
+                short_private.as_slice(),
+                INFO,
+                AAD,
+                32
+            )),
         CryptoError::ReceiverSetupError
     );
     assert_eq!(
-        refusal(|| crypto.hpke_setup_sender_and_export(
-            kind.config(),
-            &recipient.public,
-            INFO,
-            AAD,
-            hash_len * 256
-        )),
+        refusal_at("HPKE exporter output length", || crypto
+            .hpke_setup_sender_and_export(
+                kind.config(),
+                &recipient.public,
+                INFO,
+                AAD,
+                hash_len * 256
+            )),
         CryptoError::ExporterError
     );
 }

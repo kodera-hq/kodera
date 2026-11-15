@@ -71,6 +71,21 @@ fn kem_mode(kem: HpkeKemType) -> hpke_types::KemAlgorithm {
     }
 }
 
+// RFC 9180 sections 4 and 7.1 encode each classical private key in exactly
+// Nsk bytes. Generic scalar parsers may accept and pad shorter encodings.
+fn hpke_private_key_length_is_valid(kem: HpkeKemType, length: usize) -> bool {
+    match kem {
+        HpkeKemType::DhKemP256 | HpkeKemType::DhKem25519 => length == 32,
+        HpkeKemType::DhKemP384 => length == 48,
+        HpkeKemType::DhKemP521 => length == 66,
+        HpkeKemType::DhKem448 => length == 56,
+        // Keep draft encodings under the backend's existing validation. This
+        // classical length guard makes no post-quantum coverage assertion.
+        #[cfg(feature = "draft-ietf-mls-pq-ciphersuites")]
+        HpkeKemType::XWingKemDraft6 | HpkeKemType::MlKem768 | HpkeKemType::MlKem1024 => true,
+    }
+}
+
 #[inline(always)]
 fn kdf_mode(kdf: HpkeKdfType) -> hpke_types::KdfAlgorithm {
     match kdf {
@@ -525,6 +540,9 @@ impl OpenMlsCrypto for RustCrypto {
         info: &[u8],
         aad: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
+        if !hpke_private_key_length_is_valid(config.0, sk_r.len()) {
+            return Err(CryptoError::HpkeDecryptionError);
+        }
         hpke_from_config(config)
             .open(
                 input.kem_output.as_slice(),
@@ -565,6 +583,9 @@ impl OpenMlsCrypto for RustCrypto {
         exporter_context: &[u8],
         exporter_length: usize,
     ) -> Result<ExporterSecret, CryptoError> {
+        if !hpke_private_key_length_is_valid(config.0, sk_r.len()) {
+            return Err(CryptoError::ReceiverSetupError);
+        }
         let context = hpke_from_config(config)
             .setup_receiver(enc, &sk_r.into(), info, None, None, None)
             .map_err(|_| CryptoError::ReceiverSetupError)?;
@@ -603,6 +624,9 @@ impl OpenMlsCrypto for RustCrypto {
         psk: &[u8],
         psk_id: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
+        if !hpke_private_key_length_is_valid(config.0, sk_r.len()) {
+            return Err(CryptoError::HpkeDecryptionError);
+        }
         hpke_psk_from_config(config)
             .open(
                 input.kem_output.as_slice(),
