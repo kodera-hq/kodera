@@ -86,9 +86,7 @@ def test_moderator_cannot_target_owner_or_admin(world, action, target):
             target_id=members[target].id,
             action=action,
             reason="Example",
-            expires_at=timezone.now() + timedelta(hours=1)
-            if action == "mute"
-            else None,
+            expires_at=timezone.now() + timedelta(hours=1) if action == "mute" else None,
             request_id=str(uuid4()),
         )
     assert failure.value.status == 403
@@ -218,9 +216,7 @@ def test_concurrent_redemptions_never_exceed_capacity(world):
         try:
             barrier.wait(timeout=5)
             try:
-                moderation.redeem_link(
-                    verified=token, code=code, request_id=str(uuid4())
-                )
+                moderation.redeem_link(verified=token, code=code, request_id=str(uuid4()))
                 return "accepted"
             except moderation.RefusalError as error:
                 return error.status
@@ -333,9 +329,7 @@ def test_protected_target_refusal_detects_its_source_mutation(world, monkeypatch
     source = inspect.getsource(moderation_policy.target_allowed)
     # Formatting is immaterial to the mutation; replace the complete return expression.
     lines = source.splitlines()
-    returns = [
-        index for index, line in enumerate(lines) if line.strip().startswith("return ")
-    ]
+    returns = [index for index, line in enumerate(lines) if line.strip().startswith("return ")]
     assert len(returns) == 1
     lines[returns[0]] = "    return True"
     namespace = {}
@@ -389,17 +383,13 @@ def test_scoped_invite_grants_only_its_restricted_channel_and_moderator_role(wor
         None,
         email_verified=True,
     )
-    member = moderation.redeem_link(
-        verified=verified, code=code, request_id=str(uuid4())
-    )
+    member = moderation.redeem_link(verified=verified, code=code, request_id=str(uuid4()))
     assert member.role == "org_member"
-    assert WorkspaceModerator.objects.filter(
-        workspace=workspace, membership_id=member.id
-    ).exists()
+    assert WorkspaceModerator.objects.filter(workspace=workspace, membership_id=member.id).exists()
     assert list(
-        ResourcePolicyRule.objects.filter(
-            membership_id=member.id, kind="allow_member"
-        ).values_list("policy_id", flat=True)
+        ResourcePolicyRule.objects.filter(membership_id=member.id, kind="allow_member").values_list(
+            "policy_id", flat=True
+        )
     ) == [policy.id]
 
 
@@ -428,15 +418,11 @@ def test_kicked_member_can_be_readmitted_but_banned_member_cannot(world):
         request_id=str(uuid4()),
     )
     assert (
-        moderation.redeem_link(
-            verified=tokens[3], code=code, request_id=str(uuid4())
-        ).id
+        moderation.redeem_link(verified=tokens[3], code=code, request_id=str(uuid4())).id
         == members[3].id
     )
     assert moderation.member_restrictions(workspace.id, members[3].id)[0] is False
-    assert (
-        tokens[3].subject not in moderation.projection(workspace.id)["banned_subjects"]
-    )
+    assert tokens[3].subject not in moderation.projection(workspace.id)["banned_subjects"]
     link.refresh_from_db()
     assert link.uses_count == 1
     moderation.moderate(
@@ -488,9 +474,7 @@ def test_existing_member_receives_scoped_role_once_and_old_link_cannot_reverse_k
         )
     link.refresh_from_db()
     assert link.uses_count == 1
-    assert WorkspaceModerator.objects.filter(
-        workspace=workspace, membership=members[3]
-    ).exists()
+    assert WorkspaceModerator.objects.filter(workspace=workspace, membership=members[3]).exists()
     members[3].refresh_from_db()
     assert members[3].role == "org_member"
     moderation.moderate(
@@ -513,9 +497,7 @@ def test_existing_member_receives_scoped_role_once_and_old_link_cannot_reverse_k
 
 
 @pytest.mark.parametrize("invalid", ["contains\x00null", "unpaired\ud800surrogate"])
-def test_unstorable_moderation_and_report_text_refuses_before_any_effect(
-    world, invalid
-):
+def test_unstorable_moderation_and_report_text_refuses_before_any_effect(world, invalid):
     org, _, members, tokens = world
     before = AuditEvent.objects.count()
     with pytest.raises(moderation.RefusalError) as denied:

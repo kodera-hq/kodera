@@ -24,6 +24,7 @@ from django.test import Client, RequestFactory, override_settings
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
 
+from apps.billing.models import CapacityTier, Order, Pack, Plan, Price, Subscription
 from apps.identity.models import STAFF_REALM, Identity, StaffRole, User
 from apps.jobs import services as job_services
 from apps.jobs.models import Job
@@ -237,9 +238,7 @@ def test_staff_environment_validators_enforce_realm_https_and_split_ops_hosts() 
         == STAFF_ISSUER
     )
     assert (
-        staff_oidc_jwks_url(
-            {"KODERA_STAFF_OIDC_JWKS_URL": STAFF_JWKS_URL}, loopback_issuers=False
-        )
+        staff_oidc_jwks_url({"KODERA_STAFF_OIDC_JWKS_URL": STAFF_JWKS_URL}, loopback_issuers=False)
         == STAFF_JWKS_URL
     )
     assert staff_ops_hosts(
@@ -464,9 +463,7 @@ def test_mfa_hwk_320s_step_up_and_ops_host_split_plane_enforcement() -> None:
 
         # 5. /ops/* refuses missing auth_time, future auth_time, and stale auth_time (321s > 320s)
         for bad_auth_time in (None, now + 60, now - 321):
-            t_stale = _mint_staff_jwt(
-                operator.subject, amr=["hwk"], auth_time=bad_auth_time
-            )
+            t_stale = _mint_staff_jwt(operator.subject, amr=["hwk"], auth_time=bad_auth_time)
             r_stale = client.post(
                 "/staff/v1/ops/audit-chain/verify",
                 data="{}",
@@ -787,6 +784,9 @@ def test_triage_finops_roles_issuer_snapshots_and_hash_chain_tamper_detection() 
         )
         assert r_read_finops.status_code == 200
         assert r_read_finops.json()["finops"]["gross_margin_alert"] is True
+        _assert_no_forbidden_finops_keys(r_fin_healthy.json())
+        _assert_no_forbidden_finops_keys(r_fin_alert.json())
+        _assert_no_forbidden_finops_keys(r_read_finops.json())
 
         # 5. M8 Staff role grant & revoke (two-person rule + owner>=1 & operator>=2 floors)
         r_self_grant = client.post(
@@ -1654,7 +1654,9 @@ def test_admitted_mutation_for_share_caller_fence_blocks_concurrent_revocation_a
                     waiting_on_lock = True
                     break
                 time.sleep(0.02)
-            assert waiting_on_lock, "revoke_staff_role_mutation did not block on FOR SHARE caller fence"
+            assert waiting_on_lock, (
+                "revoke_staff_role_mutation did not block on FOR SHARE caller fence"
+            )
             assert not revoker_done.is_set()
         finally:
             release_mutation.set()
@@ -1773,7 +1775,9 @@ def test_reverse_order_caller_identity_disable_contention_rolls_back_and_returns
                     waiting_on_user_lock = True
                     break
                 time.sleep(0.02)
-            assert waiting_on_user_lock, "Identity disable did not wait on caller User FOR SHARE lock"
+            assert waiting_on_user_lock, (
+                "Identity disable did not wait on caller User FOR SHARE lock"
+            )
             assert not disabler_done.is_set()
         finally:
             resume_into_identity_lock.set()
@@ -1906,3 +1910,183 @@ def test_staff_views_and_command_transactions_translate_contention_and_timeout_s
     assert resp.json()["code"] == expected_code
 
 
+_FORBIDDEN_FINOPS_KEYS = frozenset({"organisation_id", "order_id", "tenant_id", "subscription_id"})
+
+
+def _collect_json_keys(payload: object) -> set[str]:
+    found: set[str] = set()
+    if isinstance(payload, dict):
+        for key, val in payload.items():
+            found.add(str(key))
+            found |= _collect_json_keys(val)
+    elif isinstance(payload, list):
+        for item in payload:
+            found |= _collect_json_keys(item)
+    return found
+
+
+def _assert_no_forbidden_finops_keys(payload: object) -> None:
+    keys = _collect_json_keys(payload)
+    offending = {
+        key for key in keys if key in _FORBIDDEN_FINOPS_KEYS or key.startswith("provider_")
+    }
+    assert offending == set(), f"FinOps HTTP response exposed forbidden keys: {sorted(offending)}"
+
+
+@pytest.mark.django_db
+def test_finops_http_projection_fences_subscription_and_provider_identifiers() -> None:
+    """FinOps HTTP responses expose only aggregate MRR/snapshot fields under shared DB grants."""
+    org, tenant = _seed_customer_org_and_tenant()
+    owner = _seed_staff_member(roles=("staff_owner", "staff_operator"))
+    now_dt = timezone.now()
+    now_epoch = int(time.time())
+    t_owner_hwk = _mint_staff_jwt(owner.subject, amr=["hwk"], auth_time=now_epoch)
+
+    suffix = uuid.uuid4().hex[:8]
+    plan = Plan.objects.create(
+        code=f"plan-{suffix}",
+        version=1,
+        name="FinOps Test Plan",
+        state=Plan.State.PUBLISHED,
+        support_tier="standard",
+        price_change_notice_days=90,
+        published_at=now_dt,
+    )
+    pack = Pack.objects.create(
+        code=f"pack-{suffix}",
+        name="FinOps Test Pack",
+        apps=["visio", "messaging"],
+        profile_ref="suite-territoriale",
+    )
+    tier, _ = CapacityTier.objects.get_or_create(
+        code="S",
+        defaults={
+            "name": "Small",
+            "seats_included": 25,
+            "concurrent_participants_included": 25,
+            "storage_included_bytes": 50 * 1024 * 1024 * 1024,
+            "vm_shape": "DEV1-M",
+        },
+    )
+    price = Price.objects.create(
+        plan=plan,
+        pack=pack,
+        capacity_tier=tier,
+        billing_period="monthly",
+        amount_minor=29_000,
+        currency="EUR",
+        valid_from=now_dt - timedelta(days=1),
+    )
+    snapshot: dict[str, Any] = {
+        "price": price,
+        "plan_code": plan.code,
+        "plan_version": plan.version,
+        "pack_code": pack.code,
+        "capacity_tier_code": tier.code,
+        "apps": ["visio", "messaging"],
+        "billing_period": "monthly",
+        "currency": "EUR",
+        "unit_amount_minor": 29_000,
+        "quantity": 1,
+        "vat_regime": "fr_standard",
+        "vat_rate_bp": 2000,
+        "total_excl_vat_minor": 29_000,
+        "vat_amount_minor": 5_800,
+        "total_incl_vat_minor": 34_800,
+        "captured_at": now_dt,
+    }
+    order = Order.objects.create(
+        organisation=org,
+        idempotency_key=f"finops-fence-{uuid.uuid4().hex}",
+        request_sha256=hashlib.sha256(suffix.encode("ascii")).hexdigest(),
+        state="paid",
+        placed_by=owner.id,
+        tenant=tenant,
+        **snapshot,
+    )
+    sub = Subscription.objects.create(
+        organisation=org,
+        order=order,
+        tenant=tenant,
+        state="active",
+        current_period_start=now_dt,
+        current_period_end=now_dt + timedelta(days=30),
+        price_change_notice_days=90,
+        **snapshot,
+    )
+
+    with override_settings(**STAFF_PLANE_SETTINGS):
+        client = Client()
+        r_snap = client.post(
+            "/staff/v1/ops/finops/snapshots",
+            data=json.dumps(
+                {
+                    "period_month": "2026-11",
+                    "environment_code": "platform-prod",
+                    "organisation_slug": org.slug,
+                    "mrr_cents": 29_000,
+                    "total_cost_cents": 12_000,
+                    "active_organisations": 1,
+                    "active_tenants": 1,
+                    "source_ref": "SCW-INV-FINOPS-FENCE",
+                }
+            ),
+            content_type="application/json",
+            **_auth_headers(t_owner_hwk, host=OPS_HOST),
+        )
+        assert r_snap.status_code == 201
+        snap_body = r_snap.json()
+        _assert_no_forbidden_finops_keys(snap_body)
+
+        r_finops = client.get(
+            "/staff/v1/read/finops?period_month=2026-11",
+            **_auth_headers(t_owner_hwk, host=ADMIN_HOST),
+        )
+        assert r_finops.status_code == 200
+        finops_body = r_finops.json()
+        _assert_no_forbidden_finops_keys(finops_body)
+        assert set(finops_body.keys()) == {"billing", "finops"}
+        assert set(finops_body["billing"].keys()) == {
+            "currency",
+            "active_mrr_excl_vat_minor",
+            "active_subscriptions_count",
+        }
+        assert finops_body["billing"]["active_subscriptions_count"] >= 1
+        assert finops_body["billing"]["active_mrr_excl_vat_minor"] >= 29_000
+        assert set(finops_body["finops"].keys()) == {
+            "period_month",
+            "total_mrr_cents",
+            "total_cost_cents",
+            "gross_margin_cents",
+            "gross_margin_bps",
+            "gross_margin_alert",
+            "rows",
+        }
+        assert len(finops_body["finops"]["rows"]) >= 1
+        for row in finops_body["finops"]["rows"]:
+            assert set(row.keys()) == {
+                "id",
+                "period_month",
+                "environment_code",
+                "organisation_slug",
+                "mrr_cents",
+                "total_cost_cents",
+                "gross_margin_cents",
+                "gross_margin_bps",
+                "active_organisations",
+                "active_tenants",
+                "free_visio_sessions",
+                "source_ref",
+                "created_at",
+            }
+
+        raw_text = r_finops.content.decode("utf-8")
+        for secret_uuid in (org.id, tenant.id, order.id, sub.id):
+            assert str(secret_uuid) not in raw_text
+
+        r_overview = client.get(
+            "/staff/v1/read/overview",
+            **_auth_headers(t_owner_hwk, host=ADMIN_HOST),
+        )
+        assert r_overview.status_code == 200
+        _assert_no_forbidden_finops_keys(r_overview.json()["financial_headline"])

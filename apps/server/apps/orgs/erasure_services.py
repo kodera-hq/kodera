@@ -117,7 +117,9 @@ def begin_erasure(
 def purge_core(request_id: UUID) -> dict[str, int]:
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_purge_core(%s)", [request_id])
-        return _json(cursor.fetchone()[0])
+        sql_counts = _json(cursor.fetchone()[0])
+    stored = PrivacyErasure.objects.filter(pk=request_id).values_list("counts", flat=True).first()
+    return _json(stored) if stored is not None else sql_counts
 
 
 @transaction.atomic

@@ -7,7 +7,9 @@ import pytest
 from apps.orgs import realm_bootstrap as rb
 
 
-@pytest.mark.parametrize("host", ["example.org", "localhost.example.org", "127.0.0.2", "192.168.1.1", "2130706433"])
+@pytest.mark.parametrize(
+    "host", ["example.org", "localhost.example.org", "127.0.0.2", "192.168.1.1", "2130706433"]
+)
 def test_remote_http_is_refused_before_network(settings, monkeypatch, host):
     settings.KODERA_LOOPBACK_ISSUERS = True
     opener = MagicMock()

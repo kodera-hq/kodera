@@ -209,7 +209,11 @@ def advance_account_erasure(
         raise ValueError("account erasure required domains invalid")
     with connection.cursor() as cursor:
         cursor.execute("SELECT privacy_purge_account_core(%s)", [request_id])
-        counts = _json(cursor.fetchone()[0])
+        sql_counts = _json(cursor.fetchone()[0])
+    stored_counts = (
+        AccountErasure.objects.filter(pk=request_id).values_list("counts", flat=True).first()
+    )
+    counts = _json(stored_counts) if stored_counts is not None else sql_counts
     for domain in sorted(required):
         if (
             domain in adapters

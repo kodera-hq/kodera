@@ -1850,19 +1850,25 @@ class FirstSliceHarness:
         )
         return member
 
+    def _payment_inbox_ready(self) -> None:
+        other = [
+            op
+            for op in contract_write_operations(self.api.contract, r"payment.?event|webhook|/inbox")
+            if op != "POST /billing/webhooks/stripe (receiveStripeWebhook)"
+        ]
+        if other:
+            raise AssertionError(
+                f"inbound payment event operation now exists in the contract ({', '.join(other)}): "
+                "drive the harness through it before trusting gap adapter:payment"
+            )
+        self.api.require("receiveStripeWebhook")
+        self.adapters.require_bound("payment")
+
     def deliver_payment_event(self, event: SignedEvent) -> Any:
-        raise self._contract_absence(
-            "service:payment-inbox",
-            r"payment.?event|webhook|/inbox",
-            "inbound payment event operation",
-        )
+        self._payment_inbox_ready()
 
     def payment_inbox_evidence(self, event_id: str) -> Any:
-        raise self._contract_absence(
-            "service:payment-inbox",
-            r"payment.?event|webhook|/inbox",
-            "inbound payment event operation",
-        )
+        self._payment_inbox_ready()
 
     def deliver_payment_return(self, parameters: dict[str, str]) -> Any:
         raise self._contract_absence(

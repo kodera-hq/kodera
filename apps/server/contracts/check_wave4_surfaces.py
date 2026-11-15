@@ -20,7 +20,10 @@ def require(condition: bool, message: str) -> None:
 
 
 def validate(document: dict[str, Any]) -> None:
-    require(document["info"]["version"] in {"0.44.0", "0.44.1", "0.44.2"}, "wave4 version")
+    require(
+        document["info"]["version"] in {"0.44.0", "0.44.1", "0.44.2", "0.45.0"},
+        "wave4 version",
+    )
     schemas = document["components"]["schemas"]
     operations = {
         op["operationId"]: (method, op)

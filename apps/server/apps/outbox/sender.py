@@ -465,6 +465,39 @@ _WITHDRAWN = {
 
 
 def withdrawn(template_id: str, delivery_id: UUID) -> bool:
+    if template_id == "passport_magic_link":
+        has_binding = _rows(
+            "SELECT to_regclass('public.identity_passportoutboxbinding') IS NOT NULL"
+        )
+        if not has_binding or not has_binding[0][0]:
+            return False
+        binding_rows = _rows(
+            "SELECT user_id, organisation_id FROM identity_passportoutboxbinding"
+            " WHERE delivery_id = %s FOR SHARE",
+            [delivery_id],
+        )
+        if not binding_rows:
+            return True
+        bound_user_id, bound_org_id = binding_rows[0]
+        _rows(
+            "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy_account_cutoff:' || %s, 0)),"
+            " pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || %s, 0))",
+            [str(bound_user_id), str(bound_org_id)],
+        )
+        active = _rows(
+            "SELECT 1 FROM identity_user u"
+            " JOIN orgs_organisation o ON o.id = %s"
+            " JOIN identity_passportmagiclinktoken t ON t.delivery_id = %s"
+            " WHERE u.id = %s"
+            "   AND u.enabled AND u.deleted_at IS NULL"
+            "   AND o.state = 'active' AND o.deleted_at IS NULL"
+            "   AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp()"
+            "   AND NOT EXISTS (SELECT 1 FROM orgs_accounterasure WHERE user_reference = u.id)"
+            "   AND NOT EXISTS (SELECT 1 FROM orgs_privacyerasure WHERE organisation_reference = o.id)"
+            " FOR SHARE OF u, o, t",
+            [bound_org_id, delivery_id, bound_user_id],
+        )
+        return not bool(active)
     statement = _WITHDRAWN.get(template_id)
     if statement is None:
         return False

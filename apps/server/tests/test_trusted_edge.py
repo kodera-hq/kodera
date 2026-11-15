@@ -194,7 +194,7 @@ MUTATIONS = [
     ),
     (
         "case_view_never_reads_an_unsafe_id",
-        'namespaced or str(new_uuid7())',
+        "namespaced or str(new_uuid7())",
         'namespaced or "x" * 63',
     ),
     (

@@ -893,7 +893,7 @@ def test_the_other_measured_seams_turn_into_failures_when_their_subject_appears(
 ):
     staff = harness.staff()
     measured = {
-        "service:payment-inbox": lambda: harness.deliver_payment_event(None),
+        "adapter:payment": lambda: harness.deliver_payment_event(None),
         "service:payment-return": lambda: harness.deliver_payment_return({}),
         "service:owner-claim-revocation": lambda: harness.revoke_claim(staff, "o"),
         "service:organisation-closure": lambda: harness.close_organisation(staff, "o"),
@@ -907,6 +907,9 @@ def test_the_other_measured_seams_turn_into_failures_when_their_subject_appears(
         with pytest.raises(MissingBehaviourError) as absent:
             reach()
         assert absent.value.gap == gap
+    with pytest.raises(MissingBehaviourError) as absent:
+        harness.payment_inbox_evidence("evt_1")
+    assert absent.value.gap == "adapter:payment"
     with pytest.raises(MissingBehaviourError) as absent:
         Worker().reaped("j")
     assert absent.value.gap == "worker:step-bindings"
@@ -926,6 +929,13 @@ def test_the_other_measured_seams_turn_into_failures_when_their_subject_appears(
     monkeypatch.setattr(harness.api, "contract", appeared)
     with pytest.raises(AssertionError, match="operator reconciliation operation now exists"):
         harness.operator_reconciliation(staff, "j")
+
+    extra_inbox = {
+        "paths": {"/payments/inbox": {"post": {"operationId": "receivePaymentEvent", **ok}}}
+    }
+    monkeypatch.setattr(harness.api, "contract", extra_inbox)
+    with pytest.raises(AssertionError, match="inbound payment event operation now exists"):
+        harness.deliver_payment_event(None)
 
     assert realm_update_request_surface(load_contract(ROOT)) == []
     widened = {

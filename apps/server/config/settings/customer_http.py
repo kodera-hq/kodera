@@ -88,6 +88,8 @@ KODERA_INTAKE_ADMITTED = intake_admitted(os.environ)
 # The key the intake seals the intended owner's contact with. Unset, the intake is refused; a
 # malformed value stops the process.
 KODERA_CONTACT_SEAL_KEY = key_from_environment(os.environ, "KODERA_CONTACT_SEAL_KEY")
+KODERA_OUTBOX_SEAL_KEY = key_from_environment(os.environ, "KODERA_OUTBOX_SEAL_KEY")
+KODERA_PASSPORT_MAGIC_LINK = os.environ.get("KODERA_PASSPORT_MAGIC_LINK") or None
 
 # The legal entity that issues invoices, and the invoice number series (apps/billing/configuration.py).
 KODERA_BILLING_ISSUER = billing_issuer(os.environ)

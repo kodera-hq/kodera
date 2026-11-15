@@ -31,6 +31,21 @@ SELECT = (
     "docs_collectionrow",
     "billing_billingartifact",
     "billing_viesconsultation",
+    # Passport cross-workspace magic-link sign-in, Stripe webhook reconciliation, and EE billing.
+    "identity_passportmagiclinktoken",
+    "identity_passportoutboxbinding",
+    "identity_passportratelimitevent",
+    "identity_passportworkspacecontext",
+    "billing_stripewebhookdelivery",
+    "billing_providerevent",
+    "billing_invoice",
+    "billing_payment",
+    "billing_paymentlink",
+    "billing_subscription",
+    "billing_dunningcase",
+    "ee_billing_sequences",
+    "ee_billing_warm_pool_slots",
+    "ee_billing_purchase_orders",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -130,6 +145,17 @@ INSERT = (
     "docs_collection",
     "docs_collectionrow",
     "billing_viesconsultation",
+    "identity_passportmagiclinktoken",
+    "identity_passportoutboxbinding",
+    "identity_passportratelimitevent",
+    "identity_passportworkspacecontext",
+    "billing_stripewebhookdelivery",
+    "billing_providerevent",
+    "billing_payment",
+    "ee_billing_sequences",
+    "ee_billing_warm_pool_slots",
+    "ee_billing_purchase_orders",
+    "workspaces_workspacequota",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -178,6 +204,7 @@ INSERT = (
     # Suspending, reactivating or removing a member enqueues its realm access delivery: the
     # delivery and its payload, nothing else of the outbox (MEMBERSHIP_LIFECYCLE.md §§6.1, 7).
     "outbox_outboxdelivery",
+    "outbox_message",
     "outbox_realmaccess",
     # An invitation, its realm account delivery's payload, and on acceptance the person, their
     # identity and their membership (INVITATIONS.md §7).
@@ -222,6 +249,9 @@ INSERT = (
 # - identity_staffrole.created_at: `SELECT ... FOR SHARE` of the grant (current_staff_grant) needs
 #   UPDATE on one column of the table. `created_at` is one the immutability trigger already
 #   refuses to change (staffrole_immutable_grant); `revoked_at` is never granted.
+# - identity_identity.id: `SELECT ... FOR SHARE` of customer and staff identities under Passport
+#   and EE billing authority fences needs UPDATE on one column of `identity_identity`. `id` is
+#   frozen by `customer_immutable('identity')`; `enabled` and `deleted_at` are never granted.
 # - orgs_organisation.owner_guard_revision: written by the reservation's insert trigger
 #   (customer_touch_owner_guard), which runs with the invoker's rights.
 # - jobs_job.lock_requested_at: the enqueue's placement of a job claimable now (JOB_QUEUE.md §5.3).
@@ -277,6 +307,53 @@ UPDATE_COLUMNS = (
     ("docs_collectionrow", "updated_at"),
     ("billing_billingprofile", "vat_number_validated_at"),
     ("billing_billingprofile", "updated_at"),
+    ("identity_passportmagiclinktoken", "consumed_at"),
+    ("identity_passportmagiclinktoken", "updated_at"),
+    ("identity_passportworkspacecontext", "active_organisation_id"),
+    ("identity_passportworkspacecontext", "active_workspace_id"),
+    ("identity_passportworkspacecontext", "updated_at"),
+    ("billing_stripewebhookdelivery", "outcome"),
+    ("billing_stripewebhookdelivery", "organisation_id"),
+    ("billing_providerevent", "outcome"),
+    ("billing_invoice", "amount_paid_minor"),
+    ("billing_invoice", "state"),
+    ("billing_invoice", "paid_at"),
+    ("billing_invoice", "updated_at"),
+    ("billing_order", "state"),
+    ("billing_order", "updated_at"),
+    ("billing_payment", "state"),
+    ("billing_payment", "allocated"),
+    ("billing_payment", "provider_customer_ref"),
+    ("billing_payment", "last_event_at"),
+    ("billing_payment", "updated_at"),
+    ("billing_paymentlink", "state"),
+    ("billing_paymentlink", "used_at"),
+    ("billing_paymentlink", "updated_at"),
+    ("ee_billing_sequences", "last_value"),
+    ("ee_billing_warm_pool_slots", "state"),
+    ("ee_billing_warm_pool_slots", "claimed_by_organisation_id"),
+    ("ee_billing_warm_pool_slots", "checkout_id"),
+    ("ee_billing_warm_pool_slots", "idempotency_key"),
+    ("ee_billing_warm_pool_slots", "unhealthy_reason"),
+    ("ee_billing_purchase_orders", "state"),
+    ("ee_billing_purchase_orders", "issued_at"),
+    ("ee_billing_purchase_orders", "countersigned_at"),
+    ("ee_billing_purchase_orders", "countersigned_by"),
+    ("ee_billing_purchase_orders", "countersigned_by_user_id"),
+    ("ee_billing_purchase_orders", "invoice_ref"),
+    ("ee_billing_purchase_orders", "invoiced_at"),
+    ("ee_billing_purchase_orders", "payment_ref"),
+    ("ee_billing_purchase_orders", "paid_at"),
+    ("ee_billing_purchase_orders", "expired_at"),
+    ("billing_subscription", "state"),
+    ("billing_subscription", "cancelled_at"),
+    ("billing_subscription", "updated_at"),
+    ("billing_dunningcase", "state"),
+    ("billing_dunningcase", "episode"),
+    ("billing_dunningcase", "updated_at"),
+    ("workspaces_workspacequota", "policy_ref"),
+    ("workspaces_workspacequota", "seats"),
+    ("workspaces_workspacequota", "updated_at"),
     # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
     ("workspaces_workspacememberrestriction", "banned"),
     ("workspaces_workspacememberrestriction", "kicked"),
@@ -315,6 +392,7 @@ UPDATE_COLUMNS = (
     ("docs_documentsnapshot", "updated_at"),
     ("docs_documentlink", "target_id"),
     ("docs_documentlink", "updated_at"),
+    ("identity_identity", "id"),
     ("identity_staffrole", "created_at"),
     ("orgs_organisation", "owner_guard_revision"),
     ("jobs_job", "lock_requested_at"),
@@ -492,6 +570,8 @@ UPDATE_COLUMNS = (
 # or `ee_audit_signing_key`.
 DELETE = (
     "docs_collectionrow",
+    "identity_passportmagiclinktoken",
+    "identity_passportratelimitevent",
     "idempotency_record",
     "workspaces_category",
     "workspaces_resourcepolicyrule",
@@ -516,18 +596,18 @@ EXECUTE_FUNCTIONS = (
 )
 
 
-# Read by column only: the guard reads which documents were accepted, for which tenant and DPA,
-# never who accepted them or from where (identity, name, role, IP, user agent); and C1 /staff/v1/*
-# reads only aggregate MRR columns of `billing_subscription`, never provider identifiers.
-SELECT_COLUMNS = (
-    *(
-        ("legal_acceptance", column)
-        for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")
-    ),
-    *(
-        ("billing_subscription", column)
-        for column in ("state", "billing_period", "total_excl_vat_minor")
-    ),
+# SQL column-level SELECT restriction: `legal_acceptance` grants only the linkage columns the
+# guard reads (which documents were accepted, for which tenant and DPA), never personal or
+# network attributes (`identity_id`, `accepted_by_name`, `accepted_by_role`, `source_ip_trunc`,
+# `user_agent`). `billing_subscription` carries table-wide `SELECT` under the shared `kodera_api`
+# role for customer `/api/v1/*` `Subscription.objects` reads and routed Stripe webhook
+# reconciliation; `/staff/v1/*` FinOps enforces its aggregate-only MRR projection at the SQL
+# query (`SELECT ... state, billing_period, total_excl_vat_minor` in `core/staff_api/services.py`)
+# and HTTP serializer boundary (never exposing `organisation_id`, `order_id`, `tenant_id`,
+# `subscription_id`, or `provider_*`).
+SELECT_COLUMNS = tuple(
+    ("legal_acceptance", column)
+    for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")
 )
 
 

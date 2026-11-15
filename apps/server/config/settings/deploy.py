@@ -2,8 +2,6 @@
 
 import os
 
-from django.core.exceptions import ImproperlyConfigured
-
 from apps.billing.configuration import (
     PAYMENT_TERMS_DAYS,
     issuer_from_environment as billing_issuer,
@@ -67,6 +65,8 @@ KODERA_CONSOLE_CLIENT_ID = console_client_id(os.environ)
 KODERA_STAFF_ISSUER = staff_issuer(os.environ)
 KODERA_INTAKE_ADMITTED = intake_admitted(os.environ)
 KODERA_CONTACT_SEAL_KEY = key_from_environment(os.environ, "KODERA_CONTACT_SEAL_KEY")
+KODERA_OUTBOX_SEAL_KEY = key_from_environment(os.environ, "KODERA_OUTBOX_SEAL_KEY")
+KODERA_PASSPORT_MAGIC_LINK = os.environ.get("KODERA_PASSPORT_MAGIC_LINK") or None
 KODERA_MEMBERSHIP_CURSOR_KEY = os.environ.get("KODERA_MEMBERSHIP_CURSOR_KEY")
 # Discovery validates its own key only when called, without blocking other operations.
 KODERA_DISCOVERY_HMAC_KEY = os.environ.get("KODERA_DISCOVERY_HMAC_KEY")
@@ -109,11 +109,6 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
     KODERA_STRIPE_SECRET_KEY,
     KODERA_STRIPE_WEBHOOK_SECRET,
 ) = stripe_from_environment(os.environ)
-
-# No routed signed webhook exists in customer_urls yet. Do not accept money that
-# this deployment cannot reconcile; enabling it requires a route and replay tests.
-if KODERA_PAYMENT_PROVIDER == "stripe":
-    raise ImproperlyConfigured("Stripe payments require a routed reconciliation webhook")
 
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)

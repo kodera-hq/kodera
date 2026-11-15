@@ -262,6 +262,9 @@ ALLOWED_SECRETS = {
         "transform requests are signed with"
     ),
     "KODERA_CONTACT_SEAL_KEY": "an application secret: the key contacts are sealed with",
+    "KODERA_OUTBOX_SEAL_KEY": (
+        "an application secret: the key outbox messages' recipients and link secrets are sealed with"
+    ),
     "KODERA_NOTIFICATION_SEAL_KEY": (
         "an application secret: the key device push subscriptions are sealed with"
     ),

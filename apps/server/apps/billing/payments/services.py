@@ -287,7 +287,7 @@ def receive_event(*, provider_name: str, body: bytes, headers: dict[str, str]) -
     return reconcile(provider_name=provider_name, event=event)
 
 
-def reconcile(*, provider_name: str, event: Event) -> str:
+def reconcile(*, provider_name: str, event: Event, drain_deferred: bool = True) -> str:
     """Record `event` once and apply it in provider order. Returns its outcome, or `duplicate`."""
     with transaction.atomic():
         row = _record(provider_name, event)
@@ -295,7 +295,7 @@ def reconcile(*, provider_name: str, event: Event) -> str:
             _check_redelivery(provider_name, event)
             return "duplicate"
         outcome = _apply(row)
-        if outcome == "applied":
+        if outcome == "applied" and drain_deferred:
             _drain_deferred(provider_name, row.payment_ref)
         return outcome
 
@@ -636,9 +636,35 @@ def _reversed(invoice: Invoice, payment: Payment, metadata: dict[str, object]) -
         _move_subscription(invoice, "past_due")
 
 
+def subscription_has_blocking_unpaid_invoice(
+    subscription: Subscription, *, settled_invoice: Invoice
+) -> bool:
+    """True when a newer unpaid invoice or any other overdue invoice blocks reactivating
+    `subscription` upon settling `settled_invoice` (out-of-order / stale settlement guard)."""
+    from django.db.models import Q
+
+    other_unpaid = Invoice.objects.filter(subscription=subscription).exclude(id=settled_invoice.id)
+    if other_unpaid.filter(state="overdue").exists():
+        return True
+    if (
+        other_unpaid.filter(state="issued")
+        .filter(
+            Q(created_at__gt=settled_invoice.created_at)
+            | Q(created_at=settled_invoice.created_at, id__gt=settled_invoice.id)
+        )
+        .exists()
+    ):
+        return True
+    return other_unpaid.filter(state="issued", due_at__lte=timezone.now()).exists()
+
+
 def _move_subscription(invoice: Invoice, requested: str) -> None:
     subscription = Subscription.objects.select_for_update().filter(invoices=invoice).first()
     if subscription is None or requested not in SUBSCRIPTION_TRANSITIONS[subscription.state]:
+        return
+    if requested == "active" and subscription_has_blocking_unpaid_invoice(
+        subscription, settled_invoice=invoice
+    ):
         return
     # Recorded by the payment row that moved it: `subscription.*` rows are staff or tenant acts.
     subscription.state = requested
