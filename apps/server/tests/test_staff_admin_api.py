@@ -24,9 +24,11 @@ from django.test import Client, RequestFactory, override_settings
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
 
+from apps.billing import services as billing_services
 from apps.billing.models import (
     CapacityTier,
     Invoice,
+    InvoiceLine,
     Order,
     Pack,
     Payment,
@@ -2023,6 +2025,9 @@ def test_finops_http_projection_fences_subscription_and_provider_identifiers() -
         price_change_notice_days=90,
         **snapshot,
     )
+    from billing_fiscal_fixtures import register_test_fiscal_periods
+
+    register_test_fiscal_periods()
     provider_customer_sentinel = f"cus_finops_sentinel_{suffix}"
     provider_payment_sentinel = f"pi_finops_sentinel_{suffix}"
     provider_invoice_sentinel = f"in_finops_sentinel_{suffix}"
@@ -2030,15 +2035,13 @@ def test_finops_http_projection_fences_subscription_and_provider_identifiers() -
         organisation=org,
         subscription=sub,
         order=order,
-        number=f"KD-2026-FINOPS-{suffix.upper()}",
-        state="paid",
         currency="EUR",
         vat_regime="fr_standard",
         issuer_legal_name="Samourai Coop",
         issuer_address="10 rue de Penthievre, 75008 Paris",
         issuer_country="FR",
-        issuer_siren="899573422",
-        issuer_vat_number="FR44899573422",
+        issuer_siren="000000000",
+        issuer_vat_number="FR00000000000",
         customer_legal_name="FinOps Fence SAS",
         customer_address_line1="1 avenue de l'Opera",
         customer_postal_code="75001",
@@ -2047,12 +2050,31 @@ def test_finops_http_projection_fences_subscription_and_provider_identifiers() -
         total_excl_vat_minor=29_000,
         vat_amount_minor=5_800,
         total_incl_vat_minor=34_800,
-        amount_paid_minor=34_800,
-        issued_at=now_dt,
-        due_at=now_dt + timedelta(days=30),
-        paid_at=now_dt,
         external_ref=provider_invoice_sentinel,
     )
+    InvoiceLine.objects.create(
+        invoice=invoice,
+        position=1,
+        description="FinOps fence plan",
+        plan_code=plan.code,
+        plan_version=plan.version,
+        pack_code=pack.code,
+        capacity_tier_code=tier.code,
+        quantity=1,
+        unit_amount_minor=29_000,
+        total_excl_vat_minor=29_000,
+        vat_rate_bp=2000,
+        vat_amount_minor=5_800,
+    )
+    with transaction.atomic():
+        billing_services.issue_invoice(invoice)
+    Invoice.objects.filter(pk=invoice.pk).update(
+        state="paid",
+        amount_paid_minor=34_800,
+        paid_at=now_dt,
+    )
+    invoice.refresh_from_db()
+    assert invoice.number is not None
     payment = Payment.objects.create(
         organisation=org,
         invoice=invoice,
