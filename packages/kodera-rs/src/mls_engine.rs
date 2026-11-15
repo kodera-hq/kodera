@@ -14,6 +14,9 @@ use crate::{
     NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES,
 };
 
+mod persistence;
+pub use persistence::SealedMlsState;
+
 const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 const MAX_MEMBERS: usize = 128;
 const MAX_STORAGE_BYTES: usize = 16 * 1024 * 1024;
@@ -152,7 +155,8 @@ pub struct MlsCommitBundle {
     pub epoch: u64,
 }
 
-/// An in-memory RFC 9420 session. No OS keyring, durable rollback protection or IPC is supplied.
+/// An RFC 9420 session with an encrypted checkpoint boundary. Hosts still own
+/// durable storage, independent rollback fences, OS key management and IPC.
 pub struct OpenMlsSession {
     scope: NativeRoomScope,
     provider: OpenMlsRustCrypto,
@@ -331,18 +335,49 @@ impl OpenMlsSession {
         &mut self,
         key: &Ed25519PublicKey,
     ) -> Result<MlsCommitBundle, NativeCryptoError> {
-        if key == &self.device_key() || self.authorised.contains(key) {
+        self.remove_members(std::slice::from_ref(key))
+    }
+
+    /// Remove every revoked leaf for a bounded set of devices in one Commit.
+    /// This also permits recovery when a restored group has several revoked peers.
+    pub fn remove_members(
+        &mut self,
+        keys: &[Ed25519PublicKey],
+    ) -> Result<MlsCommitBundle, NativeCryptoError> {
+        if keys.is_empty() || keys.len() > MAX_MEMBERS {
+            return Err(NativeCryptoError::InvalidInput);
+        }
+        let own_key = self.device_key();
+        if !self.authorised.contains(&own_key)
+            || keys
+                .iter()
+                .any(|key| key == &own_key || self.authorised.contains(key))
+        {
             return Err(NativeCryptoError::UnauthorisedDevice);
         }
-        let index = self
-            .group
-            .members()
-            .find(|member| member.signature_key.as_slice() == key)
-            .ok_or(NativeCryptoError::InvalidInput)?
-            .index;
+        let mut seen = HashSet::new();
+        let mut indices = Vec::new();
+        for key in keys {
+            if !seen.insert(*key) {
+                return Err(NativeCryptoError::InvalidInput);
+            }
+            let before = indices.len();
+            indices.extend(
+                self.group
+                    .members()
+                    .filter(|member| member.signature_key.as_slice() == key)
+                    .map(|member| member.index),
+            );
+            if indices.len() == before {
+                return Err(NativeCryptoError::InvalidInput);
+            }
+        }
+        if indices.len() > MAX_MEMBERS {
+            return Err(NativeCryptoError::Capacity);
+        }
         self.transaction(|own, provider, group| {
             let (commit, _, _) = group
-                .remove_members(provider, &own.signer, &[index])
+                .remove_members(provider, &own.signer, &indices)
                 .map_err(failed)?;
             let commit = commit.tls_serialize_detached().map_err(failed)?;
             group.merge_pending_commit(provider).map_err(failed)?;

@@ -33,7 +33,7 @@ pub use proximity_beacon_v2::{
 #[cfg(feature = "openmls-engine")]
 mod mls_engine;
 #[cfg(feature = "openmls-engine")]
-pub use mls_engine::{MlsCommitBundle, OpenMlsMember, OpenMlsSession};
+pub use mls_engine::{MlsCommitBundle, OpenMlsMember, OpenMlsSession, SealedMlsState};
 
 #[cfg(feature = "megolm-engine")]
 mod megolm_engine;
