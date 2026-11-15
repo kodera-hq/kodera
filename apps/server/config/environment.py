@@ -84,6 +84,7 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_OUTBOX_SEAL_KEY",
         "KODERA_MEMBERSHIP_CURSOR_KEY",
         "KODERA_DISCOVERY_HMAC_KEY",
+        "KODERA_EE_AUDIT_SIGNING_SEED",  # application audit-export signing seed
         "KODERA_STRIPE_SECRET_KEY",  # a restricted key, apps/billing/configuration.py
         "KODERA_STRIPE_WEBHOOK_SECRET",
         "KODERA_MAIL_SMTP_PASSWORD",  # transactional mail, the operator's sender
@@ -257,6 +258,47 @@ def billing_enabled(environment: Mapping[str, str]) -> bool:
     if value == "false":
         return False
     raise ImproperlyConfigured("KODERA_BILLING_ENABLED must be true, false or unset")
+
+
+EDITIONS = frozenset({"community", "enterprise"})
+
+
+def edition(environment: Mapping[str, str]) -> str:
+    """Which product edition serves HTTP, from KODERA_EDITION (GOVERNANCE.md §1).
+
+    Unset or empty is `community`, the open-source default. Setting `enterprise` activates the
+    clean-room `/api/v1/ee/*` dispatcher when the `ee/` package is installed. Anything else is
+    refused at start without reflecting the caller's value."""
+    value = environment.get("KODERA_EDITION", "").strip()
+    if value == "":
+        return "community"
+    if value in EDITIONS:
+        return value
+    raise ImproperlyConfigured("KODERA_EDITION must be community, enterprise or unset")
+
+
+def ee_audit_signing_seed(environment: Mapping[str, str]) -> bytes | None:
+    """Application seed for tenant-derived Enterprise audit-export signing keys, from
+    KODERA_EE_AUDIT_SIGNING_SEED.
+
+    Unset or empty returns `None` (audit exports derive tenant keys from `SECRET_KEY` and record
+    each verification public key in `ee_audit_signing_key`). When set, must be 32 to 512 printable
+    non-whitespace ASCII characters with at least 8 distinct characters, and never a PEM private
+    key block. Malformed values stop the process without reflecting the secret."""
+    raw = environment.get("KODERA_EE_AUDIT_SIGNING_SEED", "")
+    if raw == "":
+        return None
+    if (
+        not 32 <= len(raw) <= 512
+        or any(not (0x21 <= ord(ch) <= 0x7E) for ch in raw)
+        or len(set(raw)) < 8
+        or "PRIVATE" in raw.upper()
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_EE_AUDIT_SIGNING_SEED must be 32 to 512 printable non-whitespace ASCII "
+            "characters with sufficient entropy, or unset"
+        )
+    return raw.encode("ascii")
 
 
 STAFF_REALM_SUFFIX = "/realms/kodera-staff"

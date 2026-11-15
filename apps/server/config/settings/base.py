@@ -19,6 +19,7 @@ MIDDLEWARE = [
     "core.staff_api.middleware.StaffPlaneMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "core.api.edition.EnterpriseEditionMiddleware",
 ]
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
@@ -47,6 +48,12 @@ KODERA_TENANT_APP_URLS: dict[str, str] = {}
 # Whether Core bills (docs/specs/QUICK_WORKSPACE.md §2). Each profile that serves, settles or runs
 # jobs reads it from KODERA_BILLING_ENABLED; true, today's behaviour, everywhere else.
 KODERA_BILLING_ENABLED = True
+# Product edition (GOVERNANCE.md §1): open-source `community` by default; serving profiles read
+# KODERA_EDITION (`community` or `enterprise`).
+KODERA_EDITION = "community"
+# Optional application seed for tenant-derived Enterprise compliance audit signing keys; serving
+# profiles read and validate KODERA_EE_AUDIT_SIGNING_SEED (`None` when unset).
+KODERA_EE_AUDIT_SIGNING_SEED: bytes | None = None
 # Every record at WARNING and above, as one JSON line on stderr (core/logs.py says what a line may
 # carry). Without it an uncaught exception answered 500 and wrote nothing: Django's own console
 # handler logs only with DEBUG on, which no profile turns on. The handler's level is the filter, since

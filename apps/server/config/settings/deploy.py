@@ -18,6 +18,8 @@ from config.environment import (
     auth_trust,
     billing_enabled,
     console_client_id,
+    edition,
+    ee_audit_signing_seed,
     intake_admitted,
     ios_app_ids,
     legal_text_origin,
@@ -82,6 +84,10 @@ KODERA_MUTATION_RATE_PER_MINUTE = mutation_rate_per_minute(os.environ)
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
+# Product edition: KODERA_EDITION (GOVERNANCE.md §1); `community` when unset.
+KODERA_EDITION = edition(os.environ)
+# Optional Enterprise audit-export signing seed; validated at startup when set.
+KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
 # The edge proxies whose X-Forwarded-For names the client (docs/specs/TRUSTED_EDGE.md); unset, none.
 KODERA_TRUSTED_EDGE = trusted_edge(os.environ)
 # The legal entity that issues invoices, and the invoice number series (apps/billing/configuration.py).
