@@ -710,18 +710,24 @@ impl OpenMlsRand for RustCrypto {
     type Error = RandError;
 
     fn random_array<const N: usize>(&self) -> Result<[u8; N], Self::Error> {
-        let mut rng = self.rng.write().map_err(|_| Self::Error::LockPoisoned)?;
-        let mut out = [0u8; N];
-        rng.try_fill_bytes(&mut out)
-            .map_err(|_| Self::Error::NotEnoughRandomness)?;
-        Ok(out)
+        let bytes: SecretVLBytes = self.random_vec(N)?.into();
+        bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| Self::Error::NotEnoughRandomness)
     }
 
     fn random_vec(&self, len: usize) -> Result<Vec<u8>, Self::Error> {
         let mut rng = self.rng.write().map_err(|_| Self::Error::LockPoisoned)?;
-        let mut out = vec![0u8; len];
-        rng.try_fill_bytes(&mut out)
-            .map_err(|_| Self::Error::NotEnoughRandomness)?;
+        let mut out = Vec::with_capacity(len);
+        while out.len() < len {
+            let word = rng
+                .try_next_u64()
+                .map_err(|_| Self::Error::NotEnoughRandomness)?
+                .to_le_bytes();
+            let take = (len - out.len()).min(word.len());
+            out.extend_from_slice(&word[..take]);
+        }
         Ok(out)
     }
 }
@@ -737,6 +743,110 @@ pub enum RandError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Equivalent temporary generators use fresh system entropy, never a fixed
+    // private fixture. Only the test reference duplicates that fresh RNG state.
+    fn fresh_equivalent_rngs() -> (RustCrypto, rand_chacha::ChaCha20Rng) {
+        use rand_core::SeedableRng as _;
+
+        let rng = rand_chacha::ChaCha20Rng::from_rng(&mut UnwrapErr(SysRng));
+        let reference = rng.clone();
+        (
+            RustCrypto {
+                rng: RwLock::new(rng),
+            },
+            reference,
+        )
+    }
+
+    // Independent 32-bit-word reference for the 64-bit production interface.
+    // Full word pairs are consumed even when a request retains a partial pair.
+    fn reference_random_bytes(rng: &mut rand_chacha::ChaCha20Rng, len: usize) -> SecretVLBytes {
+        use rand_core::Rng as _;
+
+        assert!(len <= 257);
+        let mut bytes = Vec::with_capacity(len + 7);
+        for _ in 0..len.div_ceil(8) {
+            bytes.extend_from_slice(&rng.next_u32().to_le_bytes());
+            bytes.extend_from_slice(&rng.next_u32().to_le_bytes());
+        }
+        bytes.truncate(len);
+        bytes.into()
+    }
+
+    fn assert_rng_position(crypto: &RustCrypto, reference: &rand_chacha::ChaCha20Rng) {
+        let observed = crypto
+            .rng
+            .read()
+            .expect("fresh RNG read lock")
+            .get_word_pos();
+        assert_eq!(observed, reference.get_word_pos());
+    }
+
+    fn check_random_array<const N: usize>(
+        crypto: &RustCrypto,
+        reference: &mut rand_chacha::ChaCha20Rng,
+    ) {
+        let expected = reference_random_bytes(reference, N);
+        let actual = crypto.random_array::<N>().expect("CSPRNG array generation");
+        assert!(actual.as_slice() == expected.as_slice());
+        assert_rng_position(crypto, reference);
+    }
+
+    #[test]
+    fn random_vectors_match_fresh_word_stream_and_partial_word_boundaries() {
+        let (crypto, mut reference) = fresh_equivalent_rngs();
+        for len in [0, 1, 7, 8, 9, 31, 32, 33, 48, 65, 257] {
+            let expected = reference_random_bytes(&mut reference, len);
+            let actual: SecretVLBytes = crypto
+                .random_vec(len)
+                .expect("CSPRNG vector generation")
+                .into();
+            assert_eq!(actual.as_slice().len(), len);
+            assert!(actual.as_slice() == expected.as_slice());
+            assert_rng_position(&crypto, &reference);
+        }
+    }
+
+    #[test]
+    fn random_arrays_match_fresh_word_stream_and_partial_word_boundaries() {
+        let (crypto, mut reference) = fresh_equivalent_rngs();
+        check_random_array::<0>(&crypto, &mut reference);
+        check_random_array::<1>(&crypto, &mut reference);
+        check_random_array::<7>(&crypto, &mut reference);
+        check_random_array::<8>(&crypto, &mut reference);
+        check_random_array::<9>(&crypto, &mut reference);
+        check_random_array::<31>(&crypto, &mut reference);
+        check_random_array::<32>(&crypto, &mut reference);
+        check_random_array::<33>(&crypto, &mut reference);
+        check_random_array::<48>(&crypto, &mut reference);
+        check_random_array::<65>(&crypto, &mut reference);
+        check_random_array::<257>(&crypto, &mut reference);
+    }
+
+    #[test]
+    fn random_methods_refuse_poisoned_lock_even_for_empty_requests() {
+        let crypto = RustCrypto::default();
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = crypto.rng.write().expect("fresh RNG write lock");
+            panic!("synthetic RNG lock poison");
+        }));
+        assert!(poisoned.is_err());
+        assert!(crypto.rng.is_poisoned());
+        assert!(matches!(crypto.random_vec(0), Err(RandError::LockPoisoned)));
+        assert!(matches!(
+            crypto.random_vec(33),
+            Err(RandError::LockPoisoned)
+        ));
+        assert!(matches!(
+            crypto.random_array::<0>(),
+            Err(RandError::LockPoisoned)
+        ));
+        assert!(matches!(
+            crypto.random_array::<32>(),
+            Err(RandError::LockPoisoned)
+        ));
+    }
 
     #[test]
     fn supports_is_consistent_with_supported_ciphersuites() {

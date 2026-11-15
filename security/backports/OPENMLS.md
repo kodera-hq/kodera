@@ -25,6 +25,8 @@ The coordinated generation uses `p256`/`p384 0.14.0`, `ed25519-dalek 3.0.0`, `ra
 
 Upstream entropy initialization uses `UnwrapErr(SysRng)`: `Default` can panic on entropy failure. There is no deterministic or weak fallback and no new browser recovery guarantee. Browser builds must separately enable the appropriate `getrandom` JavaScript feature and qualify actual worker behavior.
 
+The local RNG output refinement differs from the upstream buffer-fill implementation: bytes are appended directly from fallible ChaCha20 random words in explicit little-endian order. Both public RNG methods retain the write lock and typed error handling; no constant-byte fallback or unsafe initialization is used. Array requests allocate a temporary vector of the same requested length, transfer its ownership to the existing zeroizing `SecretVLBytes` wrapper, copy the exact-length result to the array, and wipe that heap buffer on drop. Temporary words are ordinary stack values, so this is not a universal erasure claim. Partial words may be discarded, changing stream consumption without changing the CSPRNG or serialized key formats. Compilation, boundary/error controls and fresh CodeQL results must qualify this refinement.
+
 ## Required qualification
 
 The old normal graph contains `crypto-bigint 0.5.5` through all three legacy curve roots. RUSTSEC-2026-0387 remains open until actual replacement graphs and applicable tests qualify this backport. Adding a new bigint version alone does not remove an old path. No scanner suppression or synthetic package version is used.
