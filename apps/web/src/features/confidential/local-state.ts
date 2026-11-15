@@ -39,6 +39,12 @@ export interface PendingCiphertext { id: string; ciphertext: Uint8Array }
 export interface OpaqueLocalState { checkpoint: Uint8Array; pendingSends: readonly PendingCiphertext[] }
 export interface StateMutation { scope: ConfidentialScope; expectedGeneration: number; state: OpaqueLocalState }
 export interface StateSnapshot extends OpaqueLocalState { generation: number }
+export interface DeviceContext { organisationId: string; membershipId: string }
+export interface UniqueDeviceVault {
+  scope: Extract<ConfidentialScope, { kind: 'device-vault' }>
+  generation: number
+  state: OpaqueLocalState
+}
 interface Owner {
   ownerId: string; incarnation: string; status: 'active' | 'revoked'
   records: number; bytes: number; key?: CryptoKey
@@ -99,6 +105,57 @@ function record(value: unknown, id: string, owner: Owner): EncryptedRecord {
       !(row.ciphertext instanceof ArrayBuffer) || row.ciphertext.byteLength < 28 ||
       row.ciphertext.byteLength > MAX_ENCODED + 16) fail('corrupt')
   return row
+}
+function deviceContext(value: DeviceContext): DeviceContext {
+  if (!value || typeof value !== 'object') fail('invalid-input')
+  const { organisationId, membershipId } = value
+  ownerId(organisationId); ownerId(membershipId)
+  return { organisationId, membershipId }
+}
+function storedScope(id: unknown, owner: string): ConfidentialScope {
+  try {
+    if (typeof id !== 'string' || id.length > 256) fail('corrupt')
+    const parts: unknown = JSON.parse(id)
+    if (!Array.isArray(parts) || parts.length !== 6) fail('corrupt')
+    const scope = { ownerId: parts[0], organisationId: parts[1], membershipId: parts[2],
+      devicePublicKey: parts[3], kind: parts[4], ...(parts[4] === 'room' ? { roomId: parts[5] } : {}) } as ConfidentialScope
+    if (scopeKey(scope, owner) !== id) fail('corrupt')
+    return scope
+  } catch { throw new ConfidentialStateError('corrupt') }
+}
+interface LocatedVault {
+  scope: Extract<ConfidentialScope, { kind: 'device-vault' }>
+  record: EncryptedRecord
+}
+function scanDeviceContext(tx: IDBTransaction, owner: Owner, context: DeviceContext): Promise<LocatedVault | null> {
+  return new Promise((resolve, reject) => {
+    let count = 0, bytes = 0, vault: LocatedVault | null = null
+    const roomKeys = new Set<string>()
+    const opening = tx.objectStore('records').index('ownerId').openCursor(IDBKeyRange.only(owner.ownerId))
+    opening.onerror = () => reject(new ConfidentialStateError('storage'))
+    opening.onsuccess = () => {
+      try {
+        const cursor = opening.result
+        if (cursor === null) {
+          if (count !== owner.records || bytes !== owner.bytes ||
+              (roomKeys.size !== 0 && (vault === null || roomKeys.size !== 1 || !roomKeys.has(vault.scope.devicePublicKey)))) fail('corrupt')
+          resolve(vault); return
+        }
+        if (++count > LOCAL_STATE_LIMITS.ownerRecords) fail('corrupt')
+        const scope = storedScope(cursor.primaryKey, owner.ownerId)
+        const value = record(cursor.value, scopeKey(scope, owner.ownerId), owner)
+        bytes += value.ciphertext.byteLength
+        if (bytes > LOCAL_STATE_LIMITS.ownerBytes) fail('corrupt')
+        if (scope.organisationId === context.organisationId && scope.membershipId === context.membershipId) {
+          if (scope.kind === 'device-vault') {
+            if (vault !== null) fail('corrupt')
+            vault = { scope, record: value }
+          } else roomKeys.add(scope.devicePublicKey)
+        }
+        cursor.continue()
+      } catch { reject(new ConfidentialStateError('corrupt')) }
+    }
+  })
 }
 function aad(id: string, incarnation: string, generation: number): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(JSON.stringify(['kodera-confidential-local-v1', id, incarnation, generation]))
@@ -273,6 +330,59 @@ export class ConfidentialStateStore {
     if (current.ownerId !== this.#owner.ownerId) fail('corrupt')
     if (current.incarnation !== this.#owner.incarnation) fail('owner-revoked')
     return current
+  }
+  async readUniqueDeviceVault(context: DeviceContext): Promise<UniqueDeviceVault | null> {
+    this.#alive()
+    const captured = deviceContext(context)
+    const located = await transaction(this.#db, 'readonly', async (tx) =>
+      scanDeviceContext(tx, await this.#liveOwner(tx), captured), this.#alive, this.#transactions)
+    this.#alive()
+    if (located === null) return null
+    let plaintext: Uint8Array<ArrayBuffer> | undefined
+    try {
+      if (!keyValid(this.#owner.key)) fail('corrupt')
+      const value = located.record
+      plaintext = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: value.iv,
+        additionalData: aad(value.id, value.incarnation, value.generation) }, this.#owner.key, value.ciphertext))
+      this.#alive()
+      await transaction(this.#db, 'readonly', async (tx) => { await this.#liveOwner(tx) }, this.#alive, this.#transactions)
+      this.#alive()
+      return { scope: { ...located.scope }, generation: value.generation, state: decode(plaintext) }
+    } catch (error) {
+      if (error instanceof ConfidentialStateError) throw error
+      throw new ConfidentialStateError('corrupt')
+    } finally { plaintext?.fill(0) }
+  }
+  async createUniqueDeviceVault(scope: ConfidentialScope, state: OpaqueLocalState): Promise<number> {
+    this.#alive()
+    const id = scopeKey(scope, this.#owner.ownerId)
+    const captured = storedScope(id, this.#owner.ownerId)
+    if (captured.kind !== 'device-vault') fail('invalid-input')
+    let ciphertext: ArrayBuffer, iv: Uint8Array<ArrayBuffer>
+    const plaintext = encode(state)
+    try {
+      if (new DataView(plaintext.buffer).getUint32(8) !== 0) fail('invalid-input')
+      if (!keyValid(this.#owner.key)) fail('corrupt')
+      iv = crypto.getRandomValues(new Uint8Array(12))
+      ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv,
+        additionalData: aad(id, this.#owner.incarnation, 1) }, this.#owner.key, plaintext)
+      this.#alive()
+    } catch (error) { throw safeError(error) }
+    finally { plaintext.fill(0) }
+    return transaction(this.#db, 'readwrite', async (tx) => {
+      const owner = await this.#liveOwner(tx)
+      if (await scanDeviceContext(tx, owner, captured) !== null) fail('conflict')
+      const meta = capacity(await request(tx.objectStore('metadata').get('capacity')))
+      if (meta.bytes < owner.bytes) fail('corrupt')
+      const count = owner.records + 1, bytes = owner.bytes + ciphertext.byteLength, allBytes = meta.bytes + ciphertext.byteLength
+      if (!integer(count, LOCAL_STATE_LIMITS.ownerRecords) || !integer(bytes, LOCAL_STATE_LIMITS.ownerBytes) ||
+          !integer(allBytes, LOCAL_STATE_LIMITS.databaseBytes)) fail('capacity')
+      await request(tx.objectStore('records').add({ id, ownerId: owner.ownerId, incarnation: owner.incarnation,
+        generation: 1, iv: iv.buffer, ciphertext } satisfies EncryptedRecord))
+      await request(tx.objectStore('owners').put({ ...owner, records: count, bytes }))
+      await request(tx.objectStore('metadata').put({ id: 'capacity', bytes: allBytes }))
+      return 1
+    }, this.#alive, this.#transactions)
   }
   async read(scope: ConfidentialScope): Promise<StateSnapshot | null> {
     this.#alive()
