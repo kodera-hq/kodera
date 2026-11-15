@@ -194,13 +194,8 @@ fn signer(
 ) -> Result<SignatureKeyPair, NativeCryptoError> {
     let signer = SignatureKeyPair::read(provider.storage(), expected, SUITE.signature_algorithm())
         .ok_or(NativeCryptoError::Storage)?;
-    // The storage identifier does not validate a deserialized signer's scheme.
-    // Reject foreign bindings before invoking any private signing operation.
-    if signer.signature_scheme() != SUITE.signature_algorithm() || signer.public() != expected {
-        return Err(NativeCryptoError::AuthenticationFailed);
-    }
     let challenge = b"kodera-native-mls-device-possession-v1\0";
-    let signature = signer.sign(challenge).map_err(failed)?;
+    let signature = checked_possession_signature(&signer, expected, challenge)?;
     provider
         .crypto()
         .verify_signature(SUITE.signature_algorithm(), challenge, expected, &signature)
@@ -1629,62 +1624,78 @@ pub(super) mod tests {
         let expected = own.device_key();
         let original = store.sealed.as_ref().unwrap().clone();
         let provider = own.identity.provider();
-        let private =
-            tls_codec::SecretVLBytes::new(provider.rand().random_array::<31>().unwrap().to_vec());
-        let poison: SignatureKeyPair = serde_json::from_value(serde_json::json!({
-            "private": private.as_slice(),
-            "public": expected,
-            "signature_scheme": SignatureScheme::ECDSA_SECP256R1_SHA256,
-        }))
-        .unwrap();
-        {
-            let mut values = provider.storage().values.write().unwrap();
-            let entry = values
-                .values_mut()
-                .find(|value| {
+        let malformed = SignatureKeyPair::from_raw(
+            SignatureScheme::ECDSA_SECP256R1_SHA256,
+            provider.rand().random_array::<31>().unwrap().to_vec(),
+            expected.to_vec(),
+        );
+        let (p256_private, _) = provider
+            .crypto()
+            .signature_key_gen(SignatureScheme::ECDSA_SECP256R1_SHA256)
+            .unwrap();
+        let foreign_scheme = SignatureKeyPair::from_raw(
+            SignatureScheme::ECDSA_SECP256R1_SHA256,
+            p256_private,
+            expected.to_vec(),
+        );
+        let foreign_public = SignatureKeyPair::new(SUITE.signature_algorithm()).unwrap();
+        assert_ne!(foreign_public.public(), expected);
+        let stored_signer_id = {
+            let values = provider.storage().values.read().unwrap();
+            values
+                .iter()
+                .find(|(_, value)| {
                     serde_json::from_slice::<SignatureKeyPair>(value).is_ok_and(|signer| {
                         signer.public() == expected
                             && signer.signature_scheme() == SUITE.signature_algorithm()
                     })
                 })
-                .unwrap();
-            // Keep the genuine Ed25519 storage identifier and public key; only
-            // the serialized signer value is foreign and deliberately invalid.
-            *entry = serde_json::to_vec(&poison).unwrap();
+                .map(|(id, _)| id.clone())
+                .unwrap()
+        };
+        for (poison, healthy_private) in [
+            (foreign_scheme, true),
+            (foreign_public, true),
+            (malformed, false),
+        ] {
+            {
+                let mut values = provider.storage().values.write().unwrap();
+                // Change only the value beneath the genuine Ed25519 storage ID.
+                *values.get_mut(&stored_signer_id).unwrap() = serde_json::to_vec(&poison).unwrap();
+            }
+            let loaded =
+                SignatureKeyPair::read(provider.storage(), &expected, SUITE.signature_algorithm())
+                    .unwrap();
+            assert_eq!(loaded.public(), poison.public());
+            assert_eq!(loaded.signature_scheme(), poison.signature_scheme());
+            if healthy_private {
+                // Exercise the actual private leaf: a disabled/disconnected
+                // observer must fail this positive control, not report zero.
+                let observed = possession_observation::Scope::start();
+                assert!(possession_signature(&loaded, b"public possession control").is_ok());
+                assert_eq!(observed.calls(), 1);
+            }
+            // Genuine AEAD, original metadata and fresh nonce: reject the
+            // decoded binding before any private possession-sign invocation.
+            let malformed = own.seal_device(store.generation, None, &[], &key).unwrap();
+            let observed = possession_observation::Scope::start();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                OpenMlsDevice::restore_device(
+                    scope(),
+                    expected,
+                    None,
+                    store.generation,
+                    &malformed,
+                    &key,
+                )
+            }));
+            assert!(matches!(
+                outcome,
+                Ok(Err(NativeCryptoError::AuthenticationFailed))
+            ));
+            assert_eq!(observed.calls(), 0);
         }
-        let loaded =
-            SignatureKeyPair::read(provider.storage(), &expected, SUITE.signature_algorithm())
-                .unwrap();
-        assert_eq!(loaded.public(), expected);
-        assert_eq!(
-            loaded.signature_scheme(),
-            SignatureScheme::ECDSA_SECP256R1_SHA256
-        );
-        // Pinned upstream sign converts its P-256 private slice to exactly32
-        // bytes before signing. This31byte poison panics if that branch runs.
-        // Establish the oracle on this exact deserialized fixture, not a mock.
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            loaded.sign(b"public poison control")
-        }))
-        .is_err());
-
-        // Real AEAD and correct original metadata: framing/authentication alone
-        // cannot reject this record. seal_device generates a fresh CSPRNG nonce.
-        let malformed = own.seal_device(store.generation, None, &[], &key).unwrap();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            OpenMlsDevice::restore_device(
-                scope(),
-                expected,
-                None,
-                store.generation,
-                &malformed,
-                &key,
-            )
-        }));
-        assert!(matches!(
-            outcome,
-            Ok(Err(NativeCryptoError::AuthenticationFailed))
-        ));
+        let observed = possession_observation::Scope::start();
         let restored = OpenMlsDevice::restore_device(
             scope(),
             expected,
@@ -1694,6 +1705,8 @@ pub(super) mod tests {
             &key,
         )
         .unwrap();
+        assert_eq!(observed.calls(), 1);
+        drop(observed);
         assert_eq!(restored.device_key(), expected);
         assert!(restored.registration_request().is_ok());
         assert_eq!(

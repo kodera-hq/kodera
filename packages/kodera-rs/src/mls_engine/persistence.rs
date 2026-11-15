@@ -9,7 +9,7 @@
 use std::fmt;
 
 use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce, Tag};
-use openmls_traits::{crypto::OpenMlsCrypto, random::OpenMlsRand, signatures::Signer};
+use openmls_traits::{crypto::OpenMlsCrypto, random::OpenMlsRand};
 use tls_codec::SecretVLBytes;
 
 use super::*;
@@ -318,16 +318,9 @@ impl OpenMlsSession {
             SUITE.signature_algorithm(),
         )
         .ok_or(NativeCryptoError::Storage)?;
-        // A matching storage identifier does not validate the decoded scheme.
-        // Check both bindings before any private possession signature.
-        if signer.signature_scheme() != SUITE.signature_algorithm()
-            || signer.public() != expected_device
-        {
-            return Err(NativeCryptoError::AuthenticationFailed);
-        }
         let mut possession = b"kodera-native-mls-checkpoint-possession-v1\0".to_vec();
         possession.extend_from_slice(&binding);
-        let signature = signer.sign(&possession).map_err(failed)?;
+        let signature = checked_possession_signature(&signer, &expected_device, &possession)?;
         provider
             .crypto()
             .verify_signature(
@@ -554,64 +547,80 @@ mod tests {
         let expected = alice.device_key();
         let epoch = alice.epoch();
         let original = alice.seal_checkpoint(1, &key).unwrap();
-        let private = tls_codec::SecretVLBytes::new(
-            alice.provider.rand().random_array::<31>().unwrap().to_vec(),
+        let provider = &alice.provider;
+        let malformed = SignatureKeyPair::from_raw(
+            SignatureScheme::ECDSA_SECP256R1_SHA256,
+            provider.rand().random_array::<31>().unwrap().to_vec(),
+            expected.to_vec(),
         );
-        let poison: SignatureKeyPair = serde_json::from_value(serde_json::json!({
-            "private": private.as_slice(),
-            "public": expected,
-            "signature_scheme": SignatureScheme::ECDSA_SECP256R1_SHA256,
-        }))
-        .unwrap();
-        {
-            let mut values = alice.provider.storage().values.write().unwrap();
-            let entry = values
-                .values_mut()
-                .find(|value| {
+        let (p256_private, _) = provider
+            .crypto()
+            .signature_key_gen(SignatureScheme::ECDSA_SECP256R1_SHA256)
+            .unwrap();
+        let foreign_scheme = SignatureKeyPair::from_raw(
+            SignatureScheme::ECDSA_SECP256R1_SHA256,
+            p256_private,
+            expected.to_vec(),
+        );
+        let foreign_public = SignatureKeyPair::new(SUITE.signature_algorithm()).unwrap();
+        assert_ne!(foreign_public.public(), expected);
+        let stored_signer_id = {
+            let values = provider.storage().values.read().unwrap();
+            values
+                .iter()
+                .find(|(_, value)| {
                     serde_json::from_slice::<SignatureKeyPair>(value).is_ok_and(|signer| {
                         signer.public() == expected
                             && signer.signature_scheme() == SUITE.signature_algorithm()
                     })
                 })
-                .unwrap();
-            // Preserve the Ed25519 storage key and expected public key while
-            // replacing only its decoded signature scheme and invalid scalar.
-            *entry = serde_json::to_vec(&poison).unwrap();
+                .map(|(id, _)| id.clone())
+                .unwrap()
+        };
+        for (poison, healthy_private) in [
+            (foreign_scheme, true),
+            (foreign_public, true),
+            (malformed, false),
+        ] {
+            {
+                let mut values = provider.storage().values.write().unwrap();
+                // Change only the value beneath the genuine Ed25519 storage ID.
+                *values.get_mut(&stored_signer_id).unwrap() = serde_json::to_vec(&poison).unwrap();
+            }
+            let loaded =
+                SignatureKeyPair::read(provider.storage(), &expected, SUITE.signature_algorithm())
+                    .unwrap();
+            assert_eq!(loaded.public(), poison.public());
+            assert_eq!(loaded.signature_scheme(), poison.signature_scheme());
+            if healthy_private {
+                // Exercise the actual private leaf: a disabled/disconnected
+                // observer must fail this positive control, not report zero.
+                let observed = possession_observation::Scope::start();
+                assert!(possession_signature(&loaded, b"public possession control").is_ok());
+                assert_eq!(observed.calls(), 1);
+            }
+            // Reseal the actual poisoned map with correct scope/key/epoch/
+            // generation and a fresh CSPRNG nonce, retaining the genuine state.
+            let malformed = alice.seal_checkpoint(1, &key).unwrap();
+            let observed = possession_observation::Scope::start();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                OpenMlsSession::restore_checkpoint(
+                    scope(1),
+                    expected,
+                    epoch,
+                    1,
+                    roster.clone(),
+                    &malformed,
+                    &key,
+                )
+            }));
+            assert!(matches!(
+                outcome,
+                Ok(Err(NativeCryptoError::AuthenticationFailed))
+            ));
+            assert_eq!(observed.calls(), 0);
         }
-        let loaded = SignatureKeyPair::read(
-            alice.provider.storage(),
-            &expected,
-            SUITE.signature_algorithm(),
-        )
-        .unwrap();
-        assert_eq!(loaded.public(), expected);
-        assert_eq!(
-            loaded.signature_scheme(),
-            SignatureScheme::ECDSA_SECP256R1_SHA256
-        );
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            loaded.sign(b"public checkpoint poison control")
-        }))
-        .is_err());
-
-        // A genuine reseal includes the poisoned map under the correct expected
-        // scope/key/epoch/generation and a freshly generated CSPRNG nonce.
-        let malformed = alice.seal_checkpoint(1, &key).unwrap();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            OpenMlsSession::restore_checkpoint(
-                scope(1),
-                expected,
-                epoch,
-                1,
-                roster.clone(),
-                &malformed,
-                &key,
-            )
-        }));
-        assert!(matches!(
-            outcome,
-            Ok(Err(NativeCryptoError::AuthenticationFailed))
-        ));
+        let observed = possession_observation::Scope::start();
         let mut restored = OpenMlsSession::restore_checkpoint(
             scope(1),
             expected,
@@ -622,6 +631,8 @@ mod tests {
             &key,
         )
         .unwrap();
+        assert_eq!(observed.calls(), 1);
+        drop(observed);
         let message = restored
             .seal(b"valid signer survives foreign-scheme refusal")
             .unwrap();

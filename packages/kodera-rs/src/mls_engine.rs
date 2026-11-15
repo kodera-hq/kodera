@@ -14,6 +14,9 @@ use crate::{
     NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES,
 };
 
+#[cfg(test)]
+mod provider_generation_tests;
+
 mod session;
 pub use session::{
     DurableMlsAccess, DurableMlsAuthority, DurableMlsBinding, DurableMlsCacheHandoff,
@@ -42,6 +45,93 @@ const MAX_HANDSHAKE_BYTES: usize = 256 * 1024;
 
 fn failed<T>(_: T) -> NativeCryptoError {
     NativeCryptoError::AuthenticationFailed
+}
+
+// Both authenticated restore paths must validate the decoded signer binding
+// before entering the concrete private possession-sign operation.
+fn checked_possession_signature(
+    signer: &SignatureKeyPair,
+    expected: &Ed25519PublicKey,
+    challenge: &[u8],
+) -> Result<Vec<u8>, NativeCryptoError> {
+    if signer.signature_scheme() != SUITE.signature_algorithm() || signer.public() != expected {
+        return Err(NativeCryptoError::AuthenticationFailed);
+    }
+    possession_signature(signer, challenge)
+}
+
+// Only the checked helper calls this leaf in production. The observer records
+// entry to the real signer call, never a substitute implementation or key data.
+fn possession_signature(
+    signer: &SignatureKeyPair,
+    challenge: &[u8],
+) -> Result<Vec<u8>, NativeCryptoError> {
+    #[cfg(test)]
+    possession_observation::record_call();
+    openmls_traits::signatures::Signer::sign(signer, challenge).map_err(failed)
+}
+
+#[cfg(test)]
+mod possession_observation {
+    use std::cell::Cell;
+    use std::marker::PhantomData;
+    use std::rc::Rc;
+
+    std::thread_local! {
+        static CALLS: Cell<Option<u32>> = const { Cell::new(None) };
+    }
+
+    // Rc's marker prevents this synchronous thread-local scope from moving to
+    // another thread. Drop also disarms it while unwinding a failed assertion.
+    pub(super) struct Scope {
+        _same_thread: PhantomData<Rc<()>>,
+    }
+
+    impl Scope {
+        pub(super) fn start() -> Self {
+            CALLS.with(|calls| {
+                assert!(calls.get().is_none(), "nested possession observation");
+                calls.set(Some(0));
+            });
+            Self {
+                _same_thread: PhantomData,
+            }
+        }
+
+        pub(super) fn calls(&self) -> u32 {
+            CALLS.with(|calls| calls.get().expect("active possession observation"))
+        }
+    }
+
+    pub(super) fn record_call() {
+        CALLS.with(|calls| {
+            if let Some(count) = calls.get() {
+                calls.set(Some(count.checked_add(1).expect("possession call bound")));
+            }
+        });
+    }
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            CALLS.with(|calls| calls.set(None));
+        }
+    }
+
+    #[test]
+    fn observation_disarms_on_unwind_and_rejects_nested_capture() {
+        let outcome = std::panic::catch_unwind(|| {
+            let scope = Scope::start();
+            record_call();
+            assert_eq!(scope.calls(), 1);
+            panic!("public observation unwind control");
+        });
+        assert!(outcome.is_err());
+        let scope = Scope::start();
+        assert_eq!(scope.calls(), 0);
+        assert!(std::panic::catch_unwind(Scope::start).is_err());
+        record_call();
+        assert_eq!(scope.calls(), 1);
+    }
 }
 
 /// Ephemeral software credentials and one real HPKE key package. This does not attest hardware.
