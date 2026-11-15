@@ -34,11 +34,15 @@ from apps.support.api.views import support_tickets
 from apps.workspaces.api import administration as structure, quotas
 from apps.workspaces.api.instant_claim import instant_claim
 from apps.workspaces.api.views import initialise, workspace
+from core.well_known import apple_app_site_association, assetlinks
 
 from .urls import urlpatterns as diagnostics
 
 urlpatterns = [
     *diagnostics,
+    path(".well-known/apple-app-site-association", apple_app_site_association),
+    path(".well-known/assetlinks.json", assetlinks),
+    path("staff/v1/", include("core.staff_api.urls")),
     path("api/v1/organisations/<uuid:organisation_id>/workspace/quotas/usage", quotas.usage),
     path("api/v1/organisations/<uuid:organisation_id>/workspace/quotas/limits", quotas.limits),
     path("", include("apps.workspaces.api.moderation_urls")),

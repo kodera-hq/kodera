@@ -15,6 +15,19 @@ config/settings/deploy_operator.py
 config/settings/deploy_worker.py
 !core/__init__.py
 !core/health.py
+!core/well_known.py
+!core/staff_api/__init__.py
+!core/staff_api/apps.py
+!core/staff_api/audit.py
+!core/staff_api/auth.py
+!core/staff_api/errors.py
+!core/staff_api/middleware.py
+!core/staff_api/models.py
+!core/staff_api/reconcile.py
+!core/staff_api/scrubber.py
+!core/staff_api/services.py
+!core/staff_api/urls.py
+!core/staff_api/views.py
 !core/api/__init__.py
 !core/api/scopes.py
 # The one answer to a verified token Core holds no identity for (AUTHZ.md §2 step 6).

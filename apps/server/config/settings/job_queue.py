@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "apps.legal",
     "apps.tenancy",
     *REPLAY_APPS,
+    "core.staff_api",
     "apps.engine_intents",
     "apps.support",
     "apps.media",

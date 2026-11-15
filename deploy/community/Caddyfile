@@ -21,14 +21,22 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 	}
 
-	# The agent API is for the tenant agent on the internal network only.
-	@internal path /agent /agent/*
+	# The agent API and staff plane are never exposed on the public Community ingress.
+	@internal path /agent /agent/* /staff /staff/*
 	handle @internal {
 		respond 404
 	}
 
 	@api path /api/* /health/*
 	handle @api {
+		reverse_proxy server:8000 {
+			import client_address
+		}
+	}
+
+	# Exact mobile association routes only; /.well-known/matrix/* stays on web:8080.
+	@mobile_association path /.well-known/apple-app-site-association /.well-known/assetlinks.json
+	handle @mobile_association {
 		reverse_proxy server:8000 {
 			import client_address
 		}

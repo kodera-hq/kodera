@@ -14,13 +14,18 @@ from apps.billing.configuration import (
 from apps.docs.configuration import collaboration_settings
 from config.deploy_environment import deployment
 from config.environment import (
+    android_assetlinks_sha256,
     auth_trust,
     billing_enabled,
     console_client_id,
     intake_admitted,
+    ios_app_ids,
     legal_text_origin,
     mutation_rate_per_minute,
     staff_issuer,
+    staff_oidc_issuer,
+    staff_oidc_jwks_url,
+    staff_ops_hosts,
     tenant_app_urls,
     trusted_edge,
 )
@@ -47,6 +52,7 @@ INSTALLED_APPS = [
     "apps.legal",
     "apps.tenancy",
     "core.idempotency",
+    "core.staff_api",
     "apps.engine_intents",
     "apps.support",
     "apps.media",
@@ -111,3 +117,10 @@ KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
     KODERA_COLLAB_ENGINE_URL,
     KODERA_COLLAB_PUBLIC_URL,
 ) = collaboration_settings(os.environ)
+
+KODERA_STAFF_OIDC_ISSUER = staff_oidc_issuer(os.environ)
+KODERA_STAFF_OIDC_JWKS_URL = staff_oidc_jwks_url(os.environ)
+KODERA_STAFF_OPS_HOSTS = staff_ops_hosts(os.environ)
+KODERA_STAFF_ADMIN_ORIGINS = os.environ.get("KODERA_STAFF_ADMIN_ORIGINS")
+KODERA_IOS_APP_IDS = ios_app_ids(os.environ)
+KODERA_ANDROID_ASSETLINKS_SHA256 = android_assetlinks_sha256(os.environ)

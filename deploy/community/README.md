@@ -136,7 +136,7 @@ Caddy is the only service that publishes HTTP ports. In the `single` topology it
 
 | Path | To |
 | :--- | :--- |
-| `/api/*`, `/health/*` | the server API |
+| `/api/*`, `/health/*`, `/.well-known/apple-app-site-association`, `/.well-known/assetlinks.json` | the server API |
 | `/_kodera/rooms/token` | `room-access` |
 | `/_matrix/client/*`, `/_matrix/media/*`, `/_synapse/client/*` | Synapse's client API and its sign-in callback |
 | `/rtc`, `/rtc/*` | LiveKit signalling |
@@ -144,7 +144,18 @@ Caddy is the only service that publishes HTTP ports. In the `single` topology it
 
 **Caddy alone names the client.** For every upstream it overwrites `X-Forwarded-For` with the address of the peer it accepted, and drops `X-Real-IP` and `Forwarded`: a value a client sends in those headers never reaches Synapse or the API. The `Caddyfile` declares no `trusted_proxies`, because nothing sits in front of Caddy in this profile; if you put your own proxy or load balancer in front, that is a change to review, since Caddy would then see the proxy's address as every client's. Only Caddy and LiveKit publish ports on the host. Synapse, the API and the databases are reachable on the stack's internal network only, so the listener that believes the forwarded address cannot be called around Caddy.
 
-It answers `404` on `/agent/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50200/udp), exactly those of `livekit.yaml`.
+It answers `404` on `/agent/*`, `/staff/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50200/udp), exactly those of `livekit.yaml`.
+
+### Mobile app association
+
+`/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` leave their runtime defaults empty in version control so an unconfigured stack answers `503` (`well_known_unconfigured`) instead of advertising placeholder mobile signing identifiers. To enable iOS Universal Links and Android App Links for official Kodera native builds in operator-owned configuration (comments/examples only — keep uncommitted runtime defaults empty on isolated deployments):
+
+```sh
+# Official Kodera production mobile association example:
+# KODERA_IOS_APP_IDS=UF5852SF57.io.kodera.app
+# KODERA_ANDROID_PACKAGE_NAME=io.kodera.app
+# KODERA_ANDROID_ASSETLINKS_SHA256=66:F3:3A:25:47:F5:4B:3E:DF:0F:BF:9A:E7:D9:C3:E7:F6:66:DB:92:FC:ED:82:F4:15:AE:CB:E1:56:4D:9E:F5
+```
 
 ## Synapse database
 
