@@ -9,7 +9,7 @@ This directory holds commercial **Enterprise Edition (`KODERA_EDITION=enterprise
 Kodera follows a strict, transparent boundary inspired by GitLab, Mattermost, and Grafana (see [`GOVERNANCE.md`](../GOVERNANCE.md)):
 
 1. **Clean-Room Isolation:** `ee/` is loaded strictly when `KODERA_EDITION=enterprise`. Open-source packages (`apps/*`, `packages/*`, `extensions/*`, `deploy/community/`) contain zero static imports of `ee/` and run standalone in Community Edition (`KODERA_EDITION=community`, the default) with zero degraded collaboration features. When `KODERA_EDITION=community`, requests to `/api/v1/ee/billing*` return `404` (`application/problem+json`) and requests to `/api/v1/ee/*` governance endpoints return `403 {"detail": "Enterprise Edition required", "code": "enterprise_edition_required"}`.
-2. **Never cripple individual or team collaboration in Community Edition:** Channels, DMs, voice/video rooms, screen-sharing, file sharing, standard security updates, Passkeys, `#urgence` client lifeline, and the Extension SDK live in the open-source tree (`Apache-2.0` / `AGPL-3.0-or-later`) forever.
+2. **Never cripple individual or team collaboration in Community Edition:** Channels, DMs, voice/video rooms, screen-sharing, file sharing, standard security updates, Passkeys, `#proximity` client check-in codecs, and the Extension SDK live in the open-source tree (`Apache-2.0` / `AGPL-3.0-or-later`) forever.
 3. **Enterprise governance, compliance & billing pillars live in `ee/`:** Features built specifically for CISO, procurement, and multi-entity corporate governance require a commercial subscription at **[kodera.io](https://kodera.io)**.
 
 ## Implemented Enterprise Edition Modules
