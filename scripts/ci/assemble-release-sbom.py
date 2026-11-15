@@ -7,8 +7,8 @@ Merges:
   3. Android `candidate/sbom.cdx.json` (real `.jar`/`.aar` SHA-256 digests + Maven POM SPDX licenses)
 
 Fails closed if any ecosystem is empty, if any Cargo or Android component lacks a 64-hex
-SHA-256 digest or SPDX license, or if any component declares a forbidden copyleft license
-without a permissive SPDX `OR` alternative.
+SHA-256 digest or SPDX license, or if a license falls outside the existing native-package
+policy: recognised identifiers only, with an admitted alternative and no unreviewed exception.
 
 Usage:
     python3 scripts/ci/assemble-release-sbom.py \
@@ -35,13 +35,37 @@ from pathlib import Path
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
-FORBIDDEN_LICENSE = re.compile(
-    r"^(?:A|L)?GPL(?:-\d|\b|$)|^SSPL(?:-\d|\b|$)|^UNLICENSED$|^SEE\s+LICENSE\b",
-    re.IGNORECASE,
+PERMISSIVE = frozenset(
+    {
+        "Apache-2.0",
+        "MIT",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "0BSD",
+        "Zlib",
+        "BSL-1.0",
+        "CC0-1.0",
+        "Unlicense",
+    }
 )
-SPDX_TOKEN_RE = re.compile(
-    r"\s*(?:(\()|(\))|\b(AND|OR|WITH)\b|([^\s()]+))",
-    re.IGNORECASE,
+# Recognised alternatives remain non-admitted unless an OR branch supplies a
+# reviewed permissive choice. Unknown IDs cannot hide behind an admitted branch.
+KNOWN_NONPERMISSIVE = frozenset(
+    {
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "LGPL-2.0-only",
+        "LGPL-2.0-or-later",
+        "LGPL-2.1-only",
+        "LGPL-2.1-or-later",
+        "LGPL-3.0-only",
+        "LGPL-3.0-or-later",
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+    }
 )
 
 
@@ -54,91 +78,59 @@ def normalize_cargo_spdx(raw: str) -> str:
 
 
 def spdx_expression_acceptable(expression: str) -> bool:
-    """Evaluate SPDX expression with parentheses, AND, OR, WITH, refusing copyleft-only licenses."""
-    text = expression.strip()
-    if not text or (FORBIDDEN_LICENSE.search(text) and text.upper().startswith("SEE LICENSE")):
+    """Apply the existing native-package SPDX subset, including unknown-ID refusal."""
+    if (
+        not isinstance(expression, str)
+        or not 0 < len(expression) <= 512
+        or not all(ord(char) >= 32 for char in expression)
+    ):
         return False
-
-    tokens: list[tuple[str, str]] = []
-    pos = 0
-    while pos < len(text):
-        if text[pos].isspace():
-            pos += 1
-            continue
-        match = SPDX_TOKEN_RE.match(text, pos)
-        if match is None:
-            return False
-        lparen, rparen, keyword, ident = match.groups()
-        if lparen:
-            tokens.append(("LPAREN", "("))
-        elif rparen:
-            tokens.append(("RPAREN", ")"))
-        elif keyword:
-            tokens.append((keyword.upper(), keyword.upper()))
-        elif ident:
-            tokens.append(("ID", ident))
-        pos = match.end()
-
-    if not tokens:
+    tokens = re.findall(r"\(|\)|[^\s()]+", expression)
+    if len(tokens) > 128:
         return False
-
     index = 0
 
-    def parse_or() -> bool | None:
+    def primary(depth):
         nonlocal index
-        left = parse_and()
-        if left is None:
-            return None
-        result = left
-        while index < len(tokens) and tokens[index][0] == "OR":
+        if depth > 16 or index == len(tokens):
+            raise ValueError
+        token = tokens[index]
+        index += 1
+        if token == "(":
+            result = either(depth + 1)
+            if index == len(tokens) or tokens[index] != ")":
+                raise ValueError
             index += 1
-            right = parse_and()
-            if right is None:
-                return None
-            result = result or right
-        return result
+            return result
+        if token in {"AND", "OR", "WITH", ")"}:
+            raise ValueError
+        if token not in PERMISSIVE and token not in KNOWN_NONPERMISSIVE:
+            raise ValueError
+        return token in PERMISSIVE
 
-    def parse_and() -> bool | None:
+    def both(depth):
         nonlocal index
-        left = parse_primary()
-        if left is None:
-            return None
-        result = left
-        while index < len(tokens) and tokens[index][0] == "AND":
+        result = primary(depth)
+        while index < len(tokens) and tokens[index] == "AND":
             index += 1
-            right = parse_primary()
-            if right is None:
-                return None
+            right = primary(depth)
             result = result and right
         return result
 
-    def parse_primary() -> bool | None:
+    def either(depth):
         nonlocal index
-        if index >= len(tokens):
-            return None
-        kind, value = tokens[index]
-        if kind == "LPAREN":
+        result = both(depth)
+        while index < len(tokens) and tokens[index] == "OR":
             index += 1
-            inner = parse_or()
-            if inner is None or index >= len(tokens) or tokens[index][0] != "RPAREN":
-                return None
-            index += 1
-            return inner
-        if kind == "ID":
-            index += 1
-            if index < len(tokens) and tokens[index][0] == "WITH":
-                index += 1
-                if index >= len(tokens) or tokens[index][0] != "ID":
-                    return None
-                index += 1
-            stripped = value.strip().rstrip("+")
-            if not stripped:
-                return None
-            return FORBIDDEN_LICENSE.search(stripped) is None
-        return None
+            right = both(depth)
+            result = result or right
+        return result
 
-    evaluated = parse_or()
-    return evaluated is True and index == len(tokens)
+    try:
+        result = either(0)
+        return index == len(tokens) and result
+    except ValueError:
+        return False
 
 
 def cyclonedx_license_choice(spdx_expr: str) -> dict[str, object]:
@@ -403,6 +395,52 @@ def assemble_release_sbom(
 
 
 def run_selftest() -> int:
+    import runpy
+
+    canonical = runpy.run_path(str(Path(__file__).with_name("check-native-packaging.py")))
+    assert PERMISSIVE == canonical["PERMISSIVE"]
+    assert KNOWN_NONPERMISSIVE == canonical["KNOWN_NONPERMISSIVE"]
+    expressions = sorted(PERMISSIVE | KNOWN_NONPERMISSIVE) + [
+        "MIT OR Apache-2.0",
+        "(MIT OR GPL-3.0-only) AND BSD-3-Clause",
+        "MIT OR (GPL-3.0-only AND LGPL-2.1-only)",
+        "MIT AND (Apache-2.0 OR GPL-3.0-only)",
+        "MIT AND GPL-3.0-only",
+        "MPL-2.0",
+        "Unicode-3.0",
+        "LicenseRef-Private",
+        "MIT OR LicenseRef-Private",
+        "MIT OR (Apache-2.0 AND LicenseRef-Private)",
+        "Apache-2.0 WITH Unreviewed-exception",
+        "MIT OR (GPL-3.0-only WITH Classpath-exception-2.0)",
+        "MIT OR SSPL-1.0",
+        "MIT+",
+        "mit",
+        "MIT or Apache-2.0",
+        "MIT OR",
+        "MIT AND (Apache-2.0 OR)",
+        "MIT )",
+        "()",
+        "",
+        " " * 513,
+        "MIT\nOR Apache-2.0",
+        "(" * 17 + "MIT" + ")" * 17,
+        " OR ".join(["MIT"] * 65),
+    ]
+    for expression in expressions:
+        assert spdx_expression_acceptable(expression) == canonical["acceptable_license"](expression), expression
+    for expression in ("MIT", "MIT OR GPL-3.0-only", "(MIT OR GPL-3.0-only) AND BSD-3-Clause"):
+        assert spdx_expression_acceptable(expression), expression
+    refused_expressions = (
+        "MPL-2.0",
+        "LicenseRef-Private",
+        "MIT OR LicenseRef-Private",
+        "Apache-2.0 WITH Unreviewed-exception",
+        "MIT OR (Apache-2.0 AND LicenseRef-Private)",
+    )
+    for expression in refused_expressions:
+        assert not spdx_expression_acceptable(expression), expression
+
     revision = "b" * 40
     with tempfile.TemporaryDirectory(prefix="kodera-assemble-sbom-selftest-") as scratch_str:
         scratch = Path(scratch_str)
@@ -570,9 +608,70 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
             print("[FAIL] expected copyleft crate license to fail closed", file=sys.stderr)
             return 1
 
+        # Exercise every real collector through assembly, not only the predicate.
+        original_inputs = {
+            "cargo": (cargo_meta, json.loads(cargo_meta.read_text(encoding="utf-8"))),
+            "npm": (npm_sbom, json.loads(npm_sbom.read_text(encoding="utf-8"))),
+            "android": (android_sbom, json.loads(android_sbom.read_text(encoding="utf-8"))),
+        }
+        refusal_count = 0
+        for expression in refused_expressions:
+            for ecosystem, (path, original) in original_inputs.items():
+                changed = json.loads(json.dumps(original))
+                if ecosystem == "cargo":
+                    changed["packages"][1]["license"] = expression
+                else:
+                    changed["components"][0]["licenses"] = [{"expression": expression}]
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                refused_output = scratch / f"refused-{refusal_count}.json"
+                try:
+                    assemble_release_sbom(
+                        npm_sbom, cargo_lock, cargo_meta, android_sbom, revision, refused_output
+                    )
+                except ValueError as error:
+                    assert "license" in str(error), (ecosystem, expression, str(error))
+                else:
+                    raise AssertionError(("unreviewed license assembled", ecosystem, expression))
+                finally:
+                    path.write_text(json.dumps(original), encoding="utf-8")
+                assert not refused_output.exists(), (ecosystem, expression)
+                refusal_count += 1
+
+        # Keep missing-license/digest and empty-ecosystem refusals independent
+        # of the strengthened SPDX parser.
+        for ecosystem, (path, original) in original_inputs.items():
+            for mutation in ("empty", "missing-license", "missing-digest"):
+                if ecosystem == "npm" and mutation != "empty":
+                    continue  # Existing npm collection retains upstream inventory semantics.
+                changed = json.loads(json.dumps(original))
+                selected_lock = cargo_lock
+                if mutation == "empty":
+                    changed["packages" if ecosystem == "cargo" else "components"] = []
+                elif ecosystem == "cargo":
+                    if mutation == "missing-license":
+                        changed["packages"][1].pop("license")
+                    else:
+                        selected_lock = bad_lock
+                else:
+                    changed["components"][0].pop("licenses" if mutation == "missing-license" else "hashes")
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                refused_output = scratch / f"guard-{ecosystem}-{mutation}.json"
+                try:
+                    assemble_release_sbom(
+                        npm_sbom, selected_lock, cargo_meta, android_sbom, revision, refused_output
+                    )
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(("existing guard bypassed", ecosystem, mutation))
+                finally:
+                    path.write_text(json.dumps(original), encoding="utf-8")
+                assert not refused_output.exists()
+
     print(
         "OK: assemble-release-sbom.py selftest passed "
-        "(npm + Cargo.lock + Android merge + checksum/copyleft refusals)."
+        f"(merge, checksum/copyleft guards, {len(expressions)} canonical SPDX comparisons, "
+        f"{refusal_count} unreviewed-license assembly refusals and 7 existing collector guards)."
     )
     return 0
 
