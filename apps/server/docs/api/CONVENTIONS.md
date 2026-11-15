@@ -428,3 +428,9 @@ Checklist a reviewer applies to any endpoint pull request:
 - Follows contract 0.37.2: the normative Espace table names the tenant's `slug` (`Tenant.slug`), not the organisation's, as the homeserver's `server_name`, as `TenantCreation.slug` says and the console derives it (ADR-0023). No path, schema, parameter or response changes.
 - Follows contract 0.38.0: the reserved tenant slugs gain the platform labels of `kodera.io` that organisation slugs already reserve, and the platform hosts `errors` and `ops-admin`, since a tenant's slug names its Matrix homeserver (ADR-0023). They are refused `422` at the slug by `placeOrder` and `createTenant`, and answered `reserved` by `checkSlugAvailability`. No problem type changes.
 - Follows contract 0.39.0: the reserved organisation slugs gain `errors` and `ops-admin`, platform-prod hosts of `kodera.io` the 0.22.0 list missed. `createOrganisation` refuses them `422 reserved`. No problem type changes.
+
+## Voluntary proximity protocol exception (0.46.0)
+
+Status: Active
+
+The ephemeral bootstrap/checkin/resolve/checkout POSTs take no Idempotency-Key and retain no durable response replay. Bootstrap and resolve read current authority; duplicate checkin token counters are refused; checkout is repeatable. The five endpoints always recheck current customer membership and refuse coordinates/GPS. No Job or durable customer location record is created. Proximity epoch_expires_at and presence expires_at explicitly use integer Unix seconds; lease expiry is exactly (epoch+1)*900 and clients receive no skew extension. Presence collections are bounded ephemeral snapshots, not durable cursor resources. Clients stop and wipe on lease expiry or failed authenticated rebootstrap; renewal never extends voluntary consent.
