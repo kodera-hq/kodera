@@ -279,4 +279,13 @@ export const handlers: HttpHandler[] = [
   http.post(BASE + "/proximity/resolve", () => answer(EXAMPLES["resolveProximityTokens"])),
   http.get(BASE + "/proximity/nearby", () => answer(EXAMPLES["getNearbyProximity"])),
   http.post(BASE + "/proximity/checkout", () => answer(EXAMPLES["checkOutProximity"])),
+  http.post(BASE + "/organisations/:organisation_id/confidential/devices", ({ request }) => answerIdempotent(EXAMPLES["registerConfidentialDevice"], request)),
+  http.post(BASE + "/organisations/:organisation_id/confidential/devices/revoke", ({ request }) => answerIdempotent(EXAMPLES["revokeConfidentialDevice"], request)),
+  http.post(BASE + "/organisations/:organisation_id/confidential/key-packages", ({ request }) => answerIdempotent(EXAMPLES["publishConfidentialKeyPackage"], request)),
+  http.post(BASE + "/organisations/:organisation_id/confidential/rooms", ({ request }) => answerIdempotent(EXAMPLES["createConfidentialRoom"], request)),
+  http.post(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/key-packages/claims", ({ request }) => answerIdempotent(EXAMPLES["claimConfidentialKeyPackage"], request)),
+  http.post(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/commits", ({ request }) => answerIdempotent(EXAMPLES["commitConfidentialEpoch"], request)),
+  http.post(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/participants/retire", ({ request }) => answerIdempotent(EXAMPLES["retireConfidentialParticipant"], request)),
+  http.get(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/envelopes", () => answer(EXAMPLES["listConfidentialEnvelopes"])),
+  http.post(BASE + "/organisations/:organisation_id/confidential/rooms/:room_id/envelopes", ({ request }) => answerIdempotent(EXAMPLES["sendConfidentialEnvelope"], request)),
 ]

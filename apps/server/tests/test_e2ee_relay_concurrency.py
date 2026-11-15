@@ -60,7 +60,7 @@ def test_competing_admin_claims_never_deliver_the_same_package_twice(relay):
             lambda: operation(relay, "claim_package", 1, body),
         ]
     )
-    assert sorted(result[0] for result in results) == [200, 404]
+    assert sorted(result[0] for result in results) == [200, 409]
     assert KeyPackage.objects.filter(device_id=relay[5][2], claimed_at__isnull=False).count() == 1
 
 

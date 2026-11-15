@@ -379,10 +379,10 @@ describe('the immutable contract consumer', () => {
       'src/mocks/generated/problems.ts':
         '82377473578e293b1f7fcea3a987e250f4f58ef0a0e9d89bb959052a6266cc88',
       'src/mocks/generated/examples.ts':
-        'b24673d1dee3b893589d86b07b68f42e69f524ec550db89ee9072468ff2d2db9',
+        'a1884aa58500779f0752567184ab83a7b74a80486207c30d80e23cf281373763',
       'src/mocks/generated/handlers.ts':
-        '738f39762e1538412ead4a2ee9525a0948196bad5ff3e3e4c58e0338fd983aa2',
-      'src/api/schema.d.ts': '1db8dfb603cf54d637183e5ba7147443e340e4df066f7ac606b7d11dce21a7ca',
+        '204bfc2070b755e949ebf19dcb29d0924878714e5566904357ded13ed5f9691f',
+      'src/api/schema.d.ts': '940c8654ed9d5e28396fe673d66f463ecf45689a9385cb45951a4b6e965a441d',
     }
     for (const [path, expected] of Object.entries(hashes)) {
       expect(sha(readFileSync(join(root, path)))).toBe(expected)
