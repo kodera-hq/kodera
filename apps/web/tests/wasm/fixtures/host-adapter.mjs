@@ -14,7 +14,7 @@ export const CASES = Object.freeze([
   'promise-immediate', 'promise-thenable', 'promise-proxy', 'promise-reject', 'host-throw',
   'ack-short', 'ack-long', 'ack-magic', 'ack-owner', 'ack-organisation', 'ack-membership',
   'ack-key', 'ack-prior-generation', 'ack-generation', 'ack-digest',
-  'busy', 'pre-close', 'cas-close', 'post-close', 'post-context', 'store-close', 'store-abort', 'owner-revoke',
+  'generated-export-mutant', 'busy', 'pre-close', 'cas-close', 'post-close', 'post-context', 'store-close', 'store-abort', 'owner-revoke',
 ])
 const need = (value) => { if (!value) throw 'Fixture' }
 const hex = (bytes) => Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
@@ -60,7 +60,7 @@ function acknowledge(context, metadata, digest) {
 // Observe real strict transactions; no Promise/request callback is replaced.
 function transactions() {
   const original = IDBDatabase.prototype.transaction
-  const state = { strictWrites: 0, completedWrites: 0, abortedWrites: 0, abortNext: false }
+  const state = { strictWrites: 0, completedWrites: 0, abortedWrites: 0, abortNext: false, abortObserved: null }
   IDBDatabase.prototype.transaction = function (...args) {
     const tx = Reflect.apply(original, this, args)
     if (args[1] === 'readwrite') {
@@ -68,7 +68,14 @@ function transactions() {
       state.strictWrites += 1
       tx.addEventListener('complete', () => { state.completedWrites += 1 }, { once: true })
       tx.addEventListener('abort', () => { state.abortedWrites += 1 }, { once: true })
-      if (state.abortNext) { state.abortNext = false; queueMicrotask(() => tx.abort()) }
+      if (state.abortNext) {
+        state.abortNext = false
+        state.abortObserved = new Promise((resolve) => {
+          tx.addEventListener('abort', () => resolve(true), { once: true })
+          tx.addEventListener('complete', () => resolve(false), { once: true })
+        })
+        queueMicrotask(() => tx.abort())
+      }
     }
     return tx
   }
@@ -83,6 +90,21 @@ export function createFixture() {
     async run(input, mode) {
       const accepted = scope(input)
       need(CASES.includes(mode) && alive && !actor)
+      if (mode === 'generated-export-mutant') {
+        need(typeof BrowserMlsDevice === 'function')
+        let missingExport = false
+        try { await import('./mutant.worker.mjs') }
+        catch (error) {
+          const match = error instanceof SyntaxError && typeof error.message === 'string'
+            ? /^The requested module ['"]([^'"]+)['"] does not provide an export named ['"]BrowserMlsDevice['"]$/.exec(error.message) : null
+          const rawModule = '/native/mutant-kodera_rs.js'
+          const absoluteModule = new URL(rawModule, self.location.origin).href
+          need(match && (match[1] === rawModule || match[1] === absoluteModule))
+          missingExport = true
+        }
+        need(missingExport)
+        return { status: 'refused', code: 'InvalidInput', stage: 'input' }
+      }
       const observe = transactions()
       let prior
       let ready = false, generation = 0, publicKey = null, thenGets = 0, thenCalls = 0, faultCurrent = true, stage = 'input'
@@ -245,6 +267,16 @@ export function createFixture() {
             try { actor.publicKey() } catch (error) { unpublished = closed(error) }
             need(['RestoreRequired', 'Closed', 'InvalidInput'].includes(unpublished))
             if (pending) await pending.catch(() => {})
+            if (mode === 'store-abort') {
+              need(observe.state.abortObserved instanceof Promise && await observe.state.abortObserved === true)
+              need(alive && observe.state.abortedWrites >= 1 && code === 'Storage' && stage === 'cas' && unpublished === 'RestoreRequired')
+              const afterAbort = await store.readUniqueDeviceVault(context)
+              try { need(alive && afterAbort === null) }
+              finally { afterAbort?.state.checkpoint.fill(0) }
+              let stillUnpublished
+              try { actor.publicKey() } catch (error) { stillUnpublished = closed(error) }
+              need(stillUnpublished === 'RestoreRequired')
+            }
             need(thenGets === 0 && thenCalls === 0)
             return { status: 'refused', code, unpublished, committedPublicKey: publicKey, stage,
               completedWrites: observe.state.completedWrites, abortedWrites: observe.state.abortedWrites }

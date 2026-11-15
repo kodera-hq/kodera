@@ -13,19 +13,24 @@ function request(context, mode, invalidNonce = false) {
   const nonce = hex(crypto.getRandomValues(new Uint8Array(16)))
   let phase = 'boot', completed = false, count = 0
   return new Promise((resolve, reject) => {
+    let silenceTimeout
     const end = (error, value) => {
       if (completed) return
-      completed = true; clearTimeout(timeout); worker.terminate(); activeWorkers.delete(worker)
+      completed = true; clearTimeout(timeout); clearTimeout(silenceTimeout); worker.terminate(); activeWorkers.delete(worker)
       if (error) reject(new Error('Fixture')); else resolve(value)
     }
     const timeout = setTimeout(() => end(true), 15000)
     worker.onerror = (event) => { event.preventDefault(); end(true) }
+    worker.onmessageerror = () => end(true)
     worker.onmessage = ({ data }) => {
       if (completed || ++count > 8 || data?.version !== 1 || data.nonce !== nonce) { end(true); return }
       if (phase === 'boot' && exact(data, ['version', 'operation', 'nonce']) && data.operation === 'nonceAck') {
-        phase = 'run'
-        worker.postMessage({ version: 1, operation: 'run', nonce: invalidNonce ? '0'.repeat(32) : nonce,
-          requestId: 1, context, mode })
+        phase = invalidNonce ? 'silence' : 'run'
+        const runNonce = invalidNonce ? (nonce[0] === '0' ? '1' : '0') + nonce.slice(1) : nonce
+        if (invalidNonce) silenceTimeout = setTimeout(() => end(false, { status: 'silence-after-ack' }), 500)
+        try {
+          worker.postMessage({ version: 1, operation: 'run', nonce: runNonce, requestId: 1, context, mode })
+        } catch { end(true) }
         return
       }
       if (phase !== 'run' || data.requestId !== 1 || data.operation !== 'result' ||
@@ -110,18 +115,6 @@ async function main() {
   need([...params.keys()].every((key) => key === 'case') && params.getAll('case').length === 1)
   const name = params.get('case')
   if (name === 'csp-control') { await policy(true); return { status: 'passed', case: name } }
-  if (name === 'generated-export-mutant') {
-    await new Promise((resolve, reject) => {
-      const worker = new Worker('/fixture/mutant.worker.mjs', { type: 'module' })
-      const timeout = setTimeout(() => { worker.terminate(); reject(new Error('Fixture')) }, 3000)
-      worker.onmessage = () => { clearTimeout(timeout); worker.terminate(); reject(new Error('Fixture')) }
-      worker.onerror = (event) => {
-        event.preventDefault(); clearTimeout(timeout); worker.terminate();
-        /does not provide an export named ['"]BrowserMlsDevice['"]/.test(event.message) ? resolve() : reject(new Error('Fixture'))
-      }
-    })
-    return { status: 'passed', case: name }
-  }
   const context = { ownerId: crypto.randomUUID(), organisationId: crypto.randomUUID(), membershipId: crypto.randomUUID() }
   await policy(false)
   if (name === 'restart' || name === 'lost-ack-restart') {
@@ -136,9 +129,9 @@ async function main() {
     const refused = await request(context, name)
     need(refused.status === 'refused' && (name === 'wrong-generation' ? refused.code === 'InvalidInput' : refused.code === 'Crypto'))
   } else if (name === 'wrong-nonce') {
-    let failed = false
-    try { await request(context, 'create', true) } catch { failed = true }
-    need(failed)
+    await verify(await request(context, 'create'), context)
+    const outcome = await request(context, 'create', true)
+    need(exact(outcome, ['status']) && outcome.status === 'silence-after-ack')
   } else {
     const value = await request(context, name)
     if (name === 'create' || name === 'busy') { await verify(value, context); need(value.strictWrites >= 2 && value.completedWrites >= 2) }
@@ -152,7 +145,10 @@ async function main() {
       else if (name === 'pre-close') need(value.code === 'Closed' && value.stage === 'input' && value.unpublished === 'Closed')
       else if (['cas-close', 'post-close', 'post-context'].includes(name)) need(value.code === 'Storage' && value.stage === 'committed' && value.completedWrites >= 2)
       else if (name === 'free-pending') need(['Storage', 'Closed'].includes(value.code) && value.stage === 'committed')
-      else if (name === 'store-abort') need(value.code === 'Storage' && value.stage === 'cas' && value.abortedWrites >= 1)
+      else if (name === 'store-abort') need(value.code === 'Storage' && value.stage === 'cas' &&
+        value.abortedWrites >= 1 && value.unpublished === 'RestoreRequired' && value.committedPublicKey === null)
+      else if (name === 'generated-export-mutant') need(exact(value, ['status', 'code', 'stage']) &&
+        value.code === 'InvalidInput' && value.stage === 'input')
       else if (name === 'store-close' || name === 'owner-revoke') need(value.code === 'Storage' && value.stage === 'cas')
       else if (name === 'missing-vault') need(value.code === 'Context')
       else need(value.code === 'InvalidInput' && (value.stage === undefined || value.stage === 'input'))
