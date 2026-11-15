@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setTokenProvider } from '../../api/client'
 import { coreApiUrl } from '../../config'
@@ -47,7 +47,7 @@ const WORKSPACES_FIXTURE: readonly PassportWorkspaceEntry[] = [
 const BASE = 'https://core.test/api/v1'
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
 })
 
 beforeEach(async () => {
