@@ -47,6 +47,19 @@ pub use mls_engine::{
     MAX_SEALED_MLS_DEVICE_BYTES,
 };
 
+#[cfg(all(
+    feature = "browser-bindings",
+    target_arch = "wasm32",
+    target_os = "unknown"
+))]
+mod browser_bindings;
+#[cfg(all(
+    feature = "browser-bindings",
+    target_arch = "wasm32",
+    target_os = "unknown"
+))]
+pub use browser_bindings::BrowserMlsDevice;
+
 #[cfg(feature = "megolm-engine")]
 mod megolm_engine;
 #[cfg(feature = "megolm-engine")]
