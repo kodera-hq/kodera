@@ -1,5 +1,6 @@
 // Hosted Typecheck includes tests/unit through tsconfig.node.json. These runtime
 // compiler checks additionally execute the in-memory declaration mutations.
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -32,6 +33,78 @@ const expectedLock = {
   version: '0.45.0',
   sha256: '507e657768c33c0ccd3ad5aa0fe5d3ec79e5856c7d65a39ab1c7825f36aaa940',
 }
+const commitOidPattern = /^[0-9a-f]{40}(?![\s\S])/
+const maxPinnedBlobBytes = 4 * 1024 * 1024
+
+type GitBlobLookup = { status: 'present'; bytes: Buffer } | { status: 'absent' }
+
+function readLocalPinnedGitBlob(commit: string, path: string): GitBlobLookup {
+  requireThat(commitOidPattern.test(commit), 'immutable lock commit oid')
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }
+  const treeCheck = spawnSync('git', ['--no-lazy-fetch', 'cat-file', '-t', `${commit}^{tree}`], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024,
+    timeout: 5_000,
+    env,
+  })
+  requireThat(!treeCheck.error, 'git commit lookup failed')
+  if (treeCheck.status !== 0) return { status: 'absent' }
+  requireThat(treeCheck.stdout.trim() === 'tree', 'immutable lock commit tree')
+  const entry = spawnSync(
+    'git',
+    ['--no-lazy-fetch', 'ls-tree', '--full-tree', '-z', commit, '--', path],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024,
+      timeout: 5_000,
+      env,
+    }
+  )
+  requireThat(!entry.error && entry.status === 0, 'git ls-tree lookup failed')
+  const record = entry.stdout.split('\0').find((item) => item.length > 0)
+  requireThat(record !== undefined, 'pinned contract path absent in available commit')
+  const header = record.split('\t')[0] ?? ''
+  const [, kind, blobOid] = header.trim().split(/\s+/)
+  requireThat(
+    kind === 'blob' && blobOid !== undefined && commitOidPattern.test(blobOid),
+    'pinned contract entry must be a git blob'
+  )
+  const exists = spawnSync('git', ['--no-lazy-fetch', 'cat-file', '-e', blobOid], {
+    cwd: root,
+    maxBuffer: 64 * 1024,
+    timeout: 5_000,
+    env,
+  })
+  requireThat(!exists.error, 'git blob existence check failed')
+  if (exists.status !== 0) return { status: 'absent' }
+  const blobRead = spawnSync('git', ['--no-lazy-fetch', 'cat-file', 'blob', blobOid], {
+    cwd: root,
+    maxBuffer: maxPinnedBlobBytes,
+    timeout: 5_000,
+    env,
+  })
+  requireThat(!blobRead.error && blobRead.status === 0, 'git blob read failed')
+  return { status: 'present', bytes: blobRead.stdout }
+}
+
+function checkPinnedGitProvenance(
+  metadata: unknown,
+  lookup: (commit: string, path: string) => GitBlobLookup = readLocalPinnedGitBlob
+): 'verified' | 'absent' {
+  const record = object(metadata)
+  const commit = String(record['commit'] ?? '')
+  const ref = String(record['ref'] ?? '')
+  const path = String(record['path'] ?? '')
+  requireThat(commitOidPattern.test(commit) && ref === commit, 'immutable lock commit oid')
+  const resolved = lookup(commit, path)
+  if (resolved.status === 'absent') return 'absent'
+  const pinnedSpec = parse(resolved.bytes.toString('utf8')) as Spec
+  requireThat(pinnedSpec.info.version === record['version'], 'pinned git blob version')
+  requireThat(sha(resolved.bytes) === record['sha256'], 'pinned git blob bytes')
+  return 'verified'
+}
 
 function requireThat(condition: unknown, reason: string): asserts condition {
   if (!condition) throw new Error(reason)
@@ -52,6 +125,7 @@ function checkPin(document: Spec, metadata: unknown, bytes: Buffer) {
   )
   requireThat(document.info.version === expectedLock.version, 'immutable contract version')
   requireThat(sha(bytes) === expectedLock.sha256, 'immutable contract bytes')
+  checkPinnedGitProvenance(metadata)
 }
 
 function consumeResponses(document: Spec) {
@@ -162,6 +236,24 @@ describe('the immutable contract consumer', () => {
     expect(() => checkPin(spec, lock, Buffer.concat([raw, Buffer.from('\n')]))).toThrow(
       'immutable contract bytes'
     )
+  })
+
+  it('verifies local git blob provenance offline and tolerates shallow object absence', () => {
+    expect(['verified', 'absent']).toContain(checkPinnedGitProvenance(lock))
+    expect(checkPinnedGitProvenance(lock, () => ({ status: 'absent' }))).toBe('absent')
+    expect(() =>
+      checkPinnedGitProvenance(lock, () => ({
+        status: 'present',
+        bytes: Buffer.concat([raw, Buffer.from('\n')]),
+      }))
+    ).toThrow('pinned git blob bytes')
+    const staleVersion = Buffer.from(
+      raw.toString('utf8').replace('  version: 0.45.0', '  version: 0.44.1'),
+      'utf8'
+    )
+    expect(() =>
+      checkPinnedGitProvenance(lock, () => ({ status: 'present', bytes: staleVersion }))
+    ).toThrow('pinned git blob version')
   })
 
   it('declares the bounded, nonstored transient response and contact new-key recovery', () => {

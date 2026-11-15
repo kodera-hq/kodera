@@ -24,7 +24,16 @@ from django.test import Client, RequestFactory, override_settings
 from django.urls import URLPattern, URLResolver, get_resolver
 from django.utils import timezone
 
-from apps.billing.models import CapacityTier, Order, Pack, Plan, Price, Subscription
+from apps.billing.models import (
+    CapacityTier,
+    Invoice,
+    Order,
+    Pack,
+    Payment,
+    Plan,
+    Price,
+    Subscription,
+)
 from apps.identity.models import STAFF_REALM, Identity, StaffRole, User
 from apps.jobs import services as job_services
 from apps.jobs.models import Job
@@ -2014,6 +2023,48 @@ def test_finops_http_projection_fences_subscription_and_provider_identifiers() -
         price_change_notice_days=90,
         **snapshot,
     )
+    provider_customer_sentinel = f"cus_finops_sentinel_{suffix}"
+    provider_payment_sentinel = f"pi_finops_sentinel_{suffix}"
+    provider_invoice_sentinel = f"in_finops_sentinel_{suffix}"
+    invoice = Invoice.objects.create(
+        organisation=org,
+        subscription=sub,
+        order=order,
+        number=f"KD-2026-FINOPS-{suffix.upper()}",
+        state="paid",
+        currency="EUR",
+        vat_regime="fr_standard",
+        issuer_legal_name="Samourai Coop",
+        issuer_address="10 rue de Penthievre, 75008 Paris",
+        issuer_country="FR",
+        issuer_siren="899573422",
+        issuer_vat_number="FR44899573422",
+        customer_legal_name="FinOps Fence SAS",
+        customer_address_line1="1 avenue de l'Opera",
+        customer_postal_code="75001",
+        customer_city="Paris",
+        customer_country="FR",
+        total_excl_vat_minor=29_000,
+        vat_amount_minor=5_800,
+        total_incl_vat_minor=34_800,
+        amount_paid_minor=34_800,
+        issued_at=now_dt,
+        due_at=now_dt + timedelta(days=30),
+        paid_at=now_dt,
+        external_ref=provider_invoice_sentinel,
+    )
+    payment = Payment.objects.create(
+        organisation=org,
+        invoice=invoice,
+        provider="stripe",
+        provider_ref=provider_payment_sentinel,
+        state="succeeded",
+        amount_minor=34_800,
+        currency="EUR",
+        last_event_at=now_dt,
+        provider_customer_ref=provider_customer_sentinel,
+        allocated=True,
+    )
 
     with override_settings(**STAFF_PLANE_SETTINGS):
         client = Client()
@@ -2080,13 +2131,25 @@ def test_finops_http_projection_fences_subscription_and_provider_identifiers() -
                 "created_at",
             }
 
-        raw_text = r_finops.content.decode("utf-8")
-        for secret_uuid in (org.id, tenant.id, order.id, sub.id):
-            assert str(secret_uuid) not in raw_text
-
         r_overview = client.get(
             "/staff/v1/read/overview",
             **_auth_headers(t_owner_hwk, host=ADMIN_HOST),
         )
         assert r_overview.status_code == 200
         _assert_no_forbidden_finops_keys(r_overview.json()["financial_headline"])
+
+        for response_bytes in (r_snap.content, r_finops.content, r_overview.content):
+            raw_text = response_bytes.decode("utf-8")
+            for secret_value in (
+                str(org.id),
+                str(tenant.id),
+                str(order.id),
+                str(sub.id),
+                str(invoice.id),
+                str(payment.id),
+                str(invoice.number),
+                provider_customer_sentinel,
+                provider_payment_sentinel,
+                provider_invoice_sentinel,
+            ):
+                assert secret_value not in raw_text
