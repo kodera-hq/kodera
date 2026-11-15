@@ -117,8 +117,8 @@ tags:
     description: The commercial and legal entity that buys a tenant.
   - name: Memberships
     description: People in an organisation, their roles, their invitations, on-site enrolment.
-  - name: Confidential
-    description: Planned authenticated opaque envelope relay; production routing is not admitted.
+  - name: Confidential transport
+    description: Authenticated opaque envelope relay mounted on customer HTTP routes behind default-off KODERA_E2EE_RELAY_ENABLED.
   - name: Proximity
     description: Voluntary, ephemeral workspace presence and epoch-limited radio capabilities.
   - name: Workspace
@@ -9486,7 +9486,7 @@ paths:
         escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their
         supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard
         base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused.
-        Signing operation is claim-key-package. Resource coordinate is the path room UUID.'
+        Signing operation is claim-key-package. Resource coordinate is the path room UUID. The required signed epoch must equal the current room epoch; stale epochs return 409.'
       tags:
       - Confidential transport
       security:
@@ -9574,7 +9574,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConfidentialTargetDevice'
+              $ref: '#/components/schemas/ConfidentialEpochTargetDevice'
   /organisations/{organisation_id}/confidential/rooms/{room_id}/commits:
     post:
       operationId: commitConfidentialEpoch
@@ -9704,7 +9704,7 @@ paths:
         use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body.
         All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers
         and bodies over 786432 bytes are refused. Signing operation is retire-room-device. Resource coordinate is
-        the path room UUID.'
+        the path room UUID. The required signed epoch must equal the current room epoch; stale epochs return 409.'
       tags:
       - Confidential transport
       security:
@@ -9794,7 +9794,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConfidentialTargetDevice'
+              $ref: '#/components/schemas/ConfidentialEpochTargetDevice'
   /organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes:
     post:
       operationId: sendConfidentialEnvelope
@@ -19146,6 +19146,43 @@ components:
         signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
       description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
         cryptographic evidence.'
+    ConfidentialEpochTargetDevice:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - targetDeviceId
+      - epoch
+      - signature
+      properties:
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Current room epoch, included in the unchanged signed unsigned-body transcript; stale epochs are refused.
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        targetDeviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      examples:
+      - epoch: 0
+        deviceId: 01950000-0000-7000-8000-0000000000a2
+        targetDeviceId: 01950000-0000-7000-8000-0000000000a2
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
     ConfidentialDeviceRevoked:
       type: object
       additionalProperties: false
@@ -19455,14 +19492,7 @@ components:
         headSequence: 1
         deviceIds:
         - 01950000-0000-7000-8000-0000000000a2
-      - epoch: 1
-        commitEnvelopeId: 01950000-0000-7000-8000-0000000000c2
-        commitSequence: 1
-        headSequence: 2
-        deviceIds:
-        - 01950000-0000-7000-8000-0000000000a2
-        - 01950000-0000-7000-8000-0000000000a3
-      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+      description: 'When a Commit also appends a Welcome, headSequence can exceed commitSequence. Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
         cryptographic evidence.'
     ConfidentialApplication:
       type: object
