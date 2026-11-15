@@ -27,10 +27,23 @@ consumed once under a transactional claim. Clients must additionally validate th
 its protocol credential and its expected device key before admission. Server authentication or
 proof of possession alone is not out-of-band identity verification or hardware attestation.
 
-Permanent device revocation discards its unclaimed directory payloads. Already-claimed packages
-have left that directory and remain subject to organisation/account erasure; revocation blocks
-their disclosure through both new claims and cached response replay immediately. Revocation
-must not wait on a foreign claimant's erasure fence while holding the workspace lock.
+Permanent device revocation discards every remaining package payload, including claimed packages.
+Immutable claim/reference metadata remains inventoried for account erasure and controller-owned
+retention; account cleanup revokes devices and discards bytes, while organisation erasure removes
+the metadata rows. Removing
+bytes does not revive authority: the database permits only monotonic payload removal with all
+claim/binding fields unchanged, without waiting on a foreign claimant's erasure fence after a
+workspace lock. Expired packages are discarded on subsequent owned directory activity; room
+admission also discards expired or superseded claimed payloads. There is no background TTL
+worker in this increment, so inactive rooms still require the existing erasure/operator policy.
+
+Claim and retirement requests carry a required signed current epoch. A proof captured for an
+older epoch cannot execute again with a fresh Idempotency-Key. A retry using the original key
+may replay its prior result after a later epoch only while current authority still permits it;
+that replay does not repeat the effect. Each target/room/epoch accepts one claim, enforced by
+both the serialized service and a database uniqueness constraint, including after payload
+removal. Expired or discarded claim metadata cannot authorize an added device: advance the
+room and make a fresh current-epoch claim before admission.
 
 The relay binds an explicit room to one existing text channel; it never upgrades the channel's
 ordinary Matrix room in place. Only an administrator with current channel visibility may create
@@ -42,7 +55,11 @@ grant. Removed or disabled devices cannot publish, claim, receive or replay disc
 
 Each room stores the selected algorithm, current epoch and admitted device roster. Bounded
 Welcome, Commit and Application envelopes contain binary ciphertext plus explicit routing
-metadata. There is no body, formatted body, decrypted text, searchable document, media key or
+metadata. Application storage stops at 4,096 total envelopes. A separate bounded reserve permits
+Commit/Welcome control frames up to 4,225 total envelopes so reaching application capacity does
+not immediately prevent eviction. The reserve is finite; reaching its hard ceiling refuses
+further writes rather than allowing unbounded retention. There is no automatic log rollover.
+There is no body, formatted body, decrypted text, searchable document, media key or
 private device key column. Unknown JSON fields and duplicate JSON keys are refused before
 service execution. Accepted envelopes never pass through the ordinary document/search pipeline.
 
@@ -70,6 +87,10 @@ and unbounded binary values. API role grants remain table/column scoped. Organis
 erasure fences, inventory and purge paths must cover every new stored association before the
 relay routes can be published. Audit records include identifiers and enumerated actions only;
 neither ciphertext nor package material nor signatures enter request logs or audit metadata.
+The account inventory's `directory_packages` counts all retained package metadata rows; the
+`e2ee_directory_packages_discarded` purge count measures payloads actually removed. These are
+different obligations, so an already discarded row remains inventoried with a zero payload-purge
+count. Payload discard updates `updated_at` without rewriting immutable claim history.
 
 Relay privacy hooks install after the Enterprise and proximity replacements of Core functions.
 Downgrade checks retained relay rows and durable erasure inventory/count markers before removing

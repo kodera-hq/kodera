@@ -177,9 +177,10 @@ mod tests {
                 RelayStatement::ClaimKeyPackage {
                     room: &room,
                     target: &target,
+                    epoch: 7,
                 },
                 "claim-key-package",
-                vec!["deviceId", "targetDeviceId"],
+                vec!["deviceId", "epoch", "targetDeviceId"],
                 true,
             ),
             (
@@ -208,9 +209,10 @@ mod tests {
                 RelayStatement::RetireRoomDevice {
                     room: &room,
                     target: &target,
+                    epoch: 7,
                 },
                 "retire-room-device",
-                vec!["deviceId", "targetDeviceId"],
+                vec!["deviceId", "epoch", "targetDeviceId"],
                 true,
             ),
             (
@@ -266,6 +268,46 @@ mod tests {
             serde_json::from_slice::<Value>(megolm.body()).unwrap()["algorithm"],
             "m.megolm.v1.aes-sha2"
         );
+    }
+
+    #[test]
+    fn claim_and_retirement_proofs_bind_the_requested_epoch() {
+        let (own, _store) = fixture(10);
+        let room = room(1);
+        let target = admitted(11);
+        let before = own.generation();
+        for retirement in [false, true] {
+            let statement = |value| {
+                if retirement {
+                    RelayStatement::RetireRoomDevice {
+                        room: &room,
+                        target: &target,
+                        epoch: value,
+                    }
+                } else {
+                    RelayStatement::ClaimKeyPackage {
+                        room: &room,
+                        target: &target,
+                        epoch: value,
+                    }
+                }
+            };
+            let mut signatures = Vec::new();
+            for value in [0, 7, MAX_JSON_INTEGER] {
+                let request = own.sign_relay_request(statement(value)).unwrap();
+                verify_public(&own, &request, &["deviceId", "epoch", "targetDeviceId"]);
+                let body: Value = serde_json::from_slice(request.body()).unwrap();
+                assert_eq!(body["epoch"], value);
+                signatures.push(body["signature"].as_str().unwrap().to_owned());
+            }
+            assert_ne!(signatures[0], signatures[1]);
+            assert_ne!(signatures[1], signatures[2]);
+            assert!(matches!(
+                own.sign_relay_request(statement(MAX_JSON_INTEGER + 1)),
+                Err(NativeCryptoError::InvalidInput)
+            ));
+        }
+        assert_eq!(own.generation(), before);
     }
 
     #[test]
@@ -421,7 +463,8 @@ mod tests {
         assert!(matches!(
             own.sign_relay_request(RelayStatement::ClaimKeyPackage {
                 room: &foreign,
-                target: &target
+                target: &target,
+                epoch: 0,
             }),
             Err(NativeCryptoError::ScopeMismatch)
         ));
@@ -469,6 +512,7 @@ pub enum RelayStatement<'a> {
     ClaimKeyPackage {
         room: &'a NativeRoomScope,
         target: &'a RelayId,
+        epoch: u64,
     },
     SendApplication {
         room: &'a NativeRoomScope,
@@ -485,6 +529,7 @@ pub enum RelayStatement<'a> {
     RetireRoomDevice {
         room: &'a NativeRoomScope,
         target: &'a RelayId,
+        epoch: u64,
     },
     RevokeDevice {
         target: &'a RelayId,
@@ -571,9 +616,14 @@ impl OpenMlsDevice {
                     );
                     "create-room"
                 }
-                RelayStatement::ClaimKeyPackage { room, target } => {
+                RelayStatement::ClaimKeyPackage {
+                    room,
+                    target,
+                    epoch: value,
+                } => {
                     resource = Some(self.relay_room(room)?);
                     body.insert("targetDeviceId", json!(target.as_str()));
+                    body.insert("epoch", epoch(value)?);
                     "claim-key-package"
                 }
                 RelayStatement::SendApplication {
@@ -612,9 +662,14 @@ impl OpenMlsDevice {
                     }
                     "commit-epoch"
                 }
-                RelayStatement::RetireRoomDevice { room, target } => {
+                RelayStatement::RetireRoomDevice {
+                    room,
+                    target,
+                    epoch: value,
+                } => {
                     resource = Some(self.relay_room(room)?);
                     body.insert("targetDeviceId", json!(target.as_str()));
+                    body.insert("epoch", epoch(value)?);
                     "retire-room-device"
                 }
                 RelayStatement::RevokeDevice { target } => {

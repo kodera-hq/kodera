@@ -369,3 +369,14 @@ config/settings/deploy_worker.py
 !apps/extensions/apps.py
 !apps/extensions/models.py
 !apps/extensions/expiry.py
+
+# Default-disabled confidential transport; no migrations or operator writers.
+!apps/e2ee/__init__.py
+!apps/e2ee/apps.py
+!apps/e2ee/models.py
+!apps/e2ee/services.py
+!apps/e2ee/api/__init__.py
+!apps/e2ee/api/http.py
+!apps/e2ee/api/responses.py
+!apps/e2ee/api/urls.py
+!apps/e2ee/api/views.py

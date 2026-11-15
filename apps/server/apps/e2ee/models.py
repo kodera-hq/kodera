@@ -101,6 +101,11 @@ class KeyPackage(StoredModel):
                 name="e2ee_package_expiry",
             ),
             models.UniqueConstraint(fields=["device", "reference"], name="e2ee_package_unique"),
+            models.UniqueConstraint(
+                fields=["claimed_for", "device", "claimed_epoch"],
+                condition=models.Q(claimed_at__isnull=False),
+                name="e2ee_package_epoch_claim_unique",
+            ),
             models.CheckConstraint(
                 condition=models.Q(
                     claimed_at__isnull=True,

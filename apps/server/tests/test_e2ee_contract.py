@@ -59,6 +59,17 @@ def guard(value):
             schema = value["components"]["schemas"][reference.rsplit("/", 1)[1]]
             assert schema["additionalProperties"] is False
             assert "signature" in schema["required"]
+            if name in {"claimConfidentialKeyPackage", "retireConfidentialParticipant"}:
+                assert reference == "#/components/schemas/ConfidentialEpochTargetDevice"
+                assert "epoch" in schema["required"]
+                assert {
+                    key: schema["properties"]["epoch"][key]
+                    for key in ("type", "minimum", "maximum")
+                } == {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2**53 - 1,
+                }
     guard_commit_marker(value)
     schemas = value["components"]["schemas"]
     assert schemas["ConfidentialApplication"]["properties"]["epoch"]["maximum"] == 2**53 - 1
@@ -121,6 +132,28 @@ def test_epochs_are_exact_bounded_json_integers(epoch):
     assert not validator("ConfidentialApplication").is_valid(wire)
 
 
+@pytest.mark.parametrize("path", [ROOM + "key-packages/claims", ROOM + "participants/retire"])
+def test_claim_and_retirement_require_the_signed_current_epoch(path):
+    value = document()
+    reference = value["paths"][path]["post"]["requestBody"]["content"]["application/json"][
+        "schema"
+    ]["$ref"]
+    name = reference.rsplit("/", 1)[1]
+    check = validator(name, value)
+    wire = deepcopy(value["components"]["schemas"][name]["examples"][0])
+    assert check.is_valid(wire)
+    for epoch in (0, 2**53 - 1):
+        assert check.is_valid({**wire, "epoch": epoch})
+    for epoch in (-1, 2**53, 1.5, "1", True):
+        assert not check.is_valid({**wire, "epoch": epoch})
+    wire.pop("epoch")
+    assert not check.is_valid(wire)
+    # Permanent device revocation has no room epoch and keeps its original body.
+    revoke = validator("ConfidentialTargetDevice", value)
+    assert revoke.is_valid(wire)
+    assert not revoke.is_valid({**wire, "epoch": 0})
+
+
 def test_binary_fields_have_standard_padding_and_size_boundaries():
     schema = validator("ConfidentialApplication")
     for encoded in ("", "not base64", "AA", "AA-_", base64.b64encode(bytes(81924)).decode()):
@@ -142,6 +175,8 @@ def test_binary_fields_have_standard_padding_and_size_boundaries():
         "open-request",
         "optional-proof",
         "unbounded-epoch",
+        "optional-target-epoch",
+        "unbounded-target-epoch",
         "duplicate-roster",
         "unbounded-page",
         "no-unavailable",
@@ -167,6 +202,10 @@ def test_contract_refusal_guards_reject_independent_mutations(mutation):
         schemas["ConfidentialDeviceRegistration"]["required"].remove("signature")
     elif mutation == "unbounded-epoch":
         schemas["ConfidentialApplication"]["properties"]["epoch"].pop("maximum")
+    elif mutation == "optional-target-epoch":
+        schemas["ConfidentialEpochTargetDevice"]["required"].remove("epoch")
+    elif mutation == "unbounded-target-epoch":
+        schemas["ConfidentialEpochTargetDevice"]["properties"]["epoch"].pop("maximum")
     elif mutation == "duplicate-roster":
         schemas["ConfidentialEpochCommit"]["properties"]["deviceIds"]["uniqueItems"] = False
     elif mutation == "unbounded-page":
@@ -331,8 +370,20 @@ def test_commit_marker_guard_rejects_independent_schema_mutations(mutation):
         guard(value)
 
 
-def test_commit_examples_include_exact_marker_with_and_without_a_later_welcome():
+def test_commit_base_example_and_later_welcome_keep_exact_marker():
     examples = document()["components"]["schemas"]["ConfidentialEpochCommitted"]["examples"]
-    assert any(item["headSequence"] == item["commitSequence"] for item in examples)
-    assert any(item["headSequence"] > item["commitSequence"] for item in examples)
-    assert all(validator("ConfidentialEpochCommitted").is_valid(item) for item in examples)
+    # One neutral example keeps base mocks deterministic without choosing by order.
+    assert len(examples) == 1
+    base = examples[0]
+    assert base["headSequence"] == base["commitSequence"]
+    assert validator("ConfidentialEpochCommitted").is_valid(base)
+    # A later Welcome changes the stream head, never the exact Commit marker.
+    with_welcome = {
+        **base,
+        "headSequence": base["commitSequence"] + 1,
+        "deviceIds": [*base["deviceIds"], "01950000-0000-7000-8000-0000000000a3"],
+    }
+    assert with_welcome["headSequence"] > with_welcome["commitSequence"]
+    assert with_welcome["commitEnvelopeId"] == base["commitEnvelopeId"]
+    assert with_welcome["commitSequence"] == base["commitSequence"]
+    assert validator("ConfidentialEpochCommitted").is_valid(with_welcome)

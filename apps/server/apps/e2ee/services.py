@@ -21,12 +21,12 @@ from apps.identity.selectors import current_identity
 from apps.orgs.actor_selectors import TenantCaller
 from apps.workspaces.channel_access import Access, may_view, resolve
 from apps.workspaces.channel_sets import lock_workspace
-from apps.workspaces.models import Channel, WorkspaceMemberRestriction
 from apps.workspaces.moderation import (
     RefusalError as WorkspaceRefusal,
     authorise_workspace,
     member_restrictions,
 )
+from apps.workspaces.selectors import active_text_channel_id, restricted_workspace_membership_ids
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .models import Device, Envelope, KeyPackage, Participant, Room
@@ -39,16 +39,18 @@ MAX_PACKAGES = 16
 MAX_PARTICIPANTS = 128
 MAX_FENCED_ACCOUNTS = 2 * MAX_PARTICIPANTS + 3
 MAX_ENVELOPES = 4096
+# One bounded full-roster rotation remains possible when application capacity is exhausted.
+MAX_RECOVERY_ENVELOPES = MAX_ENVELOPES + MAX_PARTICIPANTS + 1
 MAX_PAGE_BYTES = 512 * 1024
 ADMINS = frozenset({"org_owner", "org_admin"})
 REQUEST_FIELDS = {
     "register-device": ({"signingKey", "signature"}, set()),
     "publish-key-package": ({"deviceId", "keyPackage", "signature"}, set()),
     "create-room": ({"deviceId", "channelId", "algorithm", "signature"}, set()),
-    "claim-key-package": ({"deviceId", "targetDeviceId", "signature"}, set()),
+    "claim-key-package": ({"deviceId", "targetDeviceId", "epoch", "signature"}, set()),
     "send-application": ({"deviceId", "epoch", "ciphertext", "signature"}, set()),
     "commit-epoch": ({"deviceId", "epoch", "deviceIds", "ciphertext", "signature"}, {"welcome"}),
-    "retire-room-device": ({"deviceId", "targetDeviceId", "signature"}, set()),
+    "retire-room-device": ({"deviceId", "targetDeviceId", "epoch", "signature"}, set()),
     "revoke-device": ({"deviceId", "targetDeviceId", "signature"}, set()),
 }
 
@@ -267,12 +269,8 @@ def _active_device(
 
 
 def _denied(workspace: UUID, devices: list[Device]) -> set[UUID]:
-    return set(
-        WorkspaceMemberRestriction.objects.filter(
-            workspace_id=workspace, membership_id__in={device.membership_id for device in devices}
-        )
-        .filter(Q(banned=True) | Q(kicked=True))
-        .values_list("membership_id", flat=True)
+    return restricted_workspace_membership_ids(
+        workspace_id=workspace, membership_ids={device.membership_id for device in devices}
     )
 
 
@@ -343,6 +341,14 @@ def _write_allowed(principal: TenantCaller, workspace: UUID, access: Access) -> 
         raise RefusalError(403)
 
 
+def _discard_room_packages(room: Room) -> None:
+    """Discard expired or superseded bytes without changing durable claim metadata."""
+    now = timezone.now()
+    KeyPackage.objects.filter(claimed_for=room, package__isnull=False).filter(
+        Q(expires_at__lte=now) | Q(claimed_epoch__lt=room.epoch)
+    ).update(package=None, discarded_at=now, updated_at=now)
+
+
 @transaction.atomic
 def authorize_request(
     *,
@@ -369,7 +375,7 @@ def authorize_request(
             or existing.membership_id != principal.membership_id
             or existing.identity_id != principal.identity_id
         ):
-            raise RefusalError(403)
+            raise RefusalError(409)
         return
     device = _device(body.get("deviceId"), principal, workspace)
     _proof(bytes(device.signing_key), operation, principal, room_id, body)
@@ -382,17 +388,17 @@ def authorize_request(
         ).exists():
             raise RefusalError(404)
     elif operation == "create-room":
-        channel = Channel.objects.filter(
-            id=_uuid(body.get("channelId")), workspace_id=workspace, kind="text", lifecycle="active"
-        ).first()
-        if channel is None or principal.role not in ADMINS:
+        channel_id = active_text_channel_id(
+            channel_id=_uuid(body.get("channelId")), workspace_id=workspace
+        )
+        if channel_id is None or principal.role not in ADMINS:
             raise RefusalError(404)
-        access = resolve(channel.id)
+        access = resolve(channel_id)
         if not _active_device(device, workspace, access, principal.authority_revision):
             raise RefusalError(404)
         _write_allowed(principal, workspace, access)
     elif room_id is not None:
-        _, access, _ = _room(room_id, principal, workspace, device)
+        room, access, _ = _room(room_id, principal, workspace, device)
         # Leaving with the current device does not publish content.
         if operation != "retire-room-device" or body["targetDeviceId"] != body["deviceId"]:
             _write_allowed(principal, workspace, access)
@@ -408,6 +414,7 @@ def authorize_request(
                 target, workspace, access, principal.authority_revision
             ):
                 raise RefusalError(404)
+        _discard_room_packages(room)
 
 
 @transaction.atomic
@@ -429,13 +436,11 @@ def revoke_device(
     if target.revoked_at is None:
         target.revoked_at = now
         target.save(update_fields=["revoked_at", "updated_at"])
-        # Claimed packages are no longer directory entries. Their claimant may be
-        # behind a different account cutoff, whose fence must never be acquired
-        # after this operation's workspace lock. Account/org erasure owns their
-        # retained public payload; current target revocation already denies replay.
-        KeyPackage.objects.filter(
-            device=target, claimed_at__isnull=True, package__isnull=False
-        ).update(package=None, discarded_at=now, updated_at=now)
+        # Monotonic payload removal never revives a claimant, including one whose
+        # account cutoff is held. The database preserves all claim/binding fields.
+        KeyPackage.objects.filter(device=target, package__isnull=False).update(
+            package=None, discarded_at=now, updated_at=now
+        )
         _audit(principal, "device_revoked", target.id, request_id)
     return {"deviceId": str(target.id), "revoked": True}
 
@@ -485,6 +490,9 @@ def publish_package(
     package = _bytes(body.get("keyPackage"), 1, 16384)
     now = timezone.now()
     reference = hashlib.sha256(package).digest()
+    KeyPackage.objects.filter(device=device, expires_at__lte=now, package__isnull=False).update(
+        package=None, discarded_at=now, updated_at=now
+    )
     if KeyPackage.objects.filter(device=device, reference=reference).exists():
         raise RefusalError(409)
     if (
@@ -516,21 +524,21 @@ def create_room(
     workspace, principal = _context(verified, organisation_id, body=body)
     device = _device(body.get("deviceId"), principal, workspace)
     _proof(bytes(device.signing_key), "create-room", principal, None, body)
-    channel = Channel.objects.filter(
-        id=_uuid(body.get("channelId")), workspace_id=workspace, kind="text", lifecycle="active"
-    ).first()
-    if channel is None or principal.role not in ADMINS:
+    channel_id = active_text_channel_id(
+        channel_id=_uuid(body.get("channelId")), workspace_id=workspace
+    )
+    if channel_id is None or principal.role not in ADMINS:
         raise RefusalError(404)
-    access = resolve(channel.id)
+    access = resolve(channel_id)
     if not _active_device(device, workspace, access, principal.authority_revision):
         raise RefusalError(404)
     _write_allowed(principal, workspace, access)
     if body.get("algorithm") not in ("io.kodera.mls.v1", "m.megolm.v1.aes-sha2"):
         raise RefusalError(422)
-    if Room.objects.filter(channel=channel).exists():
+    if Room.objects.filter(channel_id=channel_id).exists():
         raise RefusalError(409)
     row = Room.objects.create(
-        organisation_id=organisation_id, channel=channel, algorithm=body["algorithm"]
+        organisation_id=organisation_id, channel_id=channel_id, algorithm=body["algorithm"]
     )
     Participant.objects.create(
         organisation_id=organisation_id, room=row, device=device, joined_epoch=0
@@ -558,6 +566,7 @@ def claim_package(
     _proof(bytes(device.signing_key), "claim-key-package", principal, room_id, body)
     room, access, _ = _room(room_id, principal, workspace, device)
     _write_allowed(principal, workspace, access)
+    _epoch(body.get("epoch"), room.epoch)
     if principal.role not in ADMINS:
         raise RefusalError(403)
     target = (
@@ -569,6 +578,14 @@ def claim_package(
         target, workspace, access, principal.authority_revision
     ):
         raise RefusalError(404)
+    if KeyPackage.objects.filter(
+        device=target, claimed_for=room, claimed_epoch=room.epoch, claimed_at__isnull=False
+    ).exists():
+        raise RefusalError(409)
+    now = timezone.now()
+    KeyPackage.objects.filter(device=target, expires_at__lte=now, package__isnull=False).update(
+        package=None, discarded_at=now, updated_at=now
+    )
     row = (
         KeyPackage.objects.select_for_update()
         .filter(
@@ -623,10 +640,8 @@ def _append(
         room=room, sender=sender, kind=kind, signature=signature, recipient=recipient
     ).exists():
         raise RefusalError(409)
-    if (
-        Envelope.objects.filter(room=room).count() >= MAX_ENVELOPES
-        or room.head_sequence >= MAX_EPOCH
-    ):
+    limit = MAX_RECOVERY_ENVELOPES if kind in {"commit", "welcome"} else MAX_ENVELOPES
+    if Envelope.objects.filter(room=room).count() >= limit or room.head_sequence >= MAX_EPOCH:
         raise RefusalError(409)
     room.head_sequence += 1
     return Envelope.objects.create(
@@ -705,7 +720,12 @@ def commit_epoch(
     added = ids - set(active)
     for identifier in added:
         if not KeyPackage.objects.filter(
-            device_id=identifier, claimed_for=room, claimed_by=device, claimed_epoch=room.epoch
+            device_id=identifier,
+            claimed_for=room,
+            claimed_by=device,
+            claimed_epoch=room.epoch,
+            package__isnull=False,
+            expires_at__gt=timezone.now(),
         ).exists():
             raise RefusalError(409)
     welcome = _bytes(body.get("welcome"), 16, 262144) if added else None
@@ -736,13 +756,7 @@ def commit_epoch(
         for identifier in sorted(added):
             _append(room, device, "welcome", welcome, signature, desired[identifier])
     room.rekey_required = False
-    KeyPackage.objects.filter(
-        claimed_for=room,
-        claimed_by=device,
-        claimed_epoch=room.epoch - 1,
-        device_id__in=added,
-        package__isnull=False,
-    ).update(package=None, discarded_at=timezone.now())
+    _discard_room_packages(room)
     room.save(update_fields=["epoch", "head_sequence", "rekey_required", "updated_at"])
     _audit(principal, "epoch_committed", row.id, request_id)
     return {
@@ -767,6 +781,7 @@ def retire_device(
     device = _device(body.get("deviceId"), principal, workspace)
     _proof(bytes(device.signing_key), "retire-room-device", principal, room_id, body)
     room, _, active = _room(room_id, principal, workspace, device)
+    _epoch(body.get("epoch"), room.epoch)
     target = _uuid(body.get("targetDeviceId"))
     if target not in active or (target != device.id and principal.role not in ADMINS):
         raise RefusalError(404)

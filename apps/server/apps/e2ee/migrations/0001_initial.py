@@ -381,6 +381,14 @@ class Migration(migrations.Migration):
                 name="e2ee_envelope_recipient_kind",
             ),
         ),
+        migrations.AddConstraint(
+            model_name="keypackage",
+            constraint=models.UniqueConstraint(
+                fields=("claimed_for", "device", "claimed_epoch"),
+                condition=models.Q(claimed_at__isnull=False),
+                name="e2ee_package_epoch_claim_unique",
+            ),
+        ),
         migrations.RunSQL(
             migrations.RunSQL.noop,
             reverse_sql="SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';",

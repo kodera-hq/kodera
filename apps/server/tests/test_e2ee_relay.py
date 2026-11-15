@@ -44,6 +44,8 @@ def relay(world):
 
     def signed(index, operation, body, room=None):
         document = dict(body)
+        if operation in {"claim-key-package", "retire-room-device"} and "epoch" not in document:
+            document["epoch"] = Room.objects.get(pk=room).epoch
         document["signature"] = b64(
             keys[index].sign(
                 services.signed_statement(operation, org.id, members[index].id, room, document)

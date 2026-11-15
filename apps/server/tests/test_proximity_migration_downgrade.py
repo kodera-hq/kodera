@@ -1,4 +1,4 @@
-"""Transactional downgrade refusal for proximity erasure migrations when obligations or receipts exist."""
+"""Proximity downgrade refusal, isolated from the later confidential erasure protocol."""
 
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ ORGS_0032 = ("orgs", "0032_ee_enterprise_store")
 ORGS_0033 = ("orgs", "0033_proximity_erasure_inventory")
 EXTENSIONS_0011 = ("extensions", "0011_native_document_release_fact")
 EXTENSIONS_0012 = ("extensions", "0012_proximity_erasure_domains")
+E2EE_0001 = ("e2ee", "0001_initial")
+E2EE_0002 = ("e2ee", "0002_scope_and_privacy")
 REFUSAL_MESSAGE = (
     "cannot downgrade proximity erasure migration with admitted proximity obligations or receipts"
 )
@@ -52,6 +54,29 @@ def restore_leaf_migrations() -> None:
     assert after.migration_plan(after.loader.graph.leaf_nodes()) == []
 
 
+def restore_proximity_test_migrations() -> None:
+    # These tests target the proximity guards themselves. The newer confidential
+    # guard is tested separately, and otherwise refuses the downgrade before them.
+    executor = MigrationExecutor(connection)
+    targets = [node for node in executor.loader.graph.leaf_nodes() if node[0] != "e2ee"]
+    targets.append(E2EE_0001)
+    executor.migrate(targets)
+    after = MigrationExecutor(connection)
+    assert after.migration_plan(targets) == []
+    assert E2EE_0001 in after.loader.applied_migrations
+    assert E2EE_0002 not in after.loader.applied_migrations
+
+
+@pytest.fixture(autouse=True)
+def proximity_migration_profile():
+    restore_proximity_test_migrations()
+    try:
+        yield
+    finally:
+        # Never leave the shared test database at this deliberately older profile.
+        restore_leaf_migrations()
+
+
 def assert_downgrade_refused(target: tuple[str, str]) -> None:
     with pytest.raises(IntegrityError, match=REFUSAL_MESSAGE) as caught:
         MigrationExecutor(connection).migrate([target])
@@ -62,6 +87,7 @@ def assert_downgrade_refused(target: tuple[str, str]) -> None:
 
 def assert_proximity_erasure_schema_state(*, expect_extensions_0012: bool) -> None:
     applied = set(MigrationExecutor(connection).loader.applied_migrations)
+    assert E2EE_0001 in applied and E2EE_0002 not in applied
     assert ORGS_0033 in applied
     if expect_extensions_0012:
         assert EXTENSIONS_0012 in applied
@@ -157,7 +183,7 @@ def test_empty_and_historical_pre_proximity_journals_roundtrip_cleanly(world) ->
         assert "proximity_ephemeral" not in historical.inventory["required_domains"]
         assert "proximity_inventory_version" not in historical.inventory
 
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
         assert_proximity_erasure_schema_state(expect_extensions_0012=True)
 
         MigrationExecutor(connection).migrate([ORGS_0032])
@@ -167,7 +193,7 @@ def test_empty_and_historical_pre_proximity_journals_roundtrip_cleanly(world) ->
         historical.refresh_from_db()
         assert "proximity_ephemeral" not in historical.inventory["required_domains"]
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
     assert_proximity_erasure_schema_state(expect_extensions_0012=True)
 
 
@@ -197,7 +223,7 @@ def test_admitted_and_in_flight_workspace_journal_refuses_extensions_and_orgs_do
         assert preserved.inventory_sha256 == row.inventory_sha256
         assert "proximity_ephemeral" in preserved.inventory["required_domains"]
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
 
 
 def test_direct_orgs_0032_downgrade_refuses_workspace_journal_when_extensions_at_0011(
@@ -218,7 +244,7 @@ def test_direct_orgs_0032_downgrade_refuses_workspace_journal_when_extensions_at
         assert preserved.inventory_sha256 == row.inventory_sha256
         assert "proximity_ephemeral" in preserved.inventory["required_domains"]
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
     assert_proximity_erasure_schema_state(expect_extensions_0012=True)
 
 
@@ -243,7 +269,7 @@ def test_admitted_and_in_flight_account_journal_refuses_extensions_and_orgs_down
         assert preserved.inventory_sha256 == row.inventory_sha256
         assert "proximity_ephemeral" in preserved.inventory["required_domains"]
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
 
 
 def test_direct_orgs_0032_downgrade_refuses_account_journal_when_extensions_at_0011(
@@ -265,7 +291,7 @@ def test_direct_orgs_0032_downgrade_refuses_account_journal_when_extensions_at_0
         preserved = AccountErasure.objects.get(pk=row.id)
         assert preserved.inventory_sha256 == row.inventory_sha256
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
     assert_proximity_erasure_schema_state(expect_extensions_0012=True)
 
 
@@ -294,7 +320,7 @@ def test_recorded_workspace_proximity_receipt_refuses_extensions_and_orgs_downgr
         assert_proximity_erasure_schema_state(expect_extensions_0012=True)
         assert ErasureReceipt.objects.filter(erasure=row, domain="proximity_ephemeral").count() == 1
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
 
 
 def test_direct_orgs_0032_downgrade_refuses_workspace_proximity_receipt_when_extensions_at_0011(
@@ -319,7 +345,7 @@ def test_direct_orgs_0032_downgrade_refuses_workspace_proximity_receipt_when_ext
         assert_proximity_erasure_schema_state(expect_extensions_0012=False)
         assert ErasureReceipt.objects.filter(erasure=row, domain="proximity_ephemeral").count() == 1
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
     assert_proximity_erasure_schema_state(expect_extensions_0012=True)
 
 
@@ -348,7 +374,7 @@ def test_recorded_account_proximity_receipt_refuses_extensions_and_direct_orgs_d
         assert_downgrade_refused(ORGS_0032)
         assert_proximity_erasure_schema_state(expect_extensions_0012=False)
 
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
         assert_proximity_erasure_schema_state(expect_extensions_0012=True)
         assert_downgrade_refused(EXTENSIONS_0011)
         assert_downgrade_refused(ORGS_0032)
@@ -358,5 +384,5 @@ def test_recorded_account_proximity_receipt_refuses_extensions_and_direct_orgs_d
             == 1
         )
     finally:
-        restore_leaf_migrations()
+        restore_proximity_test_migrations()
     assert_proximity_erasure_schema_state(expect_extensions_0012=True)

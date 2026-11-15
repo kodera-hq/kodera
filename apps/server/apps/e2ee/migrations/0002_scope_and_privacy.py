@@ -97,8 +97,9 @@ BEGIN
    AND (to_jsonb(NEW)-ARRAY['revoked_at','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['revoked_at','updated_at'])
   THEN RETURN NEW; END IF;
  ELSIF TG_OP='UPDATE' AND TG_TABLE_NAME='e2ee_keypackage' THEN
-  SELECT m.user_id INTO person FROM public.e2ee_device d JOIN public.orgs_membership m ON m.id=d.membership_id WHERE d.id=NEW.device_id;
-  IF public.privacy_account_context(person) AND NEW.package IS NULL AND NEW.discarded_at IS NOT NULL
+  -- Removing bytes cannot restore authority. Keep immutable claim metadata and
+  -- never wait on a foreign claimant's account fence after a workspace lock.
+  IF OLD.package IS NOT NULL AND NEW.package IS NULL AND NEW.discarded_at IS NOT NULL
    AND (to_jsonb(NEW)-ARRAY['package','discarded_at','updated_at']) IS NOT DISTINCT FROM (to_jsonb(OLD)-ARRAY['package','discarded_at','updated_at'])
   THEN RETURN NEW; END IF;
  END IF;

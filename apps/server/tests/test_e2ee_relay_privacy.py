@@ -108,7 +108,8 @@ def test_device_revocation_does_not_wait_for_or_mutate_an_erased_foreign_claiman
     )
     assert result["revoked"] and Device.objects.get(pk=relay[5][2]).revoked_at is not None
     package = KeyPackage.objects.get(pk=published["keyPackageId"])
-    assert package.claimed_by_id == relay[5][1] and package.package is not None
+    assert package.claimed_by_id == relay[5][1]
+    assert package.package is None and package.discarded_at is not None
     with pytest.raises(services.RefusalError):
         read(relay, 2)
 

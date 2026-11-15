@@ -131,11 +131,11 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `ConfidentialRoom` | create, act own | create, act own | act own | act own | — | — | — | — |
 | `ConfidentialEnvelope` | create, read own | create, read own | create, read own | create, read own | — | — | — | — |
 
-### Confidential relay (Planned)
+### Confidential relay
 
-Status: Planned
+Status: Implemented (operator gated)
 
-These rows describe the unpublished adapter in `apps/e2ee`; canonical Core 0.47 declares the proposed operations; production routing and generated-client acceptance remain pending. Every operation requires a current accepted membership; mutations additionally require device proof of possession. Ciphertext reads name an active admitted device of the caller's exact identity and membership; they do not prove possession of its private key or decrypt its payload. Device registration and permanent revocation are limited to the caller's bound identity and membership. Only owner/admin may create a room or claim a package for a currently eligible target device. Room-scoped reads and writes require explicit room admission and current channel visibility. Member epoch commits may rotate keys or remove revoked leaves; adding a device or removing an otherwise eligible peer requires owner/admin. Current mute, read-only policy and room lifecycle govern publication. Successful HTTP replay repeats current authority checks without repeating the effect. Staff roles hold no override through these surfaces.
+These rows describe the adapter in `apps/e2ee`; canonical Core 0.47 declares its operations. Customer HTTP routes are mounted behind default-off `KODERA_E2EE_RELAY_ENABLED`; generated-client acceptance remains pending. Every operation requires a current accepted membership; mutations additionally require device proof of possession. Ciphertext reads name an active admitted device of the caller's exact identity and membership; they do not prove possession of its private key or decrypt its payload. Device registration and permanent revocation are limited to the caller's bound identity and membership. Only owner/admin may create a room or claim a package for a currently eligible target device. Room-scoped reads and writes require explicit room admission and current channel visibility. Member epoch commits may rotate keys or remove revoked leaves; adding a device or removing an otherwise eligible peer requires owner/admin. Current mute, read-only policy and room lifecycle govern publication. Claim and room-retirement proofs include the required current epoch; stale epochs are refused. Successful HTTP replay repeats current authority checks without repeating the effect. Staff roles hold no override through these surfaces.
 
 ### Matrix-wide rules
 

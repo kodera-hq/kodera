@@ -36,7 +36,7 @@ const regenerated = execFileSync('node', ['scripts/api/generate.ts', '--out', ou
 
 describe('npm run api:generate', () => {
   it('reports what it read from the pinned contract', () => {
-    expect(regenerated).toContain('176 operations')
+    expect(regenerated).toContain('185 operations')
   })
 
   it.each(GENERATED)('regenerates %s byte for byte', (relative) => {

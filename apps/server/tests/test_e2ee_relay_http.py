@@ -367,7 +367,7 @@ def test_http_package_claim_commit_retirement_and_rekey_under_real_writer_role(r
             index=2,
         )
         assert published.status_code == 201, published.content
-        claim_body = {"deviceId": owner, "targetDeviceId": peer}
+        claim_body = {"deviceId": owner, "targetDeviceId": peer, "epoch": 0}
         claimed = post(
             relay,
             http,
@@ -491,7 +491,12 @@ def test_http_package_claim_commit_retirement_and_rekey_under_real_writer_role(r
         )
         assert republished.status_code == 201
         reclaimed = post(
-            relay, http, "claim-key-package", room + "key-packages/claims", claim_body, room=True
+            relay,
+            http,
+            "claim-key-package",
+            room + "key-packages/claims",
+            {**claim_body, "epoch": 2},
+            room=True,
         )
         assert reclaimed.status_code == 200 and reclaimed.json()["epoch"] == 2
         rejoined = post(
