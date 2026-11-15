@@ -1,6 +1,9 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { setImmediate as nodeSetImmediate } from 'node:timers'
+import { focusManager, onlineManager, type QueryClient, useQueryClient } from '@tanstack/react-query'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw/http'
+import { useEffect } from 'react'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { server } from '../../mocks/server'
@@ -14,7 +17,12 @@ import { handlers as fileTooLarge } from '../../mocks/overlays/people.import-fil
 import { scenario as importMixed } from '../../mocks/overlays/people.import-mixed'
 import { memberImportHandlers, type MemberImport } from '../../mocks/overlays/support/people'
 import { ImportScreen, type ImportScreenProps } from './ImportScreen'
+import { memberImportQuery, POLL_RETRIES } from './memberImport'
+import type { Tagged } from './queries'
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
+
+// Capture the function before fake timers can replace Node's live module export.
+const realSetImmediate = nodeSetImmediate
 
 beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
@@ -576,7 +584,15 @@ describe('Import a list (03-people.md §4.3)', () => {
   })
 
   it('stops polling after failed reads, backing off, and offers a retry', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    const online = onlineManager.isOnline()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    })
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    focusManager.setFocused(undefined)
+    onlineManager.setOnline(true)
+    let unmount: (() => void) | undefined
     try {
       const record: MemberImport = {
         id: '0b0b0b0b-0000-4000-8000-000000000002',
@@ -592,7 +608,57 @@ describe('Import a list (03-people.md §4.3)', () => {
       }
       const readAt: number[] = []
       let failing = true
-      renderImport(
+      let client: QueryClient | undefined
+      function CaptureQueryClient() {
+        const observed = useQueryClient()
+        useEffect(() => {
+          client = observed
+        }, [observed])
+        return null
+      }
+      const queryKey = memberImportQuery(record.id).queryKey
+      const queryState = () => client?.getQueryState<Tagged<MemberImport>>(queryKey)
+      async function settle(phase: string, ready: () => boolean) {
+        for (let turn = 0; turn < 100; turn += 1) {
+          await act(async () => {
+            await new Promise<void>((resolve) => {
+              realSetImmediate(resolve)
+            })
+            await vi.advanceTimersByTimeAsync(0)
+          })
+          if (ready()) return
+        }
+        const state = queryState()
+        const retry = client?.getQueryCache().find({ queryKey })?.options.retry
+        expect(ready(), JSON.stringify({
+          phase,
+          elapsed: Date.now() - virtualStart,
+          readCount: readAt.length,
+          readAt: readAt.slice(0, 8),
+          status: state?.status ?? null,
+          fetchStatus: state?.fetchStatus ?? null,
+          failureCount: state?.fetchFailureCount ?? null,
+          retry: typeof retry === 'number' && Number.isFinite(retry) ? retry : null,
+          timerCount: vi.getTimerCount(),
+        })).toBe(true)
+      }
+      async function advance(milliseconds: number) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(milliseconds)
+        })
+      }
+      const virtualStart = Date.now()
+      const mounted = renderWithApi(
+        <>
+          <CaptureQueryClient />
+          <ImportScreen
+            organisationId={ORG_ID}
+            callerRole="org_admin"
+            onImportStarted={vi.fn()}
+            onNavigate={vi.fn()}
+            importId={record.id}
+          />
+        </>,
         [
           [
             http.get('*/api/v1/member-imports/:id', () => {
@@ -616,10 +682,41 @@ describe('Import a list (03-people.md §4.3)', () => {
               )
             }),
           ],
-        ],
-        { importId: record.id }
+        ]
       )
-      await vi.advanceTimersByTimeAsync(60_000)
+      unmount = mounted.unmount
+      await settle('actual initial response and polling observer committed', () =>
+        readAt.length === 1 && queryState()?.status === 'success' &&
+        queryState()?.fetchStatus === 'idle' && queryState()?.data?.value.id === record.id &&
+        queryState()?.data?.value.state === 'validating' &&
+        client?.getQueryCache().find({ queryKey })?.options.retry === POLL_RETRIES &&
+        screen.queryByText('Adresse mail') !== null
+      )
+      expect(queryState()?.data?.value).toEqual(record)
+      expect(screen.getByText('Adresse mail')).toBeVisible()
+      await advance(1000)
+      await settle('actual poll failure settled before its retry timer', () =>
+        readAt.length === 2 && queryState()?.fetchFailureCount === 1
+      )
+      for (const [delay, reads, failures] of [[1000, 3, 2], [2000, 4, 3]] as const) {
+        await advance(delay)
+        await settle(`actual retry ${failures} settled before its next timer`, () =>
+          readAt.length === reads && queryState()?.fetchFailureCount === failures
+        )
+      }
+      await advance(4000)
+      await settle('terminal retry failure settled before the UI notification tick', () =>
+        readAt.length === 5 && queryState()?.fetchFailureCount === 4 &&
+        queryState()?.status === 'error' && queryState()?.fetchStatus === 'idle'
+      )
+      // A nested zero-delay notification can be due on the next fake millisecond.
+      // Advance only after retries have stopped; the remaining window accounts for it.
+      await advance(1)
+      await settle('actual final failure stopped fetching and reached the screen', () =>
+        readAt.length === 5 && queryState()?.fetchFailureCount === 4 &&
+        queryState()?.status === 'error' && queryState()?.fetchStatus === 'idle' &&
+        screen.queryByText(UNAVAILABLE) !== null
+      )
       // The first read, one poll, then three retries spaced 1 s, 2 s, 4 s.
       expect(readAt).toHaveLength(5)
       const gaps = readAt.slice(2).map((at, index) => at - readAt[index + 1]!)
@@ -628,12 +725,32 @@ describe('Import a list (03-people.md §4.3)', () => {
       expect(gaps[2]).toBeGreaterThanOrEqual(4000)
       expect(screen.getByText(UNAVAILABLE)).toBeVisible()
 
+      const remainingStoppedWindow = 59_900 - (Date.now() - virtualStart)
+      expect(remainingStoppedWindow).toBeGreaterThanOrEqual(0)
+      expect(remainingStoppedWindow).toBeLessThanOrEqual(59_900)
+      await advance(remainingStoppedWindow)
+      await settle('polling remains stopped through the original virtual window', () =>
+        queryState()?.status === 'error' && queryState()?.fetchStatus === 'idle'
+      )
+      expect(readAt).toHaveLength(5)
+      expect(screen.getByText(UNAVAILABLE)).toBeVisible()
       failing = false
       fireEvent.click(screen.getByRole('button', { name: 'Réessayer' }))
-      await vi.advanceTimersByTimeAsync(100)
+      await advance(100)
+      await settle('manual retry actually read fresh ready state', () =>
+        readAt.length === 6 && queryState()?.status === 'success' &&
+        queryState()?.fetchStatus === 'idle' && queryState()?.data?.value.state === 'ready'
+      )
       expect(readAt).toHaveLength(6)
-      await waitFor(() => expect(screen.queryByText(UNAVAILABLE)).toBeNull())
+      expect(screen.queryByText(UNAVAILABLE)).toBeNull()
+      expect(Date.now() - virtualStart).toBeLessThanOrEqual(60_000)
     } finally {
+      unmount?.()
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else Reflect.deleteProperty(document, 'visibilityState')
+      focusManager.setFocused(undefined)
+      onlineManager.setOnline(online)
+      vi.clearAllTimers()
       vi.useRealTimers()
     }
   })
