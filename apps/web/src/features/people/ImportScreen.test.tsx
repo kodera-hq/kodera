@@ -1,5 +1,5 @@
 import { setImmediate as nodeSetImmediate } from 'node:timers'
-import { type QueryClient, useQueryClient } from '@tanstack/react-query'
+import { focusManager, onlineManager, type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw/http'
@@ -584,7 +584,14 @@ describe('Import a list (03-people.md §4.3)', () => {
   })
 
   it('stops polling after failed reads, backing off, and offers a retry', async () => {
-    vi.useFakeTimers()
+    const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    const online = onlineManager.isOnline()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    })
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    focusManager.setFocused(undefined)
+    onlineManager.setOnline(true)
     let unmount: (() => void) | undefined
     try {
       const record: MemberImport = {
@@ -621,7 +628,19 @@ describe('Import a list (03-people.md §4.3)', () => {
           })
           if (ready()) return
         }
-        expect(ready(), phase).toBe(true)
+        const state = queryState()
+        const retry = client?.getQueryCache().find({ queryKey })?.options.retry
+        expect(ready(), JSON.stringify({
+          phase,
+          elapsed: Date.now() - virtualStart,
+          readCount: readAt.length,
+          readAt: readAt.slice(0, 8),
+          status: state?.status ?? null,
+          fetchStatus: state?.fetchStatus ?? null,
+          failureCount: state?.fetchFailureCount ?? null,
+          retry: typeof retry === 'number' && Number.isFinite(retry) ? retry : null,
+          timerCount: vi.getTimerCount(),
+        })).toBe(true)
       }
       async function advance(milliseconds: number) {
         await act(async () => {
@@ -720,6 +739,11 @@ describe('Import a list (03-people.md §4.3)', () => {
       expect(Date.now() - virtualStart).toBeLessThanOrEqual(60_000)
     } finally {
       unmount?.()
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else Reflect.deleteProperty(document, 'visibilityState')
+      focusManager.setFocused(undefined)
+      onlineManager.setOnline(online)
+      vi.clearAllTimers()
       vi.useRealTimers()
     }
   })
