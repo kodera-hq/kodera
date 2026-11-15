@@ -91,7 +91,7 @@ def refused_without_schema_change():
 def begin_workspace(org):
     return begin_erasure(
         organisation_id=org.id,
-        instruction_ref="DEL-RELAY-MIGRATION",
+        instruction_ref="DEL-412",
         instruction_sha256="4" * 64,
         purge_not_before=database_now(),
         actor_identity_id=operator().id,
