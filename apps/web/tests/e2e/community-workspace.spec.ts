@@ -3,6 +3,145 @@ import AxeBuilder from '@axe-core/playwright'
 
 test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
 
+interface SessionGateStatus {
+  ownsFetch: boolean
+  tokenArmed: boolean
+  coreArmed: boolean
+  tokenStarted: number
+  tokenEntered: number
+  tokenHeld: number
+  coreEntered: number
+  coreHeld: number
+  coreHeldAfterTokenRelease: number
+  abortListeners: number
+  failure: string | null
+}
+interface SessionFetchGate {
+  armBoth(): void
+  status(): SessionGateStatus
+  releaseTokenOnly(): void
+  releaseCoreOnly(): void
+  cleanup(): void
+}
+declare global {
+  interface Window {
+    __healthySessionFetchGate?: SessionFetchGate
+  }
+}
+
+async function installSessionFetchGate(page: Page) {
+  // Core captures fetch when its client is created. Install before login, unarmed.
+  await page.addInitScript(() => {
+    if (window.top !== window) return
+    const original = window.fetch
+    type Kind = 'token' | 'core'
+    type Cell = { kind: Kind; afterToken: boolean; release(): void; listening(): boolean }
+    const cells = new Set<Cell>()
+    let active = false, tokenArmed = false, coreArmed = false, tokenReleased = false
+    let total = 0, tokenStarted = 0, tokenEntered = 0, coreEntered = 0
+    let failure: string | null = null
+    function release(kind?: Kind) {
+      for (const cell of [...cells]) if (kind === undefined || cell.kind === kind) cell.release()
+    }
+    function refuse(code: string) {
+      failure ??= code
+      tokenArmed = false; coreArmed = false
+      release()
+    }
+    function kindOf(url: URL, method: string): Kind | undefined {
+      if (url.origin !== window.location.origin || url.search || url.hash) return undefined
+      if (method === 'POST' && url.pathname === '/auth/realms/community/protocol/openid-connect/token') return 'token'
+      if (method === 'GET' && url.pathname === '/api/v1/me') return 'core'
+      return undefined
+    }
+    const wrapper: typeof window.fetch = async (...args) => {
+      const [input, init] = args
+      const watching = active
+      const request = input instanceof Request ? input : undefined
+      const overrideSignal = init?.signal
+      // Snapshot before native fetch: undefined inherits; null explicitly overrides.
+      const signal = overrideSignal === undefined ? request?.signal : overrideSignal
+      const method = (init?.method ?? request?.method ?? 'GET').toUpperCase()
+      let kind: Kind | undefined
+      try { kind = kindOf(new URL(request?.url ?? String(input), window.location.href), method) }
+      catch { /* An invalid native request still follows the original fetch path. */ }
+      const afterToken = tokenReleased
+      if (watching && kind === 'token') {
+        if (tokenStarted === 8) refuse('response-storm')
+        else tokenStarted++
+      }
+      // Preserve original arguments, native errors, MSW, and the SDK transport.
+      const response = await Reflect.apply(original, window, args) as Response
+      if (!watching || !active || failure !== null || kind === undefined ||
+          !(kind === 'token' ? tokenArmed : coreArmed)) return response
+      let responseKind: Kind | undefined
+      try { responseKind = kindOf(new URL(response.url), method) } catch { /* Refused below. */ }
+      if (response.status !== 200 || responseKind !== kind) {
+        refuse('unexpected-response'); return response
+      }
+      if (total === 8) { refuse('response-storm'); return response }
+      total++
+      if (kind === 'token') tokenEntered++
+      else coreEntered++
+      const heldKind = kind
+      return new Promise<Response>((resolve, reject) => {
+        let settled = false, listening = false
+        const cell: Cell = { kind: heldKind, afterToken, release: () => finish(false), listening: () => listening }
+        const abort = () => finish(true)
+        function finish(aborted: boolean) {
+          if (settled) return
+          settled = true; cells.delete(cell)
+          if (listening) { signal?.removeEventListener('abort', abort); listening = false }
+          if (aborted) reject(signal?.reason)
+          else resolve(response)
+        }
+        cells.add(cell)
+        if (signal !== undefined && signal !== null) {
+          signal.addEventListener('abort', abort, { once: true }); listening = true
+          // Covers an abort before/between listener registration and this check.
+          if (signal.aborted) abort()
+        }
+      })
+    }
+    window.fetch = wrapper
+    window.__healthySessionFetchGate = {
+      armBoth() {
+        if (active || failure !== null || window.fetch !== wrapper) { refuse('invalid-arm'); return }
+        active = true; tokenArmed = true; coreArmed = true
+      },
+      status() {
+        const current = [...cells]
+        return { ownsFetch: window.fetch === wrapper, tokenArmed, coreArmed,
+          tokenStarted, tokenEntered, tokenHeld: current.filter((cell) => cell.kind === 'token').length,
+          coreEntered, coreHeld: current.filter((cell) => cell.kind === 'core').length,
+          coreHeldAfterTokenRelease: current.filter((cell) => cell.kind === 'core' && cell.afterToken).length,
+          abortListeners: current.filter((cell) => cell.listening()).length, failure }
+      },
+      releaseTokenOnly() {
+        if (!tokenArmed || !coreArmed) { refuse('invalid-token-release'); return }
+        tokenArmed = false; tokenReleased = true; release('token')
+      },
+      releaseCoreOnly() {
+        if (tokenArmed || !tokenReleased || !coreArmed) { refuse('invalid-core-release'); return }
+        coreArmed = false; release('core')
+      },
+      cleanup() {
+        active = false; tokenArmed = false; coreArmed = false; release()
+        if (window.fetch === wrapper) window.fetch = original
+      },
+    }
+  })
+}
+
+async function sessionGate(page: Page, action?: 'armBoth' | 'releaseTokenOnly' | 'releaseCoreOnly' | 'cleanup') {
+  return page.evaluate((action) => {
+    const gate = window.__healthySessionFetchGate
+    if (gate === undefined) throw new Error('Session response gate is not installed.')
+    if (action !== undefined) gate[action]()
+    return gate.status()
+  }, action)
+}
+
 async function login(page: Page) {
   await page.goto('/login?demo=1&org=community')
   await page.getByRole('button', { name: 'Continuer', exact: true }).click()
@@ -187,58 +326,96 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
   page,
 }, info) => {
   test.setTimeout(90_000)
-  await login(page)
-  await page.waitForTimeout(61_000)
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect(page.getByText(/Votre session va expirer/)).toHaveCount(0)
-  await page
-    .getByRole('button', { name: /changer d’organisation/ })
-    .last()
-    .focus()
-  await page.keyboard.press('Enter')
-  await expect(page.getByRole('menu')).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('menu')).toHaveCount(0)
-  await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeInViewport()
-  await expect
-    .poll(
-      async () =>
-        (await page.getByRole('heading', { name: 'announcements', exact: true }).boundingBox())
-          ?.width ?? 0
-    )
-    .toBeGreaterThan(150)
-  await page.screenshot({ path: info.outputPath('workspace-mobile.png'), fullPage: true })
-  await page.getByRole('button', { name: 'Salons', exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toBeVisible()
-  await page
-    .getByRole('dialog', { name: 'Salons', exact: true })
-    .getByRole('link', { name: 'support', exact: true })
-    .click()
-  await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'support', exact: true })).toBeInViewport()
-  await page
-    .getByRole('button', { name: /changer d’organisation/ })
-    .last()
-    .click()
-  await expect(
-    page.getByRole('menuitemradio', { name: 'Kodera Community Communauté & Support', exact: true })
-  ).toHaveAttribute('aria-checked', 'true')
-  await page.keyboard.press('Escape')
-  await page.getByRole('button', { name: 'Salons', exact: true }).click()
-  await page
-    .getByRole('dialog', { name: 'Salons', exact: true })
-    .getByRole('button', { name: /Rejoindre office-hours/ })
-    .click()
-  await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toHaveCount(0)
-  await page.getByRole('region', { name: 'Appel en cours', exact: true }).scrollIntoViewIfNeeded()
-  await expect(page.getByRole('region', { name: 'Appel en cours', exact: true })).toBeInViewport()
-  await page.screenshot({ path: info.outputPath('workspace-mobile-voice.png'), fullPage: true })
-  await page.getByRole('button', { name: 'Quitter', exact: true }).click()
+  await installSessionFetchGate(page)
+  let completed = false
+  try {
+    await login(page)
+    expect(await sessionGate(page)).toMatchObject({ ownsFetch: true, failure: null })
+    await sessionGate(page, 'armBoth')
+    await page.waitForTimeout(61_000)
+    // Keep the interval's actual token response pending through focus: one SDK renewal.
+    await expect.poll(async () => (await sessionGate(page)).tokenHeld).toBeGreaterThan(0)
+    expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, tokenEntered: 1, failure: null })
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, tokenHeld: 1, failure: null })
+    expect(await sessionGate(page, 'releaseTokenOnly')).toMatchObject({
+      tokenArmed: false, tokenHeld: 0, coreArmed: true, failure: null,
+    })
+    // The real SDK adopts the response before the new authority read can enter.
+    await expect.poll(async () => (await sessionGate(page)).coreHeldAfterTokenRelease).toBeGreaterThan(0)
+    expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, failure: null })
+    const retainedTrigger = page.getByRole('button', {
+      name: /changer d’organisation/, includeHidden: true,
+    }).last()
+    await expect(retainedTrigger).toBeAttached()
+    await expect(retainedTrigger.locator('xpath=ancestor::*[@hidden and @aria-hidden="true"]').first()).toBeAttached()
+    await expect(retainedTrigger).toBeHidden()
+    await expect(page.getByText(/Votre session va expirer/)).toHaveCount(0)
+    expect(await sessionGate(page, 'releaseCoreOnly')).toMatchObject({
+      tokenArmed: false, coreArmed: false, coreHeld: 0, abortListeners: 0, failure: null,
+    })
+    const acceptedTrigger = page.getByRole('button', { name: /changer d’organisation/ }).last()
+    await expect(acceptedTrigger).toBeVisible()
+    await expect(acceptedTrigger).toBeEnabled()
+    await expect(page.getByText(/Votre session va expirer/)).toHaveCount(0)
+    await page
+      .getByRole('button', { name: /changer d’organisation/ })
+      .last()
+      .focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('menu')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toHaveCount(0)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeInViewport()
+    await expect
+      .poll(
+        async () =>
+          (await page.getByRole('heading', { name: 'announcements', exact: true }).boundingBox())
+            ?.width ?? 0
+      )
+      .toBeGreaterThan(150)
+    await page.screenshot({ path: info.outputPath('workspace-mobile.png'), fullPage: true })
+    await page.getByRole('button', { name: 'Salons', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toBeVisible()
+    await page
+      .getByRole('dialog', { name: 'Salons', exact: true })
+      .getByRole('link', { name: 'support', exact: true })
+      .click()
+    await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'support', exact: true })).toBeInViewport()
+    await page
+      .getByRole('button', { name: /changer d’organisation/ })
+      .last()
+      .click()
+    await expect(
+      page.getByRole('menuitemradio', { name: 'Kodera Community Communauté & Support', exact: true })
+    ).toHaveAttribute('aria-checked', 'true')
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Salons', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: 'Salons', exact: true })
+      .getByRole('button', { name: /Rejoindre office-hours/ })
+      .click()
+    await expect(page.getByRole('dialog', { name: 'Salons', exact: true })).toHaveCount(0)
+    await page.getByRole('region', { name: 'Appel en cours', exact: true }).scrollIntoViewIfNeeded()
+    await expect(page.getByRole('region', { name: 'Appel en cours', exact: true })).toBeInViewport()
+    await page.screenshot({ path: info.outputPath('workspace-mobile-voice.png'), fullPage: true })
+    await page.getByRole('button', { name: 'Quitter', exact: true }).click()
 
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true
-  )
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+      true
+    )
+    expect(await sessionGate(page)).toMatchObject({ ownsFetch: true, tokenStarted: 1, failure: null })
+    completed = true
+  } finally {
+    // A failed/closed page must not mask the original assertion; a passing case proves cleanup.
+    const cleaned = await sessionGate(page, 'cleanup').catch(() => null)
+    if (completed) expect(cleaned).toMatchObject({
+      ownsFetch: false, tokenArmed: false, coreArmed: false,
+      tokenHeld: 0, coreHeld: 0, abortListeners: 0, failure: null,
+    })
+  }
 })
 
 test('voice rooms expose usable local audio controls', async ({ page }, info) => {
