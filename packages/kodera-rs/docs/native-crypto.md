@@ -87,6 +87,11 @@ Sensitive `MegolmEpochKey` values have redacted diagnostics and no implicit
 plaintext serialization. With both engines enabled, `seal_to_mls` encrypts key
 delivery inside the same MLS room. `open_from_mls` requires the expected key
 distributor's authenticated MLS device key before returning an opaque key.
+The serialized key and owned outgoing/incoming delivery frames use the already
+locked `tls_codec` zeroizing allocation wrapper, including ordinary refusal
+returns. Outgoing framing reserves its complete capacity before copying the
+key bytes. This limits the lifetime of these owned temporary copies; it does
+not guarantee forensic erasure of upstream objects, allocator or other copies.
 The adapter owns the distributor policy and current trusted roster. Revoked
 devices must be removed from MLS before distributing a replacement Megolm key.
 No Matrix key-distribution service, session persistence or downgrade fallback is
