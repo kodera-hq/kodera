@@ -1,0 +1,45 @@
+# Confidential local state
+
+Status: Standalone storage primitive; unconnected to product messaging, media, sign-out and Rust bindings. Browser qualification pending.
+
+## Purpose and trust
+
+Persist opaque engine checkpoints and pending ciphertext sends with real IndexedDB and AES-256-GCM WebCrypto. This module supplies no crypto engine, authority decision, device enrollment, server receipt, E2EE badge or network fallback. Its caller must provide current accepted-owner authority and coordinate engine publication only after durable commit.
+
+Every record binds canonical Core owner, organisation and membership UUIDs, a local immutable 32-byte lowercase hexadecimal device public key, record kind, optional room UUID, owner key incarnation and next generation in versioned AEAD additional data. A device-vault has no room ID; a room record requires one. An admitted Core device UUID can remain inside the opaque engine payload. Device keys are not fabricated from server UUIDs.
+
+Keys are non-extractable AES-GCM CryptoKeys stored only by IndexedDB structured clone. This key is not the Rust engine wrapping key (&[u8;32]); provisioning and retaining that engine key through an approved bridge remains a separate integration prerequisite. Opaque byte roundtrips do not prove an engine checkpoint can be restored. Nothing uses localStorage, sessionStorage, cookies, logs, tokens or a network. Ciphertext encryption at rest does not prevent same-origin script access, browser/profile compromise, hardware extraction, or rollback of the entire local store including keys/generation metadata. IndexedDB CAS is concurrency control, not independent rollback authority. Fresh server epoch/roster checks remain external. JavaScript buffer clearing is best effort, not universal memory erasure.
+
+## API
+
+- initializeConfidentialState(ownerId): explicitly create an owner key only if absent; return the existing active owner's persisted winner in a key-creation race. A revocation tombstone refuses initialization; no automatic re-enrollment.
+- openConfidentialState(ownerId): open an existing active owner; missing, invalid or absent-key data fails closed. Never create a replacement key.
+- handle.read(scope): return a copied opaque checkpoint/pending-send snapshot and generation, or null for an absent record. Never return partial decoded state.
+- handle.compareAndSwap(changes): atomically update one through eight distinct scopes of this owner. Each change supplies expectedGeneration (0 means absent) and checkpoint plus pendingSends. New generation must be exactly expected+1, never exceed Number.MAX_SAFE_INTEGER. One transaction includes the consumed device vault and initial room expectedGeneration=0; any conflict aborts the whole batch.
+- deleteConfidentialOwner(ownerId): independently callable while initialization is pending. In one strict transaction bounded-scan and validate actual owner ciphertext/count, delete those records and the key, subtract actual ciphertext bytes from aggregate accounting, and leave an immutable revocation tombstone. Active-header counters must reconcile; absent headers and tombstones still scan for surviving rows. Invalid records, over-limit scans or inconsistent accounting abort the whole deletion rather than acknowledge absence. Repeated deletion rechecks rows/key and does not silently trust a tombstone. Existing handles become unusable; absence of an initialized owner still produces a tombstone so delayed initializers cannot resurrect it.
+- handle.close(): synchronously fence callbacks, abort active transactions where possible and close its connection. No implicit reopen. A transaction already committed before close cannot be undone; lack of acknowledgement after a close race does not prove no commit.
+
+Every readwrite transaction explicitly requests durability=strict and verifies the returned transaction reports strict before any operation. Unsupported invocation or an ignored/weaker mode aborts/refuses; no weaker retry. This requests the strongest browser-defined durability mode, not proven power-loss, OS/hardware durability or rollback resistance. The returned generation map is acknowledged only after transaction.oncomplete. Encryption is prepared before entering a readwrite transaction; it rechecks owner incarnation/key, all expected generations, record count and byte totals under that transaction before writing any batch. Concurrent connections serialize through the same owner/global metadata stores. Batch results expose no engine session or public key package: the engine host must publish those only after this Promise succeeds.
+
+Reads linearize at their snapshot read; after decryption they recheck active owner incarnation before returning. Local close invalidates every subsequent completion. A deletion that commits before this final check refuses the result. A read that has already completed may be held by its caller; owner deletion cannot revoke caller-owned bytes or guarantee instantaneous cross-process memory wiping. Stale handles never write after deletion or reuse a replacement key.
+
+## Bounds and failures
+
+- Opaque checkpoint: at most 17 MiB, admitting the current Rust sealed active-state and bounded device-vault formats (private provider bytes 16 MiB plus framing).
+- Pending sends: at most 32, each a unique canonical UUID plus at most 64 KiB opaque ciphertext; aggregate pending ciphertext at most 1 MiB.
+- Batch: at most eight distinct records and 64 MiB prepared encrypted bytes. Per owner: 64 records and 64 MiB encrypted payload bytes. Whole database: 128 MiB encrypted payload bytes and 16 lifetime owners, including tombstones. These are admission limits, not measured browser disk/RSS quotas or a claim of arbitrary full 128-member usage across 64 rooms.
+- Framing/version/UUID/public-key/generation/length arithmetic and every decoded field are checked. Malformed data, AEAD failure, quota/transaction failure, key absence, unavailable IndexedDB/WebCrypto and closed handles refuse; no memory/unencrypted persistence fallback.
+- Tombstones are never evicted automatically; lifetime-owner saturation fails closed. An explicit re-enrollment/reset protocol is deferred and cannot delete tombstones behind active operations.
+
+## Acceptance before publication
+
+Run the actual TypeScript module transpiled by the existing TypeScript dependency on a fresh isolated localhost origin, in a real Playwright Chromium context with real IndexedDB and WebCrypto. The new tests/e2e/confidential-local-state.spec.mjs is discovered by the existing Playwright suite and uses its managed browser fixture; it starts no nested test/browser runner and changes no workflow or dependency. Semantic TypeScript checking remains the existing Web typecheck gate. This is unit-level browser storage evidence, not product E2E or compiled-engine qualification. No new dependencies, provider calls or runtime installs.
+
+1. Persist opaque bytes; close/reopen; verify exact bytes and non-extractable AES-256-GCM key; inspect raw database and show ciphertext differs from clear payload; exportKey refuses. No localStorage/sessionStorage entry.
+2. Two connections race first initialization and then same expected generation: both use the persisted key winner, exactly one CAS commits and no half state appears. Two-scope vault+initial-room batch succeeds together; one stale generation rejects both.
+3. Reject malformed scope, duplicate batch records/pending IDs, invalid/exhausted generation, framing/byte/count limits and wrong-key/ciphertext/scope metadata before exposing plaintext. Capacities are asserted through real API refusals, not allocation to every aggregate limit.
+4. Forced readwrite transaction abort leaves old checkpoint and pending sends together. Successful acknowledgement is after strict transaction oncomplete; transaction atomicity prevents a half batch. Requesting strict is not an executed crash/power-loss test. Assert real tx.durability and refusal of simulated ignored options/unsupported invocation without a weaker retry.
+5. Hold real crypto completions, then close/delete owner from another handle: writes and read results refuse, initialization cannot recreate a tombstoned key, and every existing handle remains fenced. Another owner's state remains readable.
+6. A missing key or lost owner header with surviving ciphertext fails closed before key generation; no implicit recreation. The orphan check runs both before generating a candidate key and again in the creation transaction. Database versionchange closes active handles. No silent storage fallback when WebCrypto/IndexedDB is absent or key cloning/transaction commit refuses. Orphan-header deletion subtracts actual bytes, repeated/tombstoned deletion rechecks absence and removes stray rows/key where valid; corrupt/over-limit scans abort while preserving other owners.
+
+Source, browser test and independent parent review must precede publication. Source tests remain unrun until explicit heavy-slot/disk admission; fully materialize this sparse worktree before full repository attribution/security gates and any publication.
