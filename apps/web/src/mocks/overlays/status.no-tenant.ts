@@ -3,7 +3,7 @@
 // `listSubscriptions` example already carries one row, so nothing needs
 // overriding there — only the tenants list changes.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { emptyTenantsListBody } from './support/status-fixtures'
 
 const BASE = '*/api/v1'

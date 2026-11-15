@@ -1,7 +1,7 @@
 // docs/specs/08-home.md §7: capacity at 92 %, the upgrade-prompt threshold.
 // Compose over `home.default` for a healthy baseline besides the gauge.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 

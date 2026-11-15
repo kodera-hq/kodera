@@ -2,7 +2,7 @@
 // the module rail draws « Messages ». No pack on sale includes messaging and the demo is Visio-only,
 // so this overlay is what keeps the rail's path to the workspace covered in a real browser.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { operationalComponents, tenantsListBody, tenantStatusBody } from './support/status-fixtures'
 
 const BASE = '*/api/v1'

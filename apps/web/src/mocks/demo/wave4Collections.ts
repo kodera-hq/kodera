@@ -3,7 +3,7 @@
 // walkable Groupe Vercelli and community demos answer every collection route without falling
 // through to generated contract example fixtures.
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import {
   createDefaultCollectionSchema,
   toWireCollectionProperty,

@@ -18,7 +18,7 @@ const BASE = 'https://core.test/api/v1'
 const fill = (path: string): string => path.replace(/\{[^{}]+\}/g, 'fixture-id')
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
 })
 afterEach(() => {
   server.resetHandlers()
@@ -34,7 +34,7 @@ const collections = operations.filter((op) => op.isList)
 describe('the generated handlers', () => {
   it('cover every operation in the contract', () => {
     // A count that silently drops to zero would make every assertion below vacuous.
-    expect(operations.length).toBe(166)
+    expect(operations.length).toBe(171)
     expect(collections.length).toBeGreaterThan(20)
   })
 

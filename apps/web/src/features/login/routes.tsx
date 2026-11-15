@@ -1,8 +1,15 @@
 import { createRoute } from '@tanstack/react-router'
+import { lazy, Suspense } from 'react'
 import { z } from '@/validation-policy'
 import { rootRoute } from '../../app/root-route'
-import { CommunityWelcome } from './CommunityWelcome'
+import { SessionLoading } from '../../app/SessionLoading'
 import { LoginScreen } from './LoginScreen'
+
+// The Community welcome has no callback tokens or entry state to capture. Fetch
+// its presentation only when this login destination is opened.
+const CommunityWelcome = lazy(() =>
+  import('./CommunityWelcome').then(({ CommunityWelcome }) => ({ default: CommunityWelcome }))
+)
 
 // `/login` and `/login?org={slug}` (docs/specs/00-shell-and-login.md §3):
 // realm discovery, top-level rather than under `/{org}` — there is no
@@ -23,6 +30,12 @@ export const loginRoute = createRoute({
 
 function LoginRoute() {
   const { org } = loginRoute.useSearch()
-  if (org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') return <CommunityWelcome />
+  if (org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
+    return (
+      <Suspense fallback={<SessionLoading />}>
+        <CommunityWelcome />
+      </Suspense>
+    )
+  }
   return <LoginScreen {...(org === undefined ? {} : { initialSlug: org })} />
 }

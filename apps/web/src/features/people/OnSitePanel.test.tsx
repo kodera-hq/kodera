@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { onTrack, type AnalyticsEvent } from '@/analytics/track'
@@ -16,7 +16,7 @@ import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
 const TOKENS = '*/api/v1/organisations/:org/enrolment-tokens'
 const DAY_MS = 24 * 60 * 60 * 1000
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => {
   server.resetHandlers()
   stopTracking?.()

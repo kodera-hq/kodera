@@ -1,0 +1,11 @@
+extend = "../apps/server/pyproject.toml"
+
+[lint.isort]
+known-first-party = ["config", "core", "ee", "jobs", "services"]
+known-third-party = ["apps"]
+
+[lint.extend-per-file-ignores]
+"api.py" = ["I001"]
+"tests/**" = ["S101", "S105", "S106"]
+"**/tests/**" = ["S101", "S105", "S106"]
+"test_*.py" = ["S101", "S105", "S106"]

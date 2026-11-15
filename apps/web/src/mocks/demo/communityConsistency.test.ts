@@ -25,7 +25,7 @@ const get = async (path: string, slug = 'community') =>
   (await fetch(base + path, { headers: token(slug) })).json()
 beforeAll(() => {
   vi.stubEnv('VITE_KEYCLOAK_URL', 'https://id.example.test')
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledFrame: 'error' })
 })
 afterAll(() => {
   server.close()

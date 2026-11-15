@@ -3,7 +3,7 @@
 // `Location` and `{"state": "initialised"}` only, and every read after it is the starter
 // workspace. The flag lives as long as the page: a reload starts again from `not_initialised`.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import {
   INITIALISE_PATH,
   WORKSPACE_PATH,

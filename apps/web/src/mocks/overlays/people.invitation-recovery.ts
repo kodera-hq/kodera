@@ -1,5 +1,5 @@
 // Core ownership for actual mock IdP recovery; no auth adapter is replaced.
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { ownedOrderMe } from '../orderIdentity'
 
 export const handlers = [

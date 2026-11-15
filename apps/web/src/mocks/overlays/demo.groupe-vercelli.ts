@@ -48,7 +48,7 @@ import {
 // something upstream hands the console a different one, and it does so by
 // silently falling through to the base handler rather than by failing.
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { isTenantSlug } from '@/api/tenantSlug'
 import * as seed from '../demo/seed'
@@ -111,6 +111,10 @@ const now = (): Date => new Date()
 export const DEMO_ROUTES: readonly string[] = [
   'POST /workspaces/instant-claim',
   'POST /auth/discover',
+  'GET /auth/passport/workspaces',
+  'POST /auth/passport/magic-link/request',
+  'POST /auth/passport/magic-link/verify',
+  'POST /auth/passport/switch-workspace',
   'GET /me',
   'GET /organisations/:organisation_id',
   'GET /organisations/:organisation_id/bootstrap',
@@ -187,11 +191,104 @@ function paymentLinkFor(invoiceId: string | readonly string[] | undefined) {
     : seed.paymentLink(now())
 }
 
+function demoPassportDirectory(
+  request: Request
+): components['schemas']['PassportWorkspaceDirectory'] {
+  const at = now()
+  const profile = withLocalMemberships(
+    localRequestWorkspace(request)
+      ? localMe(localRequestWorkspace(request)!, at)
+      : community.isCommunityDemoRequest(request)
+        ? community.communityMe(at)
+        : seed.me(at),
+    at
+  )
+  const workspaces: components['schemas']['PassportWorkspaceEntry'][] = profile.organisations.map(
+    (entry, index) => {
+      const orgId = entry.organisation.id
+      const slug = entry.organisation.slug
+      const realm = entry.organisation.realm ?? slug
+      const issuer =
+        profile.identities.find((row) => row.realm === realm)?.issuer ??
+        `https://id.example.test/realms/${realm}`
+      const ws = findLocalWorkspace(orgId)
+        ? localWorkspace(findLocalWorkspace(orgId)!)
+        : isCommunity(orgId)
+          ? community.communityWorkspace()
+          : readyWorkspace()
+      return {
+        organisation_id: orgId,
+        organisation_slug: slug,
+        organisation_name: entry.organisation.name,
+        realm,
+        issuer,
+        membership_id: entry.membership_id,
+        role: entry.role,
+        workspace_id: ws.id ?? null,
+        default_urls: {},
+        active: index === 0,
+      }
+    }
+  )
+  const first = workspaces[0]
+  return {
+    user: {
+      id: profile.id,
+      email: profile.email,
+      display_name: profile.display_name ?? null,
+    },
+    active_organisation_id: first?.organisation_id ?? null,
+    active_workspace_id: first?.workspace_id ?? null,
+    workspaces,
+  }
+}
+
+const demoPassportSessionToken = (): string => `kp1.${'a'.repeat(32)}.demo`
+
 export const handlers: HttpHandler[] = [
   // A demo never allocates a Cloud tenant or fabricates a signed invitation.
   http.post(`${BASE}/workspaces/instant-claim`, () =>
     HttpResponse.json({ code: 'local-preview-only' }, { status: 503, headers: headers() })
   ),
+  http.get(`${BASE}/auth/passport/workspaces`, ({ request }) =>
+    HttpResponse.json(demoPassportDirectory(request), { headers: headers() })
+  ),
+  http.post(`${BASE}/auth/passport/magic-link/request`, () =>
+    HttpResponse.json(
+      {
+        status: 'accepted',
+        expires_in_seconds: 600,
+      } satisfies components['schemas']['PassportMagicLinkAccepted'],
+      { status: 202, headers: headers() }
+    )
+  ),
+  http.post(`${BASE}/auth/passport/magic-link/verify`, ({ request }) => {
+    const directory = demoPassportDirectory(request)
+    const verified: components['schemas']['PassportVerifiedSession'] = {
+      ...directory,
+      session_token: demoPassportSessionToken(),
+      expires_in_seconds: 3600,
+    }
+    return HttpResponse.json(verified, { headers: headers() })
+  }),
+  http.post(`${BASE}/auth/passport/switch-workspace`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as { organisation_id?: unknown }
+    const directory = demoPassportDirectory(request)
+    const chosen =
+      directory.workspaces.find((row) => row.organisation_id === body.organisation_id) ??
+      directory.workspaces[0]
+    if (!chosen) {
+      return problem('https://kodera.io/problems/forbidden')
+    }
+    const switched: components['schemas']['PassportSwitchedWorkspace'] = {
+      active_organisation_id: chosen.organisation_id,
+      active_workspace_id: chosen.workspace_id,
+      workspace: { ...chosen, active: true },
+      session_token: demoPassportSessionToken(),
+      expires_in_seconds: 3600,
+    }
+    return HttpResponse.json(switched, { headers: headers() })
+  }),
   http.post(`${BASE}/auth/discover`, async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as { slug?: unknown; email?: unknown }
     const selected =

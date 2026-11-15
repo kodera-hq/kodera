@@ -2,8 +2,6 @@
 
 import os
 
-from django.core.exceptions import ImproperlyConfigured
-
 from apps.billing.configuration import (
     PAYMENT_TERMS_DAYS,
     issuer_from_environment as billing_issuer,
@@ -14,13 +12,20 @@ from apps.billing.configuration import (
 from apps.docs.configuration import collaboration_settings
 from config.deploy_environment import deployment
 from config.environment import (
+    android_assetlinks_sha256,
     auth_trust,
     billing_enabled,
     console_client_id,
+    edition,
+    ee_audit_signing_seed,
     intake_admitted,
+    ios_app_ids,
     legal_text_origin,
     mutation_rate_per_minute,
     staff_issuer,
+    staff_oidc_issuer,
+    staff_oidc_jwks_url,
+    staff_ops_hosts,
     tenant_app_urls,
     trusted_edge,
 )
@@ -47,6 +52,7 @@ INSTALLED_APPS = [
     "apps.legal",
     "apps.tenancy",
     "core.idempotency",
+    "core.staff_api",
     "apps.engine_intents",
     "apps.support",
     "apps.media",
@@ -59,6 +65,8 @@ KODERA_CONSOLE_CLIENT_ID = console_client_id(os.environ)
 KODERA_STAFF_ISSUER = staff_issuer(os.environ)
 KODERA_INTAKE_ADMITTED = intake_admitted(os.environ)
 KODERA_CONTACT_SEAL_KEY = key_from_environment(os.environ, "KODERA_CONTACT_SEAL_KEY")
+KODERA_OUTBOX_SEAL_KEY = key_from_environment(os.environ, "KODERA_OUTBOX_SEAL_KEY")
+KODERA_PASSPORT_MAGIC_LINK = os.environ.get("KODERA_PASSPORT_MAGIC_LINK") or None
 KODERA_MEMBERSHIP_CURSOR_KEY = os.environ.get("KODERA_MEMBERSHIP_CURSOR_KEY")
 # Discovery validates its own key only when called, without blocking other operations.
 KODERA_DISCOVERY_HMAC_KEY = os.environ.get("KODERA_DISCOVERY_HMAC_KEY")
@@ -76,6 +84,10 @@ KODERA_MUTATION_RATE_PER_MINUTE = mutation_rate_per_minute(os.environ)
 KODERA_TENANT_APP_URLS = tenant_app_urls(os.environ)
 # Whether Core bills: KODERA_BILLING_ENABLED (docs/specs/QUICK_WORKSPACE.md §2).
 KODERA_BILLING_ENABLED = billing_enabled(os.environ)
+# Product edition: KODERA_EDITION (GOVERNANCE.md §1); `community` when unset.
+KODERA_EDITION = edition(os.environ)
+# Optional Enterprise audit-export signing seed; validated at startup when set.
+KODERA_EE_AUDIT_SIGNING_SEED = ee_audit_signing_seed(os.environ)
 # The edge proxies whose X-Forwarded-For names the client (docs/specs/TRUSTED_EDGE.md); unset, none.
 KODERA_TRUSTED_EDGE = trusted_edge(os.environ)
 # The legal entity that issues invoices, and the invoice number series (apps/billing/configuration.py).
@@ -98,11 +110,6 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
     KODERA_STRIPE_WEBHOOK_SECRET,
 ) = stripe_from_environment(os.environ)
 
-# No routed signed webhook exists in customer_urls yet. Do not accept money that
-# this deployment cannot reconcile; enabling it requires a route and replay tests.
-if KODERA_PAYMENT_PROVIDER == "stripe":
-    raise ImproperlyConfigured("Stripe payments require a routed reconciliation webhook")
-
 # Application keys only; the API never loads object-storage or VAPID private credentials.
 KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
 (KODERA_NOTIFICATION_SEAL_KEY, KODERA_PUSH_VAPID_PUBLIC_KEY) = notification_settings(os.environ)
@@ -111,3 +118,10 @@ KODERA_MEDIA_GATEWAY_SOCKET = media_gateway_socket(os.environ)
     KODERA_COLLAB_ENGINE_URL,
     KODERA_COLLAB_PUBLIC_URL,
 ) = collaboration_settings(os.environ)
+
+KODERA_STAFF_OIDC_ISSUER = staff_oidc_issuer(os.environ)
+KODERA_STAFF_OIDC_JWKS_URL = staff_oidc_jwks_url(os.environ)
+KODERA_STAFF_OPS_HOSTS = staff_ops_hosts(os.environ)
+KODERA_STAFF_ADMIN_ORIGINS = os.environ.get("KODERA_STAFF_ADMIN_ORIGINS")
+KODERA_IOS_APP_IDS = ios_app_ids(os.environ)
+KODERA_ANDROID_ASSETLINKS_SHA256 = android_assetlinks_sha256(os.environ)

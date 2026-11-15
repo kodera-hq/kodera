@@ -1,7 +1,7 @@
 // §7: "One invoice `state: credited` and a line with a negative
 // `amount_minor`."
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import { baseInvoice, INVOICE_ID, invoicesPage, ORGANISATION_ID } from '../fixtures/invoiceFixtures'
 
 const BASE = '*/api/v1'

@@ -4,7 +4,7 @@
 // person is refused (`forbidden`, a status the contract declares), so the screens show their
 // refusal, never a fiction.
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import { problem } from '../problem'
 
 export const MESSAGING_DEMO_ROUTES: readonly string[] = [

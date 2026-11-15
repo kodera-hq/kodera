@@ -34,7 +34,8 @@ Each environment module imports `base` and overrides; none of them declares a se
 | Object-storage read credentials for artefacts it serves by reference | Narrow, read-only, per-bucket |
 | Mail-sending credentials for transactional messages to customers | Not an infrastructure credential |
 | a billing-provider restricted key limited to Checkout Sessions (create and expire), and the webhook signing secret. No refund, payout, transfer or full secret key; the key's scope is set and checked when it is issued | No money movement from the API |
-| The audit pepper and the application signing key | Application secrets, not infrastructure |
+| The audit pepper, the Enterprise audit-export signing seed (`KODERA_EE_AUDIT_SIGNING_SEED`), and the application signing key | Application secrets, not infrastructure |
+| Outbox message seal key (`KODERA_OUTBOX_SEAL_KEY`) for sealing transactional mail recipients and one-time link secrets | Application secret; unsealed only by the mail sender |
 | The Key Manager key **identifier** | An identifier, not a key |
 
 ## 3. What the API process must never hold

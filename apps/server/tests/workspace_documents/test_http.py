@@ -37,7 +37,9 @@ def http(world, http_signer, settings):
     ]
 
 
-def auth_headers(credential: str, *, idempotency_key: str | None = None, **extra: str) -> dict[str, str]:
+def auth_headers(
+    credential: str, *, idempotency_key: str | None = None, **extra: str
+) -> dict[str, str]:
     headers = {"HTTP_AUTHORIZATION": "Bearer " + credential, **extra}
     if idempotency_key is not None:
         headers["HTTP_IDEMPOTENCY_KEY"] = idempotency_key

@@ -128,7 +128,15 @@ ANONYMOUS_RESOURCES = frozenset(
 # sign-in problem report. The contract scopes them to the organisation and
 # support-ticket rows, which every other operation reaches authenticated, so
 # the allowance is keyed by operation id and never widens the row.
-ANONYMOUS_OPERATIONS = frozenset({"discoverRealm", "reportSignInProblem"})
+ANONYMOUS_OPERATIONS = frozenset(
+    {
+        "discoverRealm",
+        "reportSignInProblem",
+        "requestPassportMagicLink",
+        "verifyPassportMagicLink",
+        "receiveStripeWebhook",
+    }
+)
 
 # AUTHZ.md §5 and §7: the agent is a separate authenticator with no scope on
 # any Core API resource, so its column is exercised through

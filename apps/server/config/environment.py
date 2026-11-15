@@ -82,8 +82,10 @@ ADMITTED_SECRET_NAMES = frozenset(
         "KODERA_PUSH_VAPID_PUBLIC_KEY",  # public P-256 discovery point
         "KODERA_CONTACT_SEAL_KEY",  # application secrets
         "KODERA_OUTBOX_SEAL_KEY",
+        "KODERA_EE_INTERNAL_TOKEN",
         "KODERA_MEMBERSHIP_CURSOR_KEY",
         "KODERA_DISCOVERY_HMAC_KEY",
+        "KODERA_EE_AUDIT_SIGNING_SEED",  # application audit-export signing seed
         "KODERA_STRIPE_SECRET_KEY",  # a restricted key, apps/billing/configuration.py
         "KODERA_STRIPE_WEBHOOK_SECRET",
         "KODERA_MAIL_SMTP_PASSWORD",  # transactional mail, the operator's sender
@@ -257,6 +259,47 @@ def billing_enabled(environment: Mapping[str, str]) -> bool:
     if value == "false":
         return False
     raise ImproperlyConfigured("KODERA_BILLING_ENABLED must be true, false or unset")
+
+
+EDITIONS = frozenset({"community", "enterprise"})
+
+
+def edition(environment: Mapping[str, str]) -> str:
+    """Which product edition serves HTTP, from KODERA_EDITION (GOVERNANCE.md §1).
+
+    Unset or empty is `community`, the open-source default. Setting `enterprise` activates the
+    clean-room `/api/v1/ee/*` dispatcher when the `ee/` package is installed. Anything else is
+    refused at start without reflecting the caller's value."""
+    value = environment.get("KODERA_EDITION", "").strip()
+    if value == "":
+        return "community"
+    if value in EDITIONS:
+        return value
+    raise ImproperlyConfigured("KODERA_EDITION must be community, enterprise or unset")
+
+
+def ee_audit_signing_seed(environment: Mapping[str, str]) -> bytes | None:
+    """Application seed for tenant-derived Enterprise audit-export signing keys, from
+    KODERA_EE_AUDIT_SIGNING_SEED.
+
+    Unset or empty returns `None` (audit exports derive tenant keys from `SECRET_KEY` and record
+    each verification public key in `ee_audit_signing_key`). When set, must be 32 to 512 printable
+    non-whitespace ASCII characters with at least 8 distinct characters, and never a PEM private
+    key block. Malformed values stop the process without reflecting the secret."""
+    raw = environment.get("KODERA_EE_AUDIT_SIGNING_SEED", "")
+    if raw == "":
+        return None
+    if (
+        not 32 <= len(raw) <= 512
+        or any(not (0x21 <= ord(ch) <= 0x7E) for ch in raw)
+        or len(set(raw)) < 8
+        or "PRIVATE" in raw.upper()
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_EE_AUDIT_SIGNING_SEED must be 32 to 512 printable non-whitespace ASCII "
+            "characters with sufficient entropy, or unset"
+        )
+    return raw.encode("ascii")
 
 
 STAFF_REALM_SUFFIX = "/realms/kodera-staff"
@@ -478,3 +521,153 @@ def mutation_rate_per_minute(environment: Mapping[str, str]) -> int:
             "KODERA_MUTATION_RATE_PER_MINUTE is an integer from 1 to 6000; it cannot be disabled"
         )
     return int(value)
+
+
+IOS_APP_ID = re.compile(r"[A-Z0-9]{10}\.io\.kodera\.app(?:\.[A-Za-z0-9-]+)*\Z")
+IOS_APP_IDS_MAX = 16
+
+
+def ios_app_ids(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Validated Apple Universal Links `<TEAM_ID>.<bundle_id>` identifiers from KODERA_IOS_APP_IDS.
+
+    Unset or empty returns `()`, causing `/.well-known/apple-app-site-association` to fail closed
+    with `503` JSON; any malformed identifier stops startup without reflecting input."""
+    raw = environment.get("KODERA_IOS_APP_IDS", "").strip()
+    if not raw:
+        return ()
+    entries = [item.strip() for item in raw.split(",")]
+    if (
+        not entries
+        or len(entries) > IOS_APP_IDS_MAX
+        or any(not item or IOS_APP_ID.fullmatch(item) is None for item in entries)
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_IOS_APP_IDS must be 1 to 16 comma-separated <10-char Team ID>.io.kodera.app entries"
+        )
+    return tuple(dict.fromkeys(entries))
+
+
+ANDROID_SHA256_FINGERPRINT = re.compile(r"(?:[0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}\Z")
+ANDROID_FINGERPRINTS_MAX = 16
+
+
+def android_assetlinks_sha256(environment: Mapping[str, str]) -> tuple[str, ...]:
+    """Validated Android App Links SHA-256 cert fingerprints from KODERA_ANDROID_ASSETLINKS_SHA256.
+
+    Unset or empty returns `()`, causing `/.well-known/assetlinks.json` to fail closed with `503`
+    JSON; any malformed fingerprint stops startup without reflecting input."""
+    raw = environment.get("KODERA_ANDROID_ASSETLINKS_SHA256", "").strip()
+    if not raw:
+        return ()
+    entries = [item.strip() for item in raw.split(",")]
+    if (
+        not entries
+        or len(entries) > ANDROID_FINGERPRINTS_MAX
+        or any(not item or ANDROID_SHA256_FINGERPRINT.fullmatch(item) is None for item in entries)
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_ANDROID_ASSETLINKS_SHA256 must be 1 to 16 comma-separated colon-delimited SHA-256 fingerprints"
+        )
+    return tuple(dict.fromkeys(item.upper() for item in entries))
+
+
+def staff_oidc_issuer(
+    environment: Mapping[str, str], *, loopback_issuers: bool = False
+) -> str | None:
+    """The `kodera-staff` realm OIDC issuer for `/staff/v1/*`, from KODERA_STAFF_OIDC_ISSUER."""
+    value = environment.get("KODERA_STAFF_OIDC_ISSUER", "").strip()
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if (
+        len(value) > 2048
+        or parsed.scheme not in {"https", "http"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.endswith(STAFF_REALM_SUFFIX)
+        or (parsed.scheme == "http" and parsed.hostname not in LOCAL_HOSTS)
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_STAFF_OIDC_ISSUER must be one issuer URL of the staff realm `kodera-staff`"
+        )
+    if not loopback_issuers and not _deployable_issuer(value):
+        raise ImproperlyConfigured(
+            "KODERA_STAFF_OIDC_ISSUER is a plain-http or loopback issuer, "
+            "which only a local profile may trust"
+        )
+    return value
+
+
+def staff_oidc_jwks_url(
+    environment: Mapping[str, str], *, loopback_issuers: bool = False
+) -> str | None:
+    """The JWKS endpoint URL for `/staff/v1/*`, from KODERA_STAFF_OIDC_JWKS_URL."""
+    value = environment.get("KODERA_STAFF_OIDC_JWKS_URL", "").strip()
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if (
+        len(value) > 2048
+        or parsed.scheme not in {"https", "http"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path in {"", "/"}
+        or parsed.fragment
+        or (parsed.scheme == "http" and parsed.hostname not in LOCAL_HOSTS)
+    ):
+        raise ImproperlyConfigured(
+            "KODERA_STAFF_OIDC_JWKS_URL must be an HTTPS JWKS endpoint URL with an explicit path"
+        )
+    if not loopback_issuers and not _deployable_issuer(value):
+        raise ImproperlyConfigured(
+            "KODERA_STAFF_OIDC_JWKS_URL uses a plain-http or loopback host, "
+            "which only a local profile may trust"
+        )
+    return value
+
+
+STAFF_OPS_HOST_NAME = re.compile(
+    r"(?=.{1,253}\Z)(?:localhost|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63})"
+    r"(?::[1-9][0-9]{0,4})?\Z"
+)
+STAFF_OPS_HOSTS_MAX = 16
+
+
+def staff_ops_hosts(
+    environment: Mapping[str, str], *, loopback_issuers: bool = False
+) -> tuple[str, ...]:
+    """Dedicated `/staff/v1/ops/*` Host allowlist, from KODERA_STAFF_OPS_HOSTS.
+
+    Refuses public `admin.*` hostnames so split-plane `/staff/v1/ops/*` enforcement cannot be
+    misconfigured onto the read/triage plane."""
+    raw = environment.get("KODERA_STAFF_OPS_HOSTS", "").strip()
+    if not raw:
+        return ()
+    entries = [item.strip().lower() for item in raw.split(",")]
+    if not entries or len(entries) > STAFF_OPS_HOSTS_MAX:
+        raise ImproperlyConfigured(
+            "KODERA_STAFF_OPS_HOSTS must list 1 to 16 comma-separated ops hostnames"
+        )
+    validated: list[str] = []
+    for entry in entries:
+        if not entry or STAFF_OPS_HOST_NAME.fullmatch(entry) is None:
+            raise ImproperlyConfigured(
+                "KODERA_STAFF_OPS_HOSTS entries must be valid lowercase DNS hostnames"
+            )
+        host_only, sep, port_str = entry.partition(":")
+        if sep and not (1 <= int(port_str) <= 65535):
+            raise ImproperlyConfigured("KODERA_STAFF_OPS_HOSTS port must be between 1 and 65535")
+        if host_only == "admin" or host_only.startswith("admin."):
+            raise ImproperlyConfigured(
+                "KODERA_STAFF_OPS_HOSTS must name dedicated ops-admin hosts, never public admin.*"
+            )
+        if not loopback_issuers and is_loopback_host(host_only):
+            raise ImproperlyConfigured(
+                "KODERA_STAFF_OPS_HOSTS names a loopback host, which only a local profile admits"
+            )
+        validated.append(entry)
+    return tuple(dict.fromkeys(validated))

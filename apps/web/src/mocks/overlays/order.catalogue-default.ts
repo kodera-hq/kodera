@@ -7,7 +7,7 @@
 // tier, linked to it by the price row's `plan_code`; tiers named « Capacité S » to « Capacité L »
 // with no description; each plan carries the design lane's text (French UI catalogue copy). The capacities and prices are Core's grid, below.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { ownedOrderMe } from '../orderIdentity'
 

@@ -362,6 +362,11 @@
       "path": "/catalog/packs"
     },
     {
+      "operation_id": "listPassportWorkspaces",
+      "method": "GET",
+      "path": "/auth/passport/workspaces"
+    },
+    {
       "operation_id": "listPlans",
       "method": "GET",
       "path": "/catalog/plans"
@@ -457,6 +462,11 @@
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/query"
     },
     {
+      "operation_id": "receiveStripeWebhook",
+      "method": "POST",
+      "path": "/billing/webhooks/stripe"
+    },
+    {
       "operation_id": "redeemWorkspaceInvite",
       "method": "POST",
       "path": "/workspace-invites/redeem"
@@ -465,6 +475,11 @@
       "operation_id": "removeMembership",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
+    },
+    {
+      "operation_id": "requestPassportMagicLink",
+      "method": "POST",
+      "path": "/auth/passport/magic-link/request"
     },
     {
       "operation_id": "resendInvitation",
@@ -492,6 +507,11 @@
       "path": "/organisations/{organisation_id}/workspace/search"
     },
     {
+      "operation_id": "switchPassportWorkspace",
+      "method": "POST",
+      "path": "/auth/passport/switch-workspace"
+    },
+    {
       "operation_id": "unarchiveChannel",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/actions/unarchive"
@@ -515,6 +535,11 @@
       "operation_id": "validateBillingVat",
       "method": "POST",
       "path": "/organisations/{organisation_id}/billing/vat-status"
+    },
+    {
+      "operation_id": "verifyPassportMagicLink",
+      "method": "POST",
+      "path": "/auth/passport/magic-link/verify"
     }
   ]
 }

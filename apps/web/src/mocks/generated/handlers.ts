@@ -5,8 +5,8 @@
 // passing against a shape the Core API stopped returning. Scenario overlays go in
 // `tests/e2e/scenarios/` and override these.
 
-import { http, HttpResponse } from 'msw'
-import type { HttpHandler } from 'msw'
+import { http, HttpResponse } from 'msw/http'
+import type { HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { bindCurrentUserToMockRequest } from '../currentUserIdentity'
 import { EXAMPLES, type OperationExample } from './examples'
@@ -105,6 +105,11 @@ function answerConditional(example: OperationExample, request: Request): Respons
 export const handlers: HttpHandler[] = [
   http.get(BASE + "/me", ({ request }) => answer({ ...EXAMPLES["getMe"], body: bindCurrentUserToMockRequest(EXAMPLES["getMe"].body as components['schemas']['Me'], request) })),
   http.patch(BASE + "/me", ({ request }) => answerRequiringIfMatch(EXAMPLES["patchMe"], request)),
+  http.post(BASE + "/auth/passport/magic-link/request", () => answer(EXAMPLES["requestPassportMagicLink"])),
+  http.post(BASE + "/auth/passport/magic-link/verify", () => answer(EXAMPLES["verifyPassportMagicLink"])),
+  http.get(BASE + "/auth/passport/workspaces", () => answer(EXAMPLES["listPassportWorkspaces"])),
+  http.post(BASE + "/auth/passport/switch-workspace", () => answer(EXAMPLES["switchPassportWorkspace"])),
+  http.post(BASE + "/billing/webhooks/stripe", () => answer(EXAMPLES["receiveStripeWebhook"])),
   http.post(BASE + "/auth/discover", ({ request }) => answerIdempotent(EXAMPLES["discoverRealm"], request)),
   http.get(BASE + "/organisations", () => answer(EXAMPLES["listOrganisations"])),
   http.post(BASE + "/organisations", ({ request }) => answerIdempotent(EXAMPLES["createOrganisation"], request)),

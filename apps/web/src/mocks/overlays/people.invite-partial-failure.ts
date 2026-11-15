@@ -3,7 +3,7 @@
 // `already_member`, in submission order. Later batches (the retry) are
 // answered by the stateful store underneath.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 
 type InvitationBatchResult = components['schemas']['InvitationBatchResult']

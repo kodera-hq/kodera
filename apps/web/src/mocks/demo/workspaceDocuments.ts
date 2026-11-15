@@ -3,7 +3,7 @@
 // organisation so the walkable demo and E2E suites answer every route the console calls without
 // falling through to OpenAPI example fixtures or opening external WebSockets.
 
-import { http, HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import {
   canCreateDocumentUnderParent,

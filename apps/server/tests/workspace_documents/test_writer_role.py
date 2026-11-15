@@ -26,9 +26,7 @@ def writer(world):
     yield from _role()
 
 
-def test_writer_role_serves_document_operations_and_refuses_tampering(
-    world, writer, native_engine
-):
+def test_writer_role_serves_document_operations_and_refuses_tampering(world, writer, native_engine):
     org, _, members, tokens = world
     # Schema owner seeds a restricted document grant later read by docs_document_role.
     with acting_as(writer):
@@ -119,17 +117,13 @@ def test_writer_role_serves_document_operations_and_refuses_tampering(
         assert refused("TRUNCATE docs_document CASCADE") == INSUFFICIENT_PRIVILEGE
         assert refused("DELETE FROM docs_documentsnapshot") == INSUFFICIENT_PRIVILEGE
         assert (
-            refused("UPDATE docs_document SET visibility = 'restricted'")
-            == INSUFFICIENT_PRIVILEGE
+            refused("UPDATE docs_document SET visibility = 'restricted'") == INSUFFICIENT_PRIVILEGE
         )
         assert (
             refused("UPDATE docs_document SET workspace_id = workspace_id")
             == INSUFFICIENT_PRIVILEGE
         )
-        assert (
-            refused("UPDATE docs_document SET creator_id = creator_id")
-            == INSUFFICIENT_PRIVILEGE
-        )
+        assert refused("UPDATE docs_document SET creator_id = creator_id") == INSUFFICIENT_PRIVILEGE
         assert (
             refused(
                 "INSERT INTO docs_documentgrant "
@@ -140,10 +134,7 @@ def test_writer_role_serves_document_operations_and_refuses_tampering(
             == INSUFFICIENT_PRIVILEGE
         )
         assert refused("DELETE FROM docs_documentgrant") == INSUFFICIENT_PRIVILEGE
-        assert (
-            refused("UPDATE docs_documentupdate SET state = state")
-            == INSUFFICIENT_PRIVILEGE
-        )
+        assert refused("UPDATE docs_documentupdate SET state = state") == INSUFFICIENT_PRIVILEGE
         assert (
             refused(
                 "UPDATE audit_auditevent SET action = 'workspace.document.deleted' "

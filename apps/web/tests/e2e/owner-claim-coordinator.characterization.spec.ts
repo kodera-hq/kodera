@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   expect,
@@ -55,6 +56,13 @@ const CANONICAL_NAME = 'kodera-test-owner-claim-coordinator'
 const SPLIT_NAME = 'kodera-test-owner-claim-coordinator-split'
 const MARKER_NAME = 'kodera.test.owner-claim.arm.v1'
 const STATIC_SCRIPT = fileURLToPath(new URL('../../server/static.mjs', import.meta.url))
+const LOCKED_PLAYWRIGHT_VERSION = '1.65.1' as const
+// Resolve through the test runner's own dependency chain. npm may place that
+// chain inside this workspace instead of hoisting playwright-core to the root.
+const testRequire = createRequire(import.meta.url)
+const playwrightRequire = createRequire(testRequire.resolve('@playwright/test/package.json'))
+const coreRequire = createRequire(playwrightRequire.resolve('playwright/package.json'))
+const CORE_PACKAGE_FILE = coreRequire.resolve('playwright-core/package.json')
 const ASSET_NAMES = [
   'fixture-client.js',
   'fixture-icon.svg',
@@ -85,9 +93,7 @@ function assertBrowserVersion(observed: string, expected: readonly ExpectedChrom
 }
 
 async function expectedChromium(): Promise<{ sha256: string; entries: ExpectedChromium[] }> {
-  const bytes = await readFile(
-    new URL('../../../../node_modules/playwright-core/browsers.json', import.meta.url)
-  )
+  const bytes = await readFile(join(dirname(CORE_PACKAGE_FILE), 'browsers.json'))
   const manifest: unknown = JSON.parse(bytes.toString())
   if (
     manifest === null ||
@@ -223,7 +229,7 @@ async function assertExcluded(): Promise<void> {
 
 interface Rank1FixtureMetadata {
   browser: {
-    playwright: '1.63.0'
+    playwright: typeof LOCKED_PLAYWRIGHT_VERSION
     version: string
     manifest: string
     expected: ExpectedChromium[]
@@ -458,13 +464,10 @@ async function withFixture<Value = Comparison>(
       }
     }
     try {
-      const installed: unknown = JSON.parse(
-        await readFile(
-          new URL('../../../../node_modules/playwright-core/package.json', import.meta.url),
-          'utf8'
-        )
-      )
-      expect(installed, 'NATIVE_LOCKED_PLAYWRIGHT').toMatchObject({ version: '1.63.0' })
+      const installed: unknown = JSON.parse(await readFile(CORE_PACKAGE_FILE, 'utf8'))
+      expect(installed, 'NATIVE_LOCKED_PLAYWRIGHT').toMatchObject({
+        version: LOCKED_PLAYWRIGHT_VERSION,
+      })
       const browserManifest = await expectedChromium()
       assertBrowserVersion(browser.version(), browserManifest.entries)
       const evidence = {
@@ -475,8 +478,10 @@ async function withFixture<Value = Comparison>(
         explicitContextOptions: { serviceWorkers: 'block' },
         projectDevicePreferenceInheritanceAttested: false,
         forceFirstDisposeError,
-        playwright: '1.63.0',
-        lockSha256: digest(await readFile(new URL('../../../../package-lock.json', import.meta.url))),
+        playwright: LOCKED_PLAYWRIGHT_VERSION,
+        lockSha256: digest(
+          await readFile(new URL('../../../../package-lock.json', import.meta.url))
+        ),
         browserVersion: browser.version(),
         reportedDefaultExecutable: browser.browserType().executablePath(),
         browserManifest,
@@ -509,7 +514,7 @@ async function withFixture<Value = Comparison>(
         })
         rank1Metadata = {
           browser: {
-            playwright: '1.63.0',
+            playwright: LOCKED_PLAYWRIGHT_VERSION,
             version: browser.version(),
             manifest: browserManifest.sha256,
             expected: browserManifest.entries,
@@ -915,7 +920,7 @@ async function rank1Probe(
   const requestWitness = new Promise<'request' | 'cleanup-only'>((resolve) => {
     requestArrived = resolve
   })
-  let released = false
+  const released = false
   let requestCount = 0
   let routeCount = 0
   let routeWork: Promise<void> | undefined
@@ -1048,7 +1053,6 @@ async function rank1Probe(
     } catch (error) {
       failures.push(error)
     }
-    released = true
     releaseResponse()
     try {
       const drained = await deadline(
@@ -1232,7 +1236,7 @@ function rank1Shape(value: unknown): asserts value is Rank1Record {
     schema()
   const browser = value.browser
   if (
-    browser.playwright !== '1.63.0' ||
+    browser.playwright !== LOCKED_PLAYWRIGHT_VERSION ||
     !text(browser.version, 64) ||
     !/^\d+\.\d+\.\d+\.\d+$/.test(browser.version) ||
     typeof browser.manifest !== 'string' ||
@@ -1429,7 +1433,7 @@ function rank1ReceiptSelfTests(): void {
       program: hash,
     },
     browser: {
-      playwright: '1.63.0',
+      playwright: LOCKED_PLAYWRIGHT_VERSION,
       version: '1.2.3.4',
       manifest: hash,
       expected: [
@@ -1569,7 +1573,7 @@ async function runRank1Subject(
           : { actual: false, expected: true, name: 'toBe', pass: false }
       )
     } catch (error) {
-      throw new AggregateError([original, error], 'R1_CONTROL_NONQUALIFIED')
+      throw new AggregateError([original, error], 'R1_CONTROL_NONQUALIFIED', { cause: error })
     }
   }
   try {
@@ -1617,7 +1621,8 @@ async function runRank1Subject(
     console.log('W03_RANK1_NATIVE_FETCH ' + body)
     return { record, hashes: captured.hashes }
   } catch (error) {
-    if (refused) throw new AggregateError([original, error], 'R1_PUBLICATION_NONQUALIFIED')
+    if (refused)
+      throw new AggregateError([original, error], 'R1_PUBLICATION_NONQUALIFIED', { cause: error })
     throw error
   }
 }
@@ -2064,7 +2069,7 @@ async function runFencingSubject(
         })
       )
     } catch (error) {
-      throw new AggregateError([primary, error], 'FENCE_CONTROL_NONQUALIFIED')
+      throw new AggregateError([primary, error], 'FENCE_CONTROL_NONQUALIFIED', { cause: error })
     }
   }
   try {
@@ -2131,7 +2136,8 @@ async function runFencingSubject(
     console.log('W03_FENCING ' + body)
     return canonicalAssets
   } catch (error) {
-    if (refused) throw new AggregateError([primary, error], 'FENCE_PUBLICATION_NONQUALIFIED')
+    if (refused)
+      throw new AggregateError([primary, error], 'FENCE_PUBLICATION_NONQUALIFIED', { cause: error })
     throw error
   }
 }
@@ -2393,7 +2399,7 @@ function fencingShape(value: unknown): asserts value is FencingRecord {
       'projectPreferenceInheritanceAttested',
       'serviceWorkers',
     ]) ||
-    browser.playwright !== '1.63.0' ||
+    browser.playwright !== LOCKED_PLAYWRIGHT_VERSION ||
     !text(browser.version, 64) ||
     !/^\d+\.\d+\.\d+\.\d+$/.test(browser.version) ||
     !hash(browser.manifest) ||
@@ -2647,7 +2653,7 @@ function fencingReceiptSelfTests(): void {
       assets: Object.fromEntries(ASSET_NAMES.map((name) => [name, hash])),
     },
     browser: {
-      playwright: '1.63.0',
+      playwright: LOCKED_PLAYWRIGHT_VERSION,
       version: '153.0.8010.12',
       manifest: hash,
       expected: [

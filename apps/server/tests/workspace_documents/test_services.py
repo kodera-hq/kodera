@@ -361,8 +361,14 @@ def test_postgres_backed_sockets_converge_audit_and_recheck_current_roles(
                 settings.KODERA_COLLAB_TICKET_KEY
             ).decode(),
         },
-        input=json.dumps({"editor": editor["token"], "viewer": viewer["token"],
-                          "secondEditor": second_editor["token"], "secondViewer": second_viewer["token"]}).encode(),
+        input=json.dumps(
+            {
+                "editor": editor["token"],
+                "viewer": viewer["token"],
+                "secondEditor": second_editor["token"],
+                "secondViewer": second_viewer["token"],
+            }
+        ).encode(),
         capture_output=True,
         timeout=60,
     )

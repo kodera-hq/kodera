@@ -6,6 +6,8 @@ from uuid import UUID
 
 from django.db.models import QuerySet
 
+from apps.identity.selectors import person_identities
+
 from .models import Membership, Organisation
 
 
@@ -227,4 +229,69 @@ def digest_member(*, membership_id: UUID) -> MembershipContact | None:
         return None
     return MembershipContact(
         row.id, row.user_id, row.organisation_id, row.user.email, row.organisation.name
+    )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PassportMembershipRow:
+    membership_id: UUID
+    organisation_id: UUID
+    organisation_slug: str
+    organisation_name: str
+    realm: str
+    issuer: str
+    role: str
+
+
+def passport_memberships(*, user_id: UUID) -> tuple[PassportMembershipRow, ...]:
+    """Eligible active memberships of a person across organisations (one realm per organisation).
+
+    Requires both an active accepted `Membership` and an enabled, undeleted customer `Identity`
+    bound to that target organisation's `(organisation_id, realm, issuer)`.
+    """
+    active_identities = person_identities(user_id=user_id)
+    if not active_identities:
+        return ()
+    valid_bindings = {
+        (ident.organisation_id, ident.realm, ident.issuer) for ident in active_identities
+    }
+    org_ids = {ident.organisation_id for ident in active_identities}
+    rows = (
+        Membership.objects.select_related("organisation")
+        .filter(
+            user_id=user_id,
+            organisation_id__in=org_ids,
+            deleted_at__isnull=True,
+            state=Membership.State.ACTIVE,
+            accepted_at__isnull=False,
+            role__in=Membership.Role.values,
+            user__enabled=True,
+            user__deleted_at__isnull=True,
+            organisation__state=Organisation.State.ACTIVE,
+            organisation__deleted_at__isnull=True,
+        )
+        .exclude(organisation__realm="kodera-staff")
+        .order_by("organisation__slug", "id")
+    )
+    return tuple(
+        PassportMembershipRow(
+            membership_id=row.id,
+            organisation_id=row.organisation_id,
+            organisation_slug=row.organisation.slug,
+            organisation_name=row.organisation.name,
+            realm=row.organisation.realm,
+            issuer=row.organisation.issuer,
+            role=row.role,
+        )
+        for row in rows
+        if (row.organisation_id, row.organisation.realm, row.organisation.issuer) in valid_bindings
+    )
+
+
+def organisation_slug_or_none(*, organisation_id: UUID) -> str | None:
+    """Return an undeleted organisation's slug for internal audit target naming, or None."""
+    return (
+        Organisation.objects.filter(id=organisation_id, deleted_at__isnull=True)
+        .values_list("slug", flat=True)
+        .first()
     )

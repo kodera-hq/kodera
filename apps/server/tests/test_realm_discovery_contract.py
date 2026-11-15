@@ -80,7 +80,8 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.42.0: directory privacy, proximity and the theme vocabulary; discovery is
 # unchanged.
 # Rebound for additive workspace surfaces; discovery remains unchanged.
-UNCHANGED_SHA = "9ef440067789b8c69e33ae0db3c60b2892c6f04e5994240ea9389e9443bd90c1"
+# Rebound at 0.45.0: Kodera Passport magic-link/workspace routes (including 409 conflict) and Stripe webhook (including deferred receipt); discovery is unchanged.
+UNCHANGED_SHA = "47a09ef525437ee0542a5c0a7dae31fa864551517c499b84bc721b326e932445"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

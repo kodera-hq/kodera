@@ -15,8 +15,12 @@ MIDDLEWARE = [
     "core.api.edge.ConsoleCorsMiddleware",
     # Before any view: one principal's writes per minute (§2).
     "core.api.edge.MutationRateLimitMiddleware",
+    # Zero-trust C1 staff plane (/staff/v1/*): JSON-only 404s, workspace wall, and listed CORS.
+    "core.staff_api.middleware.StaffPlaneMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "core.api.ee_billing.EnterpriseBillingMiddleware",
+    "core.api.edition.EnterpriseEditionMiddleware",
 ]
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
@@ -45,6 +49,12 @@ KODERA_TENANT_APP_URLS: dict[str, str] = {}
 # Whether Core bills (docs/specs/QUICK_WORKSPACE.md §2). Each profile that serves, settles or runs
 # jobs reads it from KODERA_BILLING_ENABLED; true, today's behaviour, everywhere else.
 KODERA_BILLING_ENABLED = True
+# Product edition (GOVERNANCE.md §1): open-source `community` by default; serving profiles read
+# KODERA_EDITION (`community` or `enterprise`).
+KODERA_EDITION = "community"
+# Optional application seed for tenant-derived Enterprise compliance audit signing keys; serving
+# profiles read and validate KODERA_EE_AUDIT_SIGNING_SEED (`None` when unset).
+KODERA_EE_AUDIT_SIGNING_SEED: bytes | None = None
 # Every record at WARNING and above, as one JSON line on stderr (core/logs.py says what a line may
 # carry). Without it an uncaught exception answered 500 and wrote nothing: Django's own console
 # handler logs only with DEBUG on, which no profile turns on. The handler's level is the filter, since
@@ -72,3 +82,12 @@ KODERA_DEFAULT_COMMUNITY_ISSUER = os.environ.get("KODERA_DEFAULT_COMMUNITY_ISSUE
 KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID = os.environ.get(
     "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID", ""
 )
+# Zero-trust /staff/v1/* C1 plane and mobile Universal/App Links (/.well-known/*); fail-closed (503) when unset.
+KODERA_STAFF_OIDC_ISSUER: str | None = None
+KODERA_STAFF_OIDC_JWKS_URL: str | None = None
+KODERA_STAFF_OPS_HOSTS: tuple[str, ...] = ()
+KODERA_STAFF_ADMIN_ORIGINS: str | None = None
+KODERA_IOS_APP_IDS: tuple[str, ...] = ()
+KODERA_ANDROID_ASSETLINKS_SHA256: tuple[str, ...] = ()
+# Optional explicit sign-in link URL on an allowed Console origin for Passport magic-link mails.
+KODERA_PASSPORT_MAGIC_LINK: str | None = None

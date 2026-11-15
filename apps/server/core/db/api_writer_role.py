@@ -31,6 +31,21 @@ SELECT = (
     "docs_collectionrow",
     "billing_billingartifact",
     "billing_viesconsultation",
+    # Passport cross-workspace magic-link sign-in, Stripe webhook reconciliation, and EE billing.
+    "identity_passportmagiclinktoken",
+    "identity_passportoutboxbinding",
+    "identity_passportratelimitevent",
+    "identity_passportworkspacecontext",
+    "billing_stripewebhookdelivery",
+    "billing_providerevent",
+    "billing_invoice",
+    "billing_payment",
+    "billing_paymentlink",
+    "billing_subscription",
+    "billing_dunningcase",
+    "ee_billing_sequences",
+    "ee_billing_warm_pool_slots",
+    "ee_billing_purchase_orders",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -100,6 +115,29 @@ SELECT = (
     # no personal data.
     "billing_pack",
     "billing_capacitytier",
+    # C1 zero-trust /staff/v1/* records and append-only SHA-256 hash-chained staff audit entries.
+    "staff_api_role_grant",
+    "staff_api_deal_card",
+    "staff_api_waitlist_cohort",
+    "staff_api_feedback_item",
+    "staff_api_sar_record",
+    "staff_api_finops_snapshot",
+    "staff_api_issuer_snapshot",
+    "staff_api_audit_entry",
+    # Enterprise Edition (`ee/`, KODERA_EDITION=enterprise): SAML 2.0 federation, SCIM 2.0
+    # directory provisioning, append-only compliance audit ledger and verification public keys.
+    "ee_saml_idp",
+    "ee_saml_pending_request",
+    "ee_saml_replay_assertion",
+    "ee_saml_principal",
+    "ee_scim_token",
+    "ee_scim_user",
+    "ee_scim_group",
+    "ee_scim_group_member",
+    "ee_scim_session",
+    "ee_scim_deprovision",
+    "ee_audit_ledger",
+    "ee_audit_signing_key",
 )
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
@@ -107,6 +145,17 @@ INSERT = (
     "docs_collection",
     "docs_collectionrow",
     "billing_viesconsultation",
+    "identity_passportmagiclinktoken",
+    "identity_passportoutboxbinding",
+    "identity_passportratelimitevent",
+    "identity_passportworkspacecontext",
+    "billing_stripewebhookdelivery",
+    "billing_providerevent",
+    "billing_payment",
+    "ee_billing_sequences",
+    "ee_billing_warm_pool_slots",
+    "ee_billing_purchase_orders",
+    "workspaces_workspacequota",
     # Workspace moderation, reports and bounded invite redemption.
     "workspaces_workspacemoderator",
     "workspaces_workspacememberrestriction",
@@ -155,6 +204,7 @@ INSERT = (
     # Suspending, reactivating or removing a member enqueues its realm access delivery: the
     # delivery and its payload, nothing else of the outbox (MEMBERSHIP_LIFECYCLE.md §§6.1, 7).
     "outbox_outboxdelivery",
+    "outbox_message",
     "outbox_realmaccess",
     # An invitation, its realm account delivery's payload, and on acceptance the person, their
     # identity and their membership (INVITATIONS.md §7).
@@ -171,11 +221,37 @@ INSERT = (
     "tenancy_tenant",
     "legal_dpa",
     "legal_acceptance",
+    # C1 zero-trust /staff/v1/* records and append-only SHA-256 hash-chained staff audit entries
+    # (`staff_api_feedback_item` is triaged via UPDATE only, never inserted by `/staff/v1/*`).
+    "staff_api_role_grant",
+    "staff_api_deal_card",
+    "staff_api_waitlist_cohort",
+    "staff_api_sar_record",
+    "staff_api_finops_snapshot",
+    "staff_api_issuer_snapshot",
+    "staff_api_audit_entry",
+    # Enterprise Edition (`ee/`): SAML IdP config/requests/replays/principals, SCIM tokens/users/
+    # groups/memberships/sessions/deprovision records, and append-only audit ledger + signing keys.
+    "ee_saml_idp",
+    "ee_saml_pending_request",
+    "ee_saml_replay_assertion",
+    "ee_saml_principal",
+    "ee_scim_token",
+    "ee_scim_user",
+    "ee_scim_group",
+    "ee_scim_group_member",
+    "ee_scim_session",
+    "ee_scim_deprovision",
+    "ee_audit_ledger",
+    "ee_audit_signing_key",
 )
 # One column each, and why:
 # - identity_staffrole.created_at: `SELECT ... FOR SHARE` of the grant (current_staff_grant) needs
 #   UPDATE on one column of the table. `created_at` is one the immutability trigger already
 #   refuses to change (staffrole_immutable_grant); `revoked_at` is never granted.
+# - identity_identity.id: `SELECT ... FOR SHARE` of customer and staff identities under Passport
+#   and EE billing authority fences needs UPDATE on one column of `identity_identity`. `id` is
+#   frozen by `customer_immutable('identity')`; `enabled` and `deleted_at` are never granted.
 # - orgs_organisation.owner_guard_revision: written by the reservation's insert trigger
 #   (customer_touch_owner_guard), which runs with the invoker's rights.
 # - jobs_job.lock_requested_at: the enqueue's placement of a job claimable now (JOB_QUEUE.md §5.3).
@@ -231,6 +307,53 @@ UPDATE_COLUMNS = (
     ("docs_collectionrow", "updated_at"),
     ("billing_billingprofile", "vat_number_validated_at"),
     ("billing_billingprofile", "updated_at"),
+    ("identity_passportmagiclinktoken", "consumed_at"),
+    ("identity_passportmagiclinktoken", "updated_at"),
+    ("identity_passportworkspacecontext", "active_organisation_id"),
+    ("identity_passportworkspacecontext", "active_workspace_id"),
+    ("identity_passportworkspacecontext", "updated_at"),
+    ("billing_stripewebhookdelivery", "outcome"),
+    ("billing_stripewebhookdelivery", "organisation_id"),
+    ("billing_providerevent", "outcome"),
+    ("billing_invoice", "amount_paid_minor"),
+    ("billing_invoice", "state"),
+    ("billing_invoice", "paid_at"),
+    ("billing_invoice", "updated_at"),
+    ("billing_order", "state"),
+    ("billing_order", "updated_at"),
+    ("billing_payment", "state"),
+    ("billing_payment", "allocated"),
+    ("billing_payment", "provider_customer_ref"),
+    ("billing_payment", "last_event_at"),
+    ("billing_payment", "updated_at"),
+    ("billing_paymentlink", "state"),
+    ("billing_paymentlink", "used_at"),
+    ("billing_paymentlink", "updated_at"),
+    ("ee_billing_sequences", "last_value"),
+    ("ee_billing_warm_pool_slots", "state"),
+    ("ee_billing_warm_pool_slots", "claimed_by_organisation_id"),
+    ("ee_billing_warm_pool_slots", "checkout_id"),
+    ("ee_billing_warm_pool_slots", "idempotency_key"),
+    ("ee_billing_warm_pool_slots", "unhealthy_reason"),
+    ("ee_billing_purchase_orders", "state"),
+    ("ee_billing_purchase_orders", "issued_at"),
+    ("ee_billing_purchase_orders", "countersigned_at"),
+    ("ee_billing_purchase_orders", "countersigned_by"),
+    ("ee_billing_purchase_orders", "countersigned_by_user_id"),
+    ("ee_billing_purchase_orders", "invoice_ref"),
+    ("ee_billing_purchase_orders", "invoiced_at"),
+    ("ee_billing_purchase_orders", "payment_ref"),
+    ("ee_billing_purchase_orders", "paid_at"),
+    ("ee_billing_purchase_orders", "expired_at"),
+    ("billing_subscription", "state"),
+    ("billing_subscription", "cancelled_at"),
+    ("billing_subscription", "updated_at"),
+    ("billing_dunningcase", "state"),
+    ("billing_dunningcase", "episode"),
+    ("billing_dunningcase", "updated_at"),
+    ("workspaces_workspacequota", "policy_ref"),
+    ("workspaces_workspacequota", "seats"),
+    ("workspaces_workspacequota", "updated_at"),
     # Moderation changes only mutable facts; invite codes and report evidence stay immutable.
     ("workspaces_workspacememberrestriction", "banned"),
     ("workspaces_workspacememberrestriction", "kicked"),
@@ -269,6 +392,7 @@ UPDATE_COLUMNS = (
     ("docs_documentsnapshot", "updated_at"),
     ("docs_documentlink", "target_id"),
     ("docs_documentlink", "updated_at"),
+    ("identity_identity", "id"),
     ("identity_staffrole", "created_at"),
     ("orgs_organisation", "owner_guard_revision"),
     ("jobs_job", "lock_requested_at"),
@@ -338,29 +462,149 @@ UPDATE_COLUMNS = (
     ("legal_dpa", "accepted_by_email"),
     ("legal_dpa", "accepted_by_role"),
     ("legal_dpa", "updated_at"),
+    # C1 /staff/v1/* mutable operational columns only; `staff_api_audit_entry`,
+    # `staff_api_finops_snapshot` and `staff_api_waitlist_cohort` remain strictly append-only
+    # (never UPDATE or DELETE).
+    ("staff_api_role_grant", "revoked_at"),
+    ("staff_api_role_grant", "revoked_by_identity_id"),
+    ("staff_api_role_grant", "updated_at"),
+    ("staff_api_deal_card", "stage"),
+    ("staff_api_deal_card", "pack_code"),
+    ("staff_api_deal_card", "capacity_tier_code"),
+    ("staff_api_deal_card", "estimated_mrr_cents"),
+    ("staff_api_deal_card", "owner_seat"),
+    ("staff_api_deal_card", "next_step_code"),
+    ("staff_api_deal_card", "updated_by_identity_id"),
+    ("staff_api_deal_card", "updated_at"),
+    ("staff_api_feedback_item", "status"),
+    ("staff_api_feedback_item", "severity"),
+    ("staff_api_feedback_item", "assigned_seat"),
+    ("staff_api_feedback_item", "vote_count"),
+    ("staff_api_feedback_item", "roadmap_milestone"),
+    ("staff_api_feedback_item", "external_issue_ref"),
+    ("staff_api_feedback_item", "updated_at"),
+    ("staff_api_sar_record", "status"),
+    ("staff_api_sar_record", "completed_at"),
+    ("staff_api_sar_record", "evidence_ref"),
+    ("staff_api_sar_record", "completed_by_identity_id"),
+    ("staff_api_sar_record", "updated_at"),
+    ("staff_api_issuer_snapshot", "issuer"),
+    ("staff_api_issuer_snapshot", "expires_at_epoch"),
+    ("staff_api_issuer_snapshot", "public_jwks"),
+    ("staff_api_issuer_snapshot", "registered_by_identity_id"),
+    ("staff_api_issuer_snapshot", "updated_at"),
+    # Enterprise Edition (`ee/`): mutable IdP/principal/SCIM fields only; `ee_audit_ledger` and
+    # `ee_audit_signing_key` receive zero UPDATE grants (strictly append-only for `kodera_api`).
+    *(
+        ("ee_saml_idp", c)
+        for c in (
+            "idp_entity_id",
+            "idp_sso_url",
+            "public_key_pem",
+            "verified_domains_json",
+            "group_role_mapping_json",
+            "default_role",
+            "want_assertions_signed",
+            "clock_skew_seconds",
+            "updated_at",
+        )
+    ),
+    *(
+        ("ee_saml_principal", c)
+        for c in (
+            "user_id",
+            "principal_ref",
+            "idp_id",
+            "idp_entity_id",
+            "assertion_id",
+            "subject_name_id",
+            "email",
+            "display_name",
+            "groups_json",
+            "role",
+            "return_path",
+            "authenticated_at",
+            "updated_at",
+        )
+    ),
+    ("ee_scim_token", "revoked_at"),
+    *(
+        ("ee_scim_user", c)
+        for c in (
+            "user_id",
+            "user_name",
+            "user_name_lower",
+            "external_id",
+            "display_name",
+            "given_name",
+            "family_name",
+            "emails_json",
+            "active",
+            "roles_json",
+            "department",
+            "member_state",
+            "version",
+            "updated_at",
+            "deprovisioned_at",
+        )
+    ),
+    *(
+        ("ee_scim_group", c)
+        for c in (
+            "display_name",
+            "display_name_lower",
+            "external_id",
+            "version",
+            "updated_at",
+        )
+    ),
+    ("ee_scim_group_member", "member_order"),
 )
 # An expired replay entry is replaced when its key returns (IDEMPOTENCY_REPLAY.md §2.2), for the
 # intake and initialiseWorkspace alike. deleteCategory deletes an empty category, and a channel's
 # access change deletes the rules it drops; a policy itself is never deleted. Native document
 # Markdown replacement refreshes outgoing wikilinks and prunes snapshot-covered journal updates
-# (trigger `docs_journal_guard` refuses deleting any uncovered update).
+# (trigger `docs_journal_guard` refuses deleting any uncovered update). Enterprise Edition operational
+# deletes cover single-use SAML RelayState consumption, expired SAML replay pruning, SCIM RFC 7644 §3.6
+# user/group deletion, group-membership unlinking, and active session revocation — never `ee_audit_ledger`
+# or `ee_audit_signing_key`.
 DELETE = (
     "docs_collectionrow",
+    "identity_passportmagiclinktoken",
+    "identity_passportratelimitevent",
     "idempotency_record",
     "workspaces_category",
     "workspaces_resourcepolicyrule",
     "docs_documentlink",
     "docs_documentupdate",
+    "ee_saml_pending_request",
+    "ee_saml_replay_assertion",
+    "ee_scim_user",
+    "ee_scim_group",
+    "ee_scim_group_member",
+    "ee_scim_session",
 )
 EXECUTE_FUNCTIONS = (
     "workspace_quota_usage(uuid)",
     "audit_workspace_resource_event(uuid, text, uuid, uuid, uuid, text)",
     "docs_document_role(uuid, uuid, uuid, uuid, text, text)",
+    "staff_fence_caller(uuid, uuid, text, text, text[])",
+    "staff_read_outbox_sre_summary(uuid)",
+    "staff_sync_identity_bridge_role(uuid, uuid, text, text, uuid)",
+    "staff_reconcile_job(uuid, uuid, jsonb, text)",
+    "staff_reconcile_delivery(uuid, uuid, jsonb, text)",
 )
 
 
-# Read by column only: the guard reads which documents were accepted, for which tenant and DPA,
-# never who accepted them or from where (identity, name, role, IP, user agent).
+# SQL column-level SELECT restriction: `legal_acceptance` grants only the linkage columns the
+# guard reads (which documents were accepted, for which tenant and DPA), never personal or
+# network attributes (`identity_id`, `accepted_by_name`, `accepted_by_role`, `source_ip_trunc`,
+# `user_agent`). `billing_subscription` carries table-wide `SELECT` under the shared `kodera_api`
+# role for customer `/api/v1/*` `Subscription.objects` reads and routed Stripe webhook
+# reconciliation; `/staff/v1/*` FinOps enforces its aggregate-only MRR projection at the SQL
+# query (`SELECT ... state, billing_period, total_excl_vat_minor` in `core/staff_api/services.py`)
+# and HTTP serializer boundary (never exposing `organisation_id`, `order_id`, `tenant_id`,
+# `subscription_id`, or `provider_*`).
 SELECT_COLUMNS = tuple(
     ("legal_acceptance", column)
     for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")

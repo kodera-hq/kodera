@@ -60,6 +60,7 @@ COMMANDS = [
     "sweep_jobs",
     "run_deliveries",
     "cleanup_discovery_quotas",
+    "purge_passport_tokens",
     "run_realm_deliveries",
     "send_invitations",
     "run_operator_schedule",

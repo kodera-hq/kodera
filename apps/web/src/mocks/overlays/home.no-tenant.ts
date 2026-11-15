@@ -3,7 +3,7 @@
 // `status-summary.tenant_id: null` and the fallback tenants list (§6, "only
 // when status-summary.tenant_id is null") answers no rows.
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw/http'
 import type { components } from '@/api/schema'
 import { EXAMPLES } from '../generated/examples'
 
