@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.46.0
+  version: 0.47.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -117,6 +117,8 @@ tags:
     description: The commercial and legal entity that buys a tenant.
   - name: Memberships
     description: People in an organisation, their roles, their invitations, on-site enrolment.
+  - name: Confidential
+    description: Planned authenticated opaque envelope relay; production routing is not admitted.
   - name: Proximity
     description: Voluntary, ephemeral workspace presence and epoch-limited radio capabilities.
   - name: Workspace
@@ -9058,6 +9060,955 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProximityRadioProblem'
+
+  /organisations/{organisation_id}/confidential/devices:
+    post:
+      operationId: registerConfidentialDevice
+      summary: RegisterConfidentialDevice
+      description: 'Register a bounded immutable public signing key for the current membership. Re-registering an
+        active owned key yields its same device; revoked keys never reactivate. Current accepted membership and enabled
+        identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit
+        device admission and current channel visibility. Staff has no override. Device proof is possession, not human
+        identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves
+        have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient
+        503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified
+        customer JWT and Ed25519 proof from the registration key or existing registered device are both required.
+        The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation
+        UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma
+        and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped.
+        Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from
+        unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields,
+        non-finite numbers and bodies over 786432 bytes are refused. Signing operation is register-device. Resource
+        coordinate is null.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_device:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialDevice'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialDeviceRegistration'
+  /organisations/{organisation_id}/confidential/devices/revoke:
+    post:
+      operationId: revokeConfidentialDevice
+      summary: RevokeConfidentialDevice
+      description: 'Permanently revoke a device of the caller own identity and membership; discard unclaimed directory
+        payloads. Revoked devices cannot publish, read or replay. Rejoining needs a new device key. Current accepted
+        membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally
+        require explicit device admission and current channel visibility. Staff has no override. Device proof is possession,
+        not human identity verification. Application publication observes mute/read-only policy and blocks until revoked
+        leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with
+        a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms.
+        A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both
+        required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation
+        UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma
+        and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped.
+        Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from
+        unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields,
+        non-finite numbers and bodies over 786432 bytes are refused. Signing operation is revoke-device. Resource
+        coordinate is null.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_device:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialDeviceRevoked'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialTargetDevice'
+  /organisations/{organisation_id}/confidential/key-packages:
+    post:
+      operationId: publishConfidentialKeyPackage
+      summary: PublishConfidentialKeyPackage
+      description: 'Publish an opaque package for at most seven days. At most sixteen active unclaimed packages per
+        device are admitted. The public SHA-256 reference remains a single-use tombstone after consumption. Current
+        accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations
+        additionally require explicit device admission and current channel visibility. Staff has no override. Device
+        proof is possession, not human identity verification. Application publication observes mute/read-only policy
+        and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority
+        fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption
+        or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered
+        device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact
+        JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are
+        lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes
+        and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied
+        order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64.
+        Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing
+        operation is publish-key-package. Resource coordinate is null.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_key_package:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialKeyPackagePublished'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialKeyPackagePublication'
+  /organisations/{organisation_id}/confidential/rooms:
+    post:
+      operationId: createConfidentialRoom
+      summary: CreateConfidentialRoom
+      description: 'Create one explicit encrypted relay bound to an active text channel. Only owner/admin with current
+        content visibility may create it. The algorithm is immutable; this never upgrades the existing ordinary Matrix
+        room in place. Current accepted membership and enabled identity are checked before any effect or replay metadata.
+        Room-scoped operations additionally require explicit device admission and current channel visibility. Staff
+        has no override. Device proof is possession, not human identity verification. Application publication observes
+        mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit.
+        Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not
+        qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the
+        registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1,
+        then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned
+        body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings
+        use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays
+        retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical
+        padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes
+        are refused. Signing operation is create-room. Resource coordinate is null.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_room:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialRoomCreated'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialRoomCreation'
+  /organisations/{organisation_id}/confidential/rooms/{room_id}/key-packages/claims:
+    post:
+      operationId: claimConfidentialKeyPackage
+      summary: ClaimConfidentialKeyPackage
+      description: 'Claim one eligible target device package once, bound to this room, current epoch and claimant.
+        Only an admitted owner/admin can claim; concurrent claimants never receive the same package. A successful
+        same-key retry may return its original public package only while current caller and target authority hold.
+        Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped
+        operations additionally require explicit device admission and current channel visibility. Staff has no override.
+        Device proof is possession, not human identity verification. Application publication observes mute/read-only
+        policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or
+        authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native
+        encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing
+        registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte,
+        then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object
+        keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON
+        escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their
+        supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard
+        base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused.
+        Signing operation is claim-key-package. Resource coordinate is the path room UUID.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_key_package:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialKeyPackageClaimed'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialTargetDevice'
+  /organisations/{organisation_id}/confidential/rooms/{room_id}/commits:
+    post:
+      operationId: commitConfidentialEpoch
+      summary: CommitConfidentialEpoch
+      description: 'Atomically advance the expected epoch and admitted device roster. Only owner/admin may add a device
+        or remove an otherwise eligible peer; any current admitted device may rotate or remove revoked leaves. Clients
+        must cryptographically validate the opaque Commit and resulting roster before using keys. Current accepted
+        membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally
+        require explicit device admission and current channel visibility. Staff has no override. Device proof is possession,
+        not human identity verification. Application publication observes mute/read-only policy and blocks until revoked
+        leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with
+        a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms.
+        A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both
+        required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation
+        UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma
+        and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped.
+        Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from
+        unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields,
+        non-finite numbers and bodies over 786432 bytes are refused. Signing operation is commit-epoch. Resource coordinate
+        is the path room UUID.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_room:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialEpochCommitted'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialEpochCommit'
+  /organisations/{organisation_id}/confidential/rooms/{room_id}/participants/retire:
+    post:
+      operationId: retireConfidentialParticipant
+      summary: RetireConfidentialParticipant
+      description: 'Retire the caller own admitted device or, for owner/admin, another admitted device. Immediately
+        deny its reads/writes and gate application publication until a next-epoch removal Commit. This room retirement
+        is distinct from permanent device revocation. Current accepted membership and enabled identity are checked
+        before any effect or replay metadata. Room-scoped operations additionally require explicit device admission
+        and current channel visibility. Staff has no override. Device proof is possession, not human identity verification.
+        Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by
+        an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated
+        foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519
+        proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes:
+        kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership
+        UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators
+        contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields
+        use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body.
+        All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers
+        and bodies over 786432 bytes are refused. Signing operation is retire-room-device. Resource coordinate is
+        the path room UUID.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_room:act
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialParticipantRetired'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialTargetDevice'
+  /organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes:
+    post:
+      operationId: sendConfidentialEnvelope
+      summary: SendConfidentialEnvelope
+      description: 'Append an opaque protocol Application at the exact current epoch. Never store plaintext, search
+        content or media keys. A captured signature cannot append a second logical envelope under a new replay key.
+        Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped
+        operations additionally require explicit device admission and current channel visibility. Staff has no override.
+        Device proof is possession, not human identity verification. Application publication observes mute/read-only
+        policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or
+        authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native
+        encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing
+        registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte,
+        then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object
+        keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON
+        escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their
+        supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard
+        base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused.
+        Signing operation is send-application. Resource coordinate is the path room UUID.'
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_envelope:create
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Idempotency-Replayed:
+              schema:
+                type: string
+                const: 'true'
+              description: Present only when the same authorized operation is replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialApplicationAccepted'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfidentialApplication'
+    get:
+      operationId: listConfidentialEnvelopes
+      summary: ListConfidentialEnvelopes
+      description: Read current-authority ciphertext and public verification keys. Welcome is recipient-device scoped.
+        Numeric after is a bounded protocol sequence continuation, with both row and byte budgets, not permission
+        to fetch a hidden sequence. Historical keys or membership do not authorize this read. Current accepted membership
+        and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally
+        require explicit device admission and current channel visibility. Staff has no override. Device proof is possession,
+        not human identity verification. Application publication observes mute/read-only policy and blocks until revoked
+        leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with
+        a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms.
+      tags:
+      - Confidential transport
+      security:
+      - keycloakTenant: []
+      x-kodera-scope: confidential_envelope:read
+      x-kodera-authz:
+        roles:
+        - org_owner
+        - org_admin
+        - org_billing
+        - org_member
+      parameters:
+      - $ref: '#/components/parameters/OrganisationId'
+      - name: room_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      - name: deviceId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          default: 0
+      responses:
+        '200':
+          description: Opaque transport operation accepted; plaintext and private keys are never returned.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfidentialEnvelopePage'
+        '400':
+          $ref: '#/components/responses/MalformedRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 
 components:
   x-audit-action-registry:
@@ -18112,3 +19063,606 @@ components:
           distance_band: near
           expires_in_seconds: 1800
           expires_at: 1800001900
+
+    ConfidentialDeviceRegistration:
+      type: object
+      additionalProperties: false
+      required:
+      - signingKey
+      - signature
+      properties:
+        signingKey:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 32 through 32 bytes.
+          minLength: 44
+          maxLength: 44
+          pattern: ^[A-Za-z0-9+/]{43}=$
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      examples:
+      - signingKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialDevice:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - signingKey
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        signingKey:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 32 through 32 bytes.
+          minLength: 44
+          maxLength: 44
+          pattern: ^[A-Za-z0-9+/]{43}=$
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        signingKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialTargetDevice:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - targetDeviceId
+      - signature
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        targetDeviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        targetDeviceId: 01950000-0000-7000-8000-0000000000a2
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialDeviceRevoked:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - revoked
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        revoked:
+          type: boolean
+          const: true
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        revoked: true
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialKeyPackagePublication:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - keyPackage
+      - signature
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        keyPackage:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 1 through 16384 bytes.
+          minLength: 4
+          maxLength: 21848
+          pattern: ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        keyPackage: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialKeyPackagePublished:
+      type: object
+      additionalProperties: false
+      required:
+      - keyPackageId
+      - reference
+      - expiresAt
+      properties:
+        keyPackageId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        reference:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 32 through 32 bytes.
+          minLength: 44
+          maxLength: 44
+          pattern: ^[A-Za-z0-9+/]{43}=$
+        expiresAt:
+          type: string
+          format: date-time
+      examples:
+      - keyPackageId: 01950000-0000-7000-8000-0000000000a1
+        reference: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        expiresAt: '2030-01-08T00:00:00Z'
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialRoomCreation:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - channelId
+      - algorithm
+      - signature
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        channelId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        algorithm:
+          type: string
+          enum:
+          - io.kodera.mls.v1
+          - m.megolm.v1.aes-sha2
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        channelId: 01950000-0000-7000-8000-0000000000a1
+        algorithm: io.kodera.mls.v1
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialRoomCreated:
+      type: object
+      additionalProperties: false
+      required:
+      - roomId
+      - algorithm
+      - epoch
+      - deviceIds
+      properties:
+        roomId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        algorithm:
+          type: string
+          enum:
+          - io.kodera.mls.v1
+          - m.megolm.v1.aes-sha2
+        epoch:
+          type: integer
+          const: 0
+        deviceIds:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            format: uuid
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          uniqueItems: true
+      examples:
+      - roomId: 01950000-0000-7000-8000-0000000000a1
+        algorithm: io.kodera.mls.v1
+        epoch: 0
+        deviceIds:
+        - 01950000-0000-7000-8000-0000000000a2
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialKeyPackageClaimed:
+      type: object
+      additionalProperties: false
+      required:
+      - keyPackageId
+      - deviceId
+      - signingKey
+      - keyPackage
+      - epoch
+      properties:
+        keyPackageId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        signingKey:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 32 through 32 bytes.
+          minLength: 44
+          maxLength: 44
+          pattern: ^[A-Za-z0-9+/]{43}=$
+        keyPackage:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 1 through 16384 bytes.
+          minLength: 4
+          maxLength: 21848
+          pattern: ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      examples:
+      - keyPackageId: 01950000-0000-7000-8000-0000000000a1
+        deviceId: 01950000-0000-7000-8000-0000000000a2
+        signingKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        keyPackage: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        epoch: 0
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialEpochCommit:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - epoch
+      - deviceIds
+      - ciphertext
+      - signature
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        deviceIds:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            type: string
+            format: uuid
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          uniqueItems: true
+        ciphertext:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 16 through 262144 bytes.
+          minLength: 24
+          maxLength: 349528
+          pattern: ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+        welcome:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 16 through 262144 bytes.
+          minLength: 24
+          maxLength: 349528
+          pattern: ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      description: Expected current epoch; advancing requires an accepted next Commit. Welcome is required exactly when
+        adding devices; one authenticated MLS Welcome may contain multiple recipient entries. Every added device needs
+        a current room/epoch-bound single-use package claim. Examples use public zero-byte wire placeholders, not valid
+        protocol ciphertext, private keys or cryptographic evidence.
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        epoch: 0
+        deviceIds:
+        - 01950000-0000-7000-8000-0000000000a2
+        ciphertext: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+    ConfidentialEpochCommitted:
+      type: object
+      additionalProperties: false
+      required:
+      - epoch
+      - commitEnvelopeId
+      - commitSequence
+      - headSequence
+      - deviceIds
+      properties:
+        epoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        commitEnvelopeId:
+          type: string
+          format: uuid
+          minLength: 36
+          maxLength: 36
+          pattern: '^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![\s\S])'
+        commitSequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        headSequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        deviceIds:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            type: string
+            format: uuid
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+          uniqueItems: true
+      examples:
+      - epoch: 1
+        commitEnvelopeId: 01950000-0000-7000-8000-0000000000c1
+        commitSequence: 1
+        headSequence: 1
+        deviceIds:
+        - 01950000-0000-7000-8000-0000000000a2
+      - epoch: 1
+        commitEnvelopeId: 01950000-0000-7000-8000-0000000000c2
+        commitSequence: 1
+        headSequence: 2
+        deviceIds:
+        - 01950000-0000-7000-8000-0000000000a2
+        - 01950000-0000-7000-8000-0000000000a3
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialApplication:
+      type: object
+      additionalProperties: false
+      required:
+      - deviceId
+      - epoch
+      - ciphertext
+      - signature
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        ciphertext:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 16 through 81920 bytes.
+          minLength: 24
+          maxLength: 109228
+          pattern: ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+        signature:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 64 through 64 bytes.
+          minLength: 88
+          maxLength: 88
+          pattern: ^[A-Za-z0-9+/]{86}==$
+      examples:
+      - deviceId: 01950000-0000-7000-8000-0000000000a2
+        epoch: 0
+        ciphertext: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        signature: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialApplicationAccepted:
+      type: object
+      additionalProperties: false
+      required:
+      - envelopeId
+      - sequence
+      - epoch
+      properties:
+        envelopeId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+      examples:
+      - envelopeId: 01950000-0000-7000-8000-0000000000a1
+        sequence: 1
+        epoch: 0
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialParticipantRetired:
+      type: object
+      additionalProperties: false
+      required:
+      - epoch
+      - rekeyRequired
+      properties:
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        rekeyRequired:
+          type: boolean
+          const: true
+      examples:
+      - epoch: 0
+        rekeyRequired: true
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - kind
+      - epoch
+      - sequence
+      - senderDeviceId
+      - ciphertext
+      properties:
+        id:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        kind:
+          type: string
+          enum:
+          - application
+          - commit
+          - welcome
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        senderDeviceId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        ciphertext:
+          type: string
+          format: byte
+          contentEncoding: base64
+          description: Canonical padded standard base64; decoded size 16 through 262144 bytes.
+          minLength: 24
+          maxLength: 349528
+          pattern: ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+      examples:
+      - id: 01950000-0000-7000-8000-0000000000a1
+        kind: application
+        epoch: 0
+        sequence: 1
+        senderDeviceId: 01950000-0000-7000-8000-0000000000a2
+        ciphertext: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      description: ' Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or
+        cryptographic evidence.'
+    ConfidentialEnvelopePage:
+      type: object
+      additionalProperties: false
+      required:
+      - roomId
+      - algorithm
+      - epoch
+      - rekeyRequired
+      - hasMore
+      - nextAfter
+      - devices
+      - envelopes
+      properties:
+        roomId:
+          type: string
+          format: uuid
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
+        algorithm:
+          type: string
+          enum:
+          - io.kodera.mls.v1
+          - m.megolm.v1.aes-sha2
+        epoch:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        rekeyRequired:
+          type: boolean
+        hasMore:
+          type: boolean
+        nextAfter:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        devices:
+          type: array
+          minItems: 1
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/ConfidentialDevice'
+        envelopes:
+          type: array
+          minItems: 0
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ConfidentialEnvelope'
+      description: A protocol stream continuation, not a generic CursorPage. At most 100 envelopes and 512 KiB of raw
+        ciphertext are returned. Continue with after=nextAfter while hasMore is true. Sequence gaps may belong to another
+        device Welcome and do not grant access to it. New or rejoining devices receive no pre-admission history. Examples
+        use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+      examples:
+      - roomId: 01950000-0000-7000-8000-0000000000a1
+        algorithm: io.kodera.mls.v1
+        epoch: 0
+        rekeyRequired: false
+        hasMore: false
+        nextAfter: 1
+        devices:
+        - deviceId: 01950000-0000-7000-8000-0000000000a2
+          signingKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        envelopes:
+        - id: 01950000-0000-7000-8000-0000000000a1
+          kind: application
+          epoch: 0
+          sequence: 1
+          senderDeviceId: 01950000-0000-7000-8000-0000000000a2
+          ciphertext: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=

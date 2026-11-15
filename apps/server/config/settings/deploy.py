@@ -29,7 +29,11 @@ from config.environment import (
     tenant_app_urls,
     trusted_edge,
 )
-from config.workspace_features import media_gateway_socket, notification_settings
+from config.workspace_features import (
+    confidential_relay_enabled,
+    media_gateway_socket,
+    notification_settings,
+)
 from core.sealing import key_from_environment
 
 from .base import *
@@ -58,6 +62,7 @@ INSTALLED_APPS = [
     "apps.media",
     "apps.notifications",
     "apps.docs",
+    "apps.e2ee",
 ]
 KODERA_LOOPBACK_ISSUERS = False
 KODERA_AUTH_TRUST = auth_trust(os.environ)
@@ -125,3 +130,6 @@ KODERA_STAFF_OPS_HOSTS = staff_ops_hosts(os.environ)
 KODERA_STAFF_ADMIN_ORIGINS = os.environ.get("KODERA_STAFF_ADMIN_ORIGINS")
 KODERA_IOS_APP_IDS = ios_app_ids(os.environ)
 KODERA_ANDROID_ASSETLINKS_SHA256 = android_assetlinks_sha256(os.environ)
+
+# Disabled until the canonical confidential transport contract and client acceptance are released.
+KODERA_E2EE_RELAY_ENABLED = confidential_relay_enabled(os.environ)

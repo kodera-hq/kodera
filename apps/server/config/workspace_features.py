@@ -8,6 +8,13 @@ from django.core.exceptions import ImproperlyConfigured
 from core.sealing import key_from_environment
 
 
+def confidential_relay_enabled(environment: Mapping[str, str]) -> bool:
+    value = environment.get("KODERA_E2EE_RELAY_ENABLED", "false")
+    if value not in {"true", "false"}:
+        raise ImproperlyConfigured("KODERA_E2EE_RELAY_ENABLED must be true or false")
+    return value == "true"
+
+
 def media_gateway_socket(environment: Mapping[str, str]) -> str | None:
     value = environment.get("KODERA_MEDIA_GATEWAY_SOCKET", "")
     if not value:

@@ -126,6 +126,18 @@ Read as: what each role may do to each resource. `own` means "rows belonging to 
 | `PrivacyAccount` | create, read self | create, read self | create, read self | create, read self | — | — | — | — |
 | `WorkspaceSearch` | read own | read own | read own | read own | — | — | — | — |
 | `PushSubscription` | read, update, delete self | read, update, delete self | read, update, delete self | read, update, delete self | — | — | — | — |
+| `ConfidentialDevice` | create, act self | create, act self | create, act self | create, act self | — | — | — | — |
+| `ConfidentialKeyPackage` | create, act own | create, act own | create own | create own | — | — | — | — |
+| `ConfidentialRoom` | create, act own | create, act own | act own | act own | — | — | — | — |
+| `ConfidentialEnvelope` | create, read own | create, read own | create, read own | create, read own | — | — | — | — |
+
+### Confidential relay (Planned)
+
+Status: Planned
+
+These rows describe the unpublished adapter in `apps/e2ee`; canonical Core 0.47 declares the proposed operations; production routing and generated-client acceptance remain pending. Every operation requires a current accepted membership; mutations additionally require device proof of possession. Ciphertext reads name an active admitted device of the caller's exact identity and membership; they do not prove possession of its private key or decrypt its payload. Device registration and permanent revocation are limited to the caller's bound identity and membership. Only owner/admin may create a room or claim a package for a currently eligible target device. Room-scoped reads and writes require explicit room admission and current channel visibility. Member epoch commits may rotate keys or remove revoked leaves; adding a device or removing an otherwise eligible peer requires owner/admin. Current mute, read-only policy and room lifecycle govern publication. Successful HTTP replay repeats current authority checks without repeating the effect. Staff roles hold no override through these surfaces.
+
+### Matrix-wide rules
 
 Rules that override the table:
 

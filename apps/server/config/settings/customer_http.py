@@ -36,7 +36,11 @@ from config.environment import (
     staff_ops_hosts,
     tenant_app_urls,
 )
-from config.workspace_features import media_gateway_socket, notification_settings
+from config.workspace_features import (
+    confidential_relay_enabled,
+    media_gateway_socket,
+    notification_settings,
+)
 from core.sealing import key_from_environment
 
 from .persistence import *
@@ -58,6 +62,7 @@ CUSTOMER_HTTP_APPS = (
     "apps.notifications",
     "apps.docs",
     "apps.extensions",
+    "apps.e2ee",
 )
 INSTALLED_APPS = [*INSTALLED_APPS, *CUSTOMER_HTTP_APPS]
 # The deployable API profile: KODERA_LOOPBACK_ISSUERS, from config.settings.persistence, is False
@@ -133,3 +138,6 @@ KODERA_STAFF_OPS_HOSTS = staff_ops_hosts(os.environ, loopback_issuers=KODERA_LOO
 KODERA_STAFF_ADMIN_ORIGINS = os.environ.get("KODERA_STAFF_ADMIN_ORIGINS")
 KODERA_IOS_APP_IDS = ios_app_ids(os.environ)
 KODERA_ANDROID_ASSETLINKS_SHA256 = android_assetlinks_sha256(os.environ)
+
+# Disabled until the canonical confidential transport contract and client acceptance are released.
+KODERA_E2EE_RELAY_ENABLED = confidential_relay_enabled(os.environ)

@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.docs",
     "apps.extensions",
+    "apps.e2ee",
 ]
 
 # Plaintext SMTP only to a loopback address or `localhost` here; no deployed name is exempt.
