@@ -23,7 +23,7 @@ native-crypto = ["openmls-engine", "megolm-engine", "passkey-bindings"]
 ble-transport = []
 
 # The dependency-free default retains the workspace MSRV. Opt-in native crypto
-# requires Rust 1.91, the supported minimum of OpenMLS 0.9.2 and its providers.
+# requires Rust 1.94, the supported minimum of the backported crypto providers.
 [dependencies]
 aes-gcm = { version = "=0.10.3", optional = true, default-features = false, features = ["aes"] }
 openmls = { version = "=0.9.2", optional = true, default-features = false }
