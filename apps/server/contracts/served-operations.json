@@ -42,6 +42,16 @@
       "path": "/slug-availability"
     },
     {
+      "operation_id": "claimConfidentialKeyPackage",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/key-packages/claims"
+    },
+    {
+      "operation_id": "commitConfidentialEpoch",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/commits"
+    },
+    {
       "operation_id": "completeAttachmentUpload",
       "method": "POST",
       "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}/complete"
@@ -80,6 +90,11 @@
       "operation_id": "createCommunitySupportTicket",
       "method": "POST",
       "path": "/community/support/tickets"
+    },
+    {
+      "operation_id": "createConfidentialRoom",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/rooms"
     },
     {
       "operation_id": "createDocumentCollabSession",
@@ -337,6 +352,11 @@
       "path": "/catalog/capacity-tiers"
     },
     {
+      "operation_id": "listConfidentialEnvelopes",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes"
+    },
+    {
       "operation_id": "listCreditNotes",
       "method": "GET",
       "path": "/organisations/{organisation_id}/credit-notes"
@@ -467,6 +487,11 @@
       "path": "/workspace-invites/preview"
     },
     {
+      "operation_id": "publishConfidentialKeyPackage",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/key-packages"
+    },
+    {
       "operation_id": "putPushSubscription",
       "method": "PUT",
       "path": "/push/subscriptions/{device_id}"
@@ -490,6 +515,11 @@
       "operation_id": "redeemWorkspaceInvite",
       "method": "POST",
       "path": "/workspace-invites/redeem"
+    },
+    {
+      "operation_id": "registerConfidentialDevice",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/devices"
     },
     {
       "operation_id": "removeMembership",
@@ -517,6 +547,16 @@
       "path": "/proximity/resolve"
     },
     {
+      "operation_id": "retireConfidentialParticipant",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/participants/retire"
+    },
+    {
+      "operation_id": "revokeConfidentialDevice",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/devices/revoke"
+    },
+    {
       "operation_id": "revokeInvitation",
       "method": "DELETE",
       "path": "/invitations/{invitation_id}"
@@ -530,6 +570,11 @@
       "operation_id": "searchWorkspace",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/search"
+    },
+    {
+      "operation_id": "sendConfidentialEnvelope",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes"
     },
     {
       "operation_id": "switchPassportWorkspace",

@@ -27,11 +27,11 @@ const contactType = 'https://kodera.io/problems/owner-claim-contact-unverified'
 const serviceType = 'https://kodera.io/problems/service-unavailable'
 const expectedLock = {
   repository: 'kodera-hq/kodera',
-  ref: 'e586ecd99077ac941711a2c1815e401731167a3f',
-  commit: 'e586ecd99077ac941711a2c1815e401731167a3f',
+  ref: '6d4b9714e3a8f842e723ff3a75b5ad67ff02262c',
+  commit: '6d4b9714e3a8f842e723ff3a75b5ad67ff02262c',
   path: 'packages/api-contract/core-api.openapi.yaml',
-  version: '0.46.0',
-  sha256: 'f440bff5353d00ae9294952126e3960a727ec7d042b50b372d729acc4b8cbea1',
+  version: '0.47.0',
+  sha256: '3e9c09ab4fd68e0866ccf6d7d6e0dd42aa12cc318a86cf039ab010a4688383da',
 }
 const commitOidPattern = /^[0-9a-f]{40}(?![\s\S])/
 const maxPinnedBlobBytes = 4 * 1024 * 1024
