@@ -425,8 +425,8 @@ MUTATIONS = (
     Mutation(
         "the aggregate depends on the gate's job",
         WORKFLOW,
-        "needs: [plan, server, web, rust-desktop, mobile]",
-        "needs: [plan, web, rust-desktop, mobile]",
+        "needs: [plan, server, web, rust-desktop, wasm-browser-check, mobile]",
+        "needs: [plan, web, rust-desktop, wasm-browser-check, mobile]",
         "the coverage check",
         f"job `{JOB}` is not in `ci-ok` needs",
     ),
