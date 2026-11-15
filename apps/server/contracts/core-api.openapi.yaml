@@ -9167,8 +9167,9 @@ paths:
     post:
       operationId: revokeConfidentialDevice
       summary: RevokeConfidentialDevice
-      description: 'Permanently revoke a device of the caller own identity and membership; discard unclaimed directory
-        payloads. Revoked devices cannot publish, read or replay. Rejoining needs a new device key. Current accepted
+      description: 'Permanently revoke a device of the caller own identity and membership; discard all remaining directory
+        payloads, including already-claimed packages, while retaining their claim and binding metadata. Revoked devices
+        cannot publish, read or replay. Rejoining needs a new device key. Current accepted
         membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally
         require explicit device admission and current channel visibility. Staff has no override. Device proof is possession,
         not human identity verification. Application publication observes mute/read-only policy and blocks until revoked
@@ -9472,7 +9473,9 @@ paths:
       operationId: claimConfidentialKeyPackage
       summary: ClaimConfidentialKeyPackage
       description: 'Claim one eligible target device package once, bound to this room, current epoch and claimant.
-        Only an admitted owner/admin can claim; concurrent claimants never receive the same package. A successful
+        At most one claim is admitted for a target device in the same room and epoch; a duplicate claim under a new
+        idempotency key returns 409. Only an admitted owner/admin can claim; concurrent claimants never receive the
+        same package. A successful
         same-key retry may return its original public package only while current caller and target authority hold.
         Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped
         operations additionally require explicit device admission and current channel visibility. Staff has no override.
