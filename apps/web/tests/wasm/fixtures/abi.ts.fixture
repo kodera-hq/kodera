@@ -1,0 +1,17 @@
+import initialize, { BrowserMlsDevice } from './generated/kodera_rs.js'
+
+export async function declarationCalls(host: unknown, owner: string, organisation: string, membership: string,
+  seed: Uint8Array, identity: Uint8Array, publicKey: Uint8Array, checkpoint: Uint8Array): Promise<void> {
+  await initialize()
+  const actor = new BrowserMlsDevice(host, owner, organisation, membership)
+  // Generated Promise<any>/JsValue signatures are deliberately not strengthened.
+  const create: Promise<unknown> = actor.createDevice(identity, seed, true)
+  await create
+  const publicValue: unknown = actor.publicKey()
+  const proof: unknown = actor.registrationRequest()
+  void publicValue; void proof
+  actor.close(); actor.free()
+  const restored = new BrowserMlsDevice(host, owner, organisation, membership)
+  const open: Promise<unknown> = restored.openDevice(publicKey, 1, checkpoint, seed)
+  await open; restored.close(); restored.free()
+}

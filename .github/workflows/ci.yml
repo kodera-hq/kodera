@@ -98,9 +98,59 @@ jobs:
     if: needs.plan.outputs.mobile == 'true'
     uses: ./.github/workflows/ci-mobile.yml
 
+  wasm-browser-check:
+    name: WASM browser bindings (Rust 1.100.0)
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Refuse malformed artifact and lifecycle fixtures
+        run: python3 -I -S -B scripts/ci/build-wasm-browser-proof-selftest.py
+      - name: Check the pinned browser-bindings WASM target
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/wasm-check-rustup
+          CARGO_HOME: ${{ runner.temp }}/wasm-check-cargo
+          CARGO_TARGET_DIR: ${{ runner.temp }}/wasm-check-target
+          RUSTUP_AUTO_INSTALL: "0"
+          CARGO_BUILD_JOBS: "2"
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown --no-self-update
+          rustc +1.100.0 --version --verbose
+          cargo +1.100.0 --version
+          cargo +1.100.0 check --locked -p kodera-rs --no-default-features --features browser-bindings --target wasm32-unknown-unknown
+
+      - name: Qualify actual generated ABI and durable worker device
+        env:
+          RUSTUP_HOME: ${{ runner.temp }}/wasm-check-rustup
+          CARGO_HOME: ${{ runner.temp }}/wasm-check-cargo
+          CARGO_TARGET_DIR: ${{ runner.temp }}/wasm-check-target
+          RUSTUP_AUTO_INSTALL: "0"
+          CARGO_BUILD_JOBS: "2"
+        shell: bash
+        run: |
+          proof_root="$(mktemp -d "$RUNNER_TEMP/kodera-wasm-proof-XXXXXXXX")"
+          python3 -I -S -B scripts/ci/build-wasm-browser-proof.py --root "$proof_root"
+
+      - name: Retain bounded public browser qualification evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wasm-browser-component-proof-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kodera-wasm-proof-*-public-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
   ci-ok:
     name: ci-ok
-    needs: [plan, server, web, rust-desktop, mobile]
+    needs: [plan, server, web, rust-desktop, wasm-browser-check, mobile]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
