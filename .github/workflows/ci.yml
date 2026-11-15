@@ -98,9 +98,33 @@ jobs:
     if: needs.plan.outputs.mobile == 'true'
     uses: ./.github/workflows/ci-mobile.yml
 
+  wasm-browser-check:
+    name: WASM browser bindings (Rust 1.100.0)
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUSTUP_HOME: ${{ runner.temp }}/wasm-check-rustup
+      CARGO_HOME: ${{ runner.temp }}/wasm-check-cargo
+      CARGO_TARGET_DIR: ${{ runner.temp }}/wasm-check-target
+      RUSTUP_AUTO_INSTALL: "0"
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the pinned browser-bindings WASM target
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --target wasm32-unknown-unknown --no-self-update
+          rustc +1.100.0 --version --verbose
+          cargo +1.100.0 --version
+          cargo +1.100.0 check --locked -p kodera-rs --no-default-features --features browser-bindings --target wasm32-unknown-unknown
+
   ci-ok:
     name: ci-ok
-    needs: [plan, server, web, rust-desktop, mobile]
+    needs: [plan, server, web, rust-desktop, wasm-browser-check, mobile]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
