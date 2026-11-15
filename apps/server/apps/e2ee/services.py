@@ -393,7 +393,9 @@ def authorize_request(
         _write_allowed(principal, workspace, access)
     elif room_id is not None:
         _, access, _ = _room(room_id, principal, workspace, device)
-        _write_allowed(principal, workspace, access)
+        # Leaving with the current device does not publish content.
+        if operation != "retire-room-device" or body["targetDeviceId"] != body["deviceId"]:
+            _write_allowed(principal, workspace, access)
         if operation == "claim-key-package":
             if principal.role not in ADMINS:
                 raise RefusalError(403)

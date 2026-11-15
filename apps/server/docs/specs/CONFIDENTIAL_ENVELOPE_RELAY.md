@@ -1,6 +1,6 @@
 # Confidential envelope relay
 
-Status: Planned
+Status: Partially implemented
 
 This specification extends the primitives in SRV-ADR-0026. It does not qualify browser/native
 interoperability or enable a confidential-room badge. The server relays opaque cryptographic
@@ -9,12 +9,16 @@ verifying admitted device identities.
 
 ## Scope and authority
 
-Proposed `/api/v1/organisations/{organisation_id}/confidential/...` routes require a verified customer
+The `/api/v1/organisations/{organisation_id}/confidential/...` routes require a verified customer
 token, an enabled persisted identity, an active accepted membership in the exact organisation,
 and current workspace/channel authority. Staff and cross-organisation requests fail closed.
-The adapter remains reachable only through its test URL configuration; the operator gate defaults
-to disabled, and production routing awaits canonical Core contract integration.
+The customer route graph mounts the adapter. The operator gate defaults to disabled, and every
+operation returns a service-unavailable response before authentication or effects while disabled.
 No token-supplied role or caller-supplied membership identifier grants authority.
+
+Self-retirement requires current room visibility and a valid device proof. It remains available
+while publication is muted, denied or archived. Retiring another device also requires current
+publication authority and an administrator role.
 
 Devices belong to the resolved membership and hold an immutable Ed25519 signing public key.
 Registration requires proof of possession over a versioned canonical organisation/member/device
@@ -67,6 +71,10 @@ erasure fences, inventory and purge paths must cover every new stored associatio
 relay routes can be published. Audit records include identifiers and enumerated actions only;
 neither ciphertext nor package material nor signatures enter request logs or audit metadata.
 
+Relay privacy hooks install after the Enterprise and proximity replacements of Core functions.
+Downgrade checks retained relay rows and durable erasure inventory/count markers before removing
+any protection. Existing obligations prevent that downgrade even after their payloads are purged.
+
 Idempotent retries recheck current authority before replaying a stored response. Package claims
 retain one logical result for the same authorised retry; a different claimant cannot consume
 the same package. Raw request bodies are neither logged nor retained in the idempotency store.
@@ -100,10 +108,11 @@ separate release gates. A passing relay suite cannot certify those integrations.
 
 ## Planned client and media integration
 
-The Rust session currently holds OpenMLS provider state in memory. Its `native-crypto` feature
-provides protocol operations and a scoped media exporter; it does not provide browser bindings,
-generated Swift/Kotlin bindings, durable session storage or a connected LiveKit key provider.
-The web dependency is pinned to `livekit-client` 2.22.4. Current upstream examples must be checked
+The Rust core provides protocol operations, a scoped media exporter and device seal/restore
+primitives. Browser bindings expose a device actor with a generated-WASM component proof;
+complete durable group coordinators,
+generated Swift/Kotlin bindings and a connected LiveKit key provider remain planned.
+The web dependency is pinned to `livekit-client` 2.24.0. Current upstream examples must be checked
 against that exact SDK before choosing option names or rotation behavior.
 
 The client coordinator must own one durable record per `(issuer, organisation, membership,
@@ -164,8 +173,9 @@ fallback to ordinary Matrix/plaintext transport is part of this increment.
 
 1. **Qualify the relay.** Keep ownership in `apps/server/apps/e2ee`, the canonical Core contract
    and generated API consumers. Run the real PostgreSQL HTTP, exact-role, concurrency and
-   privacy suites, then reconcile proximity orgs0032 and the full legacy privacy suite. Mount
-   production routes only with accepted contract generation; the operator gate remains off.
+   privacy suites, preserving proximity orgs0033, extensions0012 and the full legacy privacy suite.
+   Canonical consumer generation and hosted qualification gate publication; the operator gate
+   remains disabled by default.
 2. **Make protocol state durable.** Extend `packages/kodera-rs/src/mls_engine.rs` and its provider
    boundary with atomic persistent storage, explicit transcript-signing support and bounded
    generated platform bindings. Restart and rollback tests must precede any UI integration.
@@ -191,9 +201,12 @@ fallback to ordinary Matrix/plaintext transport is part of this increment.
 
 ## Core 0.47 source declaration
 
-Status: Planned
+Status: Implemented behind an operator gate
 
-The qualified combined profile installs the model app, while production customer URLs do not include its relay routes. The operator flag defaults false. Canonical declaration admits no production mount, discovery, client persistence or media feature.
+The combined profile installs the model app and mounts the relay in the customer route graph.
+The operator flag defaults false and refuses requests before authentication or effects while
+disabled. This increment adds no verified-room discovery, client group coordinator or encrypted
+media feature.
 
 The Commit response names the actual Commit row as commitEnvelopeId and commitSequence;
 headSequence can additionally include a recipient-private Welcome and must never be used
