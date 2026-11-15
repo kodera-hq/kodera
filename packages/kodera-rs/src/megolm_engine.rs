@@ -211,10 +211,14 @@ impl MegolmEpochKey {
         if mls.scope() != &self.scope {
             return Err(NativeCryptoError::ScopeMismatch);
         }
-        let mut plaintext = b"kodera-megolm-key-v1:\0".to_vec();
+        let key = tls_codec::SecretVLBytes::new(self.key.to_bytes());
+        let prefix = b"kodera-megolm-key-v1:\0";
+        let mut plaintext = Vec::with_capacity(prefix.len() + 8 + key.as_slice().len());
+        plaintext.extend_from_slice(prefix);
         plaintext.extend_from_slice(&self.epoch.to_be_bytes());
-        plaintext.extend_from_slice(&self.key.to_bytes());
-        mls.seal(&plaintext)
+        plaintext.extend_from_slice(key.as_slice());
+        let plaintext = tls_codec::SecretVLBytes::new(plaintext);
+        mls.seal(plaintext.as_slice())
     }
 
     /// Require the expected sender from the trusted room-key distribution policy.
@@ -226,7 +230,8 @@ impl MegolmEpochKey {
         if &envelope.sender_device_key != expected_sender {
             return Err(NativeCryptoError::UnauthorisedDevice);
         }
-        let plaintext = mls.open(envelope)?;
+        let owned = tls_codec::SecretVLBytes::new(mls.open(envelope)?);
+        let plaintext = owned.as_slice();
         let prefix = b"kodera-megolm-key-v1:\0";
         if !plaintext.starts_with(prefix) || plaintext.len() < prefix.len() + 8 {
             return Err(NativeCryptoError::InvalidInput);
