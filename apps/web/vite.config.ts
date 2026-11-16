@@ -59,9 +59,19 @@ function mockServiceWorkerPlugin(): Plugin {
   }
 }
 
-const ENTRY_MODULE_ID = fileURLToPath(new URL('./src/entry-bootstrap.ts', import.meta.url))
-const MAIN_MODULE_ID = fileURLToPath(new URL('./src/main.tsx', import.meta.url))
-const HTML_MODULE_ID = fileURLToPath(new URL('./index.html', import.meta.url))
+export function normalizeViteModuleId(id: string): string {
+  return id.startsWith('\0') ? id : id.replaceAll('\\', '/')
+}
+
+const ENTRY_MODULE_ID = normalizeViteModuleId(
+  fileURLToPath(new URL('./src/entry-bootstrap.ts', import.meta.url))
+)
+const MAIN_MODULE_ID = normalizeViteModuleId(
+  fileURLToPath(new URL('./src/main.tsx', import.meta.url))
+)
+const HTML_MODULE_ID = normalizeViteModuleId(
+  fileURLToPath(new URL('./index.html', import.meta.url))
+)
 const RECOVERY_KEYS = [
   'console.entry.recovery.title',
   'console.entry.recovery.body',
@@ -177,8 +187,10 @@ function entryBootstrapPlugin(): Plugin {
     },
     generateBundle(_options, bundle) {
       const chunks = Object.values(bundle).filter((chunk) => chunk.type === 'chunk')
-      const entries = chunks.filter((chunk) => Object.hasOwn(chunk.modules, ENTRY_MODULE_ID))
-      const mains = chunks.filter((chunk) => Object.hasOwn(chunk.modules, MAIN_MODULE_ID))
+      const hasModule = (chunk: { modules: Record<string, unknown> }, targetId: string): boolean =>
+        Object.keys(chunk.modules).some((id) => normalizeViteModuleId(id) === targetId)
+      const entries = chunks.filter((chunk) => hasModule(chunk, ENTRY_MODULE_ID))
+      const mains = chunks.filter((chunk) => hasModule(chunk, MAIN_MODULE_ID))
       if (entries.length !== 1 || mains.length !== 1) throw Error('ENTRY_BUILD_MAPPING_INVALID')
       const entry = entries[0]
       const main = mains[0]
@@ -194,7 +206,7 @@ function entryBootstrapPlugin(): Plugin {
         entryModuleId: ENTRY_MODULE_ID,
         htmlEntryModuleId: HTML_MODULE_ID,
         modules: Object.entries(entry.modules).map(([id, module]) => ({
-          id,
+          id: normalizeViteModuleId(id),
           renderedLength: module.renderedLength,
         })),
         imports: entry.imports,
@@ -203,7 +215,7 @@ function entryBootstrapPlugin(): Plugin {
         mainModuleId: MAIN_MODULE_ID,
         mainFile: main.fileName,
         dynamicImports: entry.dynamicImports,
-        mainModules: Object.keys(main.modules),
+        mainModules: Object.keys(main.modules).map(normalizeViteModuleId),
       })
     },
   }
@@ -311,17 +323,21 @@ function deferredVendorGroups() {
 function applicationClosure(): { plugin: Plugin; has: (id: string) => boolean } {
   const closure = new Set<string>()
   return {
-    has: (id) => closure.has(id),
+    has: (id) => closure.has(normalizeViteModuleId(id)),
     plugin: {
       name: 'kodera-application-closure',
       apply: 'build',
       buildEnd() {
         closure.clear()
-        const queue = [...(this.getModuleInfo(MAIN_MODULE_ID)?.importedIds ?? [])]
-        for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
-          if (closure.has(id) || id.startsWith('\0')) continue
+        const lookupInfo = (normId: string) =>
+          this.getModuleInfo(normId) ?? this.getModuleInfo(normId.replaceAll('/', '\\'))
+        const queue = [...(lookupInfo(MAIN_MODULE_ID)?.importedIds ?? [])]
+        for (let rawId = queue.pop(); rawId !== undefined; rawId = queue.pop()) {
+          if (rawId.startsWith('\0')) continue
+          const id = normalizeViteModuleId(rawId)
+          if (closure.has(id)) continue
           closure.add(id)
-          queue.push(...(this.getModuleInfo(id)?.importedIds ?? []))
+          queue.push(...(lookupInfo(id)?.importedIds ?? []))
         }
       },
     },
