@@ -164,7 +164,7 @@ fn rfc3339(value: &str) -> Result<()> {
     let hour = number(11, 13)?;
     let minute = number(14, 16)?;
     let second = number(17, 19)?;
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let days = match month {
         2 => {
             if leap {
@@ -231,7 +231,7 @@ impl DeviceHttpRecord {
             hex32(&p.body_sha256)?;
             require(!p.body_base64.is_empty() && p.body_base64.len() <= MAX_BODY_BASE64)?;
             // Bound the decoded allocation before asking the decoder to allocate.
-            require(p.body_base64.len().is_multiple_of(4))?;
+            require(p.body_base64.len() % 4 == 0)?;
             let padding = p
                 .body_base64
                 .bytes()
