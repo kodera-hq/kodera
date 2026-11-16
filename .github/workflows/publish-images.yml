@@ -40,7 +40,7 @@ jobs:
 
       - name: Build and push kodera-core API image
         id: build_api
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.0.1
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: apps/server
           file: apps/server/Dockerfile
@@ -53,7 +53,7 @@ jobs:
 
       - name: Build and push kodera-core-operator-deps image
         id: build_operator
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.0.1
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: apps/server
           file: apps/server/Dockerfile
@@ -67,7 +67,7 @@ jobs:
 
       - name: Build and push kodera-core-worker image
         id: build_worker
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.0.1
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: apps/server
           file: apps/server/Dockerfile.worker

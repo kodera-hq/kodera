@@ -320,10 +320,18 @@ function deferredVendorGroups() {
  * re-export it never calls — comes along, about 2 kB gzip in all. The sign-in page fetches four
  * script files for it instead of six in a production build and seventeen in a mock one.
  */
+// Only the lazy workspace MessageComposer uses these rich-translation renderers.
+// The root react-i18next barrel re-exports them, but must not pin them to app.
+// Normal bundling still makes any genuinely eager import part of the measured entry.
+const LAZY_TRANSLATION_RENDERERS = /\/node_modules\/(?:react-i18next\/dist\/es\/Trans(?:WithoutContext)?\.js|html-parse-stringify\/dist\/esm\/html-parse-stringify\.js)$/
+
 function applicationClosure(): { plugin: Plugin; has: (id: string) => boolean } {
   const closure = new Set<string>()
   return {
-    has: (id) => closure.has(normalizeViteModuleId(id)),
+    has: (id) => {
+      const normalized = normalizeViteModuleId(id)
+      return closure.has(normalized) && !LAZY_TRANSLATION_RENDERERS.test(normalized)
+    },
     plugin: {
       name: 'kodera-application-closure',
       apply: 'build',
