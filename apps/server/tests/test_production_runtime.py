@@ -756,7 +756,7 @@ def test_actual_pinned_gunicorn_accepts_source_and_disables_forwarder_headers(mo
     import gunicorn
     from gunicorn.config import Config
 
-    assert gunicorn.__version__ == "27.0.0"
+    assert gunicorn.__version__ == "27.0.1"
     monkeypatch.setattr(os, "environ", inputs())
     source = runpy.run_path(str(ROOT / "config/gunicorn.py"))
     actual = Config()
