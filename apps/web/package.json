@@ -59,7 +59,7 @@
     "@tiptap/starter-kit": "3.33.1",
     "@tiptap/suggestion": "3.33.1",
     "@tiptap/y-tiptap": "3.3.0",
-    "i18next": "^26.4.2",
+    "i18next": "^27.1.1",
     "livekit-client": "2.24.0",
     "matrix-js-sdk": "45.1.0",
     "oidc-client-ts": "^3.5.0",
