@@ -4,11 +4,14 @@ const output = document.querySelector('output')
 const exact = (value, names) => value && Object.getPrototypeOf(value) === Object.prototype &&
   Object.keys(value).sort().join(',') === names.slice().sort().join(',')
 const mode = new URL(location.href).searchParams.get('httpCase')
+const stages = new Set(['boot', 'native-import', 'native-init', 'store-open', 'host-create', 'actor-create', 'protocol'])
+const codes = new Set(['InvalidInput', 'Busy', 'Closed', 'RestoreRequired', 'Context', 'Storage', 'Crypto', 'Capacity', 'Fixture'])
 let worker, timer, finished = false, phase = 'boot', messages = 0
-const finish = (passed) => {
+const finish = (passed, failure = { stage: 'boot', code: 'Fixture' }) => {
   if (finished) return
   finished = true; clearTimeout(timer); worker?.terminate()
-  output.textContent = JSON.stringify(passed ? { status: 'passed', case: mode, hostOracleOnly: true } : { status: 'failed' })
+  output.textContent = JSON.stringify(passed ? { status: 'passed', case: mode, hostOracleOnly: true } :
+    { status: 'failed', stage: failure.stage, code: failure.code })
   output.dataset.phase = 'complete'
 }
 try {
@@ -24,6 +27,11 @@ try {
     if (phase === 'boot' && exact(data, ['version', 'operation', 'nonce']) && data.operation === 'nonceAck') {
       phase = 'run'; worker.postMessage({ version: 1, operation: 'run', nonce, requestId: 1, context, mode }); return
     }
+    if (phase === 'run' && exact(data, ['version', 'operation', 'nonce', 'requestId', 'value']) &&
+      data.operation === 'result' && data.requestId === 1 &&
+      exact(data.value, ['status', 'case', 'hostOracleOnly', 'stage', 'code']) &&
+      data.value.status === 'failed' && data.value.case === mode && data.value.hostOracleOnly === true &&
+      stages.has(data.value.stage) && codes.has(data.value.code)) { finish(false, data.value); return }
     if (phase !== 'run' || !exact(data, ['version', 'operation', 'nonce', 'requestId', 'value']) ||
       data.operation !== 'result' || data.requestId !== 1 ||
       !exact(data.value, ['status', 'case', 'hostOracleOnly']) || data.value.status !== 'passed' ||

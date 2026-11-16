@@ -1,5 +1,5 @@
 // Test-only trusted-host oracle. Synthetic 201s are NOT real Core qualification.
-import { initializeConfidentialState, openConfidentialState } from '/storage/local-state.js'
+import { initializeConfidentialState, openConfidentialState } from '/storage/local-state'
 import { createDeviceCasHost } from '/storage/device-cas-host.js'
 
 const need = (v) => { if (!v) throw new Error('HTTP fixture') }
@@ -62,10 +62,13 @@ async function run(context, mode) {
     Object.defineProperty(Date, 'now', { value: () => invalidClock ? NaN : wall() + wallOffset })
     Object.defineProperty(performance, 'now', { value: () => monotonic() + monotonicOffset })
   }
+  stage = 'native-import'
   const { default: initializeNative, BrowserMlsDevice, BrowserMlsHttpDevice } = await import('/native/kodera_rs.js')
+  stage = 'native-init'
   await initializeNative()
   need(Object.keys(context).sort().join() === 'membershipId,organisationId,ownerId')
   let alive = true, actor, n = 0, g = 0, key = null, record = null, frameSha = null, nativeWrites = 0, sends = 0
+  stage = 'store-open'
   let fault = null, store = await initializeConfidentialState(context.ownerId)
   let recoveryArms = 0
   const sentRequests = []
@@ -75,6 +78,7 @@ async function run(context, mode) {
     const capturedWorker = currentWorker
     return () => alive && capturedWorker === currentWorker
   })
+  stage = 'host-create'
   let durableHost = makeDurableHost(), abortNext = false, aborted = 0
   const originalTransaction = IDBDatabase.prototype.transaction
   IDBDatabase.prototype.transaction = function (...args) {
@@ -203,8 +207,10 @@ async function run(context, mode) {
     } finally { restoredSealed.fill(0); restoredSeed.fill(0); read.state.checkpoint.fill(0) }
   }
   try {
+    stage = 'actor-create'
     actor = fresh()
     need(state(await actor.createHttpDevice(new TextEncoder().encode('public HTTP fixture'), seed, true)).state === 'pre-admission')
+    stage = 'protocol'
     if (mode === 'http-profile') {
       for (const name of ['registrationRequest', 'createDevice', 'openDevice']) need(!(name in actor))
       const legacy = new BrowserMlsDevice(host, context.ownerId, context.organisationId, context.membershipId)
@@ -325,7 +331,7 @@ async function run(context, mode) {
   }
 }
 
-let nonce, running = false
+let nonce, running = false, stage = 'boot'
 self.onmessage = async ({ data }) => {
   if (!nonce) {
     need(data?.version === 1 && data.operation === 'boot' && /^[0-9a-f]{32}$/.test(data.nonce))
@@ -337,5 +343,9 @@ self.onmessage = async ({ data }) => {
     await run(data.context, data.mode)
     self.postMessage({ version: 1, operation: 'result', nonce, requestId: 1,
       value: { status: 'passed', case: data.mode, hostOracleOnly: true } })
+  } catch (error) {
+    self.postMessage({ version: 1, operation: 'result', nonce, requestId: 1,
+      value: { status: 'failed', case: CASES.includes(data.mode) ? data.mode : 'invalid-case', hostOracleOnly: true,
+        stage, code: typeof error === 'string' && codes.has(error) ? error : 'Fixture' } })
   } finally { self.close() }
 }
