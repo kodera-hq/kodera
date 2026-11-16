@@ -1032,7 +1032,8 @@ N4_VERSION = "0.47.0"
 # aliases, and the reserved proximity check-in schemas; no N4 bytes changed.
 # Rebound for PR132 at 94c19b5: Passport request 503 and explicit Stripe version/event contract.
 # Rebound for frozen PR132 canonical507 at 6194653b: three Passport conflict responses.
-N4_OLD_CONTRACT = "160f95824e77c22547cdbd8a0e9426c662688035681fca93d5cf19e582f10f29"
+# Rebound after shared replay-header normalization; all prior wire definitions remain exact.
+N4_OLD_CONTRACT = "dcb6adea366d2748f9c4066704b12d427d925148e34fb457bf37d24110369603"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

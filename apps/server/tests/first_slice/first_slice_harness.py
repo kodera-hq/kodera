@@ -168,6 +168,7 @@ TENANT_SLUG_SCHEMAS = ("Tenant", "OrderRequest.tenant")
 
 CATALOGUE_PATH = re.compile(r"^/(catalog|catalogue|legal-documents|offers)(/|$)")
 CATALOGUE_WORD = re.compile(r"(?i)catalog|legal.?document|offer|plan|price|pack|capacity.?tier")
+KEY_PACKAGE_TOKEN = re.compile(r"(?i)\bkey[ _-]?packages?\b")
 CATALOGUE_MODEL = re.compile(r"^(Catalog|Offer|Plan|Price|Pack|CapacityTier|LegalDocument)")
 
 
@@ -615,6 +616,13 @@ def contract_write_operations(contract: Mapping[str, Any], pattern: str) -> list
     return found
 
 
+def catalogue_subject(value: str) -> str:
+    """Remove only cryptographic KeyPackage words, never a Pack prefix inside generic Package."""
+    # Split canonical camelCase and underscore word delimiters before bounded token matching.
+    words = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value).replace("_", " ")
+    return KEY_PACKAGE_TOKEN.sub("", words)
+
+
 def catalogue_write_surface(contract: Mapping[str, Any], model_names: Sequence[str]) -> list[str]:
     """Any non-read operation on catalogue, offer or legal-document resources, and any such model."""
     found = []
@@ -625,8 +633,8 @@ def catalogue_write_surface(contract: Mapping[str, Any], model_names: Sequence[s
         tags = " ".join(str(tag) for tag in operation.get("tags") or [])
         if (
             CATALOGUE_PATH.match(path)
-            or CATALOGUE_WORD.search(operation_id)
-            or CATALOGUE_WORD.search(tags)
+            or CATALOGUE_WORD.search(catalogue_subject(operation_id))
+            or CATALOGUE_WORD.search(catalogue_subject(tags))
         ):
             found.append(f"{method.upper()} {path} ({operation_id or 'no operationId'})")
     found += [f"model {name}" for name in model_names if CATALOGUE_MODEL.match(name)]

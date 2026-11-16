@@ -888,6 +888,46 @@ def test_catalogue_publication_is_measured_against_the_contract_and_the_models()
     ]
 
 
+@pytest.mark.parametrize(
+    ("operation_id", "tags", "expected"),
+    [
+        ("publishConfidentialKeyPackage", ["Confidential transport"], False),
+        ("claimConfidentialKeyPackage", ["Confidential transport"], False),
+        ("publishKeyPackage", ["Key packages"], False),
+        ("PUBLISH_KEY_PACKAGE", ["KEY PACKAGES"], False),
+        ("publishPackage", [], True),
+        ("publishThing", ["Packages"], True),
+        ("publishPack", [], True),
+        ("publishPacks", [], True),
+        ("publishThing", ["Packs"], True),
+        ("publishKeyPackagePrice", [], True),
+        ("publishConfidentialKeyPackage", ["Catalog"], True),
+        ("publishKeyPackagePack", [], True),
+        ("publishThing", ["KeyPackages Price"], True),
+        ("publishMonkeyPackage", [], True),
+        ("publishmonkeyPackages", [], True),
+        ("publishKeyXPackage", [], True),
+    ],
+)
+def test_catalogue_pack_classifier_distinguishes_key_packages_without_masking_catalogue_writes(
+    operation_id, tags, expected
+):
+    synthetic = {
+        "paths": {
+            "/elsewhere": {
+                "post": {
+                    "operationId": operation_id,
+                    "tags": tags,
+                    "responses": {"204": {"description": "done"}},
+                }
+            }
+        }
+    }
+    assert catalogue_write_surface(synthetic, []) == (
+        [f"POST /elsewhere ({operation_id})"] if expected else []
+    )
+
+
 def test_the_other_measured_seams_turn_into_failures_when_their_subject_appears(
     harness, monkeypatch, tmp_path
 ):

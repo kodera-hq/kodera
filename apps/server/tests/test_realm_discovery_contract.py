@@ -83,7 +83,8 @@ DISCOVERY_SCHEMAS = (
 # Rebound at 0.47.0: additive Confidential operations and Commit marker; discovery unchanged.
 # Rebound for PR132 at 94c19b5: Passport request 503 and explicit Stripe version/event contract.
 # Rebound for frozen PR132 canonical507 at 6194653b: three Passport conflict responses.
-UNCHANGED_SHA = "af5742255974dd9c800152492dc7e89099ff47632c7c5d369299faa2e5b53790"
+# Rebound after reviewed Confidential replay-header references and claim-epoch schema; all prior surfaces preserved.
+UNCHANGED_SHA = "21dbce4419a027af96b442498cfe5e6733731628a4fb777c67143f15787c209c"
 # Approved schema/key semantics; prose is removed before hashing.
 # Rebound at 0.26.0: discoverRealm declares 403 forbidden, a browser request refused from its
 # headers before any quota charge; the rest of the discovery wire is unchanged.

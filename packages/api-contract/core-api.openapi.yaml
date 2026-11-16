@@ -9105,10 +9105,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9124,6 +9121,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9208,10 +9207,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9227,6 +9223,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9310,10 +9308,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9329,6 +9324,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9410,10 +9407,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9429,6 +9423,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9520,10 +9516,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9539,6 +9532,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9630,10 +9625,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9649,6 +9641,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9740,10 +9734,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9759,6 +9750,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
@@ -9849,10 +9842,7 @@ paths:
                 type: string
                 const: no-store
             Idempotency-Replayed:
-              schema:
-                type: string
-                const: 'true'
-              description: Present only when the same authorized operation is replayed.
+              $ref: '#/components/headers/IdempotencyReplayed'
           content:
             application/json:
               schema:
@@ -9868,6 +9858,8 @@ paths:
         '405':
           description: Authentication, authority, validation, conflict, capacity or temporary contention refusal.
           headers:
+            Idempotency-Replayed:
+              $ref: '#/components/headers/IdempotencyReplayed'
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
             Cache-Control:
