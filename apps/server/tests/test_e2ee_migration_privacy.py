@@ -50,6 +50,26 @@ def definitions():
         return result
 
 
+def core_function_metadata():
+    """Numeric identity and security attributes must survive every body replacement."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """SELECT p.oid,p.proowner,p.proacl,p.prosecdef,p.proconfig,p.provolatile,
+            p.proparallel,p.proisstrict,p.proretset,p.proleakproof,p.prolang,p.procost,p.prorows,
+            p.prorettype,p.proargtypes::text,p.proargnames,p.provariadic,p.prosupport::oid,
+            p.prokind,p.pronargs,p.pronargdefaults,p.proallargtypes,p.proargmodes,
+            p.proargdefaults::text,p.protrftypes,p.probin,p.prosqlbody::text,
+            p.proname,p.pronamespace
+            FROM pg_catalog.pg_proc p WHERE p.oid IN
+              (%s::regprocedure,%s::regprocedure,%s::regprocedure,%s::regprocedure)
+            ORDER BY p.oid""",
+            ["public." + signature for signature in ADDITIONS],
+        )
+        rows = cursor.fetchall()
+        assert len(rows) == 4
+        return rows
+
+
 def schema_snapshot():
     with connection.cursor() as cursor:
         cursor.execute("SELECT app,name FROM django_migrations ORDER BY app,name")
@@ -131,6 +151,7 @@ def test_empty_and_historical_pre_relay_journal_roundtrip_preserves_predecessor_
     try:
         MigrationExecutor(connection).migrate([BASE])
         predecessor = definitions()
+        predecessor_metadata = core_function_metadata()
         # This real journal has the existing proximity obligation, but no relay inventory.
         historical = begin_workspace(org)
         assert "e2ee" not in historical.inventory
@@ -139,6 +160,7 @@ def test_empty_and_historical_pre_relay_journal_roundtrip_preserves_predecessor_
         immutable_digest = historical.inventory_sha256
         restore_leaves()
         upgraded = definitions()
+        assert core_function_metadata() == predecessor_metadata
         for signature, addition in ADDITIONS.items():
             assert upgraded[signature].count(addition) == 1
             assert upgraded[signature].replace(addition, "") == predecessor[signature]
@@ -146,6 +168,7 @@ def test_empty_and_historical_pre_relay_journal_roundtrip_preserves_predecessor_
             assert upgraded[signature] == predecessor[signature]
         MigrationExecutor(connection).migrate([BASE])
         assert definitions() == predecessor
+        assert core_function_metadata() == predecessor_metadata
         historical.refresh_from_db()
         assert historical.inventory == immutable_inventory
         assert historical.inventory_sha256 == immutable_digest
@@ -276,3 +299,105 @@ def test_empty_relay_account_inventory_still_prevents_downgrade(world):
     assert result["counts"]["e2ee_directory_packages_discarded"] == 0
     assert result["complete"] is False
     refused_without_schema_change()
+
+
+def test_predecessor_body_drift_refuses_upgrade_without_overwriting_functions(world):
+    signature = "privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid)"
+    original = None
+    try:
+        MigrationExecutor(connection).migrate([BASE])
+        original = definitions()[signature]
+        assert original.count("\nBEGIN\n") == 1
+        changed = original.replace("\nBEGIN\n", "\nBEGIN\n -- retained predecessor body drift\n", 1)
+        assert changed != original
+        with connection.cursor() as cursor:
+            cursor.execute(changed)
+        before = schema_snapshot()
+        metadata = core_function_metadata()
+        with pytest.raises(
+            IntegrityError, match="privacy protocol integration anchor changed"
+        ) as caught:
+            restore_leaves()
+        assert getattr(caught.value.__cause__, "sqlstate", None) == "23514"
+        assert schema_snapshot() == before
+        assert core_function_metadata() == metadata
+        assert TARGET not in MigrationExecutor(connection).loader.applied_migrations
+    finally:
+        if original is not None:
+            with connection.cursor() as cursor:
+                cursor.execute(original)
+        restore_leaves()
+
+
+def test_relay_body_drift_refuses_empty_reverse_without_changing_guards(world):
+    signature = "privacy_purge_account_core(uuid)"
+    original = None
+    try:
+        restore_leaves()
+        assert all(not model.objects.exists() for model in MODELS)
+        original = definitions()[signature]
+        assert original.count("\nBEGIN\n") == 1
+        changed = original.replace("\nBEGIN\n", "\nBEGIN\n -- retained relay body drift\n", 1)
+        assert changed != original
+        assert changed.count(ADDITIONS[signature]) == 1
+        with connection.cursor() as cursor:
+            cursor.execute(changed)
+        before = schema_snapshot()
+        metadata = core_function_metadata()
+        with pytest.raises(
+            IntegrityError, match="privacy protocol integration cannot be restored"
+        ) as caught:
+            MigrationExecutor(connection).migrate([BASE])
+        assert getattr(caught.value.__cause__, "sqlstate", None) == "23514"
+        assert schema_snapshot() == before
+        assert core_function_metadata() == metadata
+        assert TARGET in MigrationExecutor(connection).loader.applied_migrations
+    finally:
+        if original is not None:
+            with connection.cursor() as cursor:
+                cursor.execute(original)
+        restore_leaves()
+
+
+@pytest.mark.parametrize("change", ["configuration", "security"])
+def test_predecessor_metadata_drift_refuses_upgrade_before_reset(world, change):
+    signature = "privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid)"
+    original = None
+    try:
+        MigrationExecutor(connection).migrate([BASE])
+        original = definitions()[signature]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT prosrc FROM pg_catalog.pg_proc WHERE oid=%s::regprocedure",
+                ["public." + signature],
+            )
+            original_body = cursor.fetchone()[0]
+            if change == "configuration":
+                cursor.execute(
+                    "ALTER FUNCTION public.privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid) SET statement_timeout='17s'"
+                )
+            else:
+                cursor.execute(
+                    "ALTER FUNCTION public.privacy_begin_erasure(uuid,uuid,text,text,timestamptz,uuid) SECURITY INVOKER"
+                )
+            cursor.execute(
+                "SELECT prosrc FROM pg_catalog.pg_proc WHERE oid=%s::regprocedure",
+                ["public." + signature],
+            )
+            assert cursor.fetchone()[0] == original_body
+        assert definitions()[signature] != original
+        before = schema_snapshot()
+        metadata = core_function_metadata()
+        with pytest.raises(
+            IntegrityError, match="privacy protocol integration anchor changed"
+        ) as caught:
+            restore_leaves()
+        assert getattr(caught.value.__cause__, "sqlstate", None) == "23514"
+        assert schema_snapshot() == before
+        assert core_function_metadata() == metadata
+        assert TARGET not in MigrationExecutor(connection).loader.applied_migrations
+    finally:
+        if original is not None:
+            with connection.cursor() as cursor:
+                cursor.execute(original)
+        restore_leaves()
