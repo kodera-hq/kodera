@@ -1,13 +1,97 @@
 // @vitest-environment node
 // Public structural records only: none is a real signature, native seal or Core grant.
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import vectors from '../../../../../../packages/kodera-rs/vectors/device-http-v1.json'
 import {
   decodeDeviceHttpRecord, validateDeviceHttpBinding,
   encodeDeviceHttpAck, decodeDeviceHttpAck, verifyDeviceHttpAck,
   DeviceHttpRecordError,
 } from '@/features/confidential/device-http-record'
+
+interface DeviceHttpVectorAdmission {
+  operationId: string
+  bodySha256: string
+  deviceId: string
+  responseSha256: string
+}
+
+interface DeviceHttpVectorPending {
+  operation: string
+  operationId: string
+  bodyBase64: string
+  bodySha256: string
+  nativePackageId: string | null
+  packageWireSha256: string | null
+  phase: string
+  recoverySpent: number
+  firstAttemptAtMs: number | null
+  retryBeforeMs: number | null
+}
+
+interface DeviceHttpVectorPublication {
+  operationId: string
+  nativePackageId: string
+  bodySha256: string
+  corePackageId: string
+  packageWireSha256: string
+  expiresAt: string
+  responseSha256: string
+}
+
+interface DeviceHttpVectorRecordEntry {
+  name: string
+  record: {
+    version: number
+    recordId: string
+    scope: [string, string, string, string]
+    nativeGeneration: number
+    sealedSha256: string
+    admission: DeviceHttpVectorAdmission | null
+    pending: DeviceHttpVectorPending | null
+    publication: DeviceHttpVectorPublication | null
+  }
+  canonicalJson: string
+  frameHex: string
+  frameSha256: string
+}
+
+interface DeviceHttpVectorAckEntry {
+  name: string
+  ack: {
+    scope: [string, string, string, string]
+    recordId: string
+    expectedNativeGeneration: number
+    nextNativeGeneration: number
+    expectedHostGeneration: number
+    nextHostGeneration: number
+    sealedSha256: string
+    recordSha256: string
+  }
+  frameHex: string
+}
+
+interface DeviceHttpVectorFile {
+  classification: string
+  records: DeviceHttpVectorRecordEntry[]
+  acknowledgements: DeviceHttpVectorAckEntry[]
+}
+
+const DEVICE_HTTP_VECTOR_PATH = join(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'packages/kodera-rs/vectors/device-http-v1.json'
+)
+
+const vectors = JSON.parse(
+  readFileSync(DEVICE_HTTP_VECTOR_PATH, 'utf8')
+) as DeviceHttpVectorFile
 
 const fromHex = (value: string) => Uint8Array.from(Buffer.from(value, 'hex'))
 const digest = (value: Uint8Array) => createHash('sha256').update(value).digest('hex')
@@ -253,5 +337,48 @@ describe('KDA2 closed 276-byte completion data (not authority)', () => {
       { ...ack, expectedHostGeneration: 1 },
       { ...ack, expectedHostGeneration: Number.MAX_SAFE_INTEGER, nextHostGeneration: Number.MAX_SAFE_INTEGER + 1 },
     ]) expect(() => encodeDeviceHttpAck(bad)).toThrow(DeviceHttpRecordError)
+  })
+
+  it('materializes plain descriptor snapshots without consulting stateful Proxy get traps', async () => {
+    const record = await decodeDeviceHttpRecord(fromHex(row(5).frameHex))
+    const raw = fromHex(vectors.acknowledgements[0]!.frameHex)
+    const ack = decodeDeviceHttpAck(raw)
+    let reads = 0
+    const forbidGet = <T extends object>(target: T): T =>
+      new Proxy(target, {
+        get() {
+          reads++
+          throw new Error('stateful get trap must not run')
+        },
+      })
+    const validBinding = {
+      scope: forbidGet([...record.scope] as const),
+      nativeGeneration: 3,
+      hostGeneration: 7,
+      sealedSha256: record.sealedSha256,
+    }
+    expect(() => validateDeviceHttpBinding(forbidGet({ ...record }), forbidGet(validBinding))).not.toThrow()
+    expect(encodeDeviceHttpAck(forbidGet({ ...ack, scope: forbidGet([...ack.scope] as const) }))).toEqual(raw)
+
+    // Even if a Proxy get trap attempts to lie on subsequent property reads, descriptor values decide.
+    const disguisedBinding = new Proxy(
+      { ...validBinding, hostGeneration: 2 },
+      {
+        get(target, key, receiver) {
+          reads++
+          return key === 'hostGeneration' ? 7 : Reflect.get(target, key, receiver)
+        },
+      }
+    )
+    expect(() => validateDeviceHttpBinding(record, disguisedBinding)).toThrow(DeviceHttpRecordError)
+
+    const disguisedAck = new Proxy(ack, {
+      get(target, key, receiver) {
+        reads++
+        return key === 'nextHostGeneration' ? 999 : Reflect.get(target, key, receiver)
+      },
+    })
+    expect(encodeDeviceHttpAck(disguisedAck)).toEqual(raw)
+    expect(reads).toBe(0)
   })
 })

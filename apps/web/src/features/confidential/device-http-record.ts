@@ -85,8 +85,13 @@ function object(value: unknown, keys: readonly string[]): Record<string, unknown
   const descriptors = Object.getOwnPropertyDescriptors(value)
   const names = Reflect.ownKeys(descriptors)
   require(names.length === keys.length && names.every((key) => typeof key === 'string' && keys.includes(key)))
-  for (const key of keys) require(descriptors[key] && 'value' in descriptors[key]!)
-  return value as Record<string, unknown>
+  const result = Object.create(null) as Record<string, unknown>
+  for (const key of keys) {
+    const descriptor = descriptors[key]
+    require(descriptor && 'value' in descriptor)
+    result[key] = descriptor.value
+  }
+  return result
 }
 function uuid(value: unknown): asserts value is string {
   require(typeof value === 'string' && value.length === 36 && value !== '00000000-0000-0000-0000-000000000000' &&
@@ -99,9 +104,23 @@ function unsigned(value: unknown): asserts value is number {
   require(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
 }
 function positive(value: unknown): asserts value is number { unsigned(value); require(value > 0) }
-function scope(value: unknown): asserts value is DeviceHttpScope {
-  require(Array.isArray(value) && value.length === 4)
-  uuid(value[0]); uuid(value[1]); uuid(value[2]); hex32(value[3])
+const SCOPE_KEYS = ['0', '1', '2', '3', 'length'] as const
+function scope(value: unknown): DeviceHttpScope {
+  require(Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype)
+  const descriptors = Object.getOwnPropertyDescriptors<object>(value)
+  const names = Reflect.ownKeys(descriptors)
+  require(names.length === SCOPE_KEYS.length &&
+    names.every((key) => typeof key === 'string' && (SCOPE_KEYS as readonly string[]).includes(key)))
+  const items: unknown[] = []
+  for (const key of SCOPE_KEYS) {
+    const descriptor = descriptors[key]
+    require(descriptor && 'value' in descriptor)
+    if (key === 'length') require(descriptor.value === 4)
+    else items.push(descriptor.value)
+  }
+  const [s0, s1, s2, s3] = items
+  uuid(s0); uuid(s1); uuid(s2); hex32(s3)
+  return Object.freeze([s0, s1, s2, s3])
 }
 function hex(bytes: Uint8Array): string { return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('') }
 function rawHex(value: string): Uint8Array<ArrayBuffer> {
@@ -190,7 +209,7 @@ function publication(value: unknown): DeviceHttpPublication | null {
 }
 function record(value: unknown): DeviceHttpRecord {
   const r = object(value, ['version', 'recordId', 'scope', 'nativeGeneration', 'sealedSha256', 'admission', 'pending', 'publication'])
-  require(r.version === 1); uuid(r.recordId); scope(r.scope); positive(r.nativeGeneration); hex32(r.sealedSha256)
+  require(r.version === 1); uuid(r.recordId); const s = scope(r.scope); positive(r.nativeGeneration); hex32(r.sealedSha256)
   const a = admission(r.admission), p = pending(r.pending), published = publication(r.publication)
   if (p) {
     require(published === null)
@@ -198,8 +217,7 @@ function record(value: unknown): DeviceHttpRecord {
     else require(a !== null && p.nativePackageId !== null && p.packageWireSha256 !== null)
   }
   if (published) require(a !== null)
-  return Object.freeze({ version: 1, recordId: r.recordId,
-    scope: Object.freeze([r.scope[0], r.scope[1], r.scope[2], r.scope[3]]) as DeviceHttpScope,
+  return Object.freeze({ version: 1, recordId: r.recordId, scope: s,
     nativeGeneration: r.nativeGeneration, sealedSha256: r.sealedSha256, admission: a, pending: p, publication: published })
 }
 
@@ -228,8 +246,7 @@ export function validateDeviceHttpBinding(value: DeviceHttpRecord, binding: Devi
   try {
     const r = record(value)
     const b = object(binding, ['scope', 'nativeGeneration', 'hostGeneration', 'sealedSha256'])
-    scope(b.scope); positive(b.nativeGeneration); positive(b.hostGeneration); hex32(b.sealedSha256)
-    const expectedScope = b.scope
+    const expectedScope = scope(b.scope); positive(b.nativeGeneration); positive(b.hostGeneration); hex32(b.sealedSha256)
     require(b.hostGeneration >= b.nativeGeneration && r.nativeGeneration === b.nativeGeneration &&
       r.scope.every((v, i) => v === expectedScope[i]) && r.sealedSha256 === b.sealedSha256)
   } catch { throw new DeviceHttpRecordError() }
@@ -238,13 +255,13 @@ export function validateDeviceHttpBinding(value: DeviceHttpRecord, binding: Devi
 function ack(value: unknown): DeviceHttpAck {
   const a = object(value, ['scope', 'recordId', 'expectedNativeGeneration', 'nextNativeGeneration',
     'expectedHostGeneration', 'nextHostGeneration', 'sealedSha256', 'recordSha256'])
-  scope(a.scope); uuid(a.recordId); hex32(a.sealedSha256); hex32(a.recordSha256)
+  const s = scope(a.scope); uuid(a.recordId); hex32(a.sealedSha256); hex32(a.recordSha256)
   positive(a.expectedNativeGeneration); positive(a.nextNativeGeneration); positive(a.expectedHostGeneration); positive(a.nextHostGeneration)
   require(a.expectedHostGeneration < SAFE && a.nextHostGeneration === a.expectedHostGeneration + 1 &&
     a.expectedHostGeneration >= a.expectedNativeGeneration && a.nextHostGeneration >= a.nextNativeGeneration &&
     (a.nextNativeGeneration === a.expectedNativeGeneration ||
       (a.expectedNativeGeneration < SAFE && a.nextNativeGeneration === a.expectedNativeGeneration + 1)))
-  return Object.freeze({ scope: Object.freeze([...a.scope]) as DeviceHttpScope, recordId: a.recordId,
+  return Object.freeze({ scope: s, recordId: a.recordId,
     expectedNativeGeneration: a.expectedNativeGeneration, nextNativeGeneration: a.nextNativeGeneration,
     expectedHostGeneration: a.expectedHostGeneration, nextHostGeneration: a.nextHostGeneration,
     sealedSha256: a.sealedSha256, recordSha256: a.recordSha256 })
