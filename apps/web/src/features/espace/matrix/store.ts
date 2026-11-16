@@ -130,6 +130,8 @@ export type ChannelRoom =
   /** The directory has no room under the alias (a 404): the room does not exist yet. */
   | { state: 'pending' }
 
+export type RoomJoinState = 'joining' | 'refused'
+
 export interface EspaceSnapshot {
   status: SyncStatus
   /** Joined rooms, spaces left out, by name. */
@@ -191,7 +193,7 @@ const TYPING_RESEND_MS = 8_000
  * it doubles from `first` up to `atMost`, then is drawn between half of it and all of it, so a
  * homeserver that is down is not asked for every channel at once, every few seconds.
  */
-export function backoff(
+function backoff(
   first: number,
   atMost: number,
   attempts: number,
@@ -199,6 +201,40 @@ export function backoff(
 ): number {
   const ceiling = Math.min(atMost, first * 2 ** Math.max(0, attempts - 1))
   return Math.round(ceiling / 2 + random() * (ceiling / 2))
+}
+
+export { backoff }
+
+function isJoinRefused(error: unknown): boolean {
+  return (
+    error instanceof MatrixError && (error.errcode === 'M_FORBIDDEN' || error.httpStatus === 403)
+  )
+}
+
+function isJoinPermanentClientError(error: unknown): boolean {
+  return (
+    error instanceof MatrixError &&
+    typeof error.httpStatus === 'number' &&
+    error.httpStatus >= 400 &&
+    error.httpStatus < 500 &&
+    !error.isRateLimitError()
+  )
+}
+
+function rateLimitWaitMs(error: MatrixError, attempts: number): number {
+  try {
+    const retryAfter = error.getRetryAfterMs()
+    if (typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter > 0) {
+      return Math.min(Math.max(100, Math.ceil(retryAfter)), RETRY_AT_MOST_MS)
+    }
+  } catch {
+    // Fall back to `data.retry_after_ms` or standard backoff when the header/body is non-integer.
+  }
+  const raw = (error.data as { retry_after_ms?: unknown } | undefined)?.retry_after_ms
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return Math.min(Math.max(100, Math.ceil(raw)), RETRY_AT_MOST_MS)
+  }
+  return backoff(RETRY_AFTER_MS, RETRY_AT_MOST_MS, attempts)
 }
 
 type Relation = { rel_type: string; event_id: string }
@@ -350,6 +386,22 @@ export class EspaceStore {
   /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
   #directsChanged = false
   #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
+  /** Rooms whose join is under way or was refused (`M_FORBIDDEN`). */
+  readonly #joins = new Map<string, RoomJoinState>()
+  #joinsChanged = false
+  /** Rooms whose auto-join reached a settled state (joined, banned, or join request completed). */
+  readonly #joinSettled = new Set<string>()
+  /** Rooms whose `POST /join` succeeded while `/sync` has not yet delivered `membership === 'join'`. */
+  readonly #awaitingJoinSync = new Set<string>()
+  /** Invited room IDs observed on `/sync`, so each fresh invitation can clear a prior refusal once. */
+  readonly #seenInvites = new Set<string>()
+  #wantedJoins: readonly string[] = []
+  readonly #inFlightJoins = new Map<string, Promise<void>>()
+  readonly #joinFailures = new Map<string, number>()
+  readonly #joinTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  #joinRateLimitedUntil = 0
+  #joinCooldownTimer: ReturnType<typeof setTimeout> | null = null
+  #pumpingJoins = false
 
   constructor(
     session: EspaceSession,
@@ -493,7 +545,41 @@ export class EspaceStore {
     on(RoomEvent.Redaction, (_event: MatrixEvent, room: Room) => touch(room))
     on(RoomEvent.Receipt, (_event: MatrixEvent, room: Room) => touch(room))
     on(RoomEvent.Name, (room: Room) => touch(room))
-    on(RoomEvent.MyMembership, (room: Room) => touch(room))
+    on(RoomEvent.MyMembership, (room: Room) => {
+      const membership = room.getMyMembership()
+      const stored = this.#client.getRoom(room.roomId) !== null
+      if (membership === 'join') {
+        this.#joinSettled.add(room.roomId)
+        this.#clearJoinTimer(room.roomId)
+        if (stored) {
+          this.#awaitingJoinSync.delete(room.roomId)
+          if (this.#joins.delete(room.roomId)) this.#joinsChanged = true
+        }
+      } else if (membership === 'invite') {
+        this.#joinSettled.delete(room.roomId)
+        this.#clearJoinTimer(room.roomId)
+        if (stored) {
+          this.#awaitingJoinSync.delete(room.roomId)
+          if (this.#joins.get(room.roomId) === 'refused') {
+            this.#joins.delete(room.roomId)
+            this.#joinsChanged = true
+          }
+        }
+      } else if (membership === 'ban') {
+        this.#joinSettled.add(room.roomId)
+        this.#awaitingJoinSync.delete(room.roomId)
+        this.#clearJoinTimer(room.roomId)
+        this.#setJoinState(room.roomId, 'refused')
+      } else if (membership === 'leave' && !this.#inFlightJoins.has(room.roomId)) {
+        this.#awaitingJoinSync.delete(room.roomId)
+        this.#clearJoinTimer(room.roomId)
+        if (this.#joins.get(room.roomId) === 'joining' && this.#joinSettled.has(room.roomId)) {
+          this.#joins.delete(room.roomId)
+          this.#joinsChanged = true
+        }
+      }
+      touch(room)
+    })
     on(RoomStateEvent.Events, (_event: MatrixEvent, state: RoomState) =>
       touch(this.#client.getRoom(state.roomId))
     )
@@ -572,6 +658,13 @@ export class EspaceStore {
     }
     for (const timer of this.#askAgain.values()) clearTimeout(timer)
     this.#askAgain.clear()
+    for (const timer of this.#joinTimers.values()) clearTimeout(timer)
+    this.#joinTimers.clear()
+    if (this.#joinCooldownTimer !== null) {
+      clearTimeout(this.#joinCooldownTimer)
+      this.#joinCooldownTimer = null
+    }
+    this.#joinRateLimitedUntil = 0
     this.#status = status
     this.#snapshot = { ...this.#snapshot, status }
     this.#emit()
@@ -706,10 +799,7 @@ export class EspaceStore {
       this.#cache?.save(roomId, timeline)
       const pins = pinnedOf(room.currentState.getStateEvents(PINNED_EVENTS, '')?.getContent())
       const knownPins = this.#pins.get(roomId)
-      this.#pins.set(
-        roomId,
-        knownPins !== undefined && sameIds(knownPins, pins) ? knownPins : pins
-      )
+      this.#pins.set(roomId, knownPins !== undefined && sameIds(knownPins, pins) ? knownPins : pins)
       const prevThreads = this.#threads.get(roomId)
       const nextThreads = new Map<string, readonly MessageView[]>()
       for (const msg of next) {
@@ -726,14 +816,11 @@ export class EspaceStore {
     this.#dirty.clear()
     // Summaries are cheap; unread counts arrive with every sync, so all are recomputed and the
     // unchanged ones reused.
-    const rooms = reuse(
-      this.#snapshot.rooms,
-      all
-        .filter((room) => room.getMyMembership() === 'join')
-        .map((room) => this.#summary(room))
-        .sort((a, b) => a.name.localeCompare(b.name)),
-      (r) => r.roomId
-    )
+    const joinedSummaries = all
+      .filter((room) => room.getMyMembership() === 'join')
+      .map((room) => this.#summary(room))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const rooms = reuse(this.#snapshot.rooms, joinedSummaries, (r) => r.roomId)
     const invites = reuse(
       this.#snapshot.invites,
       all
@@ -745,16 +832,44 @@ export class EspaceStore {
         })),
       (r) => r.roomId
     )
+    for (const room of rooms) {
+      this.#joinSettled.add(room.roomId)
+      this.#awaitingJoinSync.delete(room.roomId)
+      this.#clearJoinTimer(room.roomId)
+      if (this.#joins.delete(room.roomId)) this.#joinsChanged = true
+    }
+    const currentInviteIds = new Set(invites.map((invite) => invite.roomId))
+    for (const seenId of this.#seenInvites) {
+      if (!currentInviteIds.has(seenId)) this.#seenInvites.delete(seenId)
+    }
+    for (const invite of invites) {
+      if (!this.#seenInvites.has(invite.roomId)) {
+        this.#seenInvites.add(invite.roomId)
+        this.#joinSettled.delete(invite.roomId)
+        this.#awaitingJoinSync.delete(invite.roomId)
+        this.#clearJoinTimer(invite.roomId)
+        if (this.#joins.get(invite.roomId) === 'refused') {
+          this.#joins.delete(invite.roomId)
+          this.#joinsChanged = true
+        }
+      }
+    }
     const status = this.#stopped ? this.#snapshot.status : this.#status
-    if (status === 'live') this.#recheck(rooms, invites)
+    if (status === 'live') {
+      this.#syncWantedJoins(rooms)
+      this.#recheck(rooms, invites)
+    }
     const typingChanged = this.#typingChanged
     this.#typingChanged = false
     const directsChanged = this.#directsChanged
     this.#directsChanged = false
+    const joinsChanged = this.#joinsChanged
+    this.#joinsChanged = false
     if (
       messageDataChanged ||
       typingChanged ||
       directsChanged ||
+      joinsChanged ||
       this.#presenceChanged ||
       rooms !== this.#snapshot.rooms ||
       invites !== this.#snapshot.invites ||
@@ -914,6 +1029,23 @@ export class EspaceStore {
     if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
     return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
   }
+
+  /** Whether the room's power levels let the member post messages (`m.room.message`). */
+  canSendMessage = (roomId: string): boolean => {
+    const room = this.#client.getRoom(roomId)
+    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    return room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
+  }
+
+  /** Whether the room's power levels let the member react to messages (`m.reaction`). */
+  canReact = (roomId: string): boolean => {
+    const room = this.#client.getRoom(roomId)
+    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    return room.currentState.maySendEvent(EventType.Reaction, this.#me)
+  }
+
+  /** State of an in-flight or refused join for `roomId`, or `undefined` otherwise. */
+  getJoinState = (roomId: string): RoomJoinState | undefined => this.#joins.get(roomId)
 
   /** Pins or unpins one event; the room's next state answers with the new list. */
   async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
@@ -1084,6 +1216,12 @@ export class EspaceStore {
         this.#rechecked.delete(channelId)
         continue
       }
+      if (
+        this.#joins.has(room.roomId) ||
+        this.#awaitingJoinSync.has(room.roomId) ||
+        this.#inFlightJoins.has(room.roomId)
+      )
+        continue
       if (this.#rechecked.has(channelId)) continue
       this.#rechecked.add(channelId)
       this.#lookups.delete(channelId)
@@ -1381,8 +1519,214 @@ export class EspaceStore {
     await this.#client.invite(roomId, userId)
   }
 
-  async join(roomId: string): Promise<void> {
-    await this.#client.joinRoom(roomId)
+  #setJoinState(roomId: string, state: RoomJoinState): void {
+    if (this.#joins.get(roomId) === state) return
+    this.#joins.set(roomId, state)
+    this.#joinsChanged = true
+  }
+
+  #clearJoinTimer(roomId: string): void {
+    const timer = this.#joinTimers.get(roomId)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.#joinTimers.delete(roomId)
+    }
+  }
+
+  #syncWantedJoins(rooms: readonly RoomSummary[]): void {
+    const joined = new Set(rooms.map((room) => room.roomId))
+    for (const roomId of this.#wantedJoins) {
+      if (joined.has(roomId) || this.#joinSettled.has(roomId)) continue
+      if (this.#client.getRoom(roomId)?.getMyMembership() === 'ban') {
+        this.#joinSettled.add(roomId)
+        this.#setJoinState(roomId, 'refused')
+        continue
+      }
+      if (!this.#joins.has(roomId)) {
+        this.#joins.set(roomId, 'joining')
+        this.#joinsChanged = true
+      }
+    }
+    void this.#pumpJoins()
+  }
+
+  /**
+   * Queues resolved active workspace rooms for a one-shot join once the sync is `live`, in the
+   * priority order given (current channel first, then remaining active channels one by one so
+   * Synapse's `rc_joins.local` burst limit is respected).
+   */
+  ensureJoined = (roomIds: readonly string[]): void => {
+    if (this.#stopped) return
+    this.#wantedJoins = [...new Set(roomIds)]
+    const wanted = new Set(this.#wantedJoins)
+    for (const [roomId, timer] of this.#joinTimers) {
+      if (!wanted.has(roomId)) {
+        clearTimeout(timer)
+        this.#joinTimers.delete(roomId)
+        if (
+          this.#joins.get(roomId) === 'joining' &&
+          !this.#inFlightJoins.has(roomId) &&
+          !this.#awaitingJoinSync.has(roomId)
+        ) {
+          this.#joins.delete(roomId)
+          this.#joinsChanged = true
+        }
+      }
+    }
+    for (const [roomId, state] of this.#joins) {
+      if (
+        state === 'joining' &&
+        !wanted.has(roomId) &&
+        !this.#inFlightJoins.has(roomId) &&
+        !this.#awaitingJoinSync.has(roomId)
+      ) {
+        this.#joins.delete(roomId)
+        this.#joinsChanged = true
+      }
+    }
+    if (this.#status === 'live') {
+      this.#syncWantedJoins(this.#snapshot.rooms)
+    }
+    if (this.#joinsChanged) this.#schedule()
+  }
+
+  join = (roomId: string): Promise<void> => {
+    if (this.#stopped) return Promise.reject(new Error('This Espace store was stopped.'))
+    const existing = this.#inFlightJoins.get(roomId)
+    if (existing !== undefined) return existing
+    const synced = this.#client.getRoom(roomId)
+    if (synced?.getMyMembership() === 'join' || this.#awaitingJoinSync.has(roomId)) {
+      this.#joinSettled.add(roomId)
+      this.#clearJoinTimer(roomId)
+      if (synced?.getMyMembership() === 'join') {
+        this.#awaitingJoinSync.delete(roomId)
+        if (this.#joins.delete(roomId)) {
+          this.#joinsChanged = true
+          this.#schedule()
+        }
+      }
+      return Promise.resolve()
+    }
+    this.#clearJoinTimer(roomId)
+    if (this.#joins.get(roomId) !== 'joining') {
+      this.#joins.set(roomId, 'joining')
+      this.#joinsChanged = true
+      this.#schedule()
+    }
+    const request = this.#client
+      .joinRoom(roomId)
+      .then(() => {
+        if (this.#stopped) return
+        this.#joinSettled.add(roomId)
+        this.#joinFailures.delete(roomId)
+        const room = this.#client.getRoom(roomId)
+        if (room?.getMyMembership() === 'join') {
+          this.#awaitingJoinSync.delete(roomId)
+          if (this.#joins.delete(roomId)) this.#joinsChanged = true
+          this.#dirty.add(roomId)
+          this.#rebuild()
+        } else {
+          this.#awaitingJoinSync.add(roomId)
+          this.#setJoinState(roomId, 'joining')
+          if (this.#joinsChanged) this.#rebuild()
+        }
+      })
+      .catch((error: unknown) => {
+        if (!this.#stopped && isJoinRefused(error)) {
+          this.#joinSettled.add(roomId)
+          this.#awaitingJoinSync.delete(roomId)
+          this.#joinFailures.delete(roomId)
+          this.#setJoinState(roomId, 'refused')
+          this.#rebuild()
+        }
+        throw error
+      })
+      .finally(() => {
+        this.#inFlightJoins.delete(roomId)
+      })
+    this.#inFlightJoins.set(roomId, request)
+    return request
+  }
+
+  async #pumpJoins(): Promise<void> {
+    if (this.#pumpingJoins || this.#stopped) return
+    this.#pumpingJoins = true
+    try {
+      while (!this.#stopped && this.#status === 'live') {
+        const remainingCooldown = this.#joinRateLimitedUntil - Date.now()
+        if (remainingCooldown > 0 || this.#joinCooldownTimer !== null) {
+          if (this.#joinCooldownTimer === null) {
+            this.#scheduleJoinCooldown(remainingCooldown)
+          }
+          break
+        }
+        const nextRoomId = this.#wantedJoins.find((roomId) => {
+          if (this.#joinSettled.has(roomId) || this.#joinTimers.has(roomId)) return false
+          if (this.#joins.get(roomId) !== 'joining') return false
+          const membership = this.#client.getRoom(roomId)?.getMyMembership()
+          return membership !== 'join' && !this.#awaitingJoinSync.has(roomId)
+        })
+        if (nextRoomId === undefined) break
+        try {
+          await this.join(nextRoomId)
+        } catch (error: unknown) {
+          if (this.#stopped || isJoinRefused(error)) continue
+          if (isJoinPermanentClientError(error)) {
+            this.#joinSettled.add(nextRoomId)
+            this.#joinFailures.delete(nextRoomId)
+            if (this.#joins.delete(nextRoomId)) {
+              this.#joinsChanged = true
+              this.#schedule()
+            }
+            continue
+          }
+          const attempts = (this.#joinFailures.get(nextRoomId) ?? 0) + 1
+          this.#joinFailures.set(nextRoomId, attempts)
+          if (error instanceof MatrixError && error.isRateLimitError()) {
+            this.#scheduleJoinCooldown(rateLimitWaitMs(error, attempts))
+            break
+          }
+          this.#scheduleJoinRetry(nextRoomId, backoff(RETRY_AFTER_MS, RETRY_AT_MOST_MS, attempts))
+        }
+      }
+    } finally {
+      this.#pumpingJoins = false
+    }
+  }
+
+  #scheduleJoinCooldown(ms: number): void {
+    if (this.#stopped) return
+    const wait = Math.max(0, ms)
+    const until = Date.now() + wait
+    if (until > this.#joinRateLimitedUntil) {
+      this.#joinRateLimitedUntil = until
+    }
+    if (this.#joinCooldownTimer !== null) {
+      clearTimeout(this.#joinCooldownTimer)
+    }
+    const delay = Math.max(0, this.#joinRateLimitedUntil - Date.now())
+    this.#joinCooldownTimer = setTimeout(() => {
+      this.#joinCooldownTimer = null
+      this.#joinRateLimitedUntil = 0
+      if (!this.#stopped && this.#status === 'live') {
+        void this.#pumpJoins()
+      }
+    }, delay)
+  }
+
+  #scheduleJoinRetry(roomId: string, ms: number): void {
+    if (this.#stopped || this.#joinTimers.has(roomId) || !this.#wantedJoins.includes(roomId)) return
+    this.#joinTimers.set(
+      roomId,
+      setTimeout(
+        () => {
+          this.#joinTimers.delete(roomId)
+          if (this.#stopped || !this.#wantedJoins.includes(roomId)) return
+          if (this.#status === 'live') void this.#pumpJoins()
+        },
+        Math.max(0, ms)
+      )
+    )
   }
 
   /**

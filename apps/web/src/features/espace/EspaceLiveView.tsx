@@ -73,6 +73,7 @@ import { AntennaIcon } from './AntennaIcon'
 import { ChannelSidebar } from './ChannelSidebar'
 import { createLocalDrafts, useDraftChannel, useDraftSlice } from './draftChannel'
 import {
+  activeJoinTargetIds,
   composing,
   displayNameOf,
   isProximityChannel,
@@ -541,6 +542,113 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   // No room, no messages and nowhere to send them: never a channel id taken for a room id.
   const activeRoomId = activeRoom?.roomId ?? null
+  const joinTargets = useMemo(
+    () => activeJoinTargetIds(workspace, snapshot.channels, activeChannel),
+    [workspace, snapshot.channels, activeChannel]
+  )
+  const joinTargetsKey = joinTargets.join(' ')
+  const fallbackJoinRuntime = useRef<{
+    store: EspaceStoreLike | null
+    attempted: Set<string>
+    seenInvites: Set<string>
+    targets: readonly string[]
+    running: boolean
+    cancelled: boolean
+  }>({
+    store: null,
+    attempted: new Set(),
+    seenInvites: new Set(),
+    targets: [],
+    running: false,
+    cancelled: false,
+  })
+  const [fallbackRefused, setFallbackRefused] = useState<{
+    store: EspaceStoreLike
+    rooms: ReadonlySet<string>
+  }>(() => ({ store: activeStore, rooms: new Set() }))
+  if (fallbackRefused.store !== activeStore) {
+    setFallbackRefused({ store: activeStore, rooms: new Set() })
+  }
+  const joinedRoomIdsKey = useMemo(
+    () => snapshot.rooms.map((item) => item.roomId).join(' '),
+    [snapshot.rooms]
+  )
+  const invitedRoomIdsKey = useMemo(
+    () => snapshot.invites.map((item) => item.roomId).join(' '),
+    [snapshot.invites]
+  )
+  useEffect(() => {
+    return () => {
+      if (fallbackJoinRuntime.current.store === activeStore) {
+        fallbackJoinRuntime.current.cancelled = true
+      }
+    }
+  }, [activeStore])
+  useEffect(() => {
+    const targets = joinTargetsKey === '' ? [] : joinTargetsKey.split(' ')
+    if (activeStore.ensureJoined !== undefined) {
+      activeStore.ensureJoined(targets)
+      return
+    }
+    const { join } = activeStore
+    if (join === undefined || snapshot.status !== 'live') return
+    if (fallbackJoinRuntime.current.store !== activeStore) {
+      fallbackJoinRuntime.current = {
+        store: activeStore,
+        attempted: new Set(),
+        seenInvites: new Set(),
+        targets: [],
+        running: false,
+        cancelled: false,
+      }
+    }
+    const runtime = fallbackJoinRuntime.current
+    runtime.cancelled = false
+    runtime.targets = targets
+    const joined = new Set(joinedRoomIdsKey === '' ? [] : joinedRoomIdsKey.split(' '))
+    for (const roomId of joined) runtime.attempted.add(roomId)
+    const currentInvites = new Set(invitedRoomIdsKey === '' ? [] : invitedRoomIdsKey.split(' '))
+    for (const seenId of runtime.seenInvites) {
+      if (!currentInvites.has(seenId)) runtime.seenInvites.delete(seenId)
+    }
+    for (const inviteId of currentInvites) {
+      if (!runtime.seenInvites.has(inviteId)) {
+        runtime.seenInvites.add(inviteId)
+        runtime.attempted.delete(inviteId)
+      }
+    }
+    if (runtime.running) return
+    runtime.running = true
+    void (async () => {
+      try {
+        while (!runtime.cancelled && runtime.store === activeStore) {
+          const currentSnap = activeStore.getSnapshot()
+          if (currentSnap.status !== 'live') break
+          const nextRoomId = runtime.targets.find(
+            (roomId) =>
+              !runtime.attempted.has(roomId) && !currentSnap.rooms.some((r) => r.roomId === roomId)
+          )
+          if (nextRoomId === undefined) break
+          runtime.attempted.add(nextRoomId)
+          try {
+            await join.call(activeStore, nextRoomId)
+          } catch (error: unknown) {
+            const err = error as { errcode?: unknown; httpStatus?: unknown } | null
+            if (!runtime.cancelled && (err?.errcode === 'M_FORBIDDEN' || err?.httpStatus === 403)) {
+              setFallbackRefused((current) => {
+                if (current.store !== activeStore || current.rooms.has(nextRoomId)) return current
+                const next = new Set(current.rooms)
+                next.add(nextRoomId)
+                return { store: activeStore, rooms: next }
+              })
+            }
+          }
+        }
+      } finally {
+        runtime.running = false
+      }
+    })()
+  }, [activeStore, joinTargetsKey, snapshot.status, joinedRoomIdsKey, invitedRoomIdsKey])
   /** « 18 membres »: a text channel's people (`RoomSummary.joined`). */
   const memberCount =
     activeRoom?.joined === undefined
@@ -1035,10 +1143,45 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     onCreateInCategory?.(category)
   })
 
+  const activeChannelName =
+    activeChannel !== null && activeChannel !== undefined ? channelLabel(activeChannel, t) : ''
+  const isArchivedChannel = activeChannel?.lifecycle === 'archived'
+  const resolvedActiveChannel =
+    activeChannel !== null && activeChannel !== undefined
+      ? snapshot.channels.get(activeChannel.id)
+      : undefined
+  const resolvedActiveRoomId =
+    resolvedActiveChannel?.state === 'resolved' ? resolvedActiveChannel.roomId : null
+  const joinRefused =
+    activeRoomId === null &&
+    resolvedActiveRoomId !== null &&
+    !snapshot.invites.some((invite) => invite.roomId === resolvedActiveRoomId) &&
+    (activeStore.getJoinState?.(resolvedActiveRoomId) === 'refused' ||
+      (fallbackRefused.store === activeStore && fallbackRefused.rooms.has(resolvedActiveRoomId)))
+  const canSendInRoom =
+    activeRoomId !== null && (activeStore.canSendMessage?.(activeRoomId) ?? true)
+  const canWrite = !isArchivedChannel && canSendInRoom
+  const canReact =
+    !isArchivedChannel && activeRoomId !== null && (activeStore.canReact?.(activeRoomId) ?? true)
+  // In place of the composer, why the member cannot write here; nothing while the sync starts.
+  const paneNotice = isArchivedChannel
+    ? t('console.workspace.channel.label-archived')
+    : canWrite || activeChannel === null || activeChannel === undefined
+      ? undefined
+      : activeRoomId !== null
+        ? t('console.workspace.channel.label-read-only')
+        : !roomResolved(activeChannel, snapshot.channels)
+          ? t('console.workspace.channel.label-preparing')
+          : joinRefused
+            ? t('console.workspace.channel.label-join-refused')
+            : snapshot.status === 'live'
+              ? t('console.workspace.channel.label-arriving')
+              : undefined
+
   // What a message's controls do. Each keeps its identity, and acts on the room shown when it is
   // used: a message is not drawn again because the view was.
   const retryMessage = useStableHandler((msg: MessageView) => {
-    if (activeRoomId === null) return
+    if (!canWrite || activeRoomId === null) return
     draft.command(() => {
       if (activeStore.resend !== undefined) void activeStore.resend(activeRoomId, msg.key)
       else void activeStore.send(activeRoomId, msg.body)
@@ -1046,13 +1189,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
 
   const reactToMessage = useStableHandler((eventId: string, reaction: string) => {
-    if (activeRoomId !== null)
-      draft.command(() => {
-        void activeStore.toggleReaction(activeRoomId, eventId, reaction)
-      })
+    if (!canReact || activeRoomId === null) return
+    draft.command(() => {
+      void activeStore.toggleReaction(activeRoomId, eventId, reaction)
+    })
   })
 
   const replyToMessage = useStableHandler((msg: MessageView) => {
+    if (!canWrite) return
     const replyTo = targetInShownRoom(msg.eventId)
     draft.update((previous) => ({
       editing: null,
@@ -1062,6 +1206,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
 
   const editMessage = useStableHandler((msg: MessageView) => {
+    if (!canWrite) return
     // The new message being written gives way to the edit, which the room is not told about.
     if (activeRoomId !== null) activeStore.setTyping?.(activeRoomId, false)
     draft.update({ replyTo: null, editing: targetInShownRoom(msg.eventId), text: msg.body })
@@ -1099,21 +1244,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     openThreadRootId !== null && activeRoomId !== null
       ? activeStore.getThread(activeRoomId, openThreadRootId)
       : []
-
-  const activeChannelName =
-    activeChannel !== null && activeChannel !== undefined ? channelLabel(activeChannel, t) : ''
-  const isArchivedChannel = activeChannel?.lifecycle === 'archived'
-  const canWrite = !isArchivedChannel && activeRoomId !== null
-  // In place of the composer, why the member cannot write here; nothing while the sync starts.
-  const paneNotice = isArchivedChannel
-    ? t('console.workspace.channel.label-archived')
-    : canWrite || activeChannel === null || activeChannel === undefined
-      ? undefined
-      : !roomResolved(activeChannel, snapshot.channels)
-        ? t('console.workspace.channel.label-preparing')
-        : snapshot.status === 'live'
-          ? t('console.workspace.channel.label-arriving')
-          : undefined
   // Keyboard shortcuts (spec « Keyboard shortcuts »). What a shortcut did is said here, politely:
   // the focus stays where the member had it. Counted, so the same words twice are said twice.
   const [announcement, setAnnouncementState] = useState({ count: 0, text: '' })
@@ -1486,6 +1616,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 channelName={activeChannelName}
                 viewerId={viewerId}
                 archived={isArchivedChannel}
+                canWrite={canWrite}
+                canReact={canReact}
                 simulation={simulation}
                 expandedEventId={openThreadRootId}
                 unreadFrom={unreadFrom}
@@ -1493,7 +1625,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 documents={documents}
                 onOpenDocument={openStudioDocument}
                 inserts={timelineInserts ?? NO_INSERTS}
-                onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
+                onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
                 actions={rowActions}
                 handleRef={timelineHandle}
                 logRef={logRef}
@@ -1633,7 +1765,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                           <UserProfilePopover
                             member={member}
                             onMention={
-                              isArchivedChannel || navigationUnsettled || member.userId === viewerId
+                              !canWrite || navigationUnsettled || member.userId === viewerId
                                 ? undefined
                                 : mentionMember
                             }
@@ -1692,7 +1824,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               parent={
                 <MessageRow
                   profileRole={profileRoleIn(activeStore, activeRoomId, threadRootMessage.sender)}
-                  onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
+                  onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
                   key={threadRootMessage.key}
                   onlineLabel={
                     activeStore.isOnline?.(threadRootMessage.sender)
@@ -1705,6 +1837,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   placement="thread"
                   viewerId={viewerId}
                   archived={isArchivedChannel}
+                  canWrite={canWrite}
+                  canReact={canReact}
                   expanded={false}
                   repliedMessage={undefined}
                   threadReplies={NO_MESSAGES}
@@ -1714,9 +1848,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               }
               repliesLabel={t('console.workspace.thread.label-replies')}
               composer={
-                isArchivedChannel ||
-                activeRoomId === null ||
-                openThreadRootId === null ? undefined : (
+                !canWrite || activeRoomId === null || openThreadRootId === null ? undefined : (
                   <ThreadComposer
                     store={activeStore}
                     roomId={activeRoomId}
@@ -1735,7 +1867,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               {activeThreadReplies.map((reply) => (
                 <MessageRow
                   profileRole={profileRoleIn(activeStore, activeRoomId, reply.sender)}
-                  onMention={isArchivedChannel || navigationUnsettled ? undefined : mentionMember}
+                  onMention={!canWrite || navigationUnsettled ? undefined : mentionMember}
                   key={reply.key}
                   onlineLabel={
                     activeStore.isOnline?.(reply.sender)
@@ -1748,6 +1880,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   placement="thread"
                   viewerId={viewerId}
                   archived={isArchivedChannel}
+                  canWrite={canWrite}
+                  canReact={canReact}
                   expanded={false}
                   repliedMessage={undefined}
                   threadReplies={NO_MESSAGES}

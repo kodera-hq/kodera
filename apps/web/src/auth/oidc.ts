@@ -45,6 +45,20 @@ function readRealmHint(): string | undefined {
   }
 }
 
+/** Validated realm identifier recorded by the pending or last sign-in in this tab, if any. */
+export function readPendingRealm(): string | undefined {
+  return readRealmHint()
+}
+
+const PROTECTED_CALLBACK_MESSAGES = new Set([
+  'Protected parent is already active.',
+  'Use the protected owner-claim callback.',
+])
+
+export function isProtectedCallbackError(error: unknown): boolean {
+  return error instanceof Error && PROTECTED_CALLBACK_MESSAGES.has(error.message)
+}
+
 // Core accepts a login (auth_time) at most 320 s old at its decision and final read, so a claim
 // commits within 330 s while Core's read-to-commit lag stays within its 10 s target, which is not
 // enforced. Every protected sign-in, a claim's or an invitation's, is a new login; ordinary
@@ -498,34 +512,47 @@ export class OidcAuthAdapter implements AuthAdapter {
     if (this.#unwire === undefined) this.#wireEvents(manager)
     const generation = this.#snapshot.generation
     const result = (async (): Promise<AuthCallbackResult> => {
-      if (new URL(url).searchParams.has('state')) {
-        const inspected = await new (oidcSdk().OidcClient)(
-          manager.settings,
-          manager.metadataService
-        ).readSigninResponseState(url, false)
-        if (isOwnerClaimPurpose(inspected.state.data))
-          throw new Error('Use the protected owner-claim callback.')
+      try {
+        if (new URL(url).searchParams.has('state')) {
+          const inspected = await new (oidcSdk().OidcClient)(
+            manager.settings,
+            manager.metadataService
+          ).readSigninResponseState(url, false)
+          if (isOwnerClaimPurpose(inspected.state.data))
+            throw new Error('Use the protected owner-claim callback.')
+        }
+        if (this.#manager !== manager || this.#snapshot.generation !== generation)
+          throw new Error('The sign-in was cancelled before its callback started.')
+        // The SDK reads the stored request type. Silent callbacks notify the
+        // parent through its navigator; only that parent exchanges the code.
+        const user = await manager.signinCallback(url)
+        if (this.#manager !== manager) {
+          void manager.removeUser().catch(() => {})
+          throw new Error('The sign-in was cancelled before its callback completed.')
+        }
+        if (user === undefined) return 'silent'
+        const identity = this.#processedIdentity(user)
+        if (identity === undefined) {
+          // signOut clears storage and publishes the closed boundary even if SDK cleanup fails.
+          await this.signOut()
+          throw new Error('Invalid sign-in identity.')
+        }
+        this.#user = user
+        this.#identity = identity
+        this.#publish('ready')
+        return 'interactive'
+      } catch (error: unknown) {
+        if (
+          this.#manager === manager &&
+          this.#snapshot.generation === generation &&
+          this.#user === undefined
+        ) {
+          this.#retireManager()
+          this.#realm = undefined
+          this.#publish('unauthenticated')
+        }
+        throw error
       }
-      if (this.#manager !== manager || this.#snapshot.generation !== generation)
-        throw new Error('The sign-in was cancelled before its callback started.')
-      // The SDK reads the stored request type. Silent callbacks notify the
-      // parent through its navigator; only that parent exchanges the code.
-      const user = await manager.signinCallback(url)
-      if (this.#manager !== manager) {
-        void manager.removeUser().catch(() => {})
-        throw new Error('The sign-in was cancelled before its callback completed.')
-      }
-      if (user === undefined) return 'silent'
-      const identity = this.#processedIdentity(user)
-      if (identity === undefined) {
-        // signOut clears storage and publishes the closed boundary even if SDK cleanup fails.
-        await this.signOut()
-        throw new Error('Invalid sign-in identity.')
-      }
-      this.#user = user
-      this.#identity = identity
-      this.#publish('ready')
-      return 'interactive'
     })()
     this.#callback = { url, result }
     return result

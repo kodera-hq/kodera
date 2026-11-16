@@ -16,9 +16,12 @@ import type {
   EspaceSnapshot,
   History,
   MemberView,
+  RoomJoinState,
   RoomSummary,
   SendOptions,
 } from './matrix/store'
+
+export type { RoomJoinState }
 import type { MessageView } from './matrix/timeline'
 
 /** Something other than a message that belongs in a channel's timeline at a point in time. */
@@ -94,6 +97,11 @@ export interface EspaceStoreLike {
   toggleReaction: (roomId: string, eventId: string, key: string) => Promise<void>
   resend?: (roomId: string, key: string) => Promise<void>
   inviteToRoom?(roomId: string, userId: string): Promise<void>
+  join?: (roomId: string) => Promise<void>
+  ensureJoined?: (roomIds: readonly string[]) => void
+  getJoinState?: (roomId: string) => RoomJoinState | undefined
+  canSendMessage?: (roomId: string) => boolean
+  canReact?: (roomId: string) => boolean
   markRead?: (roomId: string) => Promise<void>
   /** The event the member has read up to: the place « Nouveaux messages » is drawn after. */
   getReadMarker?: (roomId: string) => string | null
@@ -249,6 +257,32 @@ export function readyChannelIds(workspace: Workspace): string[] {
   ]
     .filter((channel) => channel.room_state === 'ready')
     .map((channel) => channel.id)
+}
+
+/**
+ * Resolved `roomId`s of every `active` workspace channel (`text` and `audio`), with the channel
+ * currently shown first so its composer settles ahead of the rest of the sequential join queue.
+ */
+export function activeJoinTargetIds(
+  workspace: Workspace,
+  channels: ReadonlyMap<string, ChannelRoom>,
+  activeChannel: WorkspaceChannel | null | undefined
+): string[] {
+  const ordered: string[] = []
+  const seen = new Set<string>()
+  const push = (channel: WorkspaceChannel | null | undefined) => {
+    if (channel == null || channel.lifecycle !== 'active' || channel.room_state !== 'ready') return
+    const resolved = channels.get(channel.id)
+    if (resolved?.state !== 'resolved' || seen.has(resolved.roomId)) return
+    seen.add(resolved.roomId)
+    ordered.push(resolved.roomId)
+  }
+  push(activeChannel)
+  for (const category of workspace.categories) {
+    for (const channel of category.channels) push(channel)
+  }
+  for (const channel of workspace.uncategorised_channels) push(channel)
+  return ordered
 }
 
 export function occupantsForRoom(room: RoomSummary | undefined): RoomOccupant[] {

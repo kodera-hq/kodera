@@ -1775,3 +1775,459 @@ describe('outgoing Matrix room invitations', () => {
     expect(invite).not.toHaveBeenCalled()
   })
 })
+
+describe('one-shot native public room joins, rate limits, refusals and power levels', () => {
+  const SERVER = 'community.kodera.test'
+  const ME = `@member:${SERVER}`
+  const GENERAL = '0b4e7c1a-2f3d-4e5f-8a9b-0c1d2e3f4a5b'
+  const ANNOUNCES = '1c5f8d2b-3a4e-4f6a-9b0c-1d2e3f4a5b6c'
+  const PRIVATE = '2d6a9e3c-4b5f-4a7b-8c1d-2e3f4a5b6c7d'
+  const OFFICE = '3e7b0f4d-5c6a-4b8c-9d2e-3f4a5b6c7d8e'
+
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('joins active rooms one by one in priority order without re-querying aliases during join', async () => {
+    const aliases: Record<string, string> = {
+      [`#kodera-ch-${GENERAL}:${SERVER}`]: `!general:${SERVER}`,
+      [`#kodera-ch-${ANNOUNCES}:${SERVER}`]: `!announces:${SERVER}`,
+      [`#kodera-ch-${OFFICE}:${SERVER}`]: `!office:${SERVER}`,
+    }
+    const joinedOrder: string[] = []
+    let activeJoinRequests = 0
+    let maxConcurrentJoins = 0
+    let directoryCalls = 0
+    let syncCount = 0
+    let pollAnswer: ((res: Response) => void) | undefined
+
+    const base = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input))
+      const path = decodeURIComponent(url.pathname)
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+      if (method === 'GET' && path === '/_matrix/client/versions') {
+        return json(200, { versions: ['v1.11'] })
+      }
+      if (method === 'GET' && path === '/_matrix/client/v3/capabilities') {
+        return json(200, { capabilities: {} })
+      }
+      if (method === 'GET' && path === '/_matrix/client/v3/pushrules/') {
+        return json(200, { global: {} })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/user/${ME}/filter`) {
+        return json(200, { filter_id: 'f1' })
+      }
+      if (method === 'GET' && path.startsWith('/_matrix/client/v3/directory/room/')) {
+        directoryCalls += 1
+        const alias = path.slice('/_matrix/client/v3/directory/room/'.length)
+        return json(200, { room_id: aliases[alias], servers: [SERVER] })
+      }
+      if (method === 'GET' && path === '/_matrix/client/v3/sync') {
+        syncCount += 1
+        if (syncCount === 1) return json(200, { next_batch: 's1', rooms: { join: {} } })
+        return new Promise<Response>((resolve, reject) => {
+          pollAnswer = resolve
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        })
+      }
+      if (method === 'POST' && path.startsWith('/_matrix/client/v3/join/')) {
+        const roomId = path.slice('/_matrix/client/v3/join/'.length)
+        joinedOrder.push(roomId)
+        activeJoinRequests += 1
+        maxConcurrentJoins = Math.max(maxConcurrentJoins, activeJoinRequests)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        activeJoinRequests -= 1
+        return json(200, { room_id: roomId })
+      }
+      return json(404, { errcode: 'M_UNRECOGNIZED', error: 'Unrecognized request' })
+    })
+
+    const store = createEspaceStore(
+      { baseUrl: HS, userId: ME, deviceId: 'DEV1', accessToken: 'tok' },
+      base
+    )
+    try {
+      await store.resolveChannels([ANNOUNCES, GENERAL, OFFICE])
+      store.ensureJoined([`!general:${SERVER}`, `!announces:${SERVER}`, `!office:${SERVER}`])
+      await store.start()
+      await vi.waitFor(() => {
+        expect(joinedOrder).toEqual([
+          `!general:${SERVER}`,
+          `!announces:${SERVER}`,
+          `!office:${SERVER}`,
+        ])
+      })
+      expect(maxConcurrentJoins).toBe(1)
+      // Before `/sync` delivers joined rooms (`m.room.power_levels`), no synthetic summary is
+      // published, `canSendMessage` stays false, and `#recheck` does not re-query aliases.
+      expect(store.getSnapshot().rooms).toEqual([])
+      expect(store.canSendMessage(`!announces:${SERVER}`)).toBe(false)
+      expect(store.getJoinState(`!announces:${SERVER}`)).toBe('joining')
+      expect(directoryCalls).toBe(3)
+      expect(pollAnswer).toBeDefined()
+
+      pollAnswer?.(
+        json(200, {
+          next_batch: 's2',
+          rooms: {
+            join: {
+              [`!general:${SERVER}`]: {
+                state: {
+                  events: [
+                    {
+                      event_id: '$member_gen',
+                      type: 'm.room.member',
+                      sender: ME,
+                      origin_server_ts: 1,
+                      state_key: ME,
+                      content: { membership: 'join' },
+                    },
+                    {
+                      event_id: '$power_gen',
+                      type: 'm.room.power_levels',
+                      sender: `@kodera-agent:${SERVER}`,
+                      origin_server_ts: 2,
+                      state_key: '',
+                      content: { users_default: 0, events_default: 0 },
+                    },
+                  ],
+                },
+                timeline: { events: [], limited: false, prev_batch: null },
+                unread_notifications: { notification_count: 0, highlight_count: 0 },
+              },
+              [`!announces:${SERVER}`]: {
+                state: {
+                  events: [
+                    {
+                      event_id: '$member_ann',
+                      type: 'm.room.member',
+                      sender: ME,
+                      origin_server_ts: 1,
+                      state_key: ME,
+                      content: { membership: 'join' },
+                    },
+                    {
+                      event_id: '$power_ann',
+                      type: 'm.room.power_levels',
+                      sender: `@kodera-agent:${SERVER}`,
+                      origin_server_ts: 2,
+                      state_key: '',
+                      content: {
+                        users_default: 0,
+                        events_default: 20,
+                        events: { 'm.reaction': 0, 'm.room.redaction': 0 },
+                      },
+                    },
+                  ],
+                },
+                timeline: { events: [], limited: false, prev_batch: null },
+                unread_notifications: { notification_count: 0, highlight_count: 0 },
+              },
+              [`!office:${SERVER}`]: {
+                state: {
+                  events: [
+                    {
+                      event_id: '$member_off',
+                      type: 'm.room.member',
+                      sender: ME,
+                      origin_server_ts: 1,
+                      state_key: ME,
+                      content: { membership: 'join' },
+                    },
+                  ],
+                },
+                timeline: { events: [], limited: false, prev_batch: null },
+                unread_notifications: { notification_count: 0, highlight_count: 0 },
+              },
+            },
+          },
+        })
+      )
+      await vi.waitFor(() => {
+        expect(
+          store
+            .getSnapshot()
+            .rooms.map((room) => room.roomId)
+            .sort()
+        ).toEqual([`!announces:${SERVER}`, `!general:${SERVER}`, `!office:${SERVER}`])
+      })
+      expect(store.getJoinState(`!announces:${SERVER}`)).toBeUndefined()
+      expect(store.canSendMessage(`!announces:${SERVER}`)).toBe(false)
+      expect(store.canReact(`!announces:${SERVER}`)).toBe(true)
+      expect(store.canSendMessage(`!general:${SERVER}`)).toBe(true)
+      expect(directoryCalls).toBe(3)
+    } finally {
+      store.stop()
+    }
+  })
+
+  it('enforces store-wide 429 cooldown across rebuilds and auto-accepts invited wanted channels only', async () => {
+    vi.useFakeTimers()
+    let rateLimitedAttempts = 0
+    let officeAttempts = 0
+    let forbiddenAttempts = 0
+    let dmJoinAttempts = 0
+    let inviteGranted = false
+    let syncCount = 0
+    let pollAnswer: ((res: Response) => void) | undefined
+    const pendingSyncJoin = new Map<string, unknown>()
+
+    function deliverNextSync(response: Response): void {
+      const resolve = pollAnswer
+      pollAnswer = undefined
+      resolve?.(response)
+    }
+
+    function flushPendingJoinSync(batchName: string) {
+      if (pollAnswer === undefined || pendingSyncJoin.size === 0) return
+      const payload = Object.fromEntries(pendingSyncJoin.entries())
+      pendingSyncJoin.clear()
+      deliverNextSync(json(200, { next_batch: batchName, rooms: { join: payload } }))
+    }
+
+    function joinedSyncRoom(roomId: string) {
+      return {
+        state: {
+          events: [
+            {
+              event_id: `$m-${roomId}`,
+              type: 'm.room.member',
+              sender: ME,
+              origin_server_ts: 1,
+              state_key: ME,
+              content: { membership: 'join' },
+            },
+          ],
+        },
+        timeline: { events: [], limited: false, prev_batch: null },
+        unread_notifications: { notification_count: 0, highlight_count: 0 },
+      }
+    }
+
+    const base = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input))
+      const path = decodeURIComponent(url.pathname)
+      const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+      if (method === 'GET' && path === '/_matrix/client/versions') {
+        return json(200, { versions: ['v1.11'] })
+      }
+      if (method === 'GET' && path === '/_matrix/client/v3/capabilities') {
+        return json(200, { capabilities: {} })
+      }
+      if (method === 'GET' && path === '/_matrix/client/v3/pushrules/') {
+        return json(200, { global: {} })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/user/${ME}/filter`) {
+        return json(200, { filter_id: 'f1' })
+      }
+      if (method === 'GET' && path === '/_matrix/client/v3/sync') {
+        syncCount += 1
+        if (syncCount === 1) return json(200, { next_batch: 's1', rooms: { join: {} } })
+        if (pendingSyncJoin.size > 0) {
+          const payload = Object.fromEntries(pendingSyncJoin.entries())
+          pendingSyncJoin.clear()
+          return json(200, { next_batch: `s${syncCount}`, rooms: { join: payload } })
+        }
+        return new Promise<Response>((resolve, reject) => {
+          pollAnswer = resolve
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/join/!private:${SERVER}`) {
+        forbiddenAttempts += 1
+        if (!inviteGranted) {
+          return json(403, { errcode: 'M_FORBIDDEN', error: 'Invite required' })
+        }
+        pendingSyncJoin.set(`!private:${SERVER}`, joinedSyncRoom(`!private:${SERVER}`))
+        queueMicrotask(() => flushPendingJoinSync(`s-private-${forbiddenAttempts}`))
+        return json(200, { room_id: `!private:${SERVER}` })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/join/!general:${SERVER}`) {
+        rateLimitedAttempts += 1
+        if (rateLimitedAttempts === 1) {
+          return json(429, {
+            errcode: 'M_LIMIT_EXCEEDED',
+            error: 'Too Many Requests',
+            retry_after_ms: 2_500,
+          })
+        }
+        pendingSyncJoin.set(`!general:${SERVER}`, joinedSyncRoom(`!general:${SERVER}`))
+        queueMicrotask(() => flushPendingJoinSync('s-general'))
+        return json(200, { room_id: `!general:${SERVER}` })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/join/!office:${SERVER}`) {
+        officeAttempts += 1
+        pendingSyncJoin.set(`!office:${SERVER}`, joinedSyncRoom(`!office:${SERVER}`))
+        queueMicrotask(() => flushPendingJoinSync('s-office'))
+        return json(200, { room_id: `!office:${SERVER}` })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/join/!unlisted-dm:${SERVER}`) {
+        dmJoinAttempts += 1
+        return json(200, { room_id: `!unlisted-dm:${SERVER}` })
+      }
+      if (method === 'GET' && path.startsWith('/_matrix/client/v3/directory/room/')) {
+        return json(200, { room_id: `!private:${SERVER}`, servers: [SERVER] })
+      }
+      return json(404, { errcode: 'M_UNRECOGNIZED', error: 'Unrecognized request' })
+    })
+
+    const store = createEspaceStore(
+      { baseUrl: HS, userId: ME, deviceId: 'DEV1', accessToken: 'tok' },
+      base
+    )
+    try {
+      await store.resolveChannels([PRIVATE])
+      store.ensureJoined([`!private:${SERVER}`, `!general:${SERVER}`, `!office:${SERVER}`])
+      await store.start()
+      await vi.waitFor(() => {
+        expect(store.getJoinState(`!private:${SERVER}`)).toBe('refused')
+        expect(rateLimitedAttempts).toBe(1)
+      })
+      expect(forbiddenAttempts).toBe(1)
+      expect(officeAttempts).toBe(0)
+      expect(store.getJoinState(`!general:${SERVER}`)).toBe('joining')
+
+      // Mid-cooldown `/sync` rebuilds must NOT fire `POST /join/!office` during `retry_after_ms`.
+      await vi.advanceTimersByTimeAsync(1_000)
+      deliverNextSync(json(200, { next_batch: 's-mid-cooldown', rooms: { join: {} } }))
+      await Promise.resolve()
+      await vi.advanceTimersByTimeAsync(10)
+      expect(syncCount).toBeGreaterThanOrEqual(3)
+      expect(rateLimitedAttempts).toBe(1)
+      expect(officeAttempts).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(1_390)
+      expect(rateLimitedAttempts).toBe(1)
+      expect(officeAttempts).toBe(0)
+
+      await vi.advanceTimersByTimeAsync(200)
+      await vi.waitFor(() => {
+        expect(rateLimitedAttempts).toBe(2)
+        expect(officeAttempts).toBe(1)
+        expect(store.getSnapshot().rooms.map((r) => r.roomId)).toContain(`!general:${SERVER}`)
+        expect(store.getSnapshot().rooms.map((r) => r.roomId)).toContain(`!office:${SERVER}`)
+      })
+      // Delivering subsequent syncs never retries the 403 room until an invitation arrives.
+      deliverNextSync(json(200, { next_batch: 's-idle', rooms: { join: {} } }))
+      await vi.advanceTimersByTimeAsync(50)
+      expect(forbiddenAttempts).toBe(1)
+
+      // Admin invites member to `!private` (wanted workspace channel) AND someone invites member
+      // to `!unlisted-dm` (NOT in `wantedJoins`): only `!private` is auto-accepted!
+      inviteGranted = true
+      await vi.waitFor(() => expect(pollAnswer).toBeDefined())
+      deliverNextSync(
+        json(200, {
+          next_batch: 's-invite',
+          rooms: {
+            invite: {
+              [`!private:${SERVER}`]: {
+                invite_state: {
+                  events: [
+                    {
+                      type: 'm.room.member',
+                      state_key: ME,
+                      sender: `@kodera-agent:${SERVER}`,
+                      content: { membership: 'invite' },
+                    },
+                  ],
+                },
+              },
+              [`!unlisted-dm:${SERVER}`]: {
+                invite_state: {
+                  events: [
+                    {
+                      type: 'm.room.member',
+                      state_key: ME,
+                      sender: `@colleague:${SERVER}`,
+                      content: { membership: 'invite' },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        })
+      )
+      await vi.advanceTimersByTimeAsync(50)
+      await vi.waitFor(() => {
+        expect(forbiddenAttempts).toBe(2)
+        expect(store.getSnapshot().rooms.map((r) => r.roomId)).toContain(`!private:${SERVER}`)
+        expect(store.getJoinState(`!private:${SERVER}`)).toBeUndefined()
+      })
+      expect(dmJoinAttempts).toBe(0)
+      expect(store.getSnapshot().invites.map((i) => i.roomId)).toEqual([`!unlisted-dm:${SERVER}`])
+    } finally {
+      store.stop()
+    }
+  })
+
+  it('reads m.room.power_levels for canSendMessage and canReact on read-only vs writable rooms', async () => {
+    const strictReadOnly = snapshotFixture(undefined, {
+      state: [
+        {
+          event_id: '$pl',
+          type: 'm.room.power_levels',
+          sender: SNAPSHOT_ME,
+          origin_server_ts: SNAPSHOT_TIME,
+          state_key: '',
+          content: { users_default: 0, events_default: 20, users: { [SNAPSHOT_ALICE]: 20 } },
+        },
+      ],
+    })
+    const announcementsReadOnly = snapshotFixture(undefined, {
+      state: [
+        {
+          event_id: '$power_ann',
+          type: 'm.room.power_levels',
+          sender: SNAPSHOT_ME,
+          origin_server_ts: SNAPSHOT_TIME,
+          state_key: '',
+          content: {
+            users_default: 0,
+            events_default: 20,
+            events: { 'm.reaction': 0, 'm.room.redaction': 0 },
+          },
+        },
+      ],
+    })
+    const exempt = snapshotFixture(undefined, {
+      state: [
+        {
+          event_id: '$power_exempt',
+          type: 'm.room.power_levels',
+          sender: SNAPSHOT_ME,
+          origin_server_ts: SNAPSHOT_TIME,
+          state_key: '',
+          content: { users_default: 0, events_default: 20, users: { [SNAPSHOT_ME]: 20 } },
+        },
+      ],
+    })
+    try {
+      await strictReadOnly.start()
+      await announcementsReadOnly.start()
+      await exempt.start()
+      expect(strictReadOnly.store.canSendMessage(SNAPSHOT_ROOM)).toBe(false)
+      expect(strictReadOnly.store.canReact(SNAPSHOT_ROOM)).toBe(false)
+      expect(announcementsReadOnly.store.canSendMessage(SNAPSHOT_ROOM)).toBe(false)
+      expect(announcementsReadOnly.store.canReact(SNAPSHOT_ROOM)).toBe(true)
+      expect(exempt.store.canSendMessage(SNAPSHOT_ROOM)).toBe(true)
+      expect(exempt.store.canReact(SNAPSHOT_ROOM)).toBe(true)
+    } finally {
+      strictReadOnly.stop()
+      announcementsReadOnly.stop()
+      exempt.stop()
+    }
+  })
+})

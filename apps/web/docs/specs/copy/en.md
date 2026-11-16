@@ -1549,6 +1549,8 @@ The Appearance page (`docs/specs/10-appearance.md`): the theme choice, reached f
 | `console.workspace.channel.label-archived` | Archived |
 | `console.workspace.channel.label-preparing` | Being prepared |
 | `console.workspace.channel.label-arriving` | Your channels are on their way… |
+| `console.workspace.channel.label-read-only` | Read-only channel |
+| `console.workspace.channel.label-join-refused` | This channel is invite-only. Ask an administrator to add you to it. |
 | `console.workspace.channel.title-not-found` | This channel is not available |
 | `console.workspace.setup.title-preparing` | Your workspace is being prepared |
 | `console.workspace.setup.banner-preparing` | Your workspace is being prepared. You will be able to write in it as soon as it is ready. |
@@ -1655,6 +1657,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.audio.status-listen-only` | Connected · listen only |
 | `console.workspace.audio.label-listen-only` | listen only |
 | `console.workspace.audio.label-arriving` | Your channels are on their way… |
+| `console.workspace.audio.label-join-refused` | invite only |
 | `console.workspace.audio.action-mute` | Mute |
 | `console.workspace.audio.action-unmute` | Unmute |
 | `console.workspace.audio.action-deafen` | Deafen |

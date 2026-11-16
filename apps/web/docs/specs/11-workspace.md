@@ -443,10 +443,17 @@ formatTime witness proves each active-locale call, plus real displayed/menu cloc
 datetime: FR and EN-GB short clocks may match, so output alone cannot prove the locale.
 
 A channel or audio room that Core lists and Matrix resolves, but whose room the member's sync
-does not yet hold once live, reads « Vos salons arrivent… » (`console.workspace.channel.label-arriving`,
-`console.workspace.audio.label-arriving`) in place of the composer or the join action. A newly
-invited member is in that state until Core joins them to the rooms; it is not a refusal, so the
-copy names no fault and promises no delay. While the sync starts, nothing is shown.
+does not yet hold once live, is joined once per session for active channels (starting with the
+current channel, then sequentially so room-join rate limits are respected) and reads « Vos salons
+arrivent… » (`console.workspace.channel.label-arriving`, `console.workspace.audio.label-arriving`)
+in place of the composer or the join action while membership is on its way. When the homeserver
+refuses the join (`M_FORBIDDEN` on an invite-only room), the view stops retrying and shows
+`console.workspace.channel.label-join-refused` or `console.workspace.audio.label-join-refused`
+until an invitation arrives via sync (which the store accepts once for active workspace channels)
+or the room is joined. A joined text channel whose Matrix power levels do
+not permit the member to post (`m.room.message`, such as `#announcements` for ordinary members)
+hides both the channel and thread composers and shows `console.workspace.channel.label-read-only`.
+While the sync starts, nothing is shown.
 
 ### Message history
 

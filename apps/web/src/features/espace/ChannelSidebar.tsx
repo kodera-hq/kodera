@@ -56,6 +56,8 @@ interface AudioRoomProps {
   room: RoomSummary | undefined
   /** Core says the room is ready, and the directory found it. */
   resolved: boolean
+  /** The homeserver refused joining this room (`M_FORBIDDEN`): invite-only or denied. */
+  refused: boolean
   /** The chat's sync is live: a room still missing is on its way. */
   live: boolean
   store: EspaceStoreLike
@@ -82,6 +84,7 @@ function AudioRoom({
   categoryName,
   room,
   resolved,
+  refused,
   live,
   store,
   call,
@@ -124,9 +127,11 @@ function AudioRoom({
     ? t('console.workspace.channel.label-preparing')
     : channel.lifecycle === 'archived'
       ? t('console.workspace.channel.label-archived')
-      : room === undefined && live
-        ? t('console.workspace.audio.label-arriving')
-        : undefined
+      : room === undefined && refused
+        ? t('console.workspace.audio.label-join-refused')
+        : room === undefined && live
+          ? t('console.workspace.audio.label-arriving')
+          : undefined
   return (
     <RoomRow
       id={id}
@@ -264,6 +269,11 @@ function ChannelSidebarView({
     const room = roomForChannel(channel, snapshot.channels, snapshot.rooms)
     const resolved = roomResolved(channel, snapshot.channels)
     if (channel.kind === 'audio') {
+      const resolvedEntry = snapshot.channels.get(channel.id)
+      const refused =
+        room === undefined &&
+        resolvedEntry?.state === 'resolved' &&
+        store.getJoinState?.(resolvedEntry.roomId) === 'refused'
       return (
         <AudioRoom
           key={channel.id}
@@ -273,6 +283,7 @@ function ChannelSidebarView({
           categoryName={categoryName}
           room={room}
           resolved={resolved}
+          refused={refused}
           live={snapshot.status === 'live'}
           store={store}
           call={call}
