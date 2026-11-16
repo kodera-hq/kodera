@@ -8,6 +8,7 @@
 // 'self'`), and a remote image would tell its host who read the message and when.
 
 import type { components } from '../../../api/schema'
+import { cleanText } from '../../../ui/safeText'
 
 export type UnfurlResult = components['schemas']['UnfurlResult']
 
@@ -40,18 +41,8 @@ export function safeHref(value: unknown): URL | null {
   return url
 }
 
-/** Control, zero-width and direction-override characters: never shown in a card. */
-const INVISIBLE =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/gu
-
-/** Text as a card shows it: one line of plain characters, at most `max` of them. */
-export function cleanText(value: unknown, max: number): string {
-  if (typeof value !== 'string') return ''
-  const plain = value.replace(INVISIBLE, '').replace(/\s+/gu, ' ').trim()
-  const chars = [...plain]
-  return chars.length <= max ? plain : `${chars.slice(0, max - 1).join('')}…`
-}
+/** Text as a card shows it: one line of plain characters, at most `max` (`ui/safeText`). */
+export { cleanText }
 
 /**
  * The resource an address names, as Core's fetcher sees it: no fragment (a browser never sends

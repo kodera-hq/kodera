@@ -1,7 +1,8 @@
 const messages = {
   en: {
     title: 'Settings',
-    close: 'Close (Esc)',
+    close: 'Close settings',
+    escHint: 'Esc',
     personal: 'Your account',
     workspace: 'Workspace',
     profile: 'My profile & status',
@@ -28,9 +29,6 @@ const messages = {
     copied: 'Copied',
     copyError: 'Copy failed. Select the Matrix ID and copy it manually.',
     unavailable: 'Open a connected conversation to manage your Matrix profile and room members.',
-    light: 'Light · Givre',
-    dark: 'Dark · Ardoise',
-    black: 'OLED black',
     studio: 'Open Theme Studio',
     appearanceHint:
       'Choose a comfortable canvas for every conversation. Changes apply immediately.',
@@ -63,7 +61,8 @@ const messages = {
   },
   fr: {
     title: 'Réglages',
-    close: 'Fermer (Échap)',
+    close: 'Fermer les réglages',
+    escHint: 'Échap',
     personal: 'Votre compte',
     workspace: 'Espace de travail',
     profile: 'Mon profil & statut',
@@ -91,9 +90,6 @@ const messages = {
     copyError: 'Copie impossible. Sélectionnez l’identifiant Matrix pour le copier manuellement.',
     unavailable:
       'Ouvrez une conversation connectée pour gérer votre profil Matrix et les membres du salon.',
-    light: 'Clair · Givre',
-    dark: 'Sombre · Ardoise',
-    black: 'Noir OLED',
     studio: 'Ouvrir Theme Studio',
     appearanceHint:
       'Choisissez le cadre de vos conversations. Les changements s’appliquent immédiatement.',

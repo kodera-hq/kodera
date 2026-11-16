@@ -6,6 +6,7 @@ import { studioMessages } from './studioMessages'
 import { openWorkspaceCommand } from './WorkspaceMenu'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { ChannelSearchEntry } from './ChannelSearch'
+import type { CanvasMode } from '../espace/liveViewModel'
 
 export interface StudioActivity {
   channel: ChannelSearchEntry
@@ -36,8 +37,8 @@ export function StudioNavigation({
   onOpenDocument?: ((doc: ChannelDoc) => HTMLElement | null) | undefined
   compact?: boolean
   section: 'primary' | 'tools' | 'call-entry'
-  mode: 'chat' | 'docs'
-  onChange?: ((mode: 'chat' | 'docs') => void) | undefined
+  mode: CanvasMode
+  onChange?: ((mode: CanvasMode) => void) | undefined
   rooms: readonly ChannelSearchEntry[]
   onChoose: (room: ChannelSearchEntry) => HTMLElement | null
 }) {
@@ -96,7 +97,14 @@ export function StudioNavigation({
               selected: mode === 'docs',
             },
             { name: 'calls', icon: 'calls', action: () => setPanel('calls') },
-            { name: 'files', icon: 'files', action: () => setPanel('files') },
+            // « Fichiers » is a canvas of its own where the view offers one (`onChange`), and the
+            // short dialog only where it does not — the organisation console, which has no canvas.
+            {
+              name: 'files',
+              icon: 'files',
+              action: onChange ? () => onChange('files') : () => setPanel('files'),
+              ...(onChange ? { selected: mode === 'files' } : {}),
+            },
             {
               name: 'integrations',
               icon: 'integrations',
@@ -211,13 +219,15 @@ export function StudioNavigation({
             }}
             aria-current={entry.selected ? 'page' : undefined}
             aria-expanded={
-              ['notifications', 'files', 'calls'].includes(entry.name)
+              ['notifications', 'files', 'calls'].includes(entry.name) && entry.selected === undefined
                 ? panel === entry.name
                 : undefined
             }
             aria-controls={panel === entry.name ? panelId : undefined}
             aria-haspopup={
-              !compact && ['notifications', 'files', 'calls'].includes(entry.name)
+              !compact &&
+              ['notifications', 'files', 'calls'].includes(entry.name) &&
+              entry.selected === undefined
                 ? 'dialog'
                 : undefined
             }
@@ -227,7 +237,9 @@ export function StudioNavigation({
                 ? 'workspace-docs-editor-toggle'
                 : entry.name === 'messages'
                   ? 'espace-canvas-mode-chat'
-                  : undefined
+                  : entry.name === 'files' && onChange
+                    ? 'espace-canvas-mode-files'
+                    : undefined
             }
             className={`flex min-h-8 items-center gap-2 rounded-md px-2 py-1 text-left text-sm focus-visible:ring focus-visible:outline-hidden narrow:min-h-12 ${entry.selected ? 'bg-c-ok-soft font-bold text-c-ink' : 'text-c-ink-2 hover:bg-c-muted'}`}
           >

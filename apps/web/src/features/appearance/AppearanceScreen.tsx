@@ -15,7 +15,6 @@
 import * as RadioGroupPrimitive from '@radix-ui/react-radio-group'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { MessageKey } from '../../i18n'
 import { cx } from '../../ui/cx'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import {
@@ -27,43 +26,10 @@ import {
 } from '../../theme/theme'
 import type { AppliedTheme, ThemePreference } from '../../theme/theme'
 import { PAGE_TITLE } from '../../ui/pageTitle'
+import { THEME_COPY, THEME_PREVIEW } from '../../theme/themeChoices'
 
-const COPY: Record<ThemePreference, { label: MessageKey; hint: MessageKey }> = {
-  system: {
-    label: 'console.shell.appearance.label-system',
-    hint: 'console.shell.appearance.hint-system',
-  },
-  ciel: {
-    label: 'console.shell.appearance.label-ciel',
-    hint: 'console.shell.appearance.hint-ciel',
-  },
-  'ciel-nuit': {
-    label: 'console.shell.appearance.label-ciel-nuit',
-    hint: 'console.shell.appearance.hint-ciel-nuit',
-  },
-  light: {
-    label: 'console.shell.appearance.label-light',
-    hint: 'console.shell.appearance.hint-light',
-  },
-  dark: {
-    label: 'console.shell.appearance.label-dark',
-    hint: 'console.shell.appearance.hint-dark',
-  },
-  black: {
-    label: 'console.shell.appearance.label-black',
-    hint: 'console.shell.appearance.hint-black',
-  },
-}
-
-/** The themes a preview draws: « Automatique » shows both a device can ask for. */
-const PREVIEW: Record<ThemePreference, readonly AppliedTheme[]> = {
-  system: ['ciel', 'ciel-nuit'],
-  ciel: ['ciel'],
-  'ciel-nuit': ['ciel-nuit'],
-  light: ['light'],
-  dark: ['dark'],
-  black: ['black'],
-}
+const COPY = THEME_COPY
+const PREVIEW = THEME_PREVIEW
 
 // A card, as in the mock: surface, 12 px radius, 14 px padding, a 1 px border,
 // or a 2 px edge when chosen, its padding a pixel smaller so nothing inside

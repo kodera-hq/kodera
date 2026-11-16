@@ -61,37 +61,50 @@ export function DocsWorkspacePanel({
 }: DocsWorkspacePanelProps) {
   const { t, i18n } = useTranslation()
   const copy = developerDocsCopy(i18n.resolvedLanguage)
-  const [internalView, setInternalView] = useState<DocsWorkspaceView>('team')
+  // Same rule as the screen's: without channel pads to draw, the panel opens on the Pages it can
+  // actually show rather than on the placeholder card.
+  const [internalView, setInternalView] = useState<DocsWorkspaceView>(
+    teamPadsSlot === undefined && workspacePagesSlot !== undefined ? 'pages' : 'team'
+  )
   const selectedView = view ?? internalView
   const headingId = useId()
   const newPadInputId = useId()
 
-  const docsOrigin = useMemo(
-    () => buildTenantDocsOrigin(tenantSlug, baseDomain),
-    [tenantSlug, baseDomain]
-  )
+  // Both of these refuse a slug or a domain they cannot make an address from, by throwing
+  // (`url.ts`). They run while the panel is drawn and the only error boundary above is the
+  // organisation route's, so an unexpected tenant slug replaced the whole shell with the error
+  // page — for a member who may never have opened « Docs ». A refusal is a pad that does not
+  // exist, not a broken console.
+  const docsOrigin = useMemo(() => {
+    try {
+      return buildTenantDocsOrigin(tenantSlug, baseDomain)
+    } catch {
+      return null
+    }
+  }, [tenantSlug, baseDomain])
 
-  const defaultPad = useMemo<ChannelDocsPadDescriptor>(() => {
-    const url = buildChannelDocsPadUrl({
-      tenantSlug,
-      channelId,
-      channelName,
-      baseDomain,
-    })
-    return {
-      id: `default-${slugifyDocsSegment(channelId)}`,
-      title: t('console.docs.panel.default-pad-title', { channel: channelName }),
-      channelId,
-      channelName,
-      padSlug: slugifyDocsSegment(channelName),
-      url,
+  const defaultPad = useMemo<ChannelDocsPadDescriptor | null>(() => {
+    try {
+      const url = buildChannelDocsPadUrl({ tenantSlug, channelId, channelName, baseDomain })
+      return {
+        id: `default-${slugifyDocsSegment(channelId)}`,
+        title: t('console.docs.panel.default-pad-title', { channel: channelName }),
+        channelId,
+        channelName,
+        padSlug: slugifyDocsSegment(channelName),
+        url,
+      }
+    } catch {
+      return null
     }
   }, [tenantSlug, channelId, channelName, baseDomain, t])
 
   const allPads = useMemo<readonly ChannelDocsPadDescriptor[]>(() => {
-    if (pads.length === 0) return [defaultPad]
-    return pads
-  }, [pads, defaultPad])
+    if (pads.length > 0) return pads
+    // No pad was supplied: the deployment serves none for this channel, and a synthesised
+    // `docs.<host>` address would be a link to nothing. The draft below is drawn on its own.
+    return []
+  }, [pads])
 
   const [selectedPadId, setSelectedPadId] = useState<string | undefined>(activePadId)
   const [draftTitle, setDraftTitle] = useState('')
@@ -113,19 +126,21 @@ export function DocsWorkspacePanel({
     t('console.docs.panel.draft-initial')
   )
 
-  const currentPad = useMemo<ChannelDocsPadDescriptor>(() => {
+  const currentPad = useMemo<ChannelDocsPadDescriptor | undefined>(() => {
     const targetId = activePadId ?? selectedPadId
     if (targetId !== undefined) {
       const found = allPads.find((pad) => pad.id === targetId)
       if (found !== undefined) return found
     }
-    return allPads[0] ?? defaultPad
+    return allPads[0] ?? defaultPad ?? undefined
   }, [allPads, activePadId, selectedPadId, defaultPad])
 
+  /** The pad's address, once checked against this tenant's own origin; `null` for anything else. */
   const validatedCurrentUrl = useMemo(() => {
+    if (currentPad === undefined || docsOrigin === null) return null
     const check = validateExternalDocsUrl(currentPad.url, docsOrigin)
-    return check.ok ? check.normalizedUrl : defaultPad.url
-  }, [currentPad.url, docsOrigin, defaultPad.url])
+    return check.ok ? check.normalizedUrl : (defaultPad?.url ?? null)
+  }, [currentPad, docsOrigin, defaultPad])
 
   const handleSelectPad = (padId: string) => {
     setSelectedPadId(padId)
@@ -134,6 +149,7 @@ export function DocsWorkspacePanel({
   }
 
   const handleCopy = async () => {
+    if (currentPad === undefined || validatedCurrentUrl === null) return
     try {
       if (onCopyPadLink !== undefined) {
         await onCopyPadLink(validatedCurrentUrl)
@@ -184,6 +200,10 @@ export function DocsWorkspacePanel({
         aria-label={copy.views}
         className="flex flex-wrap gap-2 border-b border-c-border-soft pb-2"
       >
+        {/* « Pages » is drawn only where its slot is supplied. « Espace Docs » always is: without
+            channel pads it is a draft held in this browser, which is a thing the member can use —
+            what is not drawn there any more is the address of a pad the deployment does not
+            serve. */}
         {(workspacePagesSlot !== undefined
           ? (['team', 'pages', 'developer'] as const)
           : (['team', 'developer'] as const)
@@ -247,39 +267,44 @@ export function DocsWorkspacePanel({
                 aria-label={t('console.docs.panel.region-label')}
                 className="flex flex-col gap-3 rounded-md border border-c-border bg-c-sunken p-4"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-md font-semibold text-c-ink">{currentPad.title}</span>
-                    <span className="font-mono text-xs text-c-ink-3">{validatedCurrentUrl}</span>
+                {/* The pad's own address, and only where there is one. A deployment that serves
+                    no pad for this channel gets the draft below on its own, rather than a link
+                    to an address nothing answers on. */}
+                {currentPad === undefined || validatedCurrentUrl === null ? null : (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-md font-semibold text-c-ink">{currentPad.title}</span>
+                      <span className="font-mono text-xs text-c-ink-3">{validatedCurrentUrl}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          void handleCopy()
+                        }}
+                        aria-label={t('console.docs.panel.action-copy-link-named', {
+                          title: currentPad.title,
+                        })}
+                      >
+                        {copiedPadId === currentPad.id
+                          ? t('console.docs.panel.label-link-copied')
+                          : t('console.docs.panel.action-copy-link')}
+                      </Button>
+                      <LinkButton
+                        size="sm"
+                        variant="primary"
+                        href={validatedCurrentUrl}
+                        target="_blank"
+                        aria-label={t('console.docs.panel.action-open-named', {
+                          title: currentPad.title,
+                        })}
+                      >
+                        {t('console.docs.panel.action-open')}
+                      </LinkButton>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        void handleCopy()
-                      }}
-                      aria-label={t('console.docs.panel.action-copy-link-named', {
-                        title: currentPad.title,
-                      })}
-                    >
-                      {copiedPadId === currentPad.id
-                        ? t('console.docs.panel.label-link-copied')
-                        : t('console.docs.panel.action-copy-link')}
-                    </Button>
-                    <LinkButton
-                      size="sm"
-                      variant="primary"
-                      href={validatedCurrentUrl}
-                      target="_blank"
-                      aria-label={t('console.docs.panel.action-open-named', {
-                        title: currentPad.title,
-                      })}
-                    >
-                      {t('console.docs.panel.action-open')}
-                    </LinkButton>
-                  </div>
-                </div>
+                )}
 
                 <div
                   data-testid="docs-inline-collaborative-editor"
@@ -301,7 +326,10 @@ export function DocsWorkspacePanel({
                   </p>
 
                   <MarkdownDraftEditor
-                    title={currentPad.title}
+                    title={
+                      currentPad?.title ??
+                      t('console.docs.panel.default-pad-title', { channel: channelName })
+                    }
                     channelName={channelName}
                     content={inlineContent}
                     onChange={(content) => {
@@ -324,7 +352,7 @@ export function DocsWorkspacePanel({
                     className="flex flex-col gap-2"
                   >
                     {allPads.map((pad) => {
-                      const isCurrent = pad.id === currentPad.id
+                      const isCurrent = pad.id === currentPad?.id
                       return (
                         <li key={pad.id}>
                           <button

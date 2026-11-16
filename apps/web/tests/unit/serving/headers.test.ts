@@ -305,7 +305,10 @@ function security(
   // dependency wrote is removed at build (tests/unit/serving/radix-select-style.test.ts).
   expect(csp.get('style-src')).toEqual(["'self'"])
   expect(csp.get('style-src-attr')).toEqual(["'none'"])
-  expect(csp.get('img-src')).toEqual(["'self'"])
+  // Blobs this page itself made, so a member's own avatar — fetched from their homeserver over
+  // `connect-src` — can be drawn without any remote origin becoming an image source. No `data:`:
+  // an address carried by a message must never be drawable.
+  expect(csp.get('img-src')).toEqual(["'self'", 'blob:'])
   expect(csp.get('font-src')).toEqual(["'self'"])
   expect(csp.get('object-src')).toEqual(["'none'"])
   expect(csp.get('base-uri')).toEqual(["'none'"])
@@ -974,7 +977,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '51a807012b21efcdfc988073cada4680527fa28dd936717f364b6978e6cfa391'
+const PRISTINE_SHA = '0738766d5e1f187eee5e91a49a41dbccffa6123b8d18374364a73af3203fbcd3'
 type Scenario =
   | 'referrer'
   | 'directive'

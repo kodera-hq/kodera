@@ -1838,9 +1838,43 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.canvas.mode-label` | Channel view |
 | `console.workspace.canvas.mode-chat` | Chat |
 | `console.workspace.canvas.mode-docs` | Docs |
+| `console.workspace.canvas.mode-files` | Files |
+| `console.workspace.files.title` | Workspace files |
+| `console.workspace.files.held` | {count} item(s) · {size} shared |
+| `console.workspace.files.field-search` | Search for a file |
+| `console.workspace.files.label-filter` | Filter by type |
+| `console.workspace.files.label-layout` | Layout |
+| `console.workspace.files.label-list` | Workspace files and documents |
+| `console.workspace.files.layout-grid` | Grid |
+| `console.workspace.files.layout-list` | List |
+| `console.workspace.files.filter-all` | All |
+| `console.workspace.files.filter-images` | Images |
+| `console.workspace.files.filter-documents` | Documents |
+| `console.workspace.files.filter-pages` | Pages |
+| `console.workspace.files.filter-other` | Other |
+| `console.workspace.files.empty-title` | No files yet |
+| `console.workspace.files.empty-body` | Attachments and pages from your channels appear here. |
+| `console.workspace.files.empty-search-title` | No results |
+| `console.workspace.files.empty-search-body` | No file matches this search or this filter. |
+| `console.workspace.files.hint-upload` | Files are sent from a channel's message field: 25 MiB at most, ten at a time. |
 | `console.workspace.members.online-count` | Online ({count}) |
 | `console.workspace.members.state-online` | Online |
 | `console.workspace.members.state-offline` | Offline |
+| `console.workspace.members.unnamed` | Member |
+| `console.workspace.profile.title-identity` | Identity |
+| `console.workspace.profile.label-avatar` | Profile picture |
+| `console.workspace.profile.action-choose-avatar` | Choose an image |
+| `console.workspace.profile.action-change-avatar` | Change the image |
+| `console.workspace.profile.action-remove-avatar` | Remove the picture |
+| `console.workspace.profile.hint-avatar` | PNG, JPEG or WebP, 2 MB at most. The image is cropped to 256 px and sent to your own messaging server. |
+| `console.workspace.profile.action-save-name` | Save on my server |
+| `console.workspace.profile.hint-published` | This name is published to every server you share a room with. |
+| `console.workspace.profile.state-saving` | Saving… |
+| `console.workspace.profile.state-saved-server` | Saved on your server: your name and picture follow you into every room. |
+| `console.workspace.profile.state-saved-local` | Saved on this browser only. |
+| `console.workspace.profile.problem-save` | Your server refused the change. Try again in a moment. |
+| `console.workspace.profile.problem-avatar-type` | Choose a PNG, JPEG or WebP image. |
+| `console.workspace.profile.problem-avatar-size` | The image is over 2 MB. Choose a lighter one. |
 | `console.workspace.proximity.title` | Around me |
 | `console.workspace.proximity.state-disconnected` | Not connected |
 | `console.workspace.proximity.state-connected` | Connected |
@@ -2008,6 +2042,16 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.notifications.push-body` | Something new in your workspace. |
 | `console.workspace.directs.title` | Direct messages |
 | `console.workspace.directs.action-new` | New |
+| `console.workspace.directs.title-new` | New direct conversation |
+| `console.workspace.directs.help-new` | Choose people from your workspace, or enter a Matrix ID for someone on another server. |
+| `console.workspace.directs.field-search` | Search for a person |
+| `console.workspace.directs.label-members` | Workspace members |
+| `console.workspace.directs.label-chosen` | Chosen |
+| `console.workspace.directs.empty-search` | No member matches this search. |
+| `console.workspace.directs.empty-roster` | Workspace members appear here as soon as a channel is open. You can already enter a Matrix ID below. |
+| `console.workspace.directs.title-federated` | Someone on another server |
+| `console.workspace.directs.label-federated` | Another server |
+| `console.workspace.directs.problem-too-many` | A direct conversation holds at most eight people besides you. |
 | `console.workspace.directs.field-people` | With whom? |
 | `console.workspace.directs.help-people` | One to eight Matrix identifiers, separated by commas: @first.last:example.org |
 | `console.workspace.directs.action-open` | Open the conversation |

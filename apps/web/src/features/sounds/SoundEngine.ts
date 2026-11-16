@@ -141,7 +141,31 @@ export class SoundEngine {
     }
     if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
+      // A browser starts an `AudioContext` suspended and resumes it only from a user gesture. A
+      // cue fired from a sync (an arriving message) is not one, so the first such cue was silent
+      // and the browser warned about it in the console. The first press or keystroke anywhere on
+      // the page resumes the context, once; nothing is played here.
+      document.addEventListener('pointerdown', this.unlockOnGesture, { capture: true })
+      document.addEventListener('keydown', this.unlockOnGesture, { capture: true })
     }
+  }
+
+  /** Resumes the audio context from the member's first gesture, then stops listening. */
+  private readonly unlockOnGesture = (): void => {
+    this.stopListeningForGesture()
+    const ctx = this.ensureAudioContext()
+    if (ctx === null || ctx.state !== 'suspended' || typeof ctx.resume !== 'function') return
+    void ctx.resume().catch(() => {
+      // A context the browser will not resume stays suspended; every cue is then a no-op, which
+      // is what a member who has not interacted with the page would hear anyway.
+    })
+  }
+
+  private stopListeningForGesture(): void {
+    if (typeof document === 'undefined' || typeof document.removeEventListener !== 'function')
+      return
+    document.removeEventListener('pointerdown', this.unlockOnGesture, { capture: true })
+    document.removeEventListener('keydown', this.unlockOnGesture, { capture: true })
   }
 
   private loadPreferencesFromStorage(): SoundPreferences {
@@ -923,6 +947,7 @@ export class SoundEngine {
     if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
       document.removeEventListener('visibilitychange', this.handleVisibilityChange)
     }
+    this.stopListeningForGesture()
   }
 
   private ensureAudioContext(): SinkCapableAudioContext | null {

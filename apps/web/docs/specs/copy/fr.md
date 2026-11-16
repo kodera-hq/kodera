@@ -1852,9 +1852,43 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.canvas.mode-label` | Affichage du salon |
 | `console.workspace.canvas.mode-chat` | Discussion |
 | `console.workspace.canvas.mode-docs` | Docs |
+| `console.workspace.canvas.mode-files` | Fichiers |
+| `console.workspace.files.title` | Fichiers de l’espace |
+| `console.workspace.files.held` | {count} élément(s) · {size} partagés |
+| `console.workspace.files.field-search` | Rechercher un fichier |
+| `console.workspace.files.label-filter` | Filtrer par type |
+| `console.workspace.files.label-layout` | Affichage |
+| `console.workspace.files.label-list` | Fichiers et documents de l’espace |
+| `console.workspace.files.layout-grid` | Grille |
+| `console.workspace.files.layout-list` | Liste |
+| `console.workspace.files.filter-all` | Tous |
+| `console.workspace.files.filter-images` | Images |
+| `console.workspace.files.filter-documents` | Documents |
+| `console.workspace.files.filter-pages` | Pages |
+| `console.workspace.files.filter-other` | Autres |
+| `console.workspace.files.empty-title` | Aucun fichier pour l’instant |
+| `console.workspace.files.empty-body` | Les pièces jointes et les pages de vos salons apparaîtront ici. |
+| `console.workspace.files.empty-search-title` | Aucun résultat |
+| `console.workspace.files.empty-search-body` | Aucun fichier ne correspond à cette recherche ni à ce filtre. |
+| `console.workspace.files.hint-upload` | Les fichiers s’envoient depuis le champ de message d’un salon : 25 Mio au maximum, dix à la fois. |
 | `console.workspace.members.online-count` | En ligne ({count}) |
 | `console.workspace.members.state-online` | En ligne |
 | `console.workspace.members.state-offline` | Hors ligne |
+| `console.workspace.members.unnamed` | Membre |
+| `console.workspace.profile.title-identity` | Identité |
+| `console.workspace.profile.label-avatar` | Photo de profil |
+| `console.workspace.profile.action-choose-avatar` | Choisir une image |
+| `console.workspace.profile.action-change-avatar` | Changer l’image |
+| `console.workspace.profile.action-remove-avatar` | Retirer la photo |
+| `console.workspace.profile.hint-avatar` | PNG, JPEG ou WebP, 2 Mo au maximum. L’image est recadrée à 256 px et envoyée à votre serveur de messagerie. |
+| `console.workspace.profile.action-save-name` | Enregistrer sur mon serveur |
+| `console.workspace.profile.hint-published` | Ce nom est publié auprès de chaque serveur avec lequel vous partagez un salon. |
+| `console.workspace.profile.state-saving` | Enregistrement en cours… |
+| `console.workspace.profile.state-saved-server` | Enregistré sur votre serveur : votre nom et votre photo vous suivent dans tous les salons. |
+| `console.workspace.profile.state-saved-local` | Enregistré sur ce navigateur uniquement. |
+| `console.workspace.profile.problem-save` | Votre serveur n’a pas accepté la modification. Réessayez dans un instant. |
+| `console.workspace.profile.problem-avatar-type` | Choisissez une image PNG, JPEG ou WebP. |
+| `console.workspace.profile.problem-avatar-size` | L’image dépasse 2 Mo. Choisissez-en une plus légère. |
 | `console.workspace.proximity.title` | Autour de moi |
 | `console.workspace.proximity.state-disconnected` | Non connecté |
 | `console.workspace.proximity.state-connected` | Connecté |
@@ -2022,6 +2056,16 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.notifications.push-body` | Du nouveau dans votre espace. |
 | `console.workspace.directs.title` | Messages directs |
 | `console.workspace.directs.action-new` | Nouveau |
+| `console.workspace.directs.title-new` | Nouvelle conversation directe |
+| `console.workspace.directs.help-new` | Choisissez les personnes de votre espace, ou saisissez un identifiant Matrix pour une personne d’un autre serveur. |
+| `console.workspace.directs.field-search` | Rechercher une personne |
+| `console.workspace.directs.label-members` | Membres de l’espace |
+| `console.workspace.directs.label-chosen` | Choisi |
+| `console.workspace.directs.empty-search` | Aucun membre ne correspond à cette recherche. |
+| `console.workspace.directs.empty-roster` | Les membres de l’espace apparaîtront ici dès qu’un salon sera ouvert. Vous pouvez déjà saisir un identifiant Matrix ci-dessous. |
+| `console.workspace.directs.title-federated` | Personne d’un autre serveur |
+| `console.workspace.directs.label-federated` | Autre serveur |
+| `console.workspace.directs.problem-too-many` | Une conversation directe réunit huit personnes au maximum, en plus de vous. |
 | `console.workspace.directs.field-people` | Avec qui ? |
 | `console.workspace.directs.help-people` | Un à huit identifiants Matrix, séparés par des virgules : @prenom.nom:example.org |
 | `console.workspace.directs.action-open` | Ouvrir la conversation |

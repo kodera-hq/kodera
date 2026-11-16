@@ -192,6 +192,14 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     ).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent(/officiel/i)
 
+    /** The connectors the list offers now, by name: what a filter or a search leaves. */
+    const cardNames = () =>
+      screen
+        .getAllByRole('button', { name: /— Connecter$/ })
+        .map((node) => node.getAttribute('aria-label')!.replace(' — Connecter', ''))
+    const namesOf = (slugs: readonly string[]) =>
+      slugs.map((slug) => OFFICIAL_EXTENSIONS_CATALOG.find((ext) => ext.slug === slug)!.name)
+
     // Verify all 6 category filter pills are rendered
     const filterGroup = screen.getByRole('group', { name: "Filtrer par catégorie d'extension" })
     expect(EXTENSION_CATEGORY_FILTERS).toHaveLength(6)
@@ -199,23 +207,34 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       expect(within(filterGroup).getByRole('button', { name: filter.label })).toBeInTheDocument()
     }
 
+    // Every connector is offered by name, with what it does: the manifest id is a technical
+    // detail, drawn under « Détails techniques & sécurité » once a connector is chosen.
     for (const ext of OFFICIAL_EXTENSIONS_CATALOG) {
-      expect(screen.getAllByText(new RegExp(`${ext.id}(?:$|\\s)`)).length).toBeGreaterThanOrEqual(
-        1
-      )
+      expect(
+        screen.getByRole('button', { name: `${ext.name} — Connecter` })
+      ).toBeInTheDocument()
       expect(screen.getByTestId(`extension-verified-${ext.slug}`)).toHaveTextContent(
         'Schéma v1 vérifié'
       )
     }
+    // Nothing is chosen on arrival, so no setup panel is open.
+    expect(screen.getByText('Choisissez un connecteur pour voir sa configuration.')).toBeVisible()
+    for (const ext of OFFICIAL_EXTENSIONS_CATALOG) {
+      expect(screen.queryByText(new RegExp(`${ext.id}(?:$|\\s)`))).toBeNull()
+    }
+    const chosen = OFFICIAL_EXTENSIONS_CATALOG[0]!
+    await user.click(screen.getByRole('button', { name: `${chosen.name} — Connecter` }))
+    expect(screen.getAllByText(new RegExp(`${chosen.id}(?:$|\\s)`)).length).toBeGreaterThanOrEqual(
+      1
+    )
 
     // Filter by Studio & Production
     await user.click(within(filterGroup).getByRole('button', { name: 'Studio & Production' }))
     expect(
       within(filterGroup).getByRole('button', { name: 'Studio & Production' })
     ).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getAllByText(/io\.kodera\.ext\.frameio$/).length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText(/io\.kodera\.ext\.renderfarm/).length).toBeGreaterThanOrEqual(1)
-    expect(screen.queryByText('io.kodera.ext.hello-webhook')).toBeNull()
+    expect(cardNames()).toEqual(expect.arrayContaining(namesOf(['frameio', 'renderfarm'])))
+    expect(cardNames()).not.toEqual(expect.arrayContaining(namesOf(['hello-webhook'])))
 
     // Filter by Finance (Qonto)
     await user.click(within(filterGroup).getByRole('button', { name: 'Finance (Qonto)' }))
@@ -223,37 +242,32 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       'aria-pressed',
       'true'
     )
-    expect(
-      screen.getAllByText(/io\.kodera\.ext\.qonto-treasury-feed/).length
-    ).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText(/io\.kodera\.ext\.billing-webhooks/).length).toBeGreaterThanOrEqual(
-      1
+    expect(cardNames()).toEqual(
+      expect.arrayContaining(namesOf(['qonto-treasury-feed', 'billing-webhooks']))
     )
-    expect(screen.queryByText('io.kodera.ext.hello-webhook')).toBeNull()
+    expect(cardNames()).not.toEqual(expect.arrayContaining(namesOf(['hello-webhook'])))
 
     // Filter by Productivité (Docs / Notion / GDrive)
     await user.click(
       within(filterGroup).getByRole('button', { name: 'Productivité (Docs / Notion / GDrive)' })
     )
-    expect(
-      screen.getAllByText(/io\.kodera\.ext\.docs-collab-announcer/).length
-    ).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText(/io\.kodera\.ext\.openproject/).length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText(/io\.kodera\.ext\.calcom/).length).toBeGreaterThanOrEqual(1)
-    expect(
-      screen.getAllByText(/io\.kodera\.ext\.notion-workspace-bridge/).length
-    ).toBeGreaterThanOrEqual(1)
-    expect(
-      screen.getAllByText(/io\.kodera\.ext\.gdrive-document-share/).length
-    ).toBeGreaterThanOrEqual(1)
+    expect(cardNames()).toEqual(
+      expect.arrayContaining(
+        namesOf([
+          'docs-collab-announcer',
+          'openproject',
+          'calcom',
+          'notion-workspace-bridge',
+          'gdrive-document-share',
+        ])
+      )
+    )
 
     // Filter by Réseaux Sociaux (X / Mastodon / Insta)
     await user.click(
       within(filterGroup).getByRole('button', { name: 'Réseaux Sociaux (X / Mastodon / Insta)' })
     )
-    expect(
-      screen.getAllByText(/io\.kodera\.ext\.social-pulse-bridge/).length
-    ).toBeGreaterThanOrEqual(1)
+    expect(cardNames()).toEqual(expect.arrayContaining(namesOf(['social-pulse-bridge'])))
 
     // Reset filter to Toutes
     await user.click(within(filterGroup).getByRole('button', { name: 'Toutes' }))
@@ -262,7 +276,9 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       'true'
     )
 
-    for (const scope of ['messages:write', 'commands:register', 'webhooks:incoming']) {
+    // The scopes a connector asks for are drawn with its setup, under the technical details.
+    await user.click(screen.getByRole('button', { name: `${chosen.name} — Connecter` }))
+    for (const scope of chosen.scopes) {
       expect(screen.getAllByText(scope).length).toBeGreaterThanOrEqual(1)
     }
 

@@ -1519,6 +1519,69 @@ export class EspaceStore {
     await this.#client.invite(roomId, userId)
   }
 
+  /**
+   * The member's own Matrix profile, as the homeserver holds it (`m.room.member` global profile):
+   * what every other client in every room draws for them. Read from the client's own state, so no
+   * request is made to draw the settings panel.
+   */
+  getOwnProfile = (): { displayName: string | undefined; avatarUrl: string | undefined } => {
+    const user = this.#client.getUser(this.#me)
+    return {
+      displayName: user?.displayName ?? undefined,
+      avatarUrl: user?.avatarUrl ?? undefined,
+    }
+  }
+
+  /**
+   * The member's own avatar as bytes, fetched from their homeserver's media endpoint with their
+   * own token. The bytes, not the address: the console's policy names no remote image source
+   * (`img-src 'self' blob:`), so what is drawn is a blob this page holds. `null` where there is no
+   * avatar, where the homeserver refuses, or where what came back is not an image.
+   */
+  async fetchOwnAvatar(size = 96): Promise<Blob | null> {
+    const mxcUrl = this.#client.getUser(this.#me)?.avatarUrl
+    if (mxcUrl === undefined || !mxcUrl.startsWith('mxc://')) return null
+    const href = this.#client.mxcUrlToHttp(mxcUrl, size, size, 'crop', undefined, true, true)
+    if (href === null) return null
+    const token = this.#client.getAccessToken()
+    const response = await fetch(href, {
+      ...(token === null ? {} : { headers: { Authorization: `Bearer ${token}` } }),
+    })
+    if (!response.ok) return null
+    const blob = await response.blob()
+    return blob.type.startsWith('image/') ? blob : null
+  }
+
+  /** Names the member on their homeserver, for every room at once. */
+  async setProfileDisplayName(displayName: string): Promise<void> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const trimmed = displayName.trim()
+    if (trimmed === '') throw new Error('Empty display name')
+    await this.#client.setDisplayName(trimmed.slice(0, 80))
+  }
+
+  /**
+   * Uploads the picture and makes it the member's avatar. The file is sent to the member's own
+   * homeserver and nowhere else; its address is an `mxc://` one, which only a Matrix client
+   * resolves.
+   */
+  async setProfileAvatar(file: Blob, filename: string): Promise<string> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const { content_uri: uri } = await this.#client.uploadContent(file, {
+      name: filename,
+      type: file.type || 'image/png',
+      includeFilename: true,
+    })
+    await this.#client.setAvatarUrl(uri)
+    return uri
+  }
+
+  /** Removes the member's avatar; their initials stand for them again. */
+  async clearProfileAvatar(): Promise<void> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    await this.#client.setAvatarUrl('')
+  }
+
   #setJoinState(roomId: string, state: RoomJoinState): void {
     if (this.#joins.get(roomId) === state) return
     this.#joins.set(roomId, state)

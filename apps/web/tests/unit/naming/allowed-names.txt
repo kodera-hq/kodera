@@ -107,6 +107,7 @@ Instantané
 Internet
 Invitations
 Issue
+JPEG
 JPG
 JSON
 Kaci
@@ -125,7 +126,9 @@ Masque
 Mastodon
 Matrix
 Metrics
+MiB
 Microsoft
+Mio
 Mo
 Monitor
 Métriques
@@ -229,6 +232,7 @@ Vocaux
 Voice
 Web
 WebAudio
+WebP
 Webhook
 Webhooks
 Work

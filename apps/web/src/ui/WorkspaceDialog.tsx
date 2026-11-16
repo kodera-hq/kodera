@@ -51,8 +51,11 @@ export function WorkspaceDialog({
       }}
     >
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-c-sunken" />
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        {/* `c-scrim`, not a surface role: an opaque surface over the page replaces its ground, and
+            a themed page with a gradient visibly changes colour as the dialog opens. `z-40` as
+            every other dialog, below the `z-50` popovers this one can itself open. */}
+        <RadixDialog.Overlay className="fixed inset-0 z-40 bg-c-scrim" />
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
           <RadixDialog.Content
             aria-modal="true"
             aria-describedby={undefined}
@@ -63,7 +66,9 @@ export function WorkspaceDialog({
               openerRef.current = active instanceof HTMLElement ? active : null
             }}
             onCloseAutoFocus={closeAutoFocusHandler(returnTarget)}
-            className={cx('focus-visible:outline-hidden', className)}
+            // Focused by the dialog opening, not by the keyboard: `:focus-visible` does not match
+            // a programmatic focus in every browser, so the outline is removed unconditionally.
+            className={cx('outline-hidden', className)}
           >
             {children}
           </RadixDialog.Content>

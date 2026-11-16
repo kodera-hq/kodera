@@ -356,7 +356,7 @@ describe('a message that mentions the viewer', () => {
     expect(plain[0]).not.toHaveAttribute('data-mention')
   })
 
-  it('plays the msg_mention sound cue on a live incoming mention from a peer, but never on initial history load or self-authored messages', () => {
+  it('plays the mention cue on a live incoming mention from a peer, the channel cue on a plain one, and nothing on initial history load or self-authored messages', () => {
     soundEngine.resetCooldowns()
     const playSpy = vi.spyOn(soundEngine, 'play')
 
@@ -415,11 +415,19 @@ describe('a message that mentions the viewer', () => {
       })
       expect(playSpy).not.toHaveBeenCalled()
 
-      // 3. Live non-mention message from a peer must NOT trigger msg_mention
+      // 3. A live message from a peer that names nobody is a message arriving, not a mention:
+      //    it plays the channel's own cue, never the mention one.
       act(() => {
         publishTimeline([...currentTimeline, message('$m4', ALICE, 'Simple message sans mention')])
       })
-      expect(playSpy).not.toHaveBeenCalled()
+      expect(playSpy).toHaveBeenCalledTimes(1)
+      expect(playSpy).toHaveBeenCalledWith('msg_channel_unread', {
+        channelId: GENERAL,
+        roomId: ROOM,
+        senderId: ALICE,
+        currentUserId: ME,
+      })
+      playSpy.mockClear()
 
       // 4. Live incoming mention from a peer MUST trigger msg_mention with channelId, senderId, currentUserId
       act(() => {
@@ -431,6 +439,7 @@ describe('a message that mentions the viewer', () => {
       expect(playSpy).toHaveBeenCalledTimes(1)
       expect(playSpy).toHaveBeenCalledWith('msg_mention', {
         channelId: GENERAL,
+        roomId: ROOM,
         senderId: BOB,
         currentUserId: ME,
       })

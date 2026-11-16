@@ -46,6 +46,7 @@ import {
   writeDemoView,
 } from '../../app/interactiveDemo'
 import type { EspaceStoreLike } from '../espace/EspaceLiveView'
+import type { CanvasMode } from '../espace/liveViewModel'
 import { useTranslation } from 'react-i18next'
 import { orgRoute } from '../../app/org-route'
 import { useNarrowViewport } from '../../app/useNarrowViewport'
@@ -301,6 +302,9 @@ interface LiveWorkspaceProps {
   actions: ReactNode
   /** The tenant's slug: « Se reconnecter » signs in to its homeserver again. */
   serverSlug: string
+  /** The name the console's own account carries; the live view names the member with it when
+   * neither this browser nor the homeserver holds one. */
+  accountName?: string | undefined
 }
 
 /**
@@ -318,6 +322,7 @@ function LiveWorkspace({
   store,
   actions,
   serverSlug,
+  accountName,
 }: LiveWorkspaceProps) {
   const { t, i18n } = useTranslation()
   const communityCopy = developerDocsCopy(i18n.resolvedLanguage)
@@ -359,8 +364,13 @@ function LiveWorkspace({
       : undefined
   const userId = session?.userId ?? store?.getUserId() ?? ''
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [canvas, setCanvas] = useState<'chat' | 'docs'>('chat')
-  const [docsView, setDocsView] = useState<DocsWorkspaceView>('team')
+  const [canvas, setCanvas] = useState<CanvasMode>('chat')
+  // « Docs » opens on the collaborative Pages in the live workspace. `team` is the channel pads
+  // view, which only a store supplies (`teamPadsSlot` below); without one it falls through to a
+  // placeholder card pointing at a `docs.<host>` address this deployment does not serve, so a
+  // live member's first sight of « Docs » was a dead link. A store means the demo, which has
+  // pads: it opens on them, as its tests expect.
+  const [docsView, setDocsView] = useState<DocsWorkspaceView>(store ? 'team' : 'pages')
   const [workspacePages, setWorkspacePages] = useState<readonly WorkspacePageRecord[]>([])
   const [activeWorkspacePageId, setActiveWorkspacePageId] = useState<string | undefined>(undefined)
   const channel = channelId
@@ -405,6 +415,7 @@ function LiveWorkspace({
         channelId={channelId}
         {...(session ? { session } : {})}
         {...(store ? { store } : {})}
+        {...(accountName === undefined ? {} : { accountName })}
         focusedDocs={canvas === 'docs' && (docsView === 'developer' || docsView === 'pages')}
         documents={[
           ...docsWorkspace.docs,
@@ -603,7 +614,7 @@ export function WorkspaceScreen() {
   const { preference, choose } = useThemePreference()
   const queryClient = useQueryClient()
   const { t, i18n } = useTranslation()
-  const { membership } = orgRoute.useLoaderData()
+  const { me, membership } = orgRoute.useLoaderData()
   const { org } = orgRoute.useParams()
   const params = useParams({ strict: false }) as { channelId?: string }
   const copy = onboardingCopy(i18n.resolvedLanguage)
@@ -660,6 +671,10 @@ export function WorkspaceScreen() {
     window.addEventListener(WORKSPACE_COMMAND_EVENT, command)
     return () => window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
   }, [hasLiveWorkspace])
+
+  // The account's own name, as the shell's menu draws it: a person's name, never Core's person id.
+  // An address stands in for one where the account carries no name, its local part only.
+  const accountName = me.display_name?.trim() || me.email.split('@')[0] || undefined
 
   const configureAction =
     membership.role === 'org_owner' ? (
@@ -726,6 +741,7 @@ export function WorkspaceScreen() {
               channelId={params.channelId}
               serverSlug={serverSlug}
               actions={actions}
+              accountName={accountName}
             />
           ) : live !== undefined ? (
             <LiveWorkspace
@@ -740,6 +756,7 @@ export function WorkspaceScreen() {
               session={live.session}
               serverSlug={live.serverSlug}
               actions={actions}
+              accountName={accountName}
             />
           ) : (
             <ReadyWorkspace

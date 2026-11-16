@@ -31,7 +31,7 @@ Status: Implemented for review on Core API 0.43.0; service release remains separ
   - any canonical address is http or https too.
 - A canonical address on another site is not followed.
 - Text loses control, zero-width and direction-override characters, and is cut on whole characters.
-- No image is drawn. `img-src 'self'` stays as it is, and a remote image would tell its host who read the message.
+- No image is drawn. `img-src` names no remote origin, and a remote image would tell its host who read the message. It allows `'self'` and `blob:` only: a blob is bytes this page already holds — a member's own avatar, fetched from their homeserver over `connect-src` — so drawing one tells no host anything. An address a message carries is never drawn: `safeUnfurl.ts` refuses `data:` and `blob:` addresses outright.
 
 ### Direct conversations
 

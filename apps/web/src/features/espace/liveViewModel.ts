@@ -3,6 +3,7 @@
 // each part (`MessageTimeline`, `MessageComposer`, `ChannelSidebar`, `VoiceCallDock`) imports the
 // rules without importing another part.
 
+import { cleanText } from '../../ui/safeText'
 import type { DirectSummary } from './matrix/directs'
 import type { KeyboardEvent, ReactNode } from 'react'
 import type { ChannelDoc, ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
@@ -74,6 +75,13 @@ export function isProximityChannel(
   return flaggedChannelIds.has(channel.id)
 }
 
+/**
+ * What the workspace's main area is showing: the channel's conversation, the documents written in
+ * it, or the workspace's files. One channel is chosen throughout; the canvas says what is drawn
+ * of it, and choosing a channel always brings it back to the conversation.
+ */
+export type CanvasMode = 'chat' | 'docs' | 'files'
+
 export interface EspaceStoreLike {
   readonly simulation?: boolean
   getInitialDocuments?: () => ChannelDocsWorkspace
@@ -89,6 +97,16 @@ export interface EspaceStoreLike {
   getThread: (roomId: string, rootEventId: string) => readonly MessageView[]
   /** The member's direct conversations (`m.direct`); absent where there are none, as in the demo. */
   getDirects?: () => readonly DirectSummary[]
+  /** The member's own Matrix profile, as their homeserver holds it for every room. */
+  getOwnProfile?: () => { displayName: string | undefined; avatarUrl: string | undefined }
+  /** The member's own avatar as bytes; `null` where there is none. */
+  fetchOwnAvatar?: (size?: number) => Promise<Blob | null>
+  /** Names the member on their homeserver, for every room at once. */
+  setProfileDisplayName?: (displayName: string) => Promise<void>
+  /** Uploads the picture to the member's own homeserver and makes it their avatar. */
+  setProfileAvatar?: (file: Blob, filename: string) => Promise<string>
+  /** Removes the member's avatar. */
+  clearProfileAvatar?: () => Promise<void>
   /** Opens, or starts, the direct conversation with these people; resolves to its room id. */
   openDirect?: (userIds: readonly string[]) => Promise<string>
   send: (roomId: string, body: string, options?: SendOptions) => Promise<void>
@@ -201,10 +219,81 @@ export function roomRowId(sidebarHeadingId: string, channelId: string): string {
   return `${sidebarHeadingId}-room-${channelId}`
 }
 
-/** The name drawn for a member the room holds no display name for: its id's localpart. */
-export function displayNameOf(userId: string): string {
+/**
+ * A localpart that names nobody: Core's own person id, which Synapse takes as the account's
+ * localpart. Title-casing one gives « Ce239589 A4bd 41db 9cfb D06e66a77ff3 », a string no member
+ * recognises as a person, so it is never drawn as a name.
+ */
+const OPAQUE_LOCALPART = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/iu
+
+export function isOpaqueLocalpart(localpart: string): boolean {
+  return OPAQUE_LOCALPART.test(localpart)
+}
+
+/** The characters a screen draws as `@` or `:` without being them. */
+const CONFUSABLE_AT = /[\uFF20\uFE6B]/gu
+const CONFUSABLE_COLON = /[\u2236\uA789\uFE55\uFF1A\u05C3\u02D0\u0589\u1361]/gu
+
+/** A name folded to the characters it reads as, so a look-alike is judged as what it looks like. */
+function foldConfusables(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(CONFUSABLE_AT, '@')
+    .replace(CONFUSABLE_COLON, ':')
+}
+
+/** `@something:somewhere`, anywhere in the string, with or without spaces around the colon. */
+const MATRIX_ID_SHAPED = /@[^\s:]+\s*:\s*\S/u
+
+/**
+ * Whether a display name says anything the id does not. Synapse hands a new account its own
+ * localpart as a display name, so « ce239589-a4bd-… » is an unset profile wearing a value. Judge the text a screen will actually
+ * draw: `safeDisplayName` cleans before calling this, and so should any other caller.
+ */
+export function isNamedProfile(name: string | undefined, userId: string): boolean {
+  if (name === undefined) return false
+  const trimmed = name.trim()
+  if (trimmed === '') return false
+  const localpart = userId.startsWith('@') ? (userId.slice(1).split(':')[0] ?? '') : ''
+  // A name carrying something shaped like a Matrix id is not a name: drawn beside real ones it
+  // reads as somebody else's account, whoever set it. The whole string is judged, not its first
+  // character, and the characters that merely look like `@` and `:` are folded to them first —
+  // otherwise `＠someone։host` passes the test and still reads as an id on the screen.
+  if (MATRIX_ID_SHAPED.test(foldConfusables(trimmed))) return false
+  return trimmed !== localpart && trimmed !== userId && !isOpaqueLocalpart(trimmed)
+}
+
+/**
+ * The name to draw for a member, from whatever a room holds for them. A display name is set by
+ * the member themselves, so it is untrusted text: its control, zero-width and direction-override
+ * characters are stripped before it is drawn (`cleanText`, the same rule the link cards use), and
+ * one that names nobody gives way to the few characters of the id that tell two members apart.
+ */
+export function safeDisplayName(
+  name: string | undefined,
+  userId: string,
+  unnamed?: string
+): string {
+  // Cleaned first, judged second. A name judged before its direction-override characters are
+  // stripped is judged on something other than what the screen will draw: « \u202E@someone:host »
+  // does not look like an id until the override is gone, and then it is one.
+  const clean = cleanText(name, 80)
+  return isNamedProfile(clean, userId) ? clean : displayNameOf(userId, unnamed)
+}
+
+/**
+ * The name drawn for a member the room holds no display name for: its id's localpart, and — where
+ * that localpart names nobody — its first four characters, which tell two members apart. `unnamed`
+ * is the word the caller's language has for a member with no name; without one, the characters
+ * stand alone, so a caller with no translation at hand still draws something short.
+ */
+export function displayNameOf(userId: string, unnamed?: string): string {
   if (!userId.startsWith('@')) return userId
   const localpart = userId.slice(1).split(':')[0] ?? userId
+  if (isOpaqueLocalpart(localpart)) {
+    const short = localpart.replace(/-/gu, '').slice(0, 4)
+    return unnamed === undefined ? short : `${unnamed} · ${short}`
+  }
   return localpart
     .split(/[._-]+/)
     .filter(Boolean)
@@ -285,12 +374,16 @@ export function activeJoinTargetIds(
   return ordered
 }
 
-export function occupantsForRoom(room: RoomSummary | undefined): RoomOccupant[] {
+export function occupantsForRoom(
+  room: RoomSummary | undefined,
+  /** The word this language has for a member no name is held for. */
+  unnamed?: string
+): RoomOccupant[] {
   if (room?.occupancy === null || room?.occupancy === undefined) return []
   const sharing = new Set(room.occupancy.screenShare)
   return room.occupancy.participants.map((userId) => ({
     id: userId,
-    name: room.names?.[userId] ?? displayNameOf(userId),
+    name: safeDisplayName(room.names?.[userId], userId, unnamed),
     sharingScreen: sharing.has(userId),
   }))
 }

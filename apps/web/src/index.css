@@ -364,9 +364,11 @@
      the box — so no light screen moves. Matched on any ancestor's
      `data-theme`: a light-scoped subtree inside a dark page would still get
      the edge, and no screen nests one around an inverse card.
-     `tests/e2e/10-appearance.spec.ts` measures it in a browser. */
+     `tests/e2e/10-appearance.spec.ts` measures it in a browser. Every dark theme is named here,
+     as in the `color-scheme` rule above: a theme added to one list belongs in both. */
   [data-theme='dark'] .inverse-edge,
-  [data-theme='black'] .inverse-edge {
+  [data-theme='black'] .inverse-edge,
+  [data-theme='ciel-nuit'] .inverse-edge {
     @apply border border-c-border;
   }
 
@@ -375,7 +377,8 @@
      the shadow layer is zeroed: Tailwind 4 draws rings in `box-shadow` too, so `box-shadow: none`
      would also erase a ring on a card. */
   [data-theme='dark'] .card-flat-dark,
-  [data-theme='black'] .card-flat-dark {
+  [data-theme='black'] .card-flat-dark,
+  [data-theme='ciel-nuit'] .card-flat-dark {
     --tw-shadow: 0 0 transparent;
   }
 
