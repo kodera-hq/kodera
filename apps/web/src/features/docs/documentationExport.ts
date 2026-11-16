@@ -23,6 +23,7 @@ export function exportDocumentationPage(page: DeveloperDocPage): string {
   if (page.id === 'extensions') {
     parts.push(
       `## ${labels.connectors}`,
+      `- [Git Tracker](${sourceUrl('extensions/git-tracker/README.md')}): git-tracker`,
       ...content.connectors.map((c) => `- [${c.name}](${sourceUrl(c.path)}): ${c.slug}`)
     )
   }
@@ -42,9 +43,9 @@ export function buildLlmsText(): string {
       'Community uses Docker Compose and an external operator-owned HTTPS OIDC issuer/public trust registry. It brings no identity provider. No installation-time or memory-footprint claim is made.',
       'The create-kodera package is a local pre-release. Run node packages/create-kodera/bin/create-kodera.mjs --selftest from a checkout. After publication: npx create-kodera --self-host --domain chat.example.org --oidc-issuer https://id.example.org/realms/studio --oidc-client-id console --template audiovisual-production --dry-run. The kodera-deploy executable aliases the same CLI. The repository shell entry is bash deploy/community/kodera-deploy.sh; real generation requires public-trust.json. Configuration generation does not provision live channels or start services.',
       `@kodera/extension-sdk ${content.versions.sdk} uses HMAC-SHA256, v1= signatures over timestamp.rawBody, a 300-second window, bounded in-memory signature/delivery replay protection and signed body routing metadata. Native GitHub sha256= signs rawBody and is not wire-compatible. Production needs durable idempotency and resolved-address egress policy; lexical SSRF checks do not pin DNS.`,
-      `synapse-policy ${content.versions.policy} enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs and ProximityFrame v1. Ed25519 verification is not membership or measured proximity; TTL is unsigned. Native MLS/radio/hardware seams are not finished integrations. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.`,
+      `synapse-policy ${content.versions.policy} enforces room policy. kodera-rs provides bounded native identifiers/metadata/codecs, ProximityFrame v1 signed frames and v2 rotating discovery beacons, plus opt-in OpenMLS/Megolm/passkey engines and wasm32 browser bindings. Ed25519/HMAC verification is not membership or measured proximity; v1 TTL is unsigned. Native/wasm32 crypto, radio and hardware seams are not active E2EE relay or hardware-attestation claims. Web sound synthesis uses 48000 Hz; this is not a shipping Rust audio-hardware claim. kodera-theme:v1: is bounded visual metadata, not encryption or authority.`,
       'Clients/Rust/SDK: Apache-2.0. Server and Synapse policy: AGPL-3.0-or-later. Enterprise Edition: separate commercial licence. Never commit environment secrets, private keys or real tenant identifiers. No secrets belong in prompts, example payloads or theme codes.',
-      'Exactly twenty-two reference connector implementations are indexed below; this is not a list of live connected accounts. External providers outside this list remain potential custom SDK integrations, not additional reference connectors in this checkout.',
+      'Twenty-three reference connector implementations (twenty-two slash-command starters plus webhook-only git-tracker) are indexed below; this is not a list of live connected accounts. External providers outside this list remain potential custom SDK integrations, not additional reference connectors in this checkout.',
       '## Developer guides',
       ...content.pages.en.map(
         (page) => `- [${page.title}](/developer-docs/en/${page.id}.md): ${page.summary}`
@@ -54,6 +55,7 @@ export function buildLlmsText(): string {
         (page) => `- [${page.title}](/developer-docs/fr/${page.id}.md): ${page.summary}`
       ),
       '## Reference connectors',
+      `- [Git Tracker](${sourceUrl('extensions/git-tracker/README.md')}): git-tracker`,
       ...content.connectors.map((c) => `- [${c.name}](${sourceUrl(c.path)}): ${c.slug}`),
       '## Optional',
       ...[

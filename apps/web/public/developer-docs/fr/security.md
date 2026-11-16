@@ -12,9 +12,9 @@ synapse-policy 0.1.6 applique la politique de salon configurée avec le service 
 
 ## Codecs Rust, audio et proximité
 
-kodera-rs fournit identifiants, métadonnées natives bornées et codecs ProximityFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.
+kodera-rs fournit identifiants, métadonnées natives bornées, codecs de trame signée ProximityFrame v1 et balises de découverte rotatives v2 de 27 octets, ainsi que les moteurs optionnels OpenMLS/Megolm/passkeys et les bindings navigateur wasm32. Les audits publics vérifient les signatures Ed25519 v1 et les tags HMAC-SHA256 v2 ; aucun ne prouve appartenance, distance ou disponibilité radio, et le TTL v1 n’est pas signé par conception.
 
-La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les interfaces MLS et matérielles ne doivent pas être présentées comme des intégrations achevées.
+La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les moteurs crypto natifs/wasm32 optionnels et les interfaces matérielles ne doivent pas être présentés comme un relais E2EE actif, un trousseau système ou une intégration radio achevée.
 
 > Cette référence n’active ni radio BLE, ni chiffrement média de bout en bout, ni garantie de service d’urgence.
 
@@ -31,6 +31,8 @@ Un code thème transporte des métadonnées visuelles. Le base64 n’est pas du 
 - [ARCHITECTURE.md](https://github.com/kodera-hq/kodera/blob/main/ARCHITECTURE.md)
 
 - [packages/kodera-rs/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/kodera-rs/README.md)
+
+- [packages/kodera-rs/docs/native-crypto.md](https://github.com/kodera-hq/kodera/blob/main/packages/kodera-rs/docs/native-crypto.md)
 
 - [packages/synapse-policy/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/synapse-policy/README.md)
 

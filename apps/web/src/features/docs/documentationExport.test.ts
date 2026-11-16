@@ -26,13 +26,19 @@ it('keeps all generated public guides and llms.txt byte-identical to the rendere
     }
   }
 })
-it('indexes the actual twenty-two reference connectors with existing source paths', () => {
+it('indexes the twenty-two slash-command starters and exports all twenty-three reference connectors including git-tracker', () => {
   expect(developerDocsContent.connectors).toHaveLength(22)
   expect(developerDocsContent.connectors.map((connector) => connector.slug).sort()).toEqual(
     OFFICIAL_EXTENSIONS_CATALOG.map((connector) => connector.slug).sort()
   )
   for (const connector of developerDocsContent.connectors)
     expect(existsSync(resolve(root, connector.path)), connector.path).toBe(true)
+  expect(existsSync(resolve(root, 'extensions/git-tracker/README.md'))).toBe(true)
+  const llms = buildLlmsText()
+  expect(llms).toContain('Twenty-three reference connector implementations')
+  expect(llms).toContain('extensions/git-tracker/README.md): git-tracker')
+  expect(llms).toContain('v2 rotating discovery beacons')
+  expect(llms).toContain('wasm32 browser bindings')
 })
 it('pins documented versions to their authoritative repository files', () => {
   const { versions } = developerDocsContent

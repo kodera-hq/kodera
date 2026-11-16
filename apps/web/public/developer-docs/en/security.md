@@ -12,9 +12,9 @@ synapse-policy 0.1.6 enforces the configured room policy alongside the room-acce
 
 ## Rust codecs, audio and proximity
 
-kodera-rs supplies identifiers, bounded native metadata and ProximityFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.
+kodera-rs supplies identifiers, bounded native metadata, ProximityFrame v1 signed message codecs and v2 rotating 27-byte discovery beacons, plus opt-in OpenMLS/Megolm/passkey crypto and wasm32 browser bindings. The public packet audits verify Ed25519 v1 signatures and HMAC-SHA256 v2 discovery tags; neither proves membership, distance or live radio availability, and v1 TTL is unsigned by design.
 
-Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. MLS and native hardware/provider seams must not be presented as finished integrations.
+Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. Optional native/wasm32 crypto and hardware/provider seams must not be presented as active E2EE relay, OS-keyring or radio integrations.
 
 > No active BLE radio, end-to-end media encryption or emergency-service guarantee is created by this reference.
 
@@ -31,6 +31,8 @@ A theme code carries visual metadata. Base64 is not encryption; do not put secre
 - [ARCHITECTURE.md](https://github.com/kodera-hq/kodera/blob/main/ARCHITECTURE.md)
 
 - [packages/kodera-rs/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/kodera-rs/README.md)
+
+- [packages/kodera-rs/docs/native-crypto.md](https://github.com/kodera-hq/kodera/blob/main/packages/kodera-rs/docs/native-crypto.md)
 
 - [packages/synapse-policy/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/synapse-policy/README.md)
 

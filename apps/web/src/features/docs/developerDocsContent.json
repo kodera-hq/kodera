@@ -184,7 +184,8 @@
         "supportChannel": "extensions",
         "sources": [
           "packages/extension-sdk/README.md",
-          "extensions/frameio-review-bridge/README.md"
+          "extensions/frameio-review-bridge/README.md",
+          "extensions/git-tracker/README.md"
         ],
         "sections": [
           {
@@ -212,10 +213,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Twenty-two reference implementations",
+            "title": "Twenty-three reference implementations",
             "paragraphs": [
-              "The connector list below describes repository implementations, not connected production accounts. Studio starters route Frame.io timecode/OTIO markers and Flamenco/Deadline render telemetry without fetching private media.",
-              "External providers outside these twenty-two starters remain possible custom SDK integrations. This checkout does not contain additional reference connectors beyond the list below."
+              "The connector list below indexes the twenty-two slash-command starters alongside webhook-only git-tracker (extensions/git-tracker/README.md), forming twenty-three synthetic reference implementations in extensions/ rather than connected production accounts. Studio starters route Frame.io timecode/OTIO markers and Flamenco/Deadline render telemetry without fetching private media.",
+              "External providers outside these twenty-three reference implementations remain possible custom SDK integrations. This checkout does not contain additional reference connectors beyond git-tracker and the twenty-two slash-command starters below."
             ],
             "callout": "HTTPS syntax checks and disabled redirects do not pin DNS. Production egress must also enforce resolved-address and network policy.",
             "language": "",
@@ -285,6 +286,7 @@
           "48 kHz",
           "Ed25519",
           "ProximityFrame",
+          "wasm32",
           "theme",
           "synapse"
         ],
@@ -292,6 +294,7 @@
         "sources": [
           "ARCHITECTURE.md",
           "packages/kodera-rs/README.md",
+          "packages/kodera-rs/docs/native-crypto.md",
           "packages/synapse-policy/README.md",
           "apps/web/src/features/sounds/synth.ts"
         ],
@@ -311,8 +314,8 @@
             "id": "native",
             "title": "Rust codecs, audio and proximity",
             "paragraphs": [
-              "kodera-rs supplies identifiers, bounded native metadata and ProximityFrame v1 codecs. The public packet audit checks Ed25519 signatures. A signed beacon is not proof of membership, distance or live radio availability; TTL is unsigned by design.",
-              "Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. MLS and native hardware/provider seams must not be presented as finished integrations."
+              "kodera-rs supplies identifiers, bounded native metadata, ProximityFrame v1 signed message codecs and v2 rotating 27-byte discovery beacons, plus opt-in OpenMLS/Megolm/passkey crypto and wasm32 browser bindings. The public packet audits verify Ed25519 v1 signatures and HMAC-SHA256 v2 discovery tags; neither proves membership, distance or live radio availability, and v1 TTL is unsigned by design.",
+              "Web sound synthesis defines SYNTH_SAMPLE_RATE = 48000. This does not establish a shipping Rust DSP engine or a native audio hardware provider. Optional native/wasm32 crypto and hardware/provider seams must not be presented as active E2EE relay, OS-keyring or radio integrations."
             ],
             "callout": "No active BLE radio, end-to-end media encryption or emergency-service guarantee is created by this reference.",
             "language": "",
@@ -398,7 +401,8 @@
         "supportChannel": "extensions",
         "sources": [
           "packages/extension-sdk/README.md",
-          "extensions/frameio-review-bridge/README.md"
+          "extensions/frameio-review-bridge/README.md",
+          "extensions/git-tracker/README.md"
         ],
         "sections": [
           {
@@ -426,10 +430,10 @@
           },
           {
             "id": "catalogue",
-            "title": "Vingt-deux implémentations de référence",
+            "title": "Vingt-trois implémentations de référence",
             "paragraphs": [
-              "La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Les connecteurs studio routent les marqueurs Frame.io timecode/OTIO et la télémétrie de rendu Flamenco/Deadline sans récupérer les médias.",
-              "Les services externes hors de ces vingt-deux exemples restent des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire au-delà de la liste ci-dessous."
+              "La liste ci-dessous recense les vingt-deux connecteurs à commande slash aux côtés de git-tracker sans commande slash (extensions/git-tracker/README.md), soit vingt-trois implémentations de référence synthétiques dans extensions/ et non des comptes de production connectés. Les connecteurs studio routent les marqueurs Frame.io timecode/OTIO et la télémétrie de rendu Flamenco/Deadline sans récupérer les médias.",
+              "Les services externes hors de ces vingt-trois implémentations de référence restent des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire au-delà de git-tracker et des vingt-deux exemples ci-dessous."
             ],
             "callout": "Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.",
             "language": "",
@@ -499,6 +503,7 @@
           "48 kHz",
           "Ed25519",
           "ProximityFrame",
+          "wasm32",
           "theme",
           "synapse"
         ],
@@ -506,6 +511,7 @@
         "sources": [
           "ARCHITECTURE.md",
           "packages/kodera-rs/README.md",
+          "packages/kodera-rs/docs/native-crypto.md",
           "packages/synapse-policy/README.md",
           "apps/web/src/features/sounds/synth.ts"
         ],
@@ -525,8 +531,8 @@
             "id": "native",
             "title": "Codecs Rust, audio et proximité",
             "paragraphs": [
-              "kodera-rs fournit identifiants, métadonnées natives bornées et codecs ProximityFrame v1. L’audit du paquet public vérifie les signatures Ed25519. Une balise signée ne prouve ni appartenance, ni distance, ni disponibilité radio ; le TTL n’est pas signé par conception.",
-              "La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les interfaces MLS et matérielles ne doivent pas être présentées comme des intégrations achevées."
+              "kodera-rs fournit identifiants, métadonnées natives bornées, codecs de trame signée ProximityFrame v1 et balises de découverte rotatives v2 de 27 octets, ainsi que les moteurs optionnels OpenMLS/Megolm/passkeys et les bindings navigateur wasm32. Les audits publics vérifient les signatures Ed25519 v1 et les tags HMAC-SHA256 v2 ; aucun ne prouve appartenance, distance ou disponibilité radio, et le TTL v1 n’est pas signé par conception.",
+              "La synthèse sonore Web définit SYNTH_SAMPLE_RATE = 48000. Cela ne prouve pas l’existence d’un moteur DSP Rust livré ou d’un provider audio matériel natif. Les moteurs crypto natifs/wasm32 optionnels et les interfaces matérielles ne doivent pas être présentés comme un relais E2EE actif, un trousseau système ou une intégration radio achevée."
             ],
             "callout": "Cette référence n’active ni radio BLE, ni chiffrement média de bout en bout, ni garantie de service d’urgence.",
             "language": "",

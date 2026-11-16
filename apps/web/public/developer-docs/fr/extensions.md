@@ -33,15 +33,17 @@ GitHub natif utilise sha256= sur rawBody, sans préfixe temporel SDK. L’adapta
 
 > Une signature valide ne constitue ni une autorisation de locataire ni une garantie antirejeu persistante.
 
-## Vingt-deux implémentations de référence
+## Vingt-trois implémentations de référence
 
-La liste ci-dessous décrit les implémentations du dépôt, pas des comptes de production connectés. Les connecteurs studio routent les marqueurs Frame.io timecode/OTIO et la télémétrie de rendu Flamenco/Deadline sans récupérer les médias.
+La liste ci-dessous recense les vingt-deux connecteurs à commande slash aux côtés de git-tracker sans commande slash (extensions/git-tracker/README.md), soit vingt-trois implémentations de référence synthétiques dans extensions/ et non des comptes de production connectés. Les connecteurs studio routent les marqueurs Frame.io timecode/OTIO et la télémétrie de rendu Flamenco/Deadline sans récupérer les médias.
 
-Les services externes hors de ces vingt-deux exemples restent des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire au-delà de la liste ci-dessous.
+Les services externes hors de ces vingt-trois implémentations de référence restent des intégrations possibles via le SDK. Ce checkout ne contient pas de connecteur de référence supplémentaire au-delà de git-tracker et des vingt-deux exemples ci-dessous.
 
 > Les contrôles de syntaxe HTTPS et le refus des redirections ne figent pas le DNS. L’egress de production doit aussi contrôler les adresses résolues et le réseau.
 
 ## Connecteurs
+
+- [Git Tracker](https://github.com/kodera-hq/kodera/blob/main/extensions/git-tracker/README.md): git-tracker
 
 - [Hello Webhook](https://github.com/kodera-hq/kodera/blob/main/extensions/hello-webhook/README.md): hello-webhook
 
@@ -92,3 +94,5 @@ Les services externes hors de ces vingt-deux exemples restent des intégrations 
 - [packages/extension-sdk/README.md](https://github.com/kodera-hq/kodera/blob/main/packages/extension-sdk/README.md)
 
 - [extensions/frameio-review-bridge/README.md](https://github.com/kodera-hq/kodera/blob/main/extensions/frameio-review-bridge/README.md)
+
+- [extensions/git-tracker/README.md](https://github.com/kodera-hq/kodera/blob/main/extensions/git-tracker/README.md)
