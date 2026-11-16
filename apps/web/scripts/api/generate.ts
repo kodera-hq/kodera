@@ -74,15 +74,12 @@ function checkOrganisationCoherence(ops: Operation[], notes: string[]): void {
 export async function generate(options: GenerateOptions): Promise<GenerateResult> {
   const spec: Spec = readPinnedSpec(options.contract, options.lock)
 
-  const ast = await openapiTS(
-    optionalResponseHeadersForTypes(spec) as Parameters<typeof openapiTS>[0],
-    {
-      cwd: pathToFileURL(resolve(options.contract)),
-      // The contract is the source of truth for what is optional; nothing here
-      // second-guesses it, so no `defaultNonNullable` or `emptyObjectsUnknown`.
-      alphabetize: false,
-    }
-  )
+  const ast = await openapiTS(JSON.stringify(optionalResponseHeadersForTypes(spec)), {
+    cwd: pathToFileURL(resolve(options.contract)),
+    // The contract is the source of truth for what is optional; nothing here
+    // second-guesses it, so no `defaultNonNullable` or `emptyObjectsUnknown`.
+    alphabetize: false,
+  })
   const types = astToString(ast)
 
   const ops = operations(spec)

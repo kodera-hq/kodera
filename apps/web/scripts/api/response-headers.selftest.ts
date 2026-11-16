@@ -86,9 +86,7 @@ test('only optional response references expand; input and unrelated schema remai
 })
 
 test('actual pinned emitter produces optional and required property signatures correctly', async () => {
-  const nodes = await openapiTS(
-    optionalResponseHeadersForTypes(fixture()) as Parameters<typeof openapiTS>[0]
-  )
+  const nodes = await openapiTS(JSON.stringify(optionalResponseHeadersForTypes(fixture())))
   const seen: Record<string, boolean> = {}
   function visit(node: ts.Node): void {
     if (
@@ -110,7 +108,7 @@ test('actual pinned emitter produces optional and required property signatures c
     'X-Shared': true,
   })
   // Calibration: bypassing the adapter must reproduce the pinned emitter's reference defect.
-  const baseline = await openapiTS(fixture() as Parameters<typeof openapiTS>[0])
+  const baseline = await openapiTS(JSON.stringify(fixture()))
   const signatures: boolean[] = []
   function raw(node: ts.Node): void {
     if (
