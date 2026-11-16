@@ -199,6 +199,19 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append(
             "desktop-release Windows step must install a SHA256-verified NSIS packager and export KODERA_NSIS_MAKENSIS_PATH"
         )
+    autocrlf_idx = desktop_block.find("git config --global core.autocrlf false")
+    desktop_checkout_idx = desktop_block.find("uses: actions/checkout@")
+    if (
+        autocrlf_idx == -1
+        or "git config --global core.eol lf" not in desktop_block
+        or desktop_checkout_idx == -1
+        or autocrlf_idx > desktop_checkout_idx
+    ):
+        errors.append(
+            "desktop-release Windows runner must enforce core.autocrlf=false and core.eol=lf prior to actions/checkout"
+        )
+    if not (root / ".gitattributes").is_file():
+        errors.append("repository root must carry .gitattributes enforcing LF text line endings")
     if "scripts/ci/package-desktop-release.mjs" not in desktop_block:
         errors.append("desktop-release must invoke scripts/ci/package-desktop-release.mjs")
     if not (root / "scripts" / "ci" / "package-desktop-release.mjs").is_file():
@@ -486,6 +499,11 @@ def run_selftest(baseline: str) -> int:
             "removed SHA256-verified Windows NSIS packager",
             lambda s: s.replace("KODERA_NSIS_MAKENSIS_PATH=", "UNUSED_NSIS_PATH=", 1),
             "desktop-release Windows step must install a SHA256-verified NSIS packager",
+        ),
+        (
+            "removed Windows LF git checkout guard before actions/checkout",
+            lambda s: s.replace("git config --global core.autocrlf false", "git config --global core.autocrlf true", 1),
+            "desktop-release Windows runner must enforce core.autocrlf=false and core.eol=lf prior to actions/checkout",
         ),
         (
             "omitted --omit=dev from npm sbom in publish-release",

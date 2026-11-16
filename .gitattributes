@@ -1,0 +1,30 @@
+# Enforce deterministic LF line endings across Linux, macOS, and Windows checkouts
+# so prebuild documentation/contract byte-identity checks never drift under core.autocrlf.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wasm binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.jar binary
+*.aar binary
+*.apk binary
+*.aab binary
+*.dmg binary
+*.msi binary
+*.exe binary
+*.deb binary
+*.p12 binary
+*.keystore binary
