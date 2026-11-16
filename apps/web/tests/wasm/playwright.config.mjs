@@ -7,7 +7,7 @@ if (!process.env.WASM_PROOF_ROOT || !process.env.PLAYWRIGHT_BROWSERS_PATH ||
   throw new Error('managed executable path')
 
 export default defineConfig({
-  testDir: '.', testMatch: 'browser-device.spec.mjs', fullyParallel: false,
+  testDir: '.', testMatch: ['browser-device.spec.mjs', 'http-device.spec.mjs'], fullyParallel: false,
   forbidOnly: true, retries: 0, workers: 1, timeout: 30000, globalTimeout: 240000,
   reporter: 'json', outputDir: process.env.WASM_PROOF_ROOT + '/browser-output',
   use: { browserName: 'chromium', headless: true, launchOptions: { executablePath: executable }, trace: 'off', video: 'off',

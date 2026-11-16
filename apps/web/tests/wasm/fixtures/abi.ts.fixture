@@ -1,4 +1,4 @@
-import initialize, { BrowserMlsDevice } from './generated/kodera_rs.js'
+import initialize, { BrowserMlsDevice, BrowserMlsHttpDevice } from './generated/kodera_rs.js'
 
 export async function declarationCalls(host: unknown, owner: string, organisation: string, membership: string,
   seed: Uint8Array, identity: Uint8Array, publicKey: Uint8Array, checkpoint: Uint8Array): Promise<void> {
@@ -14,4 +14,29 @@ export async function declarationCalls(host: unknown, owner: string, organisatio
   const restored = new BrowserMlsDevice(host, owner, organisation, membership)
   const open: Promise<unknown> = restored.openDevice(publicKey, 1, checkpoint, seed)
   await open; restored.close(); restored.free()
+}
+
+// Semantic checking only; this function is never served or executed. Calls use
+// the actual generated declarations without strengthening JsValue/Promise<any>.
+export async function httpDeclarationCalls(host: unknown, owner: string, organisation: string, membership: string,
+  seed: Uint8Array, identity: Uint8Array, publicKey: Uint8Array, checkpoint: Uint8Array,
+  manifest: Uint8Array, recordId: string, operationId: string): Promise<void> {
+  await initialize()
+  const actor = new BrowserMlsHttpDevice(host, owner, organisation, membership)
+  const create: Promise<unknown> = actor.createHttpDevice(identity, seed, true)
+  await create
+  const key: unknown = actor.publicKey()
+  const registration: Promise<unknown> = actor.prepareRegistration(recordId, operationId)
+  await registration
+  const attempt: Promise<unknown> = actor.attemptHttp()
+  await attempt
+  const publication: Promise<unknown> = actor.preparePublication(operationId)
+  await publication
+  void key; actor.close(); actor.free()
+  const restored = new BrowserMlsHttpDevice(host, owner, organisation, membership)
+  const open: Promise<unknown> = restored.openHttpDevice(publicKey, 3, 8, checkpoint, manifest, seed)
+  await open; restored.close(); restored.free()
+  const legacy = new BrowserMlsHttpDevice(host, owner, organisation, membership)
+  const empty: Promise<unknown> = legacy.openHttpDevice(publicKey, 1, 1, checkpoint, null, seed)
+  await empty; legacy.close(); legacy.free()
 }

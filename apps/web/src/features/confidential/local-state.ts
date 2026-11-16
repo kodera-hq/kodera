@@ -127,6 +127,12 @@ interface LocatedVault {
   scope: Extract<ConfidentialScope, { kind: 'device-vault' }>
   record: EncryptedRecord
 }
+function sameBytes(left: ArrayBuffer, right: ArrayBuffer): boolean {
+  if (left.byteLength !== right.byteLength) return false
+  const a = new Uint8Array(left), b = new Uint8Array(right)
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
 function scanDeviceContext(tx: IDBTransaction, owner: Owner, context: DeviceContext): Promise<LocatedVault | null> {
   return new Promise((resolve, reject) => {
     let count = 0, bytes = 0, vault: LocatedVault | null = null
@@ -345,7 +351,14 @@ export class ConfidentialStateStore {
       plaintext = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: value.iv,
         additionalData: aad(value.id, value.incarnation, value.generation) }, this.#owner.key, value.ciphertext))
       this.#alive()
-      await transaction(this.#db, 'readonly', async (tx) => { await this.#liveOwner(tx) }, this.#alive, this.#transactions)
+      await transaction(this.#db, 'readonly', async (tx) => {
+        const current = await scanDeviceContext(tx, await this.#liveOwner(tx), captured)
+        // Decryption can outlive a competing outer-only CAS without changing native bytes.
+        if (current === null || current.record.id !== value.id ||
+            current.record.generation !== value.generation ||
+            !sameBytes(current.record.iv, value.iv) ||
+            !sameBytes(current.record.ciphertext, value.ciphertext)) fail('conflict')
+      }, this.#alive, this.#transactions)
       this.#alive()
       return { scope: { ...located.scope }, generation: value.generation, state: decode(plaintext) }
     } catch (error) {

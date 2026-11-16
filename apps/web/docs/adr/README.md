@@ -16,6 +16,8 @@ One file per decision, numbered, never edited after acceptance except to change 
 | [0010](0010-owner-claim-native-dispatch.md) | Owner-claim consume has one enforced native dispatch boundary | Accepted; effective only with configured enforcement and source-bound acceptance |
 | [0011](0011-workspace-homeserver-is-a-second-backend.md) | The workspace's homeserver is the Console's second backend | Accepted; superseded in part by ADR-0012 (the form of `connect-src`, and one homeserver per deployment) |
 | [0012](0012-audio-rooms-join-the-second-backend.md) | Audio rooms join the second backend, and every organisation's homeserver is found under one matrix domain | Accepted |
+| [0013](0013-shared-community-entry.md) | Shared community entry and public member authentication | Accepted |
+| [0014](0014-confidential-device-native-dispatch.md) | Durable confidential-device requests have one closed native dispatcher | Proposed |
 
 The cross-repository identity decision is `kodera-core` ADR-0006. The active
 execution sequence is the project roadmap.

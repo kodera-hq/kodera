@@ -1,0 +1,348 @@
+{
+  "fixtureVersion": 1,
+  "status": "Synthetic public response definitions; no test execution or cryptographic proof",
+  "cryptographicPlaceholders": "The zero32-byte base64 strings are invalid public-wire placeholders, never private keys or real actor/package evidence. Real compiled-worker/Core tests must substitute freshly generated actual public outputs.",
+  "acceptedContext": {
+    "ownerId": "01970000-0000-7000-8000-0000000000aa",
+    "identityId": "01970000-0000-7000-8000-000000000002",
+    "organisationId": "01970000-0000-7000-8000-000000000003",
+    "membershipId": "01970000-0000-7000-8000-000000000004",
+    "issuer": "https://auth.example.test/realms/spec-org",
+    "subject": "fixture-principal",
+    "organisationSlug": "spec-org"
+  },
+  "proposedProfileBounds": {
+    "meBytes": 262144,
+    "identityEntries": 64,
+    "membershipEntries": 64,
+    "postResponseBytes": 16384,
+    "postBodyBytes": 32768,
+    "meTimeoutMs": 10000,
+    "postTimeoutMs": 30000,
+    "observationMaxAgeMs": 5000
+  },
+  "responses": {
+    "me": {
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-Request-Id": "01970000-0000-7000-8000-000000000010",
+        "ETag": "\"abce0156445049880ce259d4ebd08aedaddf1c5ec8788377c554fb223ab75db4\""
+      },
+      "body": {
+        "id": "01970000-0000-7000-8000-0000000000aa",
+        "email": "member@example.test",
+        "display_name": "Fixture Member",
+        "staff": false,
+        "identities": [
+          {
+            "id": "01970000-0000-7000-8000-000000000002",
+            "issuer": "https://auth.example.test/realms/spec-org",
+            "realm": "spec-org",
+            "subject": "fixture-principal",
+            "email": "member@example.test"
+          }
+        ],
+        "organisations": [
+          {
+            "organisation": {
+              "id": "01970000-0000-7000-8000-000000000003",
+              "slug": "spec-org",
+              "name": "Fixture Organisation",
+              "realm": "spec-org"
+            },
+            "membership_id": "01970000-0000-7000-8000-000000000004",
+            "role": "org_member",
+            "state": "active",
+            "identity_id": "01970000-0000-7000-8000-000000000002",
+            "joined_at": "2026-11-16T00:00:00Z"
+          }
+        ]
+      }
+    },
+    "registration": {
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-Request-Id": "01970000-0000-7000-8000-000000000011"
+      },
+      "body": {
+        "deviceId": "01970000-0000-7000-8000-000000000005",
+        "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    "registrationReplay": {
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "Idempotency-Replayed": "true",
+        "X-Request-Id": "01970000-0000-7000-8000-000000000012"
+      },
+      "body": {
+        "deviceId": "01970000-0000-7000-8000-000000000005",
+        "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    "publication": {
+      "status": 201,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-Request-Id": "01970000-0000-7000-8000-000000000013"
+      },
+      "body": {
+        "keyPackageId": "01970000-0000-7000-8000-000000000006",
+        "reference": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "expiresAt": "2026-11-17T00:00:00Z"
+      }
+    },
+    "forbidden": {
+      "status": 403,
+      "headers": {
+        "Content-Type": "application/problem+json",
+        "Cache-Control": "no-store",
+        "X-Request-Id": "01970000-0000-7000-8000-00000000000a"
+      },
+      "body": {
+        "type": "https://kodera.io/problems/forbidden",
+        "title": "Access refused",
+        "status": 403,
+        "request_id": "01970000-0000-7000-8000-00000000000a"
+      }
+    },
+    "duplicatePublication": {
+      "status": 409,
+      "headers": {
+        "Content-Type": "application/problem+json",
+        "Cache-Control": "no-store",
+        "X-Request-Id": "01970000-0000-7000-8000-00000000000b"
+      },
+      "body": {
+        "type": "https://kodera.io/problems/conflict",
+        "title": "Conflict",
+        "status": 409,
+        "request_id": "01970000-0000-7000-8000-00000000000b"
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "missing-identity-binding",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "remove",
+        "jsonPointer": "/organisations/0/identity_id"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "wrong-identity-binding",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/organisations/0/identity_id",
+        "value": "01970000-0000-7000-8000-000000000005"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "inactive-membership",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/organisations/0/state",
+        "value": "suspended"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "unknown-membership-state",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/organisations/0/state",
+        "value": "unknown"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "bounded-decoder"
+    },
+    {
+      "id": "wrong-person",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/id",
+        "value": "01970000-0000-7000-8000-000000000002"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "nil-person",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/id",
+        "value": "00000000-0000-0000-0000-000000000000"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "bounded-decoder"
+    },
+    {
+      "id": "upper-person",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/id",
+        "value": "01970000-0000-7000-8000-0000000000AA"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "bounded-decoder"
+    },
+    {
+      "id": "wrong-issuer",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/identities/0/issuer",
+        "value": "https://other.example.test/realms/spec-org"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "wrong-subject",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/identities/0/subject",
+        "value": "another-principal"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "wrong-organisation",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/organisations/0/organisation/id",
+        "value": "01970000-0000-7000-8000-000000000005"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "wrong-membership",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/organisations/0/membership_id",
+        "value": "01970000-0000-7000-8000-000000000005"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "staff-caller",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "replace",
+        "jsonPointer": "/staff",
+        "value": true
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "duplicate-identity",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "duplicate",
+        "jsonPointer": "/identities/0"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "duplicate-membership",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "duplicate",
+        "jsonPointer": "/organisations/0"
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "accepted-context-binding"
+    },
+    {
+      "id": "identity-count-over-cap",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "append-distinct-to-count",
+        "jsonPointer": "/identities",
+        "value": 65
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "bounded-decoder"
+    },
+    {
+      "id": "membership-count-over-cap",
+      "baseResponse": "me",
+      "mutation": {
+        "operation": "append-distinct-to-count",
+        "jsonPointer": "/organisations",
+        "value": 65
+      },
+      "expected": "refuse-authority-without-storage-or-HTTP-effect",
+      "expectedStage": "bounded-decoder"
+    },
+    {
+      "id": "same-current-principal",
+      "baseResponse": "me",
+      "expected": "accept-exact-selected-context"
+    },
+    {
+      "id": "valid-registration-parser-shape",
+      "baseResponse": "registration",
+      "expected": "accept-only-with-matching-private-dispatch-cell-and-expected-key"
+    },
+    {
+      "id": "exact-registration-replay-parser-shape",
+      "baseResponse": "registrationReplay",
+      "expected": "same-as-registration-no-new-signer"
+    },
+    {
+      "id": "valid-publication-parser-shape",
+      "baseResponse": "publication",
+      "expected": "accept-only-with-matching-private-cell-and-public-wire-digest"
+    },
+    {
+      "id": "403-after-unknown-registration",
+      "baseResponse": "forbidden",
+      "expected": "remain-outcome-unknown-no-nonacceptance-inference"
+    },
+    {
+      "id": "409-post-horizon-publication",
+      "baseResponse": "duplicatePublication",
+      "expected": "remain-outcome-unknown-retain-HPKE-and-pending"
+    }
+  ],
+  "requiredAdditionalRealControls": [
+    "streamed-over-limit-body-with-short-Content-Length",
+    "malformed-UTF8/JSON/content-type",
+    "wrong-returned-signing-key/device/reference/expiry/unknown-fields",
+    "fake-public-201-and-cross-private-cell-response",
+    "real-PG-register/publish-lost-ACK-and-worker-restart",
+    "real-strict-IDB-conflict/abort/commit-with-lost-ACK",
+    "owner/context/credential/worker/RPC-retirement-after-oncomplete",
+    "recoverySpent-arm-commit/lost-ACK/repeated-restart-zero-further-sends"
+  ],
+  "caseUse": "Per-attempt observation against the exact already acceptedContext. Initial creation instead derives ownerId from its healthy fresh Me before freezing that context; these cases do not assume a caller-selected person UUID.",
+  "mutationDefinition": "append-distinct-to-count retains the one healthy selected identity/membership and appends distinct valid other IDs/issuer-subjects/organisation slugs until the target count; it must not create duplicate or ambiguous bindings that could satisfy the wrong refusal oracle. duplicate explicitly duplicates the selected row. Each actual control must assert its named intended stage with a healthy baseline."
+}
