@@ -131,6 +131,8 @@ export interface MessageTimelineProps {
   channelName: string
   viewerId: string
   archived: boolean
+  canWrite?: boolean | undefined
+  canReact?: boolean | undefined
   simulation: boolean
   /** The message whose thread is open beside the log. */
   expandedEventId: string | null
@@ -159,6 +161,8 @@ function MessageTimelineView({
   channelName,
   viewerId,
   archived,
+  canWrite,
+  canReact,
   simulation,
   expandedEventId,
   unreadFrom,
@@ -308,6 +312,8 @@ function MessageTimelineView({
                 placement="timeline"
                 viewerId={viewerId}
                 archived={archived}
+                canWrite={canWrite}
+                canReact={canReact}
                 expanded={expandedEventId === row.message.eventId}
                 repliedMessage={
                   row.message.replyTo === null ? undefined : byEventId.get(row.message.replyTo)

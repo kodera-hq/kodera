@@ -7,14 +7,31 @@
 const RETURN_TO_KEY = 'kodera.web.auth.returnTo'
 
 export function rememberReturnTo(path: string): void {
-  window.sessionStorage.setItem(RETURN_TO_KEY, path)
+  try {
+    window.sessionStorage.setItem(RETURN_TO_KEY, path)
+  } catch {
+    // Storage policy or quota must not crash sign-in or callback redirects.
+  }
+}
+
+export function hasReturnTo(): boolean {
+  try {
+    const path = window.sessionStorage.getItem(RETURN_TO_KEY)
+    return path !== null && path.length > 0
+  } catch {
+    return false
+  }
 }
 
 /** Reads and clears the remembered path. `/` when nothing was recorded —
  * a callback reached with no prior `rememberReturnTo` is not a state this
  * unit expects, but it is not a reason to throw out of a redirect either. */
 export function consumeReturnTo(): string {
-  const path = window.sessionStorage.getItem(RETURN_TO_KEY)
-  window.sessionStorage.removeItem(RETURN_TO_KEY)
-  return path ?? '/'
+  try {
+    const path = window.sessionStorage.getItem(RETURN_TO_KEY)
+    window.sessionStorage.removeItem(RETURN_TO_KEY)
+    return path ?? '/'
+  } catch {
+    return '/'
+  }
 }

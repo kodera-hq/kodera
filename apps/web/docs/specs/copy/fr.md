@@ -1563,6 +1563,8 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.workspace.channel.label-archived` | Archivé |
 | `console.workspace.channel.label-preparing` | En préparation |
 | `console.workspace.channel.label-arriving` | Vos salons arrivent… |
+| `console.workspace.channel.label-read-only` | Salon en lecture seule |
+| `console.workspace.channel.label-join-refused` | Ce salon est sur invitation. Demandez à un administrateur de vous y ajouter. |
 | `console.workspace.channel.title-not-found` | Ce salon n’est pas disponible |
 | `console.workspace.setup.title-preparing` | Votre espace de travail est en préparation |
 | `console.workspace.setup.banner-preparing` | Votre espace se prépare. Vous pourrez y écrire dès qu’il sera prêt. |
@@ -1669,6 +1671,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.workspace.audio.status-listen-only` | Connecté · écoute seule |
 | `console.workspace.audio.label-listen-only` | écoute seule |
 | `console.workspace.audio.label-arriving` | Vos salons arrivent… |
+| `console.workspace.audio.label-join-refused` | sur invitation |
 | `console.workspace.audio.action-mute` | Couper le micro |
 | `console.workspace.audio.action-unmute` | Réactiver le micro |
 | `console.workspace.audio.action-deafen` | Couper le son |

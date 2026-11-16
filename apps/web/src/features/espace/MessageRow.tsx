@@ -58,6 +58,8 @@ export interface MessageRowProps extends MessageRowActions {
   placement: 'timeline' | 'thread'
   viewerId: string
   archived: boolean
+  canWrite?: boolean | undefined
+  canReact?: boolean | undefined
   expanded: boolean
   repliedMessage: MessageView | undefined
   threadReplies: readonly MessageView[]
@@ -79,6 +81,8 @@ function MessageRowView({
   placement,
   viewerId,
   archived: isReadOnlyChannel,
+  canWrite = true,
+  canReact = true,
   expanded,
   repliedMessage: repliedMsg,
   threadReplies,
@@ -111,6 +115,9 @@ function MessageRowView({
   }
   const isoTime = new Date(msg.ts).toISOString()
   const isOwn = msg.sender === viewerId
+  const allowWrite = !isReadOnlyChannel && canWrite
+  const allowReact = !isReadOnlyChannel && canReact
+  const hasMenuItems = allowReact || !inThread || isOwn
   return (
     <TimelineMessage
       document={
@@ -130,7 +137,7 @@ function MessageRowView({
         <UserProfilePopover
           member={member}
           trigger={trigger}
-          onMention={isOwn ? undefined : onMention}
+          onMention={isOwn || !allowWrite ? undefined : onMention}
         />
       )}
       dateTime={isoTime}
@@ -189,78 +196,94 @@ function MessageRowView({
           }
         : {})}
       actions={
-        isReadOnlyChannel ? undefined : (
+        isReadOnlyChannel || (!allowReact && !hasMenuItems) ? undefined : (
           <div className="flex items-center gap-1">
-            <ReactionPalette
-              mine={new Set(msg.reactions.filter((r) => r.mine).map((r) => r.key))}
-              onReact={(key) => onReaction(msg.eventId, key)}
-            />
-            <DropdownMenu
-              key={menuContextKey}
-              label={t('console.workspace.message.actions-label', {
-                author: authorName,
-                time: formatTime(isoTime, locale),
-              })}
-              trigger={
-                <Button
-                  ref={inThread ? undefined : actionsTrigger}
-                  variant="tertiary"
-                  size="sm"
-                  aria-label={t('console.workspace.message.actions-label', {
-                    author: authorName,
-                    time: formatTime(isoTime, locale),
-                  })}
-                >
-                  <span aria-hidden="true">···</span>
-                </Button>
-              }
-              items={[
-                {
-                  label: t('console.workspace.message.action-react'),
-                  onSelect: () => onReaction(msg.eventId, '👍'),
-                },
-                ...(!inThread
-                  ? [
-                      {
-                        label: t('console.workspace.message.action-reply'),
-                        onSelect: () => onReply(msg),
-                      },
-                      {
-                        label: t('console.workspace.message.action-open-thread'),
-                        onSelect: () => {
-                          const trigger = actionsTrigger.current
-                          if (trigger !== null) onOpenThread(msg.eventId, trigger)
+            {allowReact ? (
+              <ReactionPalette
+                mine={new Set(msg.reactions.filter((r) => r.mine).map((r) => r.key))}
+                onReact={(key) => onReaction(msg.eventId, key)}
+              />
+            ) : null}
+            {!hasMenuItems ? null : (
+              <DropdownMenu
+                key={menuContextKey}
+                label={t('console.workspace.message.actions-label', {
+                  author: authorName,
+                  time: formatTime(isoTime, locale),
+                })}
+                trigger={
+                  <Button
+                    ref={inThread ? undefined : actionsTrigger}
+                    variant="tertiary"
+                    size="sm"
+                    aria-label={t('console.workspace.message.actions-label', {
+                      author: authorName,
+                      time: formatTime(isoTime, locale),
+                    })}
+                  >
+                    <span aria-hidden="true">···</span>
+                  </Button>
+                }
+                items={[
+                  ...(allowReact
+                    ? [
+                        {
+                          label: t('console.workspace.message.action-react'),
+                          onSelect: () => onReaction(msg.eventId, '👍'),
                         },
-                      },
-                    ]
-                  : []),
-                ...(!inThread && onPin !== undefined && !msg.redacted
-                  ? [
-                      {
-                        label: t(
-                          pinned
-                            ? 'console.workspace.message.action-unpin'
-                            : 'console.workspace.message.action-pin'
-                        ),
-                        onSelect: () => onPin(msg.eventId, !pinned),
-                      },
-                    ]
-                  : []),
-                ...(isOwn
-                  ? [
-                      {
-                        label: t('console.workspace.message.action-edit'),
-                        onSelect: () => onEdit(msg),
-                      },
-                      {
-                        label: t('console.workspace.message.action-delete'),
-                        destructive: true,
-                        onSelect: () => onRemove(msg.eventId),
-                      },
-                    ]
-                  : []),
-              ]}
-            />
+                      ]
+                    : []),
+                  ...(!inThread && allowWrite
+                    ? [
+                        {
+                          label: t('console.workspace.message.action-reply'),
+                          onSelect: () => onReply(msg),
+                        },
+                      ]
+                    : []),
+                  ...(!inThread
+                    ? [
+                        {
+                          label: t('console.workspace.message.action-open-thread'),
+                          onSelect: () => {
+                            const trigger = actionsTrigger.current
+                            if (trigger !== null) onOpenThread(msg.eventId, trigger)
+                          },
+                        },
+                      ]
+                    : []),
+                  ...(!inThread && onPin !== undefined && !msg.redacted
+                    ? [
+                        {
+                          label: t(
+                            pinned
+                              ? 'console.workspace.message.action-unpin'
+                              : 'console.workspace.message.action-pin'
+                          ),
+                          onSelect: () => onPin(msg.eventId, !pinned),
+                        },
+                      ]
+                    : []),
+                  ...(isOwn && allowWrite
+                    ? [
+                        {
+                          label: t('console.workspace.message.action-edit'),
+                          onSelect: () => onEdit(msg),
+                        },
+                      ]
+                    : []),
+                  ...(isOwn
+                    ? [
+                        {
+                          label: t('console.workspace.message.action-delete'),
+                          destructive: true,
+                          onSelect: () => onRemove(msg.eventId),
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            )}
           </div>
         )
       }
