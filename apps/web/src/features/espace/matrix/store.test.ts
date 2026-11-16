@@ -1884,7 +1884,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
                 state: {
                   events: [
                     {
-                      event_id: '$m-gen',
+                      event_id: '$member_gen',
                       type: 'm.room.member',
                       sender: ME,
                       origin_server_ts: 1,
@@ -1892,7 +1892,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
                       content: { membership: 'join' },
                     },
                     {
-                      event_id: '$pl-gen',
+                      event_id: '$power_gen',
                       type: 'm.room.power_levels',
                       sender: `@kodera-agent:${SERVER}`,
                       origin_server_ts: 2,
@@ -1908,7 +1908,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
                 state: {
                   events: [
                     {
-                      event_id: '$m-ann',
+                      event_id: '$member_ann',
                       type: 'm.room.member',
                       sender: ME,
                       origin_server_ts: 1,
@@ -1916,7 +1916,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
                       content: { membership: 'join' },
                     },
                     {
-                      event_id: '$pl-ann',
+                      event_id: '$power_ann',
                       type: 'm.room.power_levels',
                       sender: `@kodera-agent:${SERVER}`,
                       origin_server_ts: 2,
@@ -1936,7 +1936,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
                 state: {
                   events: [
                     {
-                      event_id: '$m-off',
+                      event_id: '$member_off',
                       type: 'm.room.member',
                       sender: ME,
                       origin_server_ts: 1,
@@ -2189,7 +2189,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
     const announcementsReadOnly = snapshotFixture(undefined, {
       state: [
         {
-          event_id: '$pl-ann',
+          event_id: '$power_ann',
           type: 'm.room.power_levels',
           sender: SNAPSHOT_ME,
           origin_server_ts: SNAPSHOT_TIME,
@@ -2205,7 +2205,7 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
     const exempt = snapshotFixture(undefined, {
       state: [
         {
-          event_id: '$pl-exempt',
+          event_id: '$power_exempt',
           type: 'm.room.power_levels',
           sender: SNAPSHOT_ME,
           origin_server_ts: SNAPSHOT_TIME,
