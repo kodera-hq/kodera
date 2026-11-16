@@ -14,7 +14,9 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import contextlib
 import copy
+import io
 import json
 import os
 import re
@@ -23,6 +25,7 @@ import stat
 import sys
 import tempfile
 import types
+import unittest
 import urllib.parse
 import uuid
 from collections.abc import Callable
@@ -64,6 +67,7 @@ ISOLATED_ROOM_ACCESS_SECRETS = (
 EXPECTED_PUBLIC_ENV_DEFAULTS = {
     "KODERA_DOMAIN": "chat.example.org",
     "KODERA_ACME_EMAIL": "ops@example.org",
+    "DJANGO_ALLOWED_HOSTS": "chat.example.org,127.0.0.1,server",
     "KODERA_OIDC_PROVIDER_ORIGIN": "https://id.example.org",
     "POSTGRES_USER": "kodera",
     "POSTGRES_DB": "kodera_server",
@@ -559,6 +563,13 @@ def check_community_deploy(
     if migrate_svc is not None:
         if migrate_svc.environment.get("KODERA_BILLING_ENABLED") != '"false"':
             errors.append('service \'migrate\' must set KODERA_BILLING_ENABLED to \'"false"\'')
+    expected_allowed_hosts_default = "${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1,server}"
+    for core_svc_name in ("server", "migrate"):
+        svc = services.get(core_svc_name)
+        if svc is not None and svc.environment.get("DJANGO_ALLOWED_HOSTS") != expected_allowed_hosts_default:
+            errors.append(
+                f"service '{core_svc_name}' must admit internal host 'server' in DJANGO_ALLOWED_HOSTS fallback for tenant-agent polling"
+            )
 
     # 4b. Every pulled image is pinned by digest; every service has a memory limit.
     for svc in services.values():
@@ -1861,8 +1872,12 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
         host = actual.get("KODERA_DOMAIN", "").strip("'\"")
         if not base or not host.endswith("." + base):
             errors.append("KODERA_DOMAIN must be a subdomain of KODERA_MATRIX_DOMAIN in the split topology")
-        if actual.get("DJANGO_ALLOWED_HOSTS", "").strip("'\"") != f"api.{base},127.0.0.1":
-            errors.append("DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1 in the split topology")
+        if actual.get("DJANGO_ALLOWED_HOSTS", "").strip("'\"") != f"api.{base},127.0.0.1,server":
+            errors.append("DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1,server in the split topology")
+    elif community_enabled:
+        host = actual.get("KODERA_DOMAIN", "").strip("'\"")
+        if actual.get("DJANGO_ALLOWED_HOSTS", "").strip("'\"") != f"{host},127.0.0.1,server":
+            errors.append("DJANGO_ALLOWED_HOSTS must be <KODERA_DOMAIN>,127.0.0.1,server for the canonical Community workspace")
     staff = actual.get("KODERA_STAFF_ISSUER", "").strip("'\"")
     if staff:
         try:
@@ -1972,6 +1987,17 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "the template defaults to the split topology",
             lambda c, e, cf: (c, e.replace(f"{TOPOLOGY_ENV_NAME}=single", f"{TOPOLOGY_ENV_NAME}=split", 1), cf),
             f".env.example must default {TOPOLOGY_ENV_NAME} to 'single'",
+        ),
+        (
+            "the template drops internal server host from DJANGO_ALLOWED_HOSTS",
+            lambda c, e, cf: (c, e.replace("DJANGO_ALLOWED_HOSTS=chat.example.org,127.0.0.1,server", "DJANGO_ALLOWED_HOSTS=chat.example.org,127.0.0.1", 1), cf),
+            "public config key DJANGO_ALLOWED_HOSTS in .env.example must be 'chat.example.org,127.0.0.1,server'",
+        ),
+        (
+            "server drops internal server host from DJANGO_ALLOWED_HOSTS fallback",
+            lambda c, e, cf: (c.replace("      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1,server}\n      DJANGO_SECRET_KEY:",
+                                        "      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1}\n      DJANGO_SECRET_KEY:", 1), e, cf),
+            "service 'server' must admit internal host 'server' in DJANGO_ALLOWED_HOSTS fallback for tenant-agent polling",
         ),
         (
             "leak LIVEKIT_API_SECRET into server environment",
@@ -2612,19 +2638,21 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         return re.sub(r"(?m)^" + key + r"=.*$", key + "=" + value, env)
 
     split_env = setting(setting(setting(setting(filled, TOPOLOGY_ENV_NAME, "split"), "KODERA_DOMAIN", "chat.example.net"),
-                                "KODERA_MATRIX_DOMAIN", "example.net"), "DJANGO_ALLOWED_HOSTS", "api.example.net,127.0.0.1")
+                                "KODERA_MATRIX_DOMAIN", "example.net"), "DJANGO_ALLOWED_HOSTS", "api.example.net,127.0.0.1,server")
     topology_accepted = (
         ("an .env written before topologies existed", re.sub(r"(?m)^" + TOPOLOGY_ENV_NAME + r"=.*\n?", "", filled)),
         ("an empty topology", setting(filled, TOPOLOGY_ENV_NAME, "")),
-        ("the split topology with its API host", split_env),
+        ("the split topology with its API and internal server hosts", split_env),
     )
     topology_refused = (
         ("an unknown topology", setting(filled, TOPOLOGY_ENV_NAME, "both"), f"{TOPOLOGY_ENV_NAME} must be single or split"),
         ("a topology in another case", setting(filled, TOPOLOGY_ENV_NAME, "Split"), f"{TOPOLOGY_ENV_NAME} must be single or split"),
-        ("split with the single-origin allowed hosts", setting(split_env, "DJANGO_ALLOWED_HOSTS", "chat.example.net,127.0.0.1"),
-         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1 in the split topology"),
+        ("split with the single-origin allowed hosts", setting(split_env, "DJANGO_ALLOWED_HOSTS", "chat.example.net,127.0.0.1,server"),
+         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1,server in the split topology"),
+        ("split missing internal server host for tenant-agent", setting(split_env, "DJANGO_ALLOWED_HOSTS", "api.example.net,127.0.0.1"),
+         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1,server in the split topology"),
         ("split admitting a wildcard host", setting(split_env, "DJANGO_ALLOWED_HOSTS", "*"),
-         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1 in the split topology"),
+         "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1,server in the split topology"),
         ("split with a web origin outside the base domain", setting(split_env, "KODERA_DOMAIN", "chat.example.com"),
          "KODERA_DOMAIN must be a subdomain of KODERA_MATRIX_DOMAIN in the split topology"),
         ("split with the web origin on the base domain itself", setting(split_env, "KODERA_DOMAIN", "example.net"),
@@ -2647,13 +2675,20 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
     canonical = canonical.replace("https://id.example.net/realms/acme", "https://id.example.net/realms/community")
     canonical = re.sub(r"(?m)^KODERA_DOMAIN=.*$", "KODERA_DOMAIN=community.example.net", canonical)
     canonical = re.sub(r"(?m)^KODERA_MATRIX_DOMAIN=.*$", "KODERA_MATRIX_DOMAIN=example.net", canonical)
+    canonical = re.sub(r"(?m)^DJANGO_ALLOWED_HOSTS=.*$", "DJANGO_ALLOWED_HOSTS=community.example.net,127.0.0.1,server", canonical)
     for key in (*AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME):
         canonical = canonical.replace(key + "=\n", key + "=synthetic-issued-token-for-test-only\n")
     if preflight_env(env_text, canonical):
         print("[FAIL] canonical Community preflight refused valid public configuration", file=sys.stderr)
         return 1
+    canonical_split = setting(setting(canonical, TOPOLOGY_ENV_NAME, "split"), "DJANGO_ALLOWED_HOSTS", "api.example.net,127.0.0.1,server")
+    if preflight_env(env_text, canonical_split):
+        print("[FAIL] canonical Community split preflight refused valid public configuration", file=sys.stderr)
+        return 1
     community_mutations = [
         ("wrong base domain", canonical.replace("KODERA_MATRIX_DOMAIN=example.net", "KODERA_MATRIX_DOMAIN=community.example.net"), "KODERA_DOMAIN must match"),
+        ("missing internal server host in single topology", canonical.replace("DJANGO_ALLOWED_HOSTS=community.example.net,127.0.0.1,server", "DJANGO_ALLOWED_HOSTS=community.example.net,127.0.0.1"), "DJANGO_ALLOWED_HOSTS must be <KODERA_DOMAIN>,127.0.0.1,server"),
+        ("missing internal server host in split topology", canonical_split.replace("DJANGO_ALLOWED_HOSTS=api.example.net,127.0.0.1,server", "DJANGO_ALLOWED_HOSTS=api.example.net,127.0.0.1"), "DJANGO_ALLOWED_HOSTS must be api.<KODERA_MATRIX_DOMAIN>,127.0.0.1,server"),
         ("missing owner", canonical.replace("00000000-0000-4000-8000-000000000001", ""), "KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID"),
         ("wrong slug", canonical.replace("ORG_SLUG=community", "ORG_SLUG=wrong"), "KODERA_DEFAULT_COMMUNITY_ORG_SLUG"),
         ("foreign issuer", canonical.replace("ISSUER=https://id.example.net/realms/community", "ISSUER=https://other.example.net/realms/community"), "customer trust lane"),
@@ -3010,6 +3045,92 @@ def run_synapse_config_selftest(source: str) -> int:
     return 0
 
 
+def check_generator_and_allowed_hosts(deploy_source: str, suite_source: str) -> list[str]:
+    """Execute deploy/community/kodera_deploy.py selftest() and test_deploy_allowed_hosts.py."""
+    community_dir = str(ROOT / "deploy" / "community")
+    previous_deploy = sys.modules.get("kodera_deploy")
+    previous_suite = sys.modules.get("test_deploy_allowed_hosts")
+    added_path = community_dir not in sys.path
+    if added_path:
+        sys.path.insert(0, community_dir)
+    try:
+        deploy_mod = types.ModuleType("kodera_deploy")
+        deploy_mod.__file__ = str(ROOT / "deploy" / "community" / "kodera_deploy.py")
+        sys.modules["kodera_deploy"] = deploy_mod
+        try:
+            exec(compile(deploy_source, "kodera_deploy.py", "exec"), deploy_mod.__dict__)  # noqa: S102 - reviewed repository file
+            with contextlib.redirect_stdout(io.StringIO()):
+                deploy_mod.selftest()
+        except Exception as error:  # noqa: BLE001
+            return [f"kodera_deploy.py selftest failed: {type(error).__name__}: {error}"]
+        suite_mod = types.ModuleType("test_deploy_allowed_hosts")
+        suite_mod.__file__ = str(ROOT / "deploy" / "community" / "test_deploy_allowed_hosts.py")
+        sys.modules["test_deploy_allowed_hosts"] = suite_mod
+        try:
+            exec(compile(suite_source, "test_deploy_allowed_hosts.py", "exec"), suite_mod.__dict__)  # noqa: S102 - reviewed repository file
+            loaded = unittest.defaultTestLoader.loadTestsFromModule(suite_mod)
+            result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(loaded)
+        except Exception as error:  # noqa: BLE001
+            return [f"test_deploy_allowed_hosts.py could not run: {type(error).__name__}: {error}"]
+        if result.testsRun < 4 or not result.wasSuccessful():
+            return ["test_deploy_allowed_hosts.py failed"]
+        return []
+    finally:
+        if previous_deploy is None:
+            sys.modules.pop("kodera_deploy", None)
+        else:
+            sys.modules["kodera_deploy"] = previous_deploy
+        if previous_suite is None:
+            sys.modules.pop("test_deploy_allowed_hosts", None)
+        else:
+            sys.modules["test_deploy_allowed_hosts"] = previous_suite
+        if added_path and community_dir in sys.path:
+            sys.path.remove(community_dir)
+
+
+def run_generator_selftest(deploy_source: str, suite_source: str) -> int:
+    baseline = check_generator_and_allowed_hosts(deploy_source, suite_source)
+    if baseline:
+        for error in baseline:
+            print(f"[FAIL] baseline generator or allowed-hosts suite invalid: {error}", file=sys.stderr)
+        return 1
+    mutations = (
+        (
+            "generator drops internal server host in single topology",
+            "deploy",
+            "allowed_hosts = host + ',127.0.0.1,server'",
+            "allowed_hosts = host + ',127.0.0.1'",
+            "kodera_deploy.py selftest failed",
+        ),
+        (
+            "generator drops internal server host in split topology",
+            "deploy",
+            "allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1,server'",
+            "allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1'",
+            "kodera_deploy.py selftest failed",
+        ),
+        (
+            "allowed-hosts unit suite assertion fails",
+            "suite",
+            'self.assertIn("server", hosts)',
+            'self.assertNotIn("server", hosts)',
+            "test_deploy_allowed_hosts.py failed",
+        ),
+    )
+    for label, target, old, new, expected in mutations:
+        mutated_deploy = deploy_source.replace(old, new, 1) if target == "deploy" else deploy_source
+        mutated_suite = suite_source.replace(old, new, 1) if target == "suite" else suite_source
+        if (mutated_deploy, mutated_suite) == (deploy_source, suite_source):
+            print(f"[FAIL] generator mutation '{label}' produced no change", file=sys.stderr)
+            return 1
+        errors = check_generator_and_allowed_hosts(mutated_deploy, mutated_suite)
+        if not any(expected in error for error in errors):
+            print(f"[FAIL] generator mutation '{label}' did not trigger '{expected}' (got {errors})", file=sys.stderr)
+            return 1
+    print(f"OK: kodera_deploy.py selftest and test_deploy_allowed_hosts.py passed, {len(mutations)} generator and suite mutations refused by name.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -3050,6 +3171,8 @@ def main() -> int:
         (args.caddyfile, "Caddyfile"),
         (ROOT / "deploy/community/configure_synapse.py", "configure_synapse.py"),
         (ROOT / "deploy/community/livekit.yaml", "livekit.yaml"),
+        (ROOT / "deploy/community/kodera_deploy.py", "kodera_deploy.py"),
+        (ROOT / "deploy/community/test_deploy_allowed_hosts.py", "test_deploy_allowed_hosts.py"),
         (DEFAULT_SPLIT_COMPOSE, "docker-compose.split.yml"),
         (DEFAULT_SPLIT_CADDYFILE, "Caddyfile.split"),
     ):
@@ -3115,6 +3238,7 @@ def main() -> int:
             or run_scaffolder_selftest()
             or run_split_selftest(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
             or run_collaboration_selftest(compose_text, env_text, caddyfile_text, texts["docker-compose.split.yml"], texts["Caddyfile.split"])
+            or run_generator_selftest(texts["kodera_deploy.py"], texts["test_deploy_allowed_hosts.py"])
             or run_selftest(compose_text, env_text, caddyfile_text)
         )
 
@@ -3132,12 +3256,14 @@ def main() -> int:
             print("[FAIL] .env is not UTF-8 text", file=sys.stderr)
             return 1
         errors += [f".env: {err}" for err in preflight_env(env_text, operator_env)]
+    else:
+        errors += check_generator_and_allowed_hosts(texts["kodera_deploy.py"], texts["test_deploy_allowed_hosts.py"])
     if errors:
         for err in errors:
             print(f"[FAIL] {err}", file=sys.stderr)
         return 1
 
-    print("OK: deploy/community passed all compose, .env.example, Caddyfile, split topology, LiveKit, Synapse and scaffolder parity checks.")
+    print("OK: deploy/community passed all compose, .env.example, Caddyfile, split topology, LiveKit, Synapse, generator and scaffolder parity checks.")
     return 0
 
 

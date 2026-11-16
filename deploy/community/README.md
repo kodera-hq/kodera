@@ -71,7 +71,7 @@ In both, the Matrix server name is `KODERA_DOMAIN`, federation stays closed and 
 Use it when the web client is a static site hosted elsewhere (for example `https://community.example.org`) and this stack serves the backends only. With `KODERA_DOMAIN=community.example.org` and `KODERA_MATRIX_DOMAIN=example.org`:
 
 - **DNS:** `api.example.org`, `matrix.community.example.org` and `livekit.community.example.org` point at this host. `community.example.org` points at the static host, not here.
-- **`.env`:** `KODERA_TOPOLOGY=split` and `DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1`. The generator writes both with `--topology split`; the preflight refuses a split `.env` whose allowed hosts are not exactly the API host, or whose `KODERA_DOMAIN` is not below `KODERA_MATRIX_DOMAIN`.
+- **`.env`:** `KODERA_TOPOLOGY=split` and `DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server` (admitting internal `http://server:8000/agent/v1/commands` polling from `tenant-agent` while Caddy answers `404` on `/agent/*` and `/staff/*` publicly). The generator writes both with `--topology split`; the preflight refuses a split `.env` whose allowed hosts are not `api.<KODERA_MATRIX_DOMAIN>,127.0.0.1,server`, or whose `KODERA_DOMAIN` is not below `KODERA_MATRIX_DOMAIN`.
 - **Start:** `docker compose -f docker-compose.yml -f docker-compose.split.yml up -d` (add `--profile community-governance` for the canonical workspace). Synapse refuses to start when `KODERA_TOPOLOGY` and the Compose files disagree, so a split `.env` started without the override, or the reverse, fails visibly.
 - **Firewall:** 80/tcp, 443/tcp and 443/udp for Caddy; 7881/tcp and 50000–50200/udp for LiveKit media (its `use_external_ip` setting advertises the host's public address). Nothing else.
 

@@ -332,7 +332,7 @@ export async function generate(options: Options) {
     KODERA_MATRIX_DOMAIN:
       labels.length >= 3 ? labels.slice(1).join('.') : prepared.domain,
     KODERA_ACME_EMAIL: mailbox,
-    DJANGO_ALLOWED_HOSTS: `${prepared.domain},127.0.0.1`,
+    DJANGO_ALLOWED_HOSTS: `${prepared.domain},127.0.0.1,server`,
     KODERA_OIDC_PROVIDER_ORIGIN: new URL(prepared.issuer).origin,
     KODERA_AUTH_TRUST: `'${trust}'`,
     // An isolated self-host: no canonical Community bootstrap and no tenant agent.

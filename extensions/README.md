@@ -11,9 +11,11 @@ the SDK, not as integrations you can switch on.
   harness. No implementation here has been run against a provider's own service, and a
   provider's name in a directory describes the payload shape the example models, not an
   endorsement by that provider.
-- **Not installed, hosted or connected by this repository.** Kodera's server has no extension
-  registry, installer or webhook delivery yet, so nothing registers these manifests or
-  calls their handlers for a workspace. Each manifest's `webhookUrl` is a reserved
+- **Not auto-registered, hosted or connected on startup.** While
+  [`apps/server/apps/extensions/`](../apps/server/apps/extensions/README.md) implements
+  workspace-scoped installation, key rotation and dual-key HMAC outbound webhook delivery,
+  the directories in `extensions/` remain synthetic reference implementations that are not
+  auto-registered on server startup. Each manifest's `webhookUrl` is a reserved
   documentation host.
 - **Workspace templates name them as an intent.** A template of
   [`deploy/community`](../deploy/community/README.md) may list one of these directories under

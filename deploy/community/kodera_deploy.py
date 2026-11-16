@@ -78,12 +78,12 @@ def generate(args):
     matrix_domain = domain(getattr(args, 'matrix_domain', None) or (host.split('.', 1)[1] if host.count('.') >= 2 else host))
     if template_id == 'community' and host != 'community.' + matrix_domain:
         raise ValueError('Community host must be community.<matrix-domain>')
-    allowed_hosts = host + ',127.0.0.1'
+    allowed_hosts = host + ',127.0.0.1,server'
     if topology == 'split':
         # The web client keeps its own host; the API moves to api.<matrix-domain>.
         if not host.endswith('.' + matrix_domain):
             raise ValueError('Split topology needs a web client host below the Matrix domain')
-        allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1'
+        allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1,server'
         domain('matrix.' + host)
         domain('livekit.' + host)
     issuer = https(args.oidc_issuer)
@@ -307,17 +307,23 @@ def selftest():
                 pass
             else:
                 raise AssertionError('Invalid Community bootstrap input accepted')
-        # Topologies: `single` stays the default; `split` admits the API host and is refused where
-        # its origins cannot exist.
+        # Topologies: `single` stays the default; `split` admits the API host and internal `server`
+        # for tenant-agent polling, and is refused where its origins cannot exist.
         single = generate(args()).read_text()
-        assert 'KODERA_TOPOLOGY=single\n' in single and 'DJANGO_ALLOWED_HOSTS=chat.example.org,127.0.0.1\n' in single
+        assert 'KODERA_TOPOLOGY=single\n' in single and 'DJANGO_ALLOWED_HOSTS=chat.example.org,127.0.0.1,server\n' in single
+        community_single = generate(args(template='community')).read_text()
+        assert 'DJANGO_ALLOWED_HOSTS=community.example.org,127.0.0.1,server\n' in community_single
+        assert not check.preflight_env(TEMPLATE.read_text(), community_single)
+        assert check.preflight_env(TEMPLATE.read_text(), community_single.replace('DJANGO_ALLOWED_HOSTS=community.example.org,127.0.0.1,server\n', 'DJANGO_ALLOWED_HOSTS=community.example.org,127.0.0.1\n'))
         split = generate(args(topology='split')).read_text()
-        assert 'KODERA_TOPOLOGY=split\n' in split and 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n' in split
+        assert 'KODERA_TOPOLOGY=split\n' in split and 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n' in split
         assert 'KODERA_DOMAIN=chat.example.org\n' in split and not check.preflight_env(TEMPLATE.read_text(), split)
+        assert check.preflight_env(TEMPLATE.read_text(), split.replace('DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n', 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n'))
         community_split = generate(args(template='community', topology='split')).read_text()
         assert 'KODERA_DOMAIN=community.example.org\n' in community_split
-        assert 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n' in community_split
+        assert 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n' in community_split
         assert not check.preflight_env(TEMPLATE.read_text(), community_split)
+        assert check.preflight_env(TEMPLATE.read_text(), community_split.replace('DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1,server\n', 'DJANGO_ALLOWED_HOSTS=api.example.org,127.0.0.1\n'))
         for changes in (dict(topology='both'), dict(topology='Split'), dict(topology='split', domain='example.org')):
             try:
                 generate(args(**changes))
