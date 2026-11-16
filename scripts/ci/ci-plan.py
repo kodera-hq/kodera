@@ -24,10 +24,11 @@ AREAS: dict[str, str] = {
     r"|scripts/ci/check-community-deploy\.py$|scripts/ci/check-publish-images-workflow\.py$"
     r"|\.github/workflows/(ci-server|publish-images)\.yml$|\.nvmrc$",
     "web": r"\.nvmrc$|package\.json$|package-lock\.json$|apps/web/|apps/server/|packages/design-tokens/"
-    r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|extensions/|\.github/workflows/ci-web\.yml$",
+    r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|packages/kodera-rs/vectors/"
+    r"|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
     r"|security/backports/glib-0\.18\.5/|scripts/ci/qualify-glib-iterator\.py$"
-    r"|apps/web/tests/wasm/|apps/web/src/features/confidential/local-state\.ts$"
+    r"|apps/web/tests/wasm/|apps/web/src/features/confidential/(local-state|device-http-record|device-cas-host)\.ts$"
     r"|scripts/ci/build-wasm-browser-proof(-selftest)?\.py$|package(-lock)?\.json$|apps/web/package\.json$"
     r"|scripts/ci/(check-release-workflow\.py|assemble-release-sbom\.py|package-desktop-release\.mjs)$"
     r"|\.nvmrc$|\.github/workflows/(ci-rust-desktop|release-binaries)\.yml$",
@@ -89,6 +90,14 @@ def selftest() -> None:
          {"server": False, "web": False, "rust": True, "mobile": False}),
         ("real device store reaches the generated consumer", ["apps/web/src/features/confidential/local-state.ts"],
          {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("device HTTP record codec reaches the generated consumer", ["apps/web/src/features/confidential/device-http-record.ts"],
+         {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("device CAS host reaches the generated consumer", ["apps/web/src/features/confidential/device-cas-host.ts"],
+         {"server": False, "web": True, "rust": True, "mobile": False}),
+        ("unrelated confidential spec does not run Rust", ["apps/web/src/features/confidential/device-http.spec.md"],
+         {"server": False, "web": True, "rust": False, "mobile": False}),
+        ("shared Rust vectors reach web, Rust and mobile", ["packages/kodera-rs/vectors/device-http-v1.json"],
+         {"server": False, "web": True, "rust": True, "mobile": True}),
         ("browser dependency lock reaches the generated consumer", ["package-lock.json"],
          {"server": False, "web": True, "rust": True, "mobile": False}),
         ("browser workspace metadata reaches the generated consumer", ["apps/web/package.json"],

@@ -254,6 +254,268 @@ class ArtifactControls(unittest.TestCase):
                 with self.assertRaises(M.Refused): M.browser_report(log,['create'],True)
 
 
+class SupplementalReportControls(unittest.TestCase):
+    """Synthetic report parsing only, never a browser/native acceptance receipt."""
+    @staticmethod
+    def report(legacy, supplemental):
+        titles = ['device: ' + name for name in legacy] + ['device HTTP: ' + name for name in supplemental]
+        return {'suites': [{'specs': [{'title': title, 'tests': [
+            {'expectedStatus': 'passed', 'results': [{'status': 'passed', 'retry': 0}]}]} for title in titles]}]}
+
+    def test_real_closed_legacy50_and_supplemental35_parser_inputs(self):
+        fixtures = SOURCE.parents[2] / 'apps/web/tests/wasm'
+        legacy = json.loads((fixtures / 'cases.json').read_text())
+        supplemental = M.http_inventory(fixtures / 'http-cases.json')
+        self.assertEqual(len(legacy), 50)
+        self.assertEqual(len(supplemental), 35)
+        with tempfile.TemporaryDirectory() as name:
+            log = Path(name) / 'public.json'
+            log.write_text(json.dumps(self.report(legacy, [])))
+            self.assertEqual(M.browser_report(log, legacy, True),
+                             {'legacy_device_cases': 50, 'http_host_oracle_cases': 0})
+            log.write_text(json.dumps(self.report(legacy, supplemental)))
+            self.assertEqual(M.browser_report(log, legacy, True, supplemental),
+                             {'legacy_device_cases': 50, 'http_host_oracle_cases': 35})
+            M.browser_report(log, legacy, False, supplemental)
+
+    def test_supplemental_missing_duplicate_skip_retry_scope_title_and_project_refuse(self):
+        with tempfile.TemporaryDirectory() as name:
+            log = Path(name) / 'public.json'
+            for mutation in ('missing', 'duplicate', 'skip', 'retry', 'scope', 'title', 'project'):
+                with self.subTest(mutation=mutation):
+                    report = self.report(['create'], ['http-flow'])
+                    specs = report['suites'][0]['specs']
+                    if mutation == 'missing': specs.pop()
+                    if mutation == 'duplicate': specs.append(json.loads(json.dumps(specs[-1])))
+                    if mutation == 'skip': specs[-1]['tests'][0]['results'][0]['status'] = 'skipped'
+                    if mutation == 'retry': specs[-1]['tests'][0]['results'][0]['retry'] = 1
+                    if mutation == 'scope': specs[-1]['title'] = 'device: http-flow'
+                    if mutation == 'title': specs[-1]['title'] = 'device HTTP: http-unlisted'
+                    if mutation == 'project': specs[-1]['tests'].append(json.loads(json.dumps(specs[-1]['tests'][0])))
+                    log.write_text(json.dumps(report))
+                    with self.assertRaises(M.Refused): M.browser_report(log, ['create'], True, ['http-flow'])
+
+    def test_http_inventory_requires_closed_host_oracle_scope(self):
+        fixtures = SOURCE.parents[2] / 'apps/web/tests/wasm'
+        original = json.loads((fixtures / 'http-cases.json').read_text())
+        with tempfile.TemporaryDirectory() as name:
+            source = Path(name) / 'public.json'
+            for mutation in ('scope', 'unknown', 'duplicate', 'prefix', 'missing', 'duplicate-key'):
+                with self.subTest(mutation=mutation):
+                    value = json.loads(json.dumps(original))
+                    if mutation == 'scope': value['hostOracleOnly'] = False
+                    if mutation == 'unknown': value['realCore'] = True
+                    if mutation == 'duplicate': value['cases'][-1] = value['cases'][0]
+                    if mutation == 'prefix': value['cases'][0] = 'create'
+                    if mutation == 'missing': value['cases'].pop()
+                    text = json.dumps(value)
+                    if mutation == 'duplicate-key': text = '{"hostOracleOnly":true,' + text[1:]
+                    source.write_text(text)
+                    with self.assertRaises(M.Refused): M.http_inventory(source)
+
+
+class GeneratedExportControls(unittest.TestCase):
+    """Actual tiny file I/O with invalid public code; never compile or execute it."""
+    @contextlib.contextmanager
+    def roots(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name); source = root/'source'; target = root/'target'
+            source.mkdir(); target.mkdir()
+            a = os.open(source, os.O_RDONLY | os.O_DIRECTORY)
+            b = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
+            try: yield root, source, target, a, b
+            finally: os.close(a); os.close(b)
+
+    @staticmethod
+    def row(path, body):
+        return {'path': path, 'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
+
+    def test_bounded_regular_copy_and_exact_digest_readback(self):
+        with self.roots() as (_, source, target, a, b):
+            (source/'snippets/public').mkdir(parents=True)
+            payload = b'INVALID public generated-code fixture\n' * 4096
+            (source/'snippets/public/inline0.js').write_bytes(payload)
+            checks = []
+            M.copy_generated_file(a, b, self.row('snippets/public/inline0.js', payload), lambda: checks.append(True))
+            self.assertEqual((target/'snippets/public/inline0.js').read_bytes(), payload)
+            self.assertGreater(len(checks), 2)
+
+    def test_both_source_and_destination_ancestor_aliases_refuse_before_foreign_creation(self):
+        for side in ('source', 'target'):
+            with self.subTest(side=side), self.roots() as (root, source, target, a, b):
+                foreign = root/'foreign'; foreign.mkdir()
+                (foreign/'sentinel').write_bytes(b'public foreign sentinel')
+                (source/'snippets').mkdir(); (target/'snippets').mkdir()
+                if side == 'source':
+                    (foreign/'inline0.js').write_bytes(b'public')
+                    (source/'snippets/public').symlink_to(foreign, target_is_directory=True)
+                else:
+                    (source/'snippets/public').mkdir(); (source/'snippets/public/inline0.js').write_bytes(b'public')
+                    (target/'snippets/public').symlink_to(foreign, target_is_directory=True)
+                with self.assertRaises((M.Refused, OSError)):
+                    M.copy_generated_file(a, b, self.row('snippets/public/inline0.js', b'public'), lambda: None)
+                self.assertEqual((foreign/'sentinel').read_bytes(), b'public foreign sentinel')
+                self.assertEqual(sorted(p.name for p in foreign.iterdir()), ['inline0.js', 'sentinel'] if side == 'source' else ['sentinel'])
+                if side == 'source': self.assertFalse((target/'snippets/public/inline0.js').exists())
+
+    def test_fifo_foreign_owner_and_closed_path_cap_refuse(self):
+        with self.roots() as (_, source, target, a, b):
+            os.mkfifo(source/'kodera_rs.js')
+            with self.assertRaises(M.Refused): M.copy_generated_file(a, b, self.row('kodera_rs.js', b'x'), lambda: None)
+            self.assertFalse((target/'kodera_rs.js').exists())
+            (source/'kodera_rs.js').unlink(); (source/'kodera_rs.js').write_bytes(b'x')
+            original = M.os.fstat
+            def foreign(fd):
+                value = original(fd)
+                if M.stat.S_ISREG(value.st_mode):
+                    return types.SimpleNamespace(**{key: getattr(value, key) for key in
+                        ('st_mode','st_dev','st_ino','st_size','st_mtime_ns','st_ctime_ns','st_nlink')}, st_uid=os.getuid()+1)
+                return value
+            with patch.object(M.os, 'fstat', side_effect=foreign):
+                with self.assertRaises(M.Refused): M.copy_generated_file(a, b, self.row('kodera_rs.js', b'x'), lambda: None)
+            self.assertFalse((target/'kodera_rs.js').exists())
+            os.link(source/'kodera_rs.js', source/'second-link')
+            with self.assertRaises(M.Refused): M.copy_generated_file(a, b, self.row('kodera_rs.js', b'x'), lambda: None)
+            (source/'second-link').unlink()
+            for row in [self.row('../outside.js', b'x'), self.row('snippets/.env/private.js', b'x'),
+                        {'path':'kodera_rs_bg.wasm','bytes':32*M.MIB+1,'sha256':'0'*64}]:
+                with self.assertRaises(M.Refused): M.copy_generated_file(a, b, row, lambda: None)
+
+    def test_wrong_hash_and_changed_source_never_create_complete_export(self):
+        with self.roots() as (_, source, target, a, b):
+            (source/'kodera_rs.js').write_bytes(b'public')
+            row = self.row('kodera_rs.js', b'public'); row['sha256'] = '0'*64
+            with self.assertRaises(M.Refused): M.copy_generated_file(a, b, row, lambda: None)
+            self.assertFalse((target/'generated-export.json').exists())
+        with self.roots() as (_, source, target, a, b):
+            file = source/'kodera_rs.js'; file.write_bytes(b'public')
+            original = M.os.read; changed = [False]
+            def growing(fd, size):
+                data = original(fd, size)
+                if data and not changed[0]:
+                    changed[0] = True; file.write_bytes(b'public plus unexpected tail')
+                return data
+            with patch.object(M.os, 'read', side_effect=growing):
+                with self.assertRaises(M.Refused): M.copy_generated_file(a, b, self.row('kodera_rs.js', b'public'), lambda: None)
+
+    def test_native_tree_rejects_link_submodule_secret_path_and_duplicate(self):
+        line = b'100644 blob ' + b'a'*40 + b' 6\tCargo.toml\0'
+        self.assertEqual(M.parse_native_tree(line)[0]['path'], 'Cargo.toml')
+        for body in [line.replace(b'100644', b'120000'), line.replace(b'blob', b'commit'),
+                     line.replace(b'Cargo.toml', b'packages/kodera-rs/.env'), line+line]:
+            with self.assertRaises(M.Refused): M.parse_native_tree(body)
+
+    def test_native_snapshot_closes_complete_namespace_modes_and_actual_git_blobs(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            values = {'Cargo.toml': ('[workspace]\nmembers=["packages/kodera-rs","apps/desktop/src-tauri"]\n'
+                '[patch.crates-io]\n' + ''.join(key+'={path="'+path+'"}\n' for key,path in M.NATIVE_PATCHES.items())).encode(),
+                'Cargo.lock': b'version = 3\n', 'apps/desktop/src-tauri/Cargo.toml': b'[package]\nname="public"\n',
+                'packages/kodera-rs/Cargo.toml': b'[package]\nname="kodera-rs"\n', 'packages/kodera-rs/src/lib.rs': b'// public\n'}
+            for path in M.NATIVE_PATCHES.values(): values[path+'/Cargo.toml'] = b'[package]\nname="public"\n'
+            rows = []
+            for path, body in values.items():
+                target = root/path; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(body); target.chmod(0o644)
+                rows.append({'path':path,'mode':'100644','bytes':len(body),
+                    'git_blob':hashlib.sha1(b'blob '+str(len(body)).encode()+b'\0'+body).hexdigest()})
+            result = M.native_snapshot(root, rows, [], lambda: None)
+            self.assertEqual(len(result), len(rows))
+            (root/'packages/kodera-rs/src/untracked.rs').write_text('// unbound compiler input')
+            with self.assertRaises(M.Refused): M.native_snapshot(root, rows, [], lambda: None)
+            (root/'packages/kodera-rs/src/untracked.rs').unlink()
+            (root/'packages/kodera-rs/src/lib.rs').chmod(0o755)
+            with self.assertRaises(M.Refused): M.native_snapshot(root, rows, [], lambda: None)
+            (root/'packages/kodera-rs/src/lib.rs').chmod(0o644)
+            config = root/'config.toml'; config.write_text('# public unexpected config')
+            with self.assertRaises(M.Refused): M.native_snapshot(root, rows, [config], lambda: None)
+            config.unlink()
+            body = b'[package]\nname="kodera-rs"\n[dependencies]\nforeign={path="../outside"}\n'
+            (root/'packages/kodera-rs/Cargo.toml').write_bytes(body)
+            row = next(row for row in rows if row['path'] == 'packages/kodera-rs/Cargo.toml')
+            row.update(bytes=len(body), git_blob=hashlib.sha1(b'blob '+str(len(body)).encode()+b'\0'+body).hexdigest())
+            with self.assertRaisesRegex(M.Refused, 'Unbound path'): M.native_snapshot(root, rows, [], lambda: None)
+
+    def test_export_refusal_retains_private_prefix_and_partial_evidence(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)/'owned'; root.mkdir(mode=0o700)
+            guard = types.SimpleNamespace(root=root,ident=M.identity(root),minimum_free=1,peaks={},commands=[],groups=set(),
+                children=types.SimpleNamespace(handles={}))
+            with patch.object(M.shutil,'disk_usage',return_value=types.SimpleNamespace(free=M.STOP+512*M.MIB)), \
+                 patch.object(M,'export_generated',side_effect=M.Refused('public export uncertainty')), \
+                 patch.object(M.shutil,'rmtree') as remove:
+                with self.assertRaises(M.Refused): M.finish(guard,{'status':'COMPONENT_BROWSER_PROOF_COMPLETE'})
+            remove.assert_not_called(); self.assertTrue(root.is_dir())
+            evidence = root.with_name('owned-public-evidence')
+            self.assertFalse((evidence/'result.json').exists())
+            self.assertTrue((root/'export-recovery.json').is_file())
+
+    def test_complete_structural_export_still_requires_final_cleanup_result(self):
+        with self.roots() as (root, private, evidence, _, __):
+            (private/'generated').mkdir(); (private/'tmp').mkdir(); (root/'repo').mkdir()
+            for filename in M.GENERATED_REQUIRED:
+                (private/'generated'/filename).write_bytes(b'INVALID public generated code, never execute')
+            for directory in ('rustup', 'cargo'): (root/directory).mkdir()
+            native = {'source_head':'a'*40,'files':[{'path':'Cargo.lock','sha256':'b'*64}]}
+            body = (json.dumps(native)+'\n').encode()
+            for parent in (private, evidence):
+                path = parent/'native-input-manifest.json'; path.write_bytes(body); path.chmod(0o600)
+            semantic = {'schema':'wasm-device-abi-v1','declarationRemovalMutantRefused':True,'httpDeclarationRemovalMutantRefused':True}
+            semantic_body = json.dumps(semantic).encode()
+            path = evidence/'semantic-abi.json'; path.write_bytes(semantic_body); path.chmod(0o600)
+            generated = M.generated_inventory(private/'generated')
+            artifact = {'source_head':'a'*40,'lock_sha256':'b'*64,'files':generated}
+            artifact_body = json.dumps(artifact).encode()
+            path = evidence/'artifact-manifest.json'; path.write_bytes(artifact_body); path.chmod(0o600)
+            commands = [{'label':label,'argv':['PUBLIC_NEVER_EXECUTED'],'exit':0,'owned_descendants_absent':True,
+                'stdout':{'sha256':'1'*64},'stderr':{'sha256':'2'*64}} for label in ('cargo-build','codegen','semantic-abi','browser-proof')]
+            guard = types.SimpleNamespace(root=private,ident=M.identity(private),started=M.time.monotonic(),minimum_free=M.STOP+512*M.MIB,
+                groups=set(),children=types.SimpleNamespace(handles={}),peaks={'target':0},npm_roots=[],commands=commands,repo=root/'repo',
+                env={'RUSTUP_HOME':str(root/'rustup'),'CARGO_HOME':str(root/'cargo')},tick=lambda:None)
+            proof = {'status':'COMPONENT_BROWSER_PROOF_COMPLETE','browser_executed':{'legacy_device_cases':50,'http_host_oracle_cases':35},
+                'native_inputs_final_verified':True,'native_inputs_sha256':hashlib.sha256(body).hexdigest(),'source_head':'a'*40,
+                'lock_sha256':'b'*64,'npm_lock_sha256':'c'*64,'rust-version':'SYNTHETIC public tool fixture',
+                'bindgen_binary_sha256':'d'*64,'raw_wasm_sha256':'e'*64,'manifest_sha256':hashlib.sha256(artifact_body).hexdigest(),'component_source_sha256':{},
+                'retained_public_diagnostics':[{'name':'semantic-abi.json','sha256':hashlib.sha256(semantic_body).hexdigest()}],
+                'generated':generated}
+            with patch.object(M.shutil,'disk_usage',return_value=types.SimpleNamespace(free=M.STOP+512*M.MIB)), \
+                 patch.object(M,'cargo_configs',return_value=[]),patch.object(M,'native_snapshot',return_value=native['files']):
+                with patch.object(M,'TOTAL',80*M.MIB+M.EXPORT_RESERVE-1):
+                    with self.assertRaisesRegex(M.Refused,'combined reservation'): M.export_generated(guard, proof, evidence)
+                self.assertFalse((evidence/'generated').exists())
+                result = M.export_generated(guard, proof, evidence)
+            self.assertTrue(result['complete']); self.assertEqual(result['files'],4)
+            manifest = json.loads((evidence/'generated-export.json').read_bytes())
+            self.assertTrue(manifest['requires_successful_cleanup_result'])
+            self.assertFalse((evidence/'result.json').exists())
+            self.assertEqual(M.generated_inventory(evidence/'generated'),proof['generated'])
+            self.assertEqual((private/'generated/kodera_rs.js').read_bytes(),b'INVALID public generated code, never execute')
+            (evidence/'generated/unlisted.bin').write_bytes(b'public unknown member')
+            fd = M.directory_fd(evidence/'generated')
+            try:
+                with self.assertRaises(M.Refused): M.verify_export_tree(fd,proof['generated'],lambda:None)
+            finally: os.close(fd)
+
+    def test_additional_export_reservation_and_live_children_refuse(self):
+        with tempfile.TemporaryDirectory() as name:
+            root=Path(name); guard=types.SimpleNamespace(root=root,ident=M.identity(root),started=M.time.monotonic(),
+                groups=set(),children=types.SimpleNamespace(handles={}),minimum_free=M.STOP+512*M.MIB)
+            with patch.object(M.shutil,'disk_usage',return_value=types.SimpleNamespace(free=M.STOP+79*M.MIB)):
+                with self.assertRaisesRegex(M.Refused,'Additional generated export floor'): M.export_check(guard)
+            guard.groups.add(123)
+            with self.assertRaisesRegex(M.Refused,'quiescent'): M.export_check(guard)
+
+    def test_failed_component_does_not_attempt_generated_export(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)/'owned'; root.mkdir(mode=0o700)
+            guard = types.SimpleNamespace(root=root,ident=M.identity(root),minimum_free=1,peaks={},commands=[],groups=set(),
+                children=types.SimpleNamespace(handles={}))
+            with patch.object(M.shutil,'disk_usage',return_value=types.SimpleNamespace(free=M.STOP+512*M.MIB)), \
+                 patch.object(M,'export_generated') as export:
+                M.finish(guard,{'status':'REFUSED'})
+            export.assert_not_called()
+            self.assertFalse((root.with_name('owned-public-evidence')/'generated-export.json').exists())
+
+
 class RevisedArtifactControls(unittest.TestCase):
     def test_generated_walk_eacces_refuses_with_all_required_files_present(self):
         with tempfile.TemporaryDirectory() as name:

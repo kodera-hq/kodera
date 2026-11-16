@@ -46,14 +46,48 @@ for (const record of manifest.files) {
   }
 }
 const location = path.dirname(fileURLToPath(import.meta.url))
+const httpInventoryPath = path.join(location, 'http-cases.json')
+need(fs.realpathSync(httpInventoryPath) === httpInventoryPath && fs.lstatSync(httpInventoryPath).isFile() &&
+  fs.statSync(httpInventoryPath).size <= 8192, 'closed supplemental inventory file')
+const httpInventoryBytes = fs.readFileSync(httpInventoryPath)
+const httpInventory = JSON.parse(httpInventoryBytes.toString('utf8'))
+need(Object.keys(httpInventory).sort().join(',') === 'cases,hostOracleOnly,schema' &&
+  httpInventory.schema === 'wasm-device-http-host-oracle-v1' && httpInventory.hostOracleOnly === true &&
+  Array.isArray(httpInventory.cases) && httpInventory.cases.length === 35 && new Set(httpInventory.cases).size === 35 &&
+  httpInventory.cases.every((name) => typeof name === 'string' && /^http-[a-z-]{1,60}$/.test(name)), 'closed host-oracle supplemental inventory')
+const httpFixtureSources = []
+for (const [relative, variable, frozen] of [['http-device.spec.mjs', 'cases', false], ['fixtures/http-host-adapter.mjs', 'CASES', true]]) {
+  const filename = path.join(location, relative), bytes = fs.readFileSync(filename)
+  need(bytes.length <= 128 * 1024, 'HTTP fixture source cap')
+  const tree = ts.createSourceFile(filename, bytes.toString('utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+  const declarations = tree.statements.filter(ts.isVariableStatement).flatMap((node) => [...node.declarationList.declarations])
+  const matches = declarations.filter((node) => ts.isIdentifier(node.name) && node.name.text === variable)
+  need(matches.length === 1, 'single source HTTP inventory')
+  let value = matches[0].initializer
+  if (frozen) {
+    need(value && ts.isCallExpression(value) && value.expression.getText(tree) === 'Object.freeze' && value.arguments.length === 1, 'frozen HTTP worker inventory')
+    value = value.arguments[0]
+  }
+  need(value && ts.isArrayLiteralExpression(value) && value.elements.every(ts.isStringLiteral), 'literal HTTP fixture inventory')
+  need(JSON.stringify(value.elements.map((node) => node.text)) === JSON.stringify(httpInventory.cases), 'HTTP fixture inventories differ')
+  httpFixtureSources.push({ path: relative, sha256: hash(bytes) })
+}
+const httpClientBytes = fs.readFileSync(path.join(location, 'fixtures/http-client.mjs'))
+need(httpClientBytes.length <= 128 * 1024, 'HTTP client source cap')
+httpFixtureSources.push({ path: 'fixtures/http-client.mjs', sha256: hash(httpClientBytes) })
 const abi = path.join(root, 'abi.ts')
 fs.writeFileSync(abi, fs.readFileSync(path.join(location, 'fixtures/abi.ts.fixture')), { flag: 'wx', mode: 0o600 })
 const storage = path.resolve('apps/web/src/features/confidential/local-state.ts')
+const transport = ['local-state', 'device-http-record', 'device-cas-host'].map((name) => ({
+  name, path: path.resolve(`apps/web/src/features/confidential/${name}.ts`),
+  imports: name === 'device-cas-host' ? ['./local-state', './device-http-record'] : [],
+}))
 const declaration = path.join(root, 'generated/kodera_rs.d.ts')
 const options = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler, strict: true, noEmitOnError: true, types: [],
   lib: ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.esnext.disposable.d.ts'] }
-const program = ts.createProgram([abi, storage], options)
+const inputs = [abi, ...transport.map((row) => row.path)]
+const program = ts.createProgram(inputs, options)
 const diagnostics = ts.getPreEmitDiagnostics(program)
 need(diagnostics.length === 0, 'actual generated ABI semantic diagnostics: ' + diagnostics.map((row) => row.code).join(','))
 const source = program.getSourceFile(declaration)
@@ -63,31 +97,57 @@ need(klass, 'actual class absent')
 const mandatory = ['createDevice', 'openDevice', 'publicKey', 'registrationRequest', 'close', 'free']
 const methods = klass.members.filter(ts.isMethodDeclaration).map((node) => node.name.getText(source))
 need(mandatory.every((name) => methods.includes(name)) && methods.every((name) => mandatory.includes(name) || name === '[Symbol.dispose]'), 'closed actual class methods')
+const httpClass = source.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === 'BrowserMlsHttpDevice')
+need(httpClass, 'actual HTTP class absent')
+const httpMandatory = ['createHttpDevice', 'openHttpDevice', 'prepareRegistration', 'preparePublication', 'attemptHttp', 'publicKey', 'close', 'free']
+const httpMethods = httpClass.members.filter(ts.isMethodDeclaration).map((node) => node.name.getText(source))
+need(httpMandatory.every((name) => httpMethods.includes(name)) && httpMethods.every((name) => httpMandatory.includes(name) || name === '[Symbol.dispose]'), 'closed actual HTTP class methods')
 const storageSource = program.getSourceFile(storage)
 need(storageSource && storageSource.text.includes('readUniqueDeviceVault') && storageSource.text.includes('createUniqueDeviceVault'), 'reviewed unique API missing from base')
 const emitted = []
+const compiledTransport = []
 const result = program.emit(undefined, (name, text) => {
-  need(name.endsWith('/local-state.js') || name === 'local-state.js' || name.endsWith('/abi.js') || name === 'abi.js', 'unexpected fixture emit')
-  if (name.endsWith('local-state.js')) {
-    fs.writeFileSync(path.join(root, 'local-state.js'), text, { flag: 'wx', mode: 0o600 })
-    emitted.push(name)
+  const basename = path.basename(name), row = transport.find((entry) => basename === entry.name + '.js')
+  need(row || basename === 'abi.js', 'unexpected fixture emit')
+  if (!row) return
+  need(!emitted.includes(row.name) && Buffer.byteLength(text) <= 128 * 1024, 'unique bounded transport emit')
+  const tree = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
+  const imports = tree.statements.filter(ts.isImportDeclaration).map((node) => node.moduleSpecifier.text)
+  need(JSON.stringify([...imports].sort()) === JSON.stringify([...row.imports].sort()), 'closed emitted runtime import aliases')
+  const inspect = (node) => {
+    need(!(ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) &&
+      !(ts.isExportDeclaration(node) && node.moduleSpecifier), 'no hidden transport import')
+    ts.forEachChild(node, inspect)
   }
+  inspect(tree)
+  const original = program.getSourceFile(row.path)
+  need(original && Buffer.byteLength(original.text) <= 128 * 1024 && fs.realpathSync(row.path) === row.path &&
+    fs.lstatSync(row.path).isFile() && fs.readFileSync(row.path, 'utf8') === original.text, 'transport source snapshot changed')
+  fs.writeFileSync(path.join(root, basename), text, { flag: 'wx', mode: 0o600 })
+  emitted.push(row.name)
+  compiledTransport.push({ name: row.name, sourcePath: path.relative(process.cwd(), row.path), sourceSha256: hash(Buffer.from(original.text)),
+    compiledSha256: hash(Buffer.from(text)), bytes: Buffer.byteLength(text), imports })
 })
-need(!result.emitSkipped && emitted.length === 1, 'actual storage emit')
-const member = klass.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(source) === 'publicKey')
-const mutated = source.text.slice(0, member.getFullStart()) + source.text.slice(member.end)
-const host = ts.createCompilerHost(options)
-const original = host.getSourceFile.bind(host)
-host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => path.resolve(name) === declaration
-  ? ts.createSourceFile(name, mutated, languageVersion, true) : original(name, languageVersion, onError, shouldCreateNewSourceFile)
-const negative = ts.getPreEmitDiagnostics(ts.createProgram([abi, storage], options, host))
-need(negative.some((row) => row.code === 2339 && row.file?.fileName === abi), 'declaration-removal mutant survived')
+need(!result.emitSkipped && emitted.length === 3, 'actual storage and transport emit')
+for (const [target, method] of [[klass, 'publicKey'], [httpClass, 'attemptHttp']]) {
+  const member = target.members.find((node) => ts.isMethodDeclaration(node) && node.name.getText(source) === method)
+  need(member, 'actual declaration mutant member absent')
+  const mutated = source.text.slice(0, member.getFullStart()) + source.text.slice(member.end)
+  const host = ts.createCompilerHost(options)
+  const original = host.getSourceFile.bind(host)
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => path.resolve(name) === declaration
+    ? ts.createSourceFile(name, mutated, languageVersion, true) : original(name, languageVersion, onError, shouldCreateNewSourceFile)
+  const negative = ts.getPreEmitDiagnostics(ts.createProgram(inputs, options, host))
+  need(negative.some((row) => row.code === 2339 && row.file?.fileName === abi && ts.flattenDiagnosticMessageText(row.messageText, ' ').includes(method)), 'declaration-removal mutant survived')
+}
 const gluePath = path.join(root, 'generated/kodera_rs.js')
 const glue = fs.readFileSync(gluePath, 'utf8')
 const glueAST = ts.createSourceFile(gluePath, glue, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 const glueClass = glueAST.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === 'BrowserMlsDevice')
 const exported = glueClass?.modifiers?.find((node) => node.kind === ts.SyntaxKind.ExportKeyword)
 need(exported, 'actual generated class export absent')
+const httpGlueClass = glueAST.statements.find((node) => ts.isClassDeclaration(node) && node.name?.text === 'BrowserMlsHttpDevice')
+need(httpGlueClass?.modifiers?.some((node) => node.kind === ts.SyntaxKind.ExportKeyword), 'actual generated HTTP class export absent')
 const mutantGlue = glue.slice(0, exported.getStart(glueAST)) + glue.slice(exported.end)
 fs.writeFileSync(path.join(root, 'mutant-kodera_rs.js'), mutantGlue, { flag: 'wx', mode: 0o600 })
 // Inspect the public module without instantiating it; worker creation remains
@@ -96,9 +156,12 @@ const publicModule = new WebAssembly.Module(fs.readFileSync(path.join(root, 'gen
 const receipt = { schema: 'wasm-device-abi-v1', actualModuleInventory,
   wasmImports: WebAssembly.Module.imports(publicModule), wasmExports: WebAssembly.Module.exports(publicModule), generatedDeclarationSha256: hash(Buffer.from(source.text)),
   storageSourceSha256: hash(Buffer.from(storageSource.text)), compiledStorageSha256: hash(fs.readFileSync(path.join(root, 'local-state.js'))),
-  declarationMethods: methods, declarationRemovalMutantRefused: true, typescript: ts.version, playwright: '1.65.1', browserManifestSha256: hash(fs.readFileSync(browserManifest)), mutantGlueSha256: hash(Buffer.from(mutantGlue)) }
+  declarationMethods: methods, declarationRemovalMutantRefused: true,
+  httpDeclarationMethods: httpMethods, httpDeclarationRemovalMutantRefused: true, compiledTransport,
+  httpInventorySha256: hash(httpInventoryBytes), httpHostOracleOnly: true, httpFixtureSources,
+  typescript: ts.version, playwright: '1.65.1', browserManifestSha256: hash(fs.readFileSync(browserManifest)), mutantGlueSha256: hash(Buffer.from(mutantGlue)) }
 need(ts.version === '5.9.3', 'locked TypeScript version')
 const receiptText = JSON.stringify(receipt) + '\n'
 need(Buffer.byteLength(receiptText) <= 1024 * 1024, 'semantic receipt cap')
 fs.writeFileSync(path.join(root, 'semantic-abi.json'), receiptText, { flag: 'wx', mode: 0o600 })
-console.log(JSON.stringify({ status: 'semantic-abi-passed', declarationRemovalMutantRefused: true }))
+console.log(JSON.stringify({ status: 'semantic-abi-passed', declarationRemovalMutantRefused: true, httpDeclarationRemovalMutantRefused: true, httpHostOracleOnly: true }))

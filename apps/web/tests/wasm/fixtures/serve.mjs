@@ -35,6 +35,27 @@ export async function startFixture() {
   const abi = JSON.parse(fs.readFileSync(path.join(root, 'semantic-abi.json'), 'utf8'))
   need(abi.schema === 'wasm-device-abi-v1' && abi.declarationRemovalMutantRefused === true)
   add('/storage/local-state.js', path.join(root, 'local-state.js'), abi.compiledStorageSha256, 128 * 1024)
+  need(abi.httpDeclarationRemovalMutantRefused === true && abi.httpHostOracleOnly === true &&
+    Array.isArray(abi.compiledTransport) && abi.compiledTransport.length === 3 &&
+    new Set(abi.compiledTransport.map((row) => row.name)).size === 3)
+  const aliases = { 'local-state': [], 'device-http-record': [], 'device-cas-host': ['./local-state', './device-http-record'] }
+  for (const row of abi.compiledTransport) {
+    need(Object.hasOwn(aliases, row.name) && JSON.stringify([...row.imports].sort()) === JSON.stringify([...aliases[row.name]].sort()))
+    if (row.name === 'local-state') need(row.compiledSha256 === abi.compiledStorageSha256)
+    else add('/storage/' + row.name + '.js', path.join(root, row.name + '.js'), row.compiledSha256, 128 * 1024)
+    if (row.name !== 'device-cas-host') add('/storage/' + row.name, path.join(root, row.name + '.js'), row.compiledSha256, 128 * 1024)
+  }
+  const httpInventoryBody = fs.readFileSync(path.join(here, '../http-cases.json'))
+  need(httpInventoryBody.length <= 8192 && digest(httpInventoryBody) === abi.httpInventorySha256)
+  const httpInventory = JSON.parse(httpInventoryBody.toString('utf8'))
+  need(Object.keys(httpInventory).sort().join(',') === 'cases,hostOracleOnly,schema' &&
+    httpInventory.schema === 'wasm-device-http-host-oracle-v1' && httpInventory.hostOracleOnly === true &&
+    Array.isArray(httpInventory.cases) && httpInventory.cases.length === 35 && new Set(httpInventory.cases).size === 35)
+  for (const name of ['http-client.mjs', 'http-host-adapter.mjs']) {
+    const row = abi.httpFixtureSources?.filter((entry) => entry.path === 'fixtures/' + name)
+    need(row?.length === 1)
+    add('/fixture/' + name, path.join(here, name), row[0].sha256, 128 * 1024)
+  }
   add('/native/mutant-kodera_rs.js', path.join(root, 'mutant-kodera_rs.js'), abi.mutantGlueSha256, 2 * 1024 * 1024)
   const sockets = new Set()
   let controlOrigin, requests = 0
@@ -42,15 +63,18 @@ export async function startFixture() {
     try {
       need(++requests <= 2048 && sockets.size <= 32 && request.method === 'GET' && typeof request.url === 'string' && request.url.length <= 512)
       const url = new URL(request.url, 'http://127.0.0.1')
-      const worker = ['/fixture/actor.worker.mjs', '/fixture/mutant.worker.mjs'].includes(url.pathname)
+      const worker = ['/fixture/actor.worker.mjs', '/fixture/mutant.worker.mjs', '/fixture/http-host-adapter.mjs'].includes(url.pathname)
       const headers = { 'Content-Security-Policy': worker || control ? WASM_CSP : CSP,
         'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store',
         'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp',
         'Cross-Origin-Resource-Policy': 'same-origin' }
       if (url.pathname === '/') {
-        need([...url.searchParams.keys()].every((key) => key === 'case'))
+        const keys = [...url.searchParams.keys()], httpCase = url.searchParams.get('httpCase')
+        if (httpCase !== null) need(!control && keys.length === 1 && keys[0] === 'httpCase' && httpInventory.cases.includes(httpCase))
+        else need(keys.every((key) => key === 'case'))
         const body = '<!doctype html><meta charset="utf-8"><meta name="control-origin" content="' + controlOrigin +
-          '"><title>Device component proof</title><output data-phase="pending"></output><script type="module" src="/fixture/client.mjs"></script>'
+          '"><title>Device component proof</title><output data-phase="pending"></output><script type="module" src="/fixture/' +
+          (httpCase === null ? 'client.mjs' : 'http-client.mjs') + '"></script>'
         response.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' }); response.end(body); return
       }
       need(!url.search && !url.hash)

@@ -24,6 +24,12 @@ use std::fmt;
 mod native_scope;
 pub use native_scope::{NativeCryptoError, NativeRoomScope, MAX_NATIVE_MESSAGE_BYTES};
 
+#[cfg(all(
+    feature = "native-crypto",
+    any(test, all(target_arch = "wasm32", feature = "browser-bindings"))
+))]
+pub(crate) mod device_http_record;
+
 mod proximity_beacon_v2;
 pub use proximity_beacon_v2::{
     BeaconObservationV2, ProximityBeaconV2, ProximityBeaconV2Receiver, ProximityBeaconV2Sender,

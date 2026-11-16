@@ -820,6 +820,118 @@ check('unique context snapshots inputs before await and authenticates discovered
   for (const failure of result.failures) assert.deepEqual(failure, { ok: false, code: 'corrupt' })
 })
 
+check('unique lookup refuses a competing outer-only CAS while actual decryption is held', async (page, context) => {
+  const peer = await pageFor(context)
+  await page.evaluate(async () => {
+    window.store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    const scope = window.scope('device-vault')
+    await window.store.createUniqueDeviceVault(scope, window.vaultState(17))
+    await window.store.compareAndSwap([{ scope, expectedGeneration: 1, state: window.payload(17) }])
+    window.holdCrypto('decrypt')
+    window.reading = window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext()))
+  })
+  await page.waitForFunction(() => window.cryptoEntered)
+  const committed = await peer.evaluate(async () => {
+    const store = await window.stateModule.openConfidentialState(window.ownerA)
+    const state = window.payload(17)
+    // Preserve the opaque native checkpoint while advancing only the outer record/outbox.
+    state.pendingSends[0].ciphertext[0] = 29
+    const generations = await store.compareAndSwap([{
+      scope: window.scope('device-vault'), expectedGeneration: 2, state,
+    }])
+    store.close()
+    return generations
+  })
+  assert.deepEqual(committed, [3])
+  const result = await page.evaluate(async () => {
+    window.releaseCrypto()
+    const stale = await window.reading
+    const current = await window.store.readUniqueDeviceVault(window.deviceContext())
+    return { stale, generation: current.generation, checkpoint: [...current.state.checkpoint],
+      pending: [...current.state.pendingSends[0].ciphertext] }
+  })
+  assert.deepEqual(result.stale, { ok: false, code: 'conflict' })
+  assert.equal(result.generation, 3)
+  assert.deepEqual(result.checkpoint, [17, 92, 177])
+  assert.deepEqual(result.pending, [29, 204])
+})
+
+for (const field of ['generation', 'iv', 'ciphertext']) {
+  const change = field === 'generation' ? 'generation even with unchanged ciphertext and IV'
+    : `${field} bytes even at the same generation`
+  check(`unique lookup checks current ${change}`, async (page, context) => {
+    const peer = await pageFor(context)
+    await page.evaluate(async () => {
+      window.store = await window.stateModule.initializeConfidentialState(window.ownerA)
+      await window.store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(17))
+      window.holdCrypto('decrypt')
+      window.reading = window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext()))
+    })
+    await page.waitForFunction(() => window.cryptoEntered)
+    await peer.evaluate(async (changedField) => {
+      const row = (await window.raw((db) => window.idbRequest(db.transaction('records').objectStore('records').getAll())))[0]
+      // Isolate the generation fence from both byte fences, and each byte fence from generation.
+      if (changedField === 'generation') row.generation += 1
+      else new Uint8Array(row[changedField])[0] ^= 1
+      await window.rawUpdate(['records'], (tx) => tx.objectStore('records').put(row))
+    }, field)
+    const result = await page.evaluate(async () => {
+      window.releaseCrypto()
+      const stale = await window.reading
+      const fresh = await window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext()))
+      return { stale, fresh }
+    })
+    assert.deepEqual(result.stale, { ok: false, code: 'conflict' })
+    assert.deepEqual(result.fresh, { ok: false, code: 'corrupt' })
+  })
+}
+
+check('unique lookup rescans context ambiguity after held decryption', async (page, context) => {
+  const peer = await pageFor(context)
+  await page.evaluate(async () => {
+    window.store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    await window.store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(17))
+    window.holdCrypto('decrypt')
+    window.reading = window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext()))
+  })
+  await page.waitForFunction(() => window.cryptoEntered)
+  await peer.evaluate(async () => {
+    const store = await window.stateModule.openConfidentialState(window.ownerA)
+    // Generic CAS is trusted; unique lookup must still refuse a second valid same-context key.
+    await store.compareAndSwap([{
+      scope: { ...window.scope('device-vault'), devicePublicKey: '42'.repeat(32) },
+      expectedGeneration: 0, state: window.vaultState(29),
+    }])
+    store.close()
+  })
+  const result = await page.evaluate(async () => { window.releaseCrypto(); return window.reading })
+  assert.deepEqual(result, { ok: false, code: 'corrupt' })
+})
+
+check('unique lookup keeps a current vault usable after an unrelated room CAS', async (page, context) => {
+  const peer = await pageFor(context)
+  await page.evaluate(async () => {
+    window.store = await window.stateModule.initializeConfidentialState(window.ownerA)
+    await window.store.createUniqueDeviceVault(window.scope('device-vault'), window.vaultState(17))
+    window.holdCrypto('decrypt')
+    window.reading = window.captured(() => window.store.readUniqueDeviceVault(window.deviceContext()))
+  })
+  await page.waitForFunction(() => window.cryptoEntered)
+  await peer.evaluate(async () => {
+    const store = await window.stateModule.openConfidentialState(window.ownerA)
+    await store.compareAndSwap([{ scope: window.scope(), expectedGeneration: 0, state: window.payload(29) }])
+    store.close()
+  })
+  const result = await page.evaluate(async () => {
+    window.releaseCrypto()
+    const reading = await window.reading
+    const room = await window.store.read(window.scope())
+    return { ok: reading.ok, generation: reading.value.generation, checkpoint: [...reading.value.state.checkpoint],
+      pending: reading.value.state.pendingSends.length, room: room.checkpoint[0] }
+  })
+  assert.deepEqual(result, { ok: true, generation: 1, checkpoint: [17, 92, 177], pending: 0, room: 29 })
+})
+
 check('unique creation cannot exceed the complete owner record capacity across foreign contexts', async (page) => {
   const result = await page.evaluate(async () => {
     const store = await window.stateModule.initializeConfidentialState(window.ownerA)

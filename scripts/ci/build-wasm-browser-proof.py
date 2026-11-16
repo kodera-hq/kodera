@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.parse
 import urllib.request
 
@@ -31,6 +32,14 @@ TOOL_MEMBERS = {'README.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'wasm-bindgen', 'w
 GENERATED_REQUIRED = {'kodera_rs.js', 'kodera_rs_bg.wasm', 'kodera_rs.d.ts', 'kodera_rs_bg.wasm.d.ts'}
 CASE_BUDGET = 240
 MAX_CARGO_ROW = 4 * MIB
+EXPORT_RESERVE = 64 * MIB
+NATIVE_PATCHES = {
+    'glib': 'security/backports/glib-0.18.5',
+    'openmls_basic_credential': 'security/backports/openmls_basic_credential-0.6.0',
+    'openmls_rust_crypto': 'security/backports/openmls_rust_crypto-0.6.0',
+}
+NATIVE_TREES = ('packages/kodera-rs', *NATIVE_PATCHES.values())
+NATIVE_SINGLE = ('Cargo.toml', 'Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml')
 
 
 class Refused(RuntimeError):
@@ -587,7 +596,55 @@ def generated_inventory(root):
     return sorted(rows, key=lambda row: row['path'])
 
 
-def browser_report(log, names, executed):
+def http_inventory(path):
+    need(path.is_file() and not path.is_symlink() and path.stat().st_size <= 8192,
+         'Supplemental inventory file cap')
+    def closed_pairs(pairs):
+        value = {}
+        for key, item in pairs:
+            need(key not in value, 'Duplicate supplemental inventory key')
+            value[key] = item
+        return value
+    with path.open('rb') as source:
+        body = source.read(8193)
+    need(len(body) <= 8192, 'Supplemental inventory actual bytes cap')
+    value = json.loads(body, object_pairs_hook=closed_pairs)
+    need(type(value) is dict and set(value) == {'schema', 'hostOracleOnly', 'cases'} and
+         value['schema'] == 'wasm-device-http-host-oracle-v1' and value['hostOracleOnly'] is True,
+         'Closed HTTP host-oracle scope')
+    names = value['cases']
+    need(type(names) is list and len(names) == 35 and
+         all(type(name) is str and re.fullmatch('http-[a-z-]{1,60}', name) for name in names) and len(set(names)) == 35,
+         'Closed supplemental HTTP inventory')
+    return names
+
+
+def component_sources(repo):
+    names = (
+        'scripts/ci/build-wasm-browser-proof.py',
+        'apps/web/tests/wasm/cases.json', 'apps/web/tests/wasm/browser-device.spec.mjs',
+        'apps/web/tests/wasm/http-cases.json', 'apps/web/tests/wasm/http-device.spec.mjs',
+        'apps/web/tests/wasm/prepare-fixtures.mjs', 'apps/web/tests/wasm/playwright.config.mjs',
+        'apps/web/tests/wasm/fixtures/serve.mjs', 'apps/web/tests/wasm/fixtures/abi.ts.fixture',
+        'apps/web/tests/wasm/fixtures/client.mjs', 'apps/web/tests/wasm/fixtures/actor.worker.mjs',
+        'apps/web/tests/wasm/fixtures/host-adapter.mjs', 'apps/web/tests/wasm/fixtures/mutant.worker.mjs',
+        'apps/web/tests/wasm/fixtures/http-client.mjs', 'apps/web/tests/wasm/fixtures/http-host-adapter.mjs',
+        'apps/web/src/features/confidential/local-state.ts',
+        'apps/web/src/features/confidential/device-http-record.ts',
+        'apps/web/src/features/confidential/device-cas-host.ts',
+        'packages/kodera-rs/src/lib.rs', 'packages/kodera-rs/src/browser_bindings.rs',
+        'packages/kodera-rs/src/device_http_record.rs',
+    )
+    result = {}
+    for name in names:
+        source = repo / name
+        need(source.is_file() and not source.is_symlink() and source.stat().st_size <= 256 * 1024,
+             'Closed component source shape')
+        result[name] = digest(source)
+    return result
+
+
+def browser_report(log, names, executed, supplemental=()):
     report = json.loads(log.read_bytes())
     specs = []
     def visit(suites):
@@ -596,8 +653,9 @@ def browser_report(log, names, executed):
             specs.extend(suite.get('specs', []))
             visit(suite.get('suites', []))
     visit(report['suites'])
-    need(not report.get('errors') and len(specs) == len(names) and
-         sorted(spec['title'] for spec in specs) == sorted('device: ' + name for name in names), 'Browser discovery differs')
+    expected = ['device: ' + name for name in names] + ['device HTTP: ' + name for name in supplemental]
+    need(len(set(expected)) == len(expected) and not report.get('errors') and len(specs) == len(expected) and
+         sorted(spec['title'] for spec in specs) == sorted(expected), 'Browser discovery differs')
     for spec in specs:
         need(len(spec['tests']) == 1, 'Single managed project required')
         test = spec['tests'][0]
@@ -605,9 +663,384 @@ def browser_report(log, names, executed):
         if executed:
             need(len(test['results']) == 1 and test['results'][0]['status'] == 'passed' and
                  test['results'][0].get('retry', 0) == 0, 'Every browser case must actually pass once')
+    return {'legacy_device_cases': len(names), 'http_host_oracle_cases': len(supplemental)}
+
+
+def safe_parts(name):
+    need(type(name) is str and 0 < len(name) <= 512 and not name.startswith('/') and '\\' not in name,
+         'Closed relative path')
+    parts = name.split('/')
+    need(len(parts) <= 16 and all(part not in ('', '.', '..') and not part.startswith('.env') for part in parts),
+         'Closed non-secret path')
+    return parts
+
+
+def directory_fd(path):
+    expected = identity(path)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        value = os.fstat(fd)
+        need(stat.S_ISDIR(value.st_mode) and value.st_uid == os.getuid() and
+             (value.st_dev, value.st_ino) == expected, 'Directory FD identity')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def parent_fd(root, name, create=False):
+    parts = safe_parts(name)
+    device = os.fstat(root).st_dev
+    fd = os.dup(root)
+    try:
+        for part in parts[:-1]:
+            if create:
+                try: os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError: pass
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            try:
+                value = os.fstat(child)
+                need(stat.S_ISDIR(value.st_mode) and value.st_uid == os.getuid() and value.st_dev == device,
+                     'Owned same-device ancestor')
+            except BaseException:
+                os.close(child)
+                raise
+            os.close(fd); fd = child
+        return fd, parts[-1]
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def regular_signature(value):
+    need(stat.S_ISREG(value.st_mode) and value.st_uid == os.getuid() and value.st_nlink == 1 and
+         not stat.S_IMODE(value.st_mode) & 0o7000, 'Owned single-link regular input')
+    return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns,
+            value.st_uid, value.st_mode, value.st_nlink)
+
+
+def consume_file(fd, size, check, destination=None, collect=False):
+    hashed = hashlib.sha256()
+    blob = hashlib.sha1(b'blob ' + str(size).encode() + b'\0')
+    count, captured = 0, bytearray()
+    while True:
+        check()
+        body = os.read(fd, min(65536, size + 1 - count))
+        count += len(body)
+        need(count <= size, 'Input grew beyond bound')
+        if not body: break
+        hashed.update(body); blob.update(body)
+        if collect: captured.extend(body)
+        if destination is not None:
+            view = memoryview(body)
+            while view:
+                check()
+                written = os.write(destination, view)
+                need(written > 0, 'Export short write')
+                view = view[written:]
+    need(count == size, 'Input truncated')
+    check()
+    return hashed.hexdigest(), blob.hexdigest(), bytes(captured)
+
+
+def native_allowed(name):
+    safe_parts(name)
+    return name in NATIVE_SINGLE or any(name.startswith(root + '/') for root in NATIVE_TREES)
+
+
+def parse_native_tree(body):
+    need(len(body) <= MIB and body.endswith(b'\0'), 'Native Git inventory cap')
+    rows, seen, total = [], set(), 0
+    for entry in body.split(b'\0')[:-1]:
+        header, name = entry.split(b'\t', 1)
+        mode, kind, blob, size = header.split()
+        name = name.decode('utf8')
+        need(mode in (b'100644', b'100755') and kind == b'blob' and re.fullmatch(b'[0-9a-f]{40}', blob) and
+             size.isdigit() and native_allowed(name) and name not in seen, 'Native tracked input kind/path')
+        size = int(size); total += size; seen.add(name)
+        need(size <= 2 * MIB and total <= 32 * MIB and len(seen) <= 4096, 'Native input bounds')
+        rows.append({'path': name, 'mode': mode.decode(), 'bytes': size, 'git_blob': blob.decode()})
+    return sorted(rows, key=lambda row: row['path'])
+
+
+def cargo_configs(guard):
+    roots = (guard.repo, *guard.repo.parents)
+    need(len(roots) <= 16, 'Cargo ancestor bound')
+    return [root / '.cargo' / name for root in roots for name in ('config', 'config.toml')] + [
+        Path(guard.env[key]) / suffix for key, suffixes in (
+            ('CARGO_HOME', ('config', 'config.toml', 'credentials', 'credentials.toml')),
+            ('HOME', ('.cargo/config', '.cargo/config.toml')))
+        for suffix in suffixes]
+
+
+def native_snapshot(repo, entries, configs, check):
+    for config in configs:
+        need(not config.parent.is_symlink() and not os.path.lexists(config), 'Unreviewed Cargo configuration present')
+    wanted = {row['path'] for row in entries}
+    need(set(NATIVE_SINGLE) <= wanted and all(root + '/Cargo.toml' in wanted for root in NATIVE_TREES), 'Required native manifests')
+    found = set(NATIVE_SINGLE)
+    fd = directory_fd(repo)
+    result, manifests = [], {}
+    try:
+        for tree in NATIVE_TREES:
+            parent, leaf = parent_fd(fd, tree)
+            try: subtree = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            finally: os.close(parent)
+            try:
+                directory = os.fstat(subtree)
+                need(directory.st_uid == os.getuid() and directory.st_dev == os.fstat(fd).st_dev, 'Native subtree owner/device')
+                def onerror(error): raise error
+                count = 0
+                for current, dirs, files, current_fd in os.fwalk('.', follow_symlinks=False, onerror=onerror, dir_fd=subtree):
+                    check()
+                    need(len(Path(current).parts) <= 12, 'Native namespace depth')
+                    for name in dirs + files:
+                        count += 1; relative = (Path(tree) / current / name).as_posix()
+                        safe_parts(relative)
+                        value = os.stat(name, dir_fd=current_fd, follow_symlinks=False)
+                        need(count <= 8192 and value.st_uid == os.getuid() and value.st_dev == directory.st_dev and
+                             (stat.S_ISDIR(value.st_mode) or stat.S_ISREG(value.st_mode)), 'Native namespace shape')
+                        if name in files: found.add(relative)
+            finally: os.close(subtree)
+        need(found == wanted, 'Untracked or missing native build input')
+        for row in entries:
+            check(); parent, leaf = parent_fd(fd, row['path'])
+            try: source = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+            finally: os.close(parent)
+            try:
+                before = os.fstat(source); signature = regular_signature(before)
+                need(before.st_size == row['bytes'] and stat.S_IMODE(before.st_mode) == int(row['mode'][-3:], 8), 'Native input size/mode')
+                manifest = row['path'].endswith('/Cargo.toml') or row['path'] == 'Cargo.toml'
+                need(not manifest or before.st_size <= 256 * 1024, 'Native Cargo manifest cap')
+                sha, git_blob, text = consume_file(source, before.st_size, check, collect=manifest)
+                need(signature == regular_signature(os.fstat(source)) and git_blob == row['git_blob'], 'Native input differs from commit')
+                result.append({**row, 'sha256': sha})
+                if manifest: manifests[row['path']] = tomllib.loads(text.decode('utf8'))
+            finally: os.close(source)
+        root = manifests['Cargo.toml']
+        need(root.get('workspace', {}).get('members') == ['packages/kodera-rs', 'apps/desktop/src-tauri'] and
+             root.get('patch') == {'crates-io': {name: {'path': path} for name, path in NATIVE_PATCHES.items()}} and
+             not root.get('replace'), 'Closed workspace/local patch roots')
+        allowed = {(repo / tree).resolve() for tree in NATIVE_TREES}
+        def dependencies(table, base):
+            for section in ('dependencies', 'dev-dependencies', 'build-dependencies'):
+                for value in table.get(section, {}).values():
+                    if isinstance(value, dict) and 'path' in value:
+                        need(type(value['path']) is str and (base / value['path']).resolve() in allowed, 'Unbound path dependency')
+            for target in table.get('target', {}).values(): dependencies(target, base)
+        for name, table in manifests.items():
+            dependencies(table, (repo / name).parent)
+            if name == 'Cargo.toml': dependencies(table.get('workspace', {}), repo)
+            if name != 'apps/desktop/src-tauri/Cargo.toml':
+                base = (repo / name).parent
+                entrypoints = [table.get('lib', {}).get('path'), table.get('package', {}).get('build')]
+                for section in ('bin', 'example', 'test', 'bench'):
+                    entrypoints.extend(value.get('path') for value in table.get(section, []))
+                for value in entrypoints:
+                    if value is None or value is False: continue
+                    need(type(value) is str and (base / value).resolve().is_relative_to(base.resolve()) and
+                         (base / value).resolve().relative_to(repo.resolve()).as_posix() in wanted,
+                         'Unbound native source entrypoint')
+        need(identity(repo) == (os.fstat(fd).st_dev, os.fstat(fd).st_ino), 'Native root changed')
+        return sorted(result, key=lambda row: row['path'])
+    finally: os.close(fd)
+
+
+def export_check(guard):
+    need(identity(guard.root) == guard.ident and not guard.groups and not guard.children.handles, 'Export requires quiescent owned root')
+    need(time.monotonic() - guard.started <= 780, 'Export owner deadline')
+    free = shutil.disk_usage(guard.root).free
+    guard.minimum_free = min(guard.minimum_free, free)
+    need(free >= STOP + 16 * MIB + EXPORT_RESERVE, 'Additional generated export floor')
+
+
+def native_inputs(guard, label, head):
+    need(re.fullmatch('[0-9a-f]{40}', head), 'Immutable native source commit')
+    log = guard.command(['git', 'ls-tree', '-r', '-l', '-z', '--full-tree', head, '--',
+                         *NATIVE_SINGLE, *NATIVE_TREES, '.cargo'], label, 10, MIB)
+    entries = parse_native_tree(log.read_bytes())
+    guard.tick()
+    def check():
+        need(time.monotonic() - guard.started <= 780, 'Native snapshot owner deadline')
+        need(shutil.disk_usage(guard.root).free >= STOP, 'Native snapshot floor')
+    rows = native_snapshot(guard.repo, entries, cargo_configs(guard), check)
+    guard.tick()
+    return {'schema': 'wasm-local-native-inputs-v1', 'source_head': head, 'files': rows,
+            'config_policy': 'All effective ancestor/home Cargo configuration and registry credential files absent',
+            'scope': 'Complete tracked local native source inputs and locked registry identities; not compiler file-access tracing or bit reproducibility'}
+
+
+def copy_generated_file(source_root, target_root, row, check):
+    name, size = row['path'], row['bytes']; parts = safe_parts(name)
+    need(len(parts) - 1 <= 8 and all(re.fullmatch('[A-Za-z0-9_.-]+', part) for part in parts) and
+         (name in GENERATED_REQUIRED or name.startswith('snippets/') and name.endswith('.js')) and
+         type(size) is int and 0 < size <= (32 * MIB if name == 'kodera_rs_bg.wasm' else 2 * MIB) and
+         re.fullmatch('[0-9a-f]{64}', row['sha256']), 'Closed generated export member')
+    check(); parent, leaf = parent_fd(source_root, name)
+    try: source = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    finally: os.close(parent)
+    target = None
+    try:
+        before = os.fstat(source); signature = regular_signature(before)
+        need(before.st_size == size and before.st_dev == os.fstat(source_root).st_dev, 'Generated source identity/size')
+        parent, leaf = parent_fd(target_root, name, True)
+        try: target = os.open(leaf, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
+        finally: os.close(parent)
+        sha, _, _ = consume_file(source, size, check, destination=target)
+        need(signature == regular_signature(os.fstat(source)) and sha == row['sha256'], 'Generated source changed/hash mismatch')
+        os.fsync(target); after = os.fstat(target)
+        need(after.st_dev == os.fstat(target_root).st_dev and after.st_size == size, 'Generated destination identity/size')
+        target_signature = regular_signature(after)
+        need(stat.S_IMODE(after.st_mode) == 0o600, 'Private generated export mode')
+        os.lseek(target, 0, os.SEEK_SET)
+        readback, _, _ = consume_file(target, size, check)
+        need(readback == sha and target_signature == regular_signature(os.fstat(target)), 'Generated export readback changed')
+        check()
+    finally:
+        if target is not None: os.close(target)
+        os.close(source)
+
+
+def owned_json(root, name, expected, check):
+    parent, leaf = parent_fd(root, name)
+    try: fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    finally: os.close(parent)
+    try:
+        before = os.fstat(fd); signature = regular_signature(before)
+        need(before.st_size <= MIB, 'Owned JSON cap')
+        sha, _, body = consume_file(fd, before.st_size, check, collect=True)
+        need(sha == expected and signature == regular_signature(os.fstat(fd)), 'Owned JSON changed/hash')
+        return json.loads(body)
+    finally: os.close(fd)
+
+
+def verify_export_tree(root, rows, check):
+    expected = {row['path'] for row in rows}
+    directories = {'/'.join(row['path'].split('/')[:i]) for row in rows for i in range(1, len(row['path'].split('/')))}
+    found = set(); device = os.fstat(root).st_dev
+    def onerror(error): raise error
+    for current, dirs, files, fd in os.fwalk('.', follow_symlinks=False, onerror=onerror, dir_fd=root):
+        check()
+        for name in dirs + files:
+            relative = (Path(current) / name).as_posix()
+            value = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            need(value.st_uid == os.getuid() and value.st_dev == device, 'Export namespace owner/device')
+            if name in dirs: need(relative in directories and stat.S_ISDIR(value.st_mode), 'Unknown export directory')
+            else:
+                need(relative in expected and stat.S_ISREG(value.st_mode), 'Unknown export file')
+                found.add(relative)
+    need(found == expected, 'Export member set changed')
+    for row in rows:
+        parent, leaf = parent_fd(root, row['path'])
+        try: fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        finally: os.close(parent)
+        try:
+            before = os.fstat(fd); signature = regular_signature(before)
+            need(before.st_size == row['bytes'] and stat.S_IMODE(before.st_mode) == 0o600, 'Export final size/mode')
+            sha, _, _ = consume_file(fd, before.st_size, check)
+            need(signature == regular_signature(os.fstat(fd)) and sha == row['sha256'], 'Export final bytes changed')
+        finally: os.close(fd)
+
+
+def export_generated(guard, proof, evidence):
+    need(proof.get('status') == 'COMPONENT_BROWSER_PROOF_COMPLETE' and
+         proof.get('browser_executed') == {'legacy_device_cases': 50, 'http_host_oracle_cases': 35} and
+         proof.get('native_inputs_final_verified') is True, 'Only complete component proof may export')
+    export_check(guard); guard.tick()
+    # The extra reservation is additional to, and never spends, the existing 80MiB margin.
+    current = guard.peaks.get('target', 0) + physical(Path(guard.env['RUSTUP_HOME'])) + physical(Path(guard.env['CARGO_HOME'])) + physical(guard.root, allow_tmp_sockets=True)
+    current += sum(physical(path) for path in guard.npm_roots)
+    need(current + 80 * MIB + EXPORT_RESERVE <= TOTAL, 'Additional export combined reservation')
+    private = directory_fd(guard.root)
+    try: native = owned_json(private, 'native-input-manifest.json', proof['native_inputs_sha256'], lambda: export_check(guard))
+    finally: os.close(private)
+    need(native['source_head'] == proof['source_head'] and
+         next(row['sha256'] for row in native['files'] if row['path'] == 'Cargo.lock') == proof['lock_sha256'],
+         'Native source/lock provenance differs')
+    need(native_snapshot(guard.repo, native['files'], cargo_configs(guard), lambda: export_check(guard)) == native['files'], 'Native inputs changed before export')
+    rows = generated_inventory(guard.root / 'generated')
+    need(rows == proof['generated'], 'Generated artifact inventory changed')
+    source, destination, generated = None, None, None
+    try:
+        source = directory_fd(guard.root / 'generated'); destination = directory_fd(evidence)
+        need(owned_json(destination, 'native-input-manifest.json', proof['native_inputs_sha256'], lambda: export_check(guard)) == native,
+             'Public native input manifest differs')
+        artifact = owned_json(destination, 'artifact-manifest.json', proof['manifest_sha256'], lambda: export_check(guard))
+        need(artifact['source_head'] == proof['source_head'] and artifact['lock_sha256'] == proof['lock_sha256'] and artifact['files'] == rows,
+             'Public artifact binding differs')
+        semantic_sha = next(row['sha256'] for row in proof['retained_public_diagnostics'] if row['name'] == 'semantic-abi.json')
+        semantic = owned_json(destination, 'semantic-abi.json', semantic_sha, lambda: export_check(guard))
+        need(semantic['schema'] == 'wasm-device-abi-v1' and semantic['declarationRemovalMutantRefused'] is True and
+             semantic['httpDeclarationRemovalMutantRefused'] is True, 'Public semantic qualification absent')
+        producers = [row for row in guard.commands if row['label'] in ('cargo-build','codegen','semantic-abi','browser-proof')]
+        need(len(producers) == 4 and len({row['label'] for row in producers}) == 4 and
+             all(row['exit'] == 0 and row['owned_descendants_absent'] is True and
+                 all(re.fullmatch('[0-9a-f]{64}', row[stream]['sha256']) for stream in ('stdout','stderr')) for row in producers),
+             'Successful bounded producer records required')
+        os.mkdir('generated', 0o700, dir_fd=destination)
+        generated = os.open('generated', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=destination)
+        value = os.fstat(generated); generated_identity = (value.st_dev, value.st_ino)
+        need(value.st_uid == os.getuid() and value.st_dev == os.fstat(destination).st_dev and
+             identity(evidence / 'generated') == generated_identity, 'Owned generated export directory')
+        for row in rows: copy_generated_file(source, generated, row, lambda: export_check(guard))
+        verify_export_tree(generated, rows, lambda: export_check(guard))
+        need(physical(evidence / 'generated') <= EXPORT_RESERVE and identity(guard.root / 'generated') == (os.fstat(source).st_dev, os.fstat(source).st_ino) and
+             identity(evidence) == (os.fstat(destination).st_dev, os.fstat(destination).st_ino) and
+             identity(evidence / 'generated') == generated_identity, 'Export roots/physical bound')
+        export_check(guard); guard.tick()
+        # Native source is represented by hashes/modes only; no source/private state is exported.
+        manifest = {'schema': 'wasm-generated-code-export-v1', 'complete': True, 'requires_successful_cleanup_result': True,
+            'source_head': proof['source_head'], 'local_native_inputs_sha256': proof['native_inputs_sha256'],
+            'cargo_lock_sha256': proof['lock_sha256'], 'npm_lock_sha256': proof['npm_lock_sha256'],
+            'rust_version': proof['rust-version'], 'bindgen_archive_sha256': TOOL_SHA, 'bindgen_binary_sha256': proof['bindgen_binary_sha256'],
+            'raw_wasm_sha256': proof['raw_wasm_sha256'], 'artifact_manifest_sha256': proof['manifest_sha256'],
+            'semantic_abi_sha256': semantic_sha, 'browser_counts': proof['browser_executed'],
+            'component_source_sha256': proof['component_source_sha256'],
+            'producer': producers,
+            'files': rows, 'limitations': 'Exact local-input/locked producer provenance only; not bit reproducibility, production assets, real Core HTTP, group or media acceptance'}
+        body = (json.dumps(manifest, sort_keys=True, separators=(',', ':')) + '\n').encode()
+        need(len(body) <= MIB, 'Export manifest cap')
+        fd = os.open('generated-export.json', os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=destination)
+        try:
+            offset = 0
+            while offset < len(body):
+                export_check(guard); wrote = os.write(fd, body[offset:offset + 65536]); need(wrote > 0, 'Manifest short write'); offset += wrote
+            os.fsync(fd); written = os.fstat(fd); signature = regular_signature(written)
+            need(written.st_size == len(body) and stat.S_IMODE(written.st_mode) == 0o600, 'Export manifest identity/size/mode')
+            os.lseek(fd, 0, os.SEEK_SET)
+            sha, _, _ = consume_file(fd, len(body), lambda: export_check(guard))
+            need(signature == regular_signature(os.fstat(fd)) and sha == hashlib.sha256(body).hexdigest(), 'Export manifest readback')
+        finally: os.close(fd)
+        need(identity(evidence / 'generated') == generated_identity and
+             identity(evidence) == (os.fstat(destination).st_dev, os.fstat(destination).st_ino), 'Export roots changed before completion')
+        export_check(guard)
+        return {'manifest_sha256': sha, 'files': len(rows), 'bytes': sum(row['bytes'] for row in rows), 'complete': True}
+    finally:
+        if generated is not None: os.close(generated)
+        if destination is not None: os.close(destination)
+        if source is not None: os.close(source)
 
 
 def finish(guard, proof):
+    export_requested = proof['status'] == 'COMPONENT_BROWSER_PROOF_COMPLETE'
+    try:
+        return finish_owned(guard, proof)
+    except BaseException as exc:
+        if export_requested:
+            proof.update(status='REFUSED', cleanup_pending=True,
+                         export_failure=type(exc).__name__ + (': ' + str(exc)[:512] if isinstance(exc, Refused) else ''))
+            # Also cover reservation/evidence-copy refusals before export starts.
+            # After cleanup has begun, only surviving owned state can be retained.
+            try:
+                if identity(guard.root) == guard.ident and not os.path.lexists(guard.root / 'export-recovery.json'):
+                    proof['private_prefix_retained'] = True
+                    json_new(guard.root / 'export-recovery.json', proof)
+            except BaseException:
+                pass
+        raise
+
+
+def finish_owned(guard, proof):
     """Public first proof precedes any deletion; uncertainty retains all state."""
     proof.update(minimum_free=guard.minimum_free, sampled_partition_peaks=guard.peaks,
                  cleanup_pending=True, root=str(guard.root))
@@ -617,11 +1050,13 @@ def finish(guard, proof):
         raise Refused('Children uncertain; retain root and recovery receipt')
     json_new(guard.root / 'precleanup.json', proof)
     evidence = guard.root.with_name(guard.root.name + '-public-evidence')
-    need(not os.path.lexists(evidence) and shutil.disk_usage(guard.root).free >= STOP + 16 * MIB,
+    extra = EXPORT_RESERVE if proof['status'] == 'COMPONENT_BROWSER_PROOF_COMPLETE' else 0
+    need(not os.path.lexists(evidence) and shutil.disk_usage(guard.root).free >= STOP + 16 * MIB + extra,
          'Evidence-copy reservation')
     evidence.mkdir(mode=0o700)
+    evidence_identity = identity(evidence)
     rows = []
-    for name in ('artifact-manifest.json', 'semantic-abi.json', 'browser-provenance.json', 'lifecycle-qualification.json'):
+    for name in ('artifact-manifest.json', 'semantic-abi.json', 'browser-provenance.json', 'lifecycle-qualification.json', 'native-input-manifest.json'):
         source = guard.root / name
         if source.exists():
             need(source.is_file() and not source.is_symlink() and source.stat().st_size <= MIB, 'Public receipt shape')
@@ -667,6 +1102,22 @@ def finish(guard, proof):
             write_new(destination, body)
             rows.append({'name': destination.name, 'bytes': len(body), 'sha256': digest(destination)})
     proof['retained_public_diagnostics'] = rows
+    if proof['status'] == 'COMPONENT_BROWSER_PROOF_COMPLETE':
+        try:
+            proof['generated_export'] = export_generated(guard, proof, evidence)
+        except BaseException as exc:
+            proof.update(status='REFUSED', private_prefix_retained=True, cleanup_pending=True,
+                         export_failure=type(exc).__name__ + (': ' + str(exc)[:512] if isinstance(exc, Refused) else ''))
+            # Never remove the source prefix after any uncertain export. Partial
+            # code/manifest cannot be adopted without a final successful result.
+            for destination, expected in ((guard.root, guard.ident), (evidence, evidence_identity)):
+                try:
+                    if identity(destination) == expected:
+                        json_new(destination / 'export-recovery.json', proof)
+                except BaseException:
+                    pass
+            raise
+    need(identity(evidence) == evidence_identity, 'Public evidence root changed')
     json_new(evidence / 'precleanup.json', proof)
     need(identity(guard.root) == guard.ident and shutil.rmtree.avoids_symlink_attacks,
          'Verified root/safe cleanup required')
@@ -754,6 +1205,7 @@ def main():
         proof['source_head'] = guard.command(['git', 'rev-parse', 'HEAD'], 'source-head', 10, 4096).read_text().strip()
         proof['lock_sha256'] = digest(repo / 'Cargo.lock')
         proof['npm_lock_sha256'] = digest(repo / 'package-lock.json')
+        proof['component_source_sha256'] = component_sources(repo)
         for command, label in ((['rustc', '+1.100.0', '--version', '--verbose'], 'rust-version'),
                                (['node', '--version'], 'node-version'), (['npm', '--version'], 'npm-version')):
             proof[label] = guard.command(command, label, 10, 4096).read_text().strip()
@@ -763,6 +1215,9 @@ def main():
         need(cli.is_file() and not cli.is_symlink(), 'Exact workspace browser CLI absent')
         guard.command(['node', str(cli), 'install', 'chromium'], 'browser-install', 90)
         binary, proof['publisher_members'] = acquire_tool(guard)
+        native = native_inputs(guard, 'native-inputs-before', proof['source_head'])
+        json_new(root / 'native-input-manifest.json', native)
+        proof['native_inputs_sha256'] = digest(root / 'native-input-manifest.json')
         log = guard.command(['cargo', '+1.100.0', 'build', '--locked', '-p', 'kodera-rs', '--lib',
             '--no-default-features', '--features', 'browser-bindings', '--target', 'wasm32-unknown-unknown',
             '--profile', 'dev', '--config', 'profile.dev.debug=0', '--message-format=json', '--jobs', '2'],
@@ -782,10 +1237,18 @@ def main():
         names = json.loads((repo / 'apps/web/tests/wasm/cases.json').read_text())
         need(type(names) is list and len(names) == 50 and len(set(names)) == 50 and
              all(type(name) is str and re.fullmatch('[a-z-]+', name) for name in names), 'Closed browser inventory')
+        supplemental = http_inventory(repo / 'apps/web/tests/wasm/http-cases.json')
+        proof['browser_scope'] = {'legacy_inventory_sha256': digest(repo / 'apps/web/tests/wasm/cases.json'),
+            'http_inventory_sha256': digest(repo / 'apps/web/tests/wasm/http-cases.json'),
+            'http_host_oracle_only': True,
+            'limitations': 'Synthetic host responses; not real Core HTTP, production worker/factory, process-restart, group or media acceptance'}
         listing = guard.command(command + ['--list'], 'browser-discovery', 20, MIB)
-        browser_report(listing, names, False)
+        proof['browser_discovered'] = browser_report(listing, names, False, supplemental)
         actual = guard.command(command, 'browser-proof', CASE_BUDGET, MIB)
-        browser_report(actual, names, True)
+        proof['browser_executed'] = browser_report(actual, names, True, supplemental)
+        need(component_sources(repo) == proof['component_source_sha256'], 'Component sources changed')
+        need(native_inputs(guard, 'native-inputs-final', proof['source_head']) == native, 'Native source inputs changed')
+        proof['native_inputs_final_verified'] = True
         proof['status'] = 'COMPONENT_BROWSER_PROOF_COMPLETE'
     except BaseException as exc:
         proof['status'] = 'REFUSED'
