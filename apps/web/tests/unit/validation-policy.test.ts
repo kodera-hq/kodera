@@ -6,6 +6,8 @@ import { expect, it } from 'vitest'
 import { z } from '@/validation-policy'
 
 function bypasses(text: string): boolean {
+  // An escaped literal can still name the module; keep the AST authoritative.
+  if (!text.includes('zod') && !text.includes('\\')) return false
   const source = ts.createSourceFile('probe.ts', text, ts.ScriptTarget.Latest, true)
   let bypass = false
   const isZod = (node: ts.Node | undefined) =>
@@ -39,6 +41,8 @@ it.each([
   "export { z } from 'zod/v4'",
   "const z = await import('zod')",
   "const z = require('zod')",
+  "import { z } from 'z\\u006fd'",
+  "const z = require('\\x7aod/v4')",
 ])('detects a policy bypass: %s', (source) => expect(bypasses(source)).toBe(true))
 it('allows type-only imports and policy imports', () => {
   expect(bypasses("import type { ZodType } from 'zod'")).toBe(false)
