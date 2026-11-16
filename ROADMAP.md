@@ -30,9 +30,11 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] `Kodera Passport`: signed PKCE cross-workspace magic-link sign-in, multi-organisation workspace switcher and account-erasure integration alongside per-realm OIDC + WebAuthn passkeys
 - [ ] Human Community production cutover, backup/restore rehearsal and exact-release acceptance
 
-## Track 3 — Native Clients (`Status: Implemented in tree; store/notarisation gates open`)
+## Track 3 — Native Clients (`Status: Foundations implemented; native transports and distribution in progress`)
 
 - [x] Companion client foundations in `apps/ios` (SwiftUI) and `apps/android` (Jetpack Compose) with `ciel` design parity, Matrix room/invitation models, CallKit / `ConnectionService` call seams, payload-free push integration and universal WebAuthn passkeys (no in-app purchase and no pricing screen)
+- [ ] Live native Matrix messaging/invitation transport, real audio/video/call adapters and compiled mobile Rust client bindings
+- [ ] End-to-end native push delivery and device/provider qualification
 - [x] Reproducible native candidate verification and reviewed SPDX SBOM provenance gates across desktop and mobile targets
 - [x] Web Push notifications that wake the web client without carrying message text
 - [x] Origin-fenced Tauri v2 desktop shell and bridge (`@kodera/desktop`) with `kodera://` / `matrix:` deep-links, tray controls, opt-in Push-to-Talk, zeroized process credential vault, and direct GitHub Releases multi-OS desktop (`.dmg`, `.AppImage`, `.deb`, `.msi`, `-setup.exe`) and Android (`.apk`) distribution workflow with `SHA256SUMS.txt`
@@ -71,7 +73,7 @@ The generic invoice ledger and the payment engine already in `apps/server` stay 
 The [collaboration status](./docs/specs/collaboration-status.md) records the completed Wave 2B through Wave 9 repository boundaries and separates merged source code from operator-run cutover and distribution gates:
 
 - **Wave 4 (`Implemented`):** typed Collections, transactional quotas, Factur-X `380`/`381` ledger, VIES validation and GDPR Art. 17/20 export and erasure. Community self-hosting remains independent of billing.
-- **Wave 5 (`Implemented in tree; store/installer signing pending`):** `kodera-rs` OpenMLS/Megolm/Passkey/proximity codecs, reproducible native SBOM gates, Tauri v2 desktop shell/bridge and iOS/Android companion implementations.
+- **Wave 5 (`Foundations implemented; mobile transports and distribution open`):** `kodera-rs` OpenMLS/Megolm/Passkey/proximity codecs, reproducible native SBOM gates, Tauri v2 desktop shell/bridge and iOS/Android companion implementations.
 - **Wave 6 & 7 (`Implemented`):** extension runtime v2, 23 reference implementations, `Slack`/`Discord`/`Notion` importers, bounded partner-room and opt-in open federation controls, developer docs + `llms.txt`, and multi-surface security hardening.
 - **Wave 8 & 9 (`Implemented in tree; operator cutover, signing & group-coordinator gates open`):** `deploy/community` fresh-volume cold-start footprint gate, Zero-Trust `/staff/v1/*` surface and `.well-known` discovery, Desktop self-host stack deployment, `Kodera Passport` cross-workspace magic-link PKCE sign-in, Enterprise `ee/` (`SAML 2.0`, `SCIM 2.0`, `Ed25519` audit exports, `ee/billing/`), `kodera-rs` `wasm32` browser device-proof bindings, modern `openmls_*` crypto-provider generation, default-off `0.47.0` confidential envelope relay, atomic browser confidential local-state vault, RAM-only `#proximity` check-in broker + 15-minute HKDF epoch leases + foreground native BLE/mDNS layers, and multi-OS release workflow; durable MLS/Megolm group coordinators, physical two-device radio qualification and operator cutover/signing gates remain open.
 - **Wave 10 (`Planned`):** universal zero-knowledge architecture with end-to-end encryption by default across every room, collaborative document, attachment, native mobile flow and real-time call.
