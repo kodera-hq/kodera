@@ -11794,7 +11794,15 @@ export interface components {
         MalformedRequest: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11843,7 +11851,15 @@ export interface components {
         NotFound: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11854,7 +11870,15 @@ export interface components {
         Conflict: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11865,7 +11889,15 @@ export interface components {
         ValidationError: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11876,7 +11908,15 @@ export interface components {
         PayloadTooLarge: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11887,7 +11927,15 @@ export interface components {
         UnsupportedMediaType: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11898,7 +11946,8 @@ export interface components {
         RateLimited: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Retry-After": components["headers"]["RetryAfter"];
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
                 [name: string]: unknown;
             };
             content: {
@@ -11952,7 +12001,8 @@ export interface components {
         UpstreamUnavailable: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Retry-After": components["headers"]["RetryAfter"];
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
                 [name: string]: unknown;
             };
             content: {
@@ -12597,7 +12647,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Opaque correlation reference for this committed intake operation.
                      * @example 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -12624,7 +12682,15 @@ export interface operations {
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Present if and only if the Problem `type` is `idempotency-key-in-flight`; absent
                      *     for `slug-taken` and `idempotency-key-reuse`.
@@ -12846,7 +12912,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
                 };
@@ -12921,7 +12995,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the workspace; read it with `getWorkspace`.
                      * @example /api/v1/organisations/6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f/workspace
@@ -12937,7 +13019,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the workspace; read it with `getWorkspace`.
                      * @example /api/v1/organisations/6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f/workspace
@@ -13003,7 +13093,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13151,7 +13249,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13263,7 +13369,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13323,7 +13437,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13820,7 +13942,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13833,7 +13963,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13850,7 +13988,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -13943,7 +14082,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13961,7 +14108,15 @@ export interface operations {
             410: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14015,7 +14170,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14035,7 +14198,15 @@ export interface operations {
             403: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14050,7 +14221,15 @@ export interface operations {
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14061,7 +14240,15 @@ export interface operations {
             410: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14168,7 +14355,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14421,7 +14616,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created order.
                      * @example /api/v1/orders/a1b2c3d4-e5f6-4718-8293-0a1b2c3d4e5f
@@ -14510,7 +14713,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14867,7 +15078,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14928,7 +15147,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15017,7 +15244,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15141,7 +15376,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the tenant; read it with `getTenant`.
                      * @example /api/v1/tenants/2c9f0e7a-1b3d-4e5f-8a9b-0c1d2e3f4a5b
@@ -15312,7 +15555,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created domain.
                      * @example /api/v1/domains/b3c4d5e6-f708-491a-8b2c-3d4e5f6a7b8c
@@ -15483,7 +15734,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -15547,7 +15806,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15640,7 +15907,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created ticket.
                      * @example /api/v1/support/tickets/f6a7b8c9-d0e1-4f2a-8b3c-4d5e6f7a8b9c
@@ -15844,7 +16119,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -15992,7 +16275,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16295,7 +16586,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16310,7 +16609,15 @@ export interface operations {
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16324,7 +16631,15 @@ export interface operations {
             410: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16416,7 +16731,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created import.
                      * @example /api/v1/member-imports/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d
@@ -16584,7 +16907,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16713,7 +17044,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -16775,7 +17114,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -16867,7 +17214,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16985,7 +17340,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -17075,7 +17438,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17136,7 +17507,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17233,7 +17612,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created provider.
                      * @example /api/v1/federation-providers/9b0c1d2e-3f40-4152-8a63-7b8c9d0e1f20
@@ -17491,7 +17878,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created test.
                      * @example /api/v1/federation-tests/a1b2c3d4-5e6f-4708-8a19-2b3c4d5e6f70
@@ -17584,7 +17979,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -17680,7 +18083,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17741,7 +18152,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17839,7 +18258,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17987,7 +18414,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18075,7 +18510,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18134,7 +18577,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18147,7 +18598,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18164,7 +18623,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -18218,7 +18678,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18231,7 +18699,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18248,7 +18724,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -18299,7 +18776,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18312,7 +18797,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18329,7 +18822,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -18415,7 +18909,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18428,7 +18930,15 @@ export interface operations {
             403: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18519,7 +19029,15 @@ export interface operations {
             204: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -18706,7 +19224,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18719,7 +19245,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18736,7 +19270,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -18935,7 +19470,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19073,7 +19616,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19086,7 +19637,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19104,7 +19663,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19277,7 +19837,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19386,7 +19954,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19601,7 +20170,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19663,7 +20240,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19682,7 +20267,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19726,7 +20312,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19769,7 +20356,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19823,7 +20411,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19842,7 +20438,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19886,7 +20483,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19938,7 +20536,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19957,7 +20563,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -20000,7 +20607,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -20042,7 +20650,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -20094,7 +20703,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -20113,7 +20730,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -20156,7 +20774,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -20690,7 +21309,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -20705,6 +21331,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -20776,7 +21411,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -20791,6 +21433,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -20862,7 +21513,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -20877,6 +21535,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -20948,7 +21615,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -20963,6 +21637,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -21035,7 +21718,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -21050,6 +21740,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -21122,7 +21821,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -21137,6 +21843,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -21209,7 +21924,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -21224,6 +21946,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
@@ -21354,7 +22085,14 @@ export interface operations {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
-                    /** @description Present only when the same authorized operation is replayed. */
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
                     "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
@@ -21369,6 +22107,15 @@ export interface operations {
             /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
             405: {
                 headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "X-Request-Id": components["headers"]["XRequestId"];
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
