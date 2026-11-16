@@ -76,6 +76,31 @@ jobs:
           chmod 0755 "$RUNNER_TEMP/appimage-runtime-x86_64"
           echo "KODERA_APPIMAGE_RUNTIME_PATH=$RUNNER_TEMP/appimage-runtime-x86_64" >> "$GITHUB_ENV"
 
+      - name: Install SHA256-verified NSIS packager on Windows
+        if: matrix.target == 'windows'
+        shell: pwsh
+        env:
+          NSIS_VERSION: "3.13"
+          NSIS_ZIP_SHA256: ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nsisZip = Join-Path $env:RUNNER_TEMP "nsis-$($env:NSIS_VERSION).zip"
+          $nsisDest = Join-Path $env:RUNNER_TEMP 'nsis'
+          Invoke-WebRequest -Uri "https://github.com/tauri-apps/binary-releases/releases/download/nsis-$($env:NSIS_VERSION)/nsis-$($env:NSIS_VERSION).zip" -OutFile $nsisZip
+          $actualHash = (Get-FileHash -Path $nsisZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:NSIS_ZIP_SHA256.ToLowerInvariant()) {
+            throw "NSIS archive SHA-256 mismatch: expected $($env:NSIS_ZIP_SHA256), got $actualHash"
+          }
+          Expand-Archive -Path $nsisZip -DestinationPath $nsisDest -Force
+          Remove-Item -Path $nsisZip -Force
+          $nsisDir = Join-Path $nsisDest "nsis-$($env:NSIS_VERSION)"
+          $makensisExe = Join-Path $nsisDir 'makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensisExe -PathType Leaf)) {
+            throw "makensis.exe missing after extraction: $makensisExe"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
+          Add-Content -Path $env:GITHUB_ENV -Value "KODERA_NSIS_MAKENSIS_PATH=$makensisExe"
+
       - name: Install locked npm workspace dependencies
         run: npm ci --ignore-scripts
 
@@ -357,13 +382,13 @@ jobs:
           node scripts/ci/package-desktop-release.mjs \
             --verify-appimage release-bundle/kodera-desktop-linux-x86_64.AppImage
 
-          npm sbom --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root \
+          npm sbom --omit=dev --sbom-format=cyclonedx --package-lock-only --workspaces --include-workspace-root \
             > "$RUNNER_TEMP/npm-sbom.cdx.json"
           if ! command -v cargo >/dev/null 2>&1; then
             rustup toolchain install stable --profile minimal
             rustup default stable
           fi
-          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+          cargo metadata --locked --all-features --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
           python3 scripts/ci/assemble-release-sbom.py \
             --npm-sbom "$RUNNER_TEMP/npm-sbom.cdx.json" \
             --cargo-lock Cargo.lock \

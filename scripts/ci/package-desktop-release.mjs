@@ -844,6 +844,9 @@ function packageWindowsHost(conf, outDir) {
     // 2. NSIS setup executable (-setup.exe)
     const setupOut = join(outDir, 'kodera-desktop-windows-x64-setup.exe');
     const makensisBin = resolveWindowsTool([
+      ...(process.env.KODERA_NSIS_MAKENSIS_PATH
+        ? [process.env.KODERA_NSIS_MAKENSIS_PATH]
+        : []),
       'makensis.exe',
       'C:\\Program Files (x86)\\NSIS\\makensis.exe',
       'C:\\Program Files\\NSIS\\makensis.exe',

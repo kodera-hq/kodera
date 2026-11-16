@@ -105,12 +105,14 @@ export interface SecureCredentialStoreInput {
 export interface SecureCredentialMetadataResult {
   stored: boolean;
   nativeKeychain: boolean;
+  ephemeralProcessVault: boolean;
   serviceName: string;
 }
 
 export interface SecureCredentialStatusResult {
   present: boolean;
   nativeKeychain: boolean;
+  ephemeralProcessVault: boolean;
   serviceName: string;
 }
 

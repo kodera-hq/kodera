@@ -119,7 +119,12 @@ class Fixture:
                         prefix + b" fixture bytes",
                     )
                 for name, value in extra:
-                    archive.writestr(name, value)
+                    info = (
+                        name
+                        if isinstance(name, zipfile.ZipInfo)
+                        else zipfile.ZipInfo(name, (2023, 11, 14, 22, 13, 20))
+                    )
+                    archive.writestr(info, value)
         self.seal()
 
     def seal(self):

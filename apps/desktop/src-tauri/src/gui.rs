@@ -17,8 +17,8 @@
 
 use crate::{
     route_deep_link, AdmittedDeepLink, DeepLinkAdmissionPolicy, DeepLinkError, DesktopShellHost,
-    RestoredWindowPlacement, DESKTOP_APP_IDENTIFIER, DESKTOP_APP_VERSION, DESKTOP_PRODUCT_NAME,
-    MAX_IPC_COMMAND_BYTES,
+    MonitorWorkArea, RestoredWindowPlacement, DESKTOP_APP_IDENTIFIER, DESKTOP_APP_VERSION,
+    DESKTOP_PRODUCT_NAME, MAX_IPC_COMMAND_BYTES,
 };
 use core::fmt;
 use std::collections::VecDeque;
@@ -34,11 +34,37 @@ pub const GUI_DEFAULT_WIDTH: u32 = 1280;
 /// Default logical desktop window height (`820px`).
 pub const GUI_DEFAULT_HEIGHT: u32 = 820;
 
-/// Minimum logical desktop window width (`900px`).
-pub const GUI_MIN_WIDTH: u32 = 900;
+/// Minimum logical desktop window width (`960px`, aligned with `tauri.conf.json` and `window_state`).
+pub const GUI_MIN_WIDTH: u32 = crate::window_state::MIN_WINDOW_WIDTH;
 
-/// Minimum logical desktop window height (`600px`).
-pub const GUI_MIN_HEIGHT: u32 = 600;
+/// Minimum logical desktop window height (`640px`, aligned with `tauri.conf.json` and `window_state`).
+pub const GUI_MIN_HEIGHT: u32 = crate::window_state::MIN_WINDOW_HEIGHT;
+
+/// Computes the effective minimum logical inner window size for [`RestoredWindowPlacement`],
+/// clamping [`GUI_MIN_WIDTH`] and [`GUI_MIN_HEIGHT`] to the selected monitor work area and
+/// sanitized placement bounds so compact displays (such as `900x600`) are never inflated past
+/// their work area by native window-manager minimum-size constraints.
+#[must_use]
+pub fn effective_gui_min_inner_size(
+    placement: &RestoredWindowPlacement,
+    monitors: &[MonitorWorkArea],
+) -> (u32, u32) {
+    let monitor_limits = monitors
+        .iter()
+        .find(|m| m.id == placement.target_monitor_id && m.validate().is_ok())
+        .map(|m| (m.width, m.height));
+    let (max_min_w, max_min_h) = match monitor_limits {
+        Some((mw, mh)) => (
+            mw.min(placement.bounds.width),
+            mh.min(placement.bounds.height),
+        ),
+        None => (placement.bounds.width, placement.bounds.height),
+    };
+    (
+        GUI_MIN_WIDTH.min(max_min_w).max(1),
+        GUI_MIN_HEIGHT.min(max_min_h).max(1),
+    )
+}
 
 /// Custom asset protocol scheme registered on the native OS WebView.
 pub const CUSTOM_ASSET_SCHEME: &str = "kodera-asset";
@@ -100,7 +126,7 @@ const BOOTSTRAP_INDEX_HTML: &str = r#"<!doctype html>
       </header>
       <p class="lead">
         Native desktop host active with strict Content Security Policy, deep-link filtering,
-        OS keychain isolation, and multi-monitor window state protection.
+        zeroized process credential isolation, and multi-monitor window state protection.
       </p>
       <dl class="meta-grid">
         <div>
@@ -1455,6 +1481,30 @@ mod native_runtime {
         out
     }
 
+    pub(super) fn configure_gui_window_builder(
+        placement: &RestoredWindowPlacement,
+        monitors: &[MonitorWorkArea],
+    ) -> WindowBuilder {
+        let (min_width, min_height) = super::effective_gui_min_inner_size(placement, monitors);
+        WindowBuilder::new()
+            .with_title(DESKTOP_WINDOW_TITLE)
+            .with_inner_size(LogicalSize::new(
+                f64::from(placement.bounds.width),
+                f64::from(placement.bounds.height),
+            ))
+            .with_min_inner_size(LogicalSize::new(
+                f64::from(min_width),
+                f64::from(min_height),
+            ))
+            .with_position(LogicalPosition::new(
+                f64::from(placement.bounds.x),
+                f64::from(placement.bounds.y),
+            ))
+            .with_maximized(placement.maximized)
+            .with_resizable(true)
+            .with_visible(true)
+    }
+
     /// Launches the native OS desktop window, WebView custom protocol + IPC handler, and event loop.
     pub fn launch_desktop_gui(options: DesktopGuiOptions) -> Result<(), DesktopShellError> {
         let _ = DesktopShellHost::self_check()?;
@@ -1486,23 +1536,7 @@ mod native_runtime {
                     .expect("fallback primary monitor geometry is valid")
             });
 
-        let window = WindowBuilder::new()
-            .with_title(DESKTOP_WINDOW_TITLE)
-            .with_inner_size(LogicalSize::new(
-                f64::from(placement.bounds.width),
-                f64::from(placement.bounds.height),
-            ))
-            .with_min_inner_size(LogicalSize::new(
-                f64::from(GUI_MIN_WIDTH),
-                f64::from(GUI_MIN_HEIGHT),
-            ))
-            .with_position(LogicalPosition::new(
-                f64::from(placement.bounds.x),
-                f64::from(placement.bounds.y),
-            ))
-            .with_maximized(placement.maximized)
-            .with_resizable(true)
-            .with_visible(true)
+        let window = configure_gui_window_builder(&placement, &monitors)
             .build(&event_loop)
             .map_err(|_| DesktopShellError::GuiWindowInitFailed)?;
 
@@ -2538,5 +2572,96 @@ mod tests {
             "if (window.__KODERA_DOCUMENT_ID__ === \"{new_doc}\") {{"
         )));
         assert!(!valid_out.eval_scripts[0].contains(old_doc));
+    }
+
+    #[test]
+    fn compact_900x600_display_clamps_effective_gui_min_inner_size() {
+        let compact = MonitorWorkArea {
+            id: "compact-900x600".to_owned(),
+            x: 0,
+            y: 0,
+            width: 900,
+            height: 600,
+            scale_factor_milli: 2000,
+            is_primary: true,
+        };
+        let compact_placement =
+            crate::sanitize_and_clamp_window_state(None, std::slice::from_ref(&compact)).unwrap();
+        assert_eq!(compact_placement.bounds.width, 900);
+        assert_eq!(compact_placement.bounds.height, 600);
+        assert_eq!(
+            effective_gui_min_inner_size(&compact_placement, std::slice::from_ref(&compact)),
+            (900, 600)
+        );
+
+        let standard = MonitorWorkArea::fallback_primary();
+        let standard_placement =
+            crate::sanitize_and_clamp_window_state(None, std::slice::from_ref(&standard)).unwrap();
+        assert_eq!(standard_placement.bounds.width, GUI_DEFAULT_WIDTH);
+        assert_eq!(standard_placement.bounds.height, GUI_DEFAULT_HEIGHT);
+        assert_eq!(
+            effective_gui_min_inner_size(&standard_placement, std::slice::from_ref(&standard)),
+            (GUI_MIN_WIDTH, GUI_MIN_HEIGHT)
+        );
+    }
+
+    #[cfg(feature = "desktop-app")]
+    #[test]
+    fn window_builder_clamps_min_inner_size_on_compact_900x600_display() {
+        use tao::dpi::{LogicalSize, Size};
+
+        let compact = MonitorWorkArea {
+            id: "compact-900x600".to_owned(),
+            x: 12,
+            y: 28,
+            width: 900,
+            height: 600,
+            scale_factor_milli: 2000,
+            is_primary: true,
+        };
+        let compact_placement =
+            crate::sanitize_and_clamp_window_state(None, std::slice::from_ref(&compact)).unwrap();
+        let compact_builder = super::native_runtime::configure_gui_window_builder(
+            &compact_placement,
+            std::slice::from_ref(&compact),
+        );
+        assert_eq!(
+            compact_builder.window.inner_size,
+            Some(Size::Logical(LogicalSize::new(900.0, 600.0)))
+        );
+        assert_eq!(
+            compact_builder
+                .window
+                .inner_size_constraints
+                .min_size_logical::<u32>(2.0),
+            LogicalSize::new(900, 600)
+        );
+        assert_eq!(
+            compact_builder
+                .window
+                .inner_size_constraints
+                .clamp(compact_builder.window.inner_size.unwrap(), 2.0)
+                .to_logical::<u32>(2.0),
+            LogicalSize::new(900, 600)
+        );
+
+        let standard = MonitorWorkArea::fallback_primary();
+        let standard_placement =
+            crate::sanitize_and_clamp_window_state(None, std::slice::from_ref(&standard)).unwrap();
+        let standard_builder = super::native_runtime::configure_gui_window_builder(
+            &standard_placement,
+            std::slice::from_ref(&standard),
+        );
+        assert_eq!(
+            standard_builder.window.inner_size,
+            Some(Size::Logical(LogicalSize::new(1280.0, 820.0)))
+        );
+        assert_eq!(
+            standard_builder
+                .window
+                .inner_size_constraints
+                .min_size_logical::<u32>(1.0),
+            LogicalSize::new(960, 640)
+        );
     }
 }
