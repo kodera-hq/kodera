@@ -35,8 +35,8 @@ export function verifyFrontendAssets(root, { maxDepth = 16, maxEntries = 8192 } 
     if (/^[a-z]+:/i.test(ref) || ref.startsWith('//') || ref.includes('\\'))
       throw new Error('frontend_nonlocal_reference');
     const name = decodeURIComponent(ref.split(/[?#]/)[0]).replace(/^\//, '');
-    const path = resolve(canonical, name), rel = relative(canonical, path);
-    if (isAbsolute(rel) || rel === '..' || rel.startsWith('../') || !files.includes(rel.split('\\').join('/')))
+    const path = resolve(canonical, name), rel = relative(canonical, path), relPosix = rel.split('\\').join('/');
+    if (isAbsolute(rel) || relPosix === '..' || relPosix.startsWith('../') || !files.includes(relPosix))
       throw new Error('frontend_asset_missing_or_uncontained');
   }
   return files.sort();
