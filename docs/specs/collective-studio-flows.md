@@ -26,9 +26,8 @@ empty states and the camera preview boundary.
 
 ## Verification
 
-- Full web unit suite: 5,258 tests passed across 374 files with two workers and
-  local listener access. A subsequent focused run passed 41 tests, including the
-  added document/file routing integration test.
+- Full web unit suite: green with two workers and local listener access. A subsequent
+  focused run was green too, including the added document/file routing integration test.
 - Typecheck passed. Lint passed with the existing `ContactsStep.tsx` incompatible-library
   warning. Formatting and attribution checks passed.
 - Studio production-browser flows pass at 1440 and 390 pixels in Light FR and Dark EN:
@@ -36,10 +35,10 @@ empty states and the camera preview boundary.
   exact-document navigation, notifications, files, camera simulation and reload persistence.
   Axe reports zero violations, including black-theme comments, panels and the active camera
   strip; its scroll region is labelled and keyboard focusable.
-- The protected login, support, workspace and emergency suites were run unchanged alongside
+- The protected login, support, workspace and proximity suites were run unchanged alongside
   Studio: 86 of 94 scenarios passed. All eight failing scenarios also fail on the untouched
   Phase 1 baseline `c0023f525843fcb5201a5fdf6c15a67d71126a82`: four MFA warning cases
-  (wide/narrow in light/dark) lose the warning after Escape, and four emergency cases report
+  (wide/narrow in light/dark) lose the warning after Escape, and four proximity cases report
   unhandled production asset requests in the strict mock worker. No authentication or
   protected acceptance-test files were changed.
 - Browser builds used an empty environment directory and local fixture services.

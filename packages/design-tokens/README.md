@@ -1,8 +1,10 @@
 # kodera-design-tokens
 
+Status: Published in tree as `@kodera/design-tokens`; `dist/` is generated and gated for drift.
+
 `@kodera/design-tokens` — the design tokens of Kodera, published as one package.
 
-Established by **ADR-0004** in the console repository: the tokens are a shared package, not a file copied into two repositories. Copies drift silently, and nothing errors when they disagree.
+Established by **`WEB-ADR-0004`** (`apps/web/docs/adr/0004-shared-design-tokens.md`): the tokens are a shared package, not a file copied into two trees. Copies drift silently, and nothing errors when they disagree.
 
 ```
 tokens.json                    W3C DTCG source of truth, delivered by the design workstream
@@ -77,7 +79,7 @@ The native self-test checks exact source mappings, reproducibility, source ident
 
 ## The three sync tests
 
-ADR-0004 names three tests, each guarding one failure that is otherwise completely silent.
+`WEB-ADR-0004` names three tests, each guarding one failure that is otherwise completely silent.
 
 | Test | Runs here | Fails when |
 |---|---|---|
@@ -85,7 +87,7 @@ ADR-0004 names three tests, each guarding one failure that is otherwise complete
 | **Contrast** | here, on every PR | A declared pair falls below its WCAG minimum and is not in the allowlist with a reason — or the allowlist entry no longer describes the pair: each entry is bound to the pair's `fg`, `bg`, `min` and the ratio it was written at, so a re-pointed pair, a loosened minimum or a colour that moved fails instead of inheriting the old excuse. Translucent colours are composited before measuring; an unresolvable pair is a hard failure, never a skipped row. |
 | **Version drift** | each consumer's CI | The consumer's pinned version is more than one minor behind the tag published here. Without it a repository sits on an old palette indefinitely and nothing complains. |
 
-A fourth gate is local to this repository: **drift**, which asserts `dist/` is byte-identical to a fresh build. `dist/` is committed so consumers can install from git, and a committed build output is a copy — the same failure mode ADR-0004 rejects — unless something proves it is still generated.
+A fourth gate is local to this repository: **drift**, which asserts `dist/` is byte-identical to a fresh build. `dist/` is committed so consumers can install from git, and a committed build output is a copy — the same failure mode `WEB-ADR-0004` rejects — unless something proves it is still generated.
 
 ## How CI is wired
 
@@ -149,7 +151,7 @@ The guard throws when a class names one of our families and resolves to nothing.
 
 A consumer pinned more than **one minor** behind the newest tag here fails its own CI. One minor of slack is the review window for a token change; two is a repository nobody is updating. The rule lives in each consumer because that is where the stale pin is, and it is a CI check rather than a convention because a convention about a version number is a convention nobody enforces.
 
-Versioning follows ADR-0004 and DESIGN_HANDOFF F5: renaming or removing a token is a **major**; a deprecation keeps the old name resolving for one minor.
+Versioning follows `WEB-ADR-0004`: renaming or removing a token is a **major**; a deprecation keeps the old name resolving for one minor.
 
 ## The source of truth is the design workstream's values
 
@@ -162,9 +164,9 @@ Two things the build emits are still not tokens: the frost page gradient behind 
 ## What v0.1 is not
 
 - **The ciel family is a foundation, not a palette.** `ciel` and `ciel-nuit` carry every role, material and row, with initial values chosen so that every gate is green; nothing about their values is decided, and `test/fixtures/themes.json` does not pin them. `ciel` is the unthemed default.
-- **Three themes, and an older semantic tier that is still single-valued.** The dark mode ADR-0004 and DESIGN_HANDOFF A4 call for is here: `semantic.theme.light`, `.dark` and `.black` carry the same 79 roles — the product reference's 49 plus `elevated`, `scrim`, `border-input`, `placeholder`, `disabled` and `on-disabled`, the twelve collaborator cursor roles (`cursor-1`..`cursor-6` and `cursor-1-soft`..`cursor-6-soft`), and the twelve non-status categorical tag roles (`tag-1-bg`/`tag-1-fg`..`tag-6-bg`/`tag-6-fg`) — emitted as `--c-*` custom properties and `c-*` preset colours that follow `[data-theme]`, with `ciel` as the unthemed default. The older semantic tokens — `semantic.surface.*`, `semantic.text.*` and the rest — still hold one value each and do not follow the attribute, so migrating a component to `c-*` means auditing its surfaces, text and statuses together. Focus indication is no longer part of that audit: the ring follows the attribute on its own, and the only choice a component still makes is which of the two variants it draws (`--focus-ring` on a normal ground, `--focus-ring-on-inverse` on an inverse panel). `docs/specs/shell-themes.md`.
+- **Three themes, and an older semantic tier that is still single-valued.** The dark mode `WEB-ADR-0004` calls for is here: `semantic.theme.light`, `.dark` and `.black` carry the same 79 roles — the product reference's 49 plus `elevated`, `scrim`, `border-input`, `placeholder`, `disabled` and `on-disabled`, the twelve collaborator cursor roles (`cursor-1`..`cursor-6` and `cursor-1-soft`..`cursor-6-soft`), and the twelve non-status categorical tag roles (`tag-1-bg`/`tag-1-fg`..`tag-6-bg`/`tag-6-fg`) — emitted as `--c-*` custom properties and `c-*` preset colours that follow `[data-theme]`, with `ciel` as the unthemed default. The older semantic tokens — `semantic.surface.*`, `semantic.text.*` and the rest — still hold one value each and do not follow the attribute, so migrating a component to `c-*` means auditing its surfaces, text and statuses together. Focus indication is no longer part of that audit: the ring follows the attribute on its own, and the only choice a component still makes is which of the two variants it draws (`--focus-ring` on a normal ground, `--focus-ring-on-inverse` on an inverse panel). `docs/specs/shell-themes.md`.
 - **No component tier for colour.** The `component` group is no longer empty — it carries the shell geometry aliases under `component.shell.*` — but nothing in it is a colour. The first component colour token (`button.primary.fill.hover`) arrives with the console's `src/ui/` primitives.
-- **No z-index ladder.** DESIGN_HANDOFF A12 is owed, so the preset does not override it and Tailwind's defaults apply. Breakpoints (A13) and themed elevation (A10) are here. `breakpoint.sm` … `breakpoint.2xl` are Tailwind 4's own five steps in rem (640, 768, 1024, 1280 and 1536 px at a 16 px root), mobile-first, for devices from 360 px, with every screen still reflowing at 320 CSS px. They reach the preset as `screens` and the CSS as `--breakpoint-*`, which a media query cannot read. `semantic.elevation.<theme>.raised`, `.overlay`, `.drawer` and `.dialog` reach the CSS as `--elevation-*` inside every `[data-theme]` block and the preset as `shadow-raised`, `shadow-overlay`, `shadow-drawer` and `shadow-dialog`, each a `var()` that follows the theme; a `shadow-c-*` colour or an opacity modifier has no effect on them. Level 0 is `shadow-none`. `shadow-card` and `shadow-pop` are unchanged and stay single-valued.
+- **No z-index ladder.** No decided z-index scale has been delivered, so the preset does not override it and Tailwind's defaults apply. Breakpoints and themed elevation are here. `breakpoint.sm` … `breakpoint.2xl` are Tailwind 4's own five steps in rem (640, 768, 1024, 1280 and 1536 px at a 16 px root), mobile-first, for devices from 360 px, with every screen still reflowing at 320 CSS px. They reach the preset as `screens` and the CSS as `--breakpoint-*`, which a media query cannot read. `semantic.elevation.<theme>.raised`, `.overlay`, `.drawer` and `.dialog` reach the CSS as `--elevation-*` inside every `[data-theme]` block and the preset as `shadow-raised`, `shadow-overlay`, `shadow-drawer` and `shadow-dialog`, each a `var()` that follows the theme; a `shadow-c-*` colour or an opacity modifier has no effect on them. Level 0 is `shadow-none`. `shadow-card` and `shadow-pop` are unchanged and stay single-valued.
 - **Two contrast pairs are exempt, and none fails.** The tertiary ink, the input border, the focus ring and the placeholder were fixed in the values rather than written down: `color.slate.600` and `color.slate.700` are darker — one step of the ramp does not move alone, so this darkens `text.tertiary` **and** `text.secondary` together — `border.input` is slate.500, the ring is two-tone, an opaque core inside a 35 % halo, both following `[data-theme]`, and `text.placeholder` is slate.600 (5.87:1 on white). What remains in `contrast-known-failures.json` is two rulings — the retired white-on-slate.300 disabled label, and the decorative card edge — each with the trigger that would reopen it. Both read "Decided, not pending": nothing there is awaiting a decision.
 
 ## Adding a token

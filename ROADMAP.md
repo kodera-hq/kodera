@@ -13,7 +13,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] `kodera-server` OpenAPI 3.1 contract-first control plane (`0.47.0`), ADR-0003 secret isolation & `room_access` sidecar
 - [x] Matrix-backed channels and LiveKit audio rooms in the web client, governed by `kodera-synapse-policy`
 - [x] `kodera-rs` zero-unsafe Rust core (`UuidV7`, `Ed25519` traits, OpenMLS/Megolm primitives, durable device/session state, universal ES256 passkey binding, `#proximity` frame v1/v2 codecs)
-- [x] `@kodera/extension-sdk` HMAC-signed webhooks, the `/hello` starter and 22 reference implementations with a generated catalogue
+- [x] `@kodera/extension-sdk` HMAC-signed webhooks and 23 reference implementations (the `/hello` starter plus 22 domain connectors) with a generated catalogue
 - [x] Hardened `deploy/community` profile (Synapse on PostgreSQL, federation closed by default, rate limits, no public agent API), checked on every change
 - [x] End-to-end fresh-volume cold-start verification of `deploy/community` in CI, with measured runtime and memory footprint
 

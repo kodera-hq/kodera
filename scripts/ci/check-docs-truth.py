@@ -26,6 +26,7 @@ be verified and a listing git could not produce are refusals too.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import re
 import stat
@@ -40,14 +41,24 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[2]
 
 # Documents whose links and wording are checked, as repository-relative paths or directories.
+# A source is a file, a directory, or a path pattern containing `*`, which matches the
+# files of every package without naming them one by one: a new package is checked the day
+# it lands, rather than the day someone remembers to add it here.
 SOURCES = (
     "README.md",
     "ARCHITECTURE.md",
     "ROADMAP.md",
     "AGENTS.md",
+    "ONBOARDING.md",
+    "CONTRIBUTING.md",
+    "GOVERNANCE.md",
+    "SECURITY.md",
+    "SUPPORT.md",
     "docs",
+    "ee/README.md",
     "ee/billing/README.md",
     "deploy/community",
+    "packages/*/README.md",
     "packages/create-kodera",
     "packages/extension-sdk",
     "extensions",
@@ -181,7 +192,12 @@ def survey(root: Path) -> Tree:
 def selected(paths: set[str] | dict[str, str], sources: tuple[str, ...]) -> list[str]:
     return sorted(
         path for path in paths
-        if any(path == source or path.startswith(source.rstrip("/") + "/") for source in sources)
+        if any(
+            path == source
+            or path.startswith(source.rstrip("/") + "/")
+            or ("*" in source and fnmatch.fnmatchcase(path, source))
+            for source in sources
+        )
     )
 
 

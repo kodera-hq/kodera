@@ -1,6 +1,6 @@
 # RFC-0001: `#proximity` Local Proximity Channel (`BLE GATT` + `mDNS/QUIC`)
 
-- **Status:** Draft specification. The frame v1 codec is implemented and tested in `packages/kodera-rs`; no radio adapter, check-in API or check-in screen ships.
+- **Status:** Accepted specification. The frozen frame v1 codec and the v2 rotating codec are implemented and tested in `packages/kodera-rs`; the voluntary check-in API, the RAM-only broker and the foreground native radio adapters ship. Two-device physical radio interoperability qualification remains open.
 - **Component:** `packages/kodera-rs`, `apps/desktop`, `apps/ios`, `apps/android`, `apps/web`
 - **License Boundary:** The wire format, its verification and the client behaviour described here are open source (`Apache-2.0`).
 
@@ -25,7 +25,7 @@ This channel was first called `#urgence`. It is now **`proximity`** wherever a m
 - **Named zones first.** A check-in names a zone the organisation defined ("3rd floor", "workshop", "site B"). That is the default and is enough for most uses.
 - **Coordinates are optional and short-lived.** A member may attach a more precise position; it is never required, it expires quickly, and it is not kept as a history of movements.
 
-Status: Planned. The check-in model above is the agreed behaviour; no API operation and no client screen implements it yet.
+Status: Implemented. The check-in model above is the agreed behaviour, served by `/api/v1/proximity/{bootstrap,checkin,resolve,nearby,checkout}` over the RAM-only broker, with voluntary check-in screens in the web, iOS and Android clients.
 
 ### Explicit non-goals
 
@@ -62,7 +62,7 @@ The four `status` values keep their v1 numbers and their historical names on the
 
 ## 4. Local transports
 
-Status: Planned. `packages/kodera-rs` holds the codec, the replay guard, the relay queue and the transport seam; the web client holds a matching codec and a same-browser cross-tab transport. No Bluetooth, mDNS or QUIC adapter exists in any client.
+Status: Foreground adapters shipped; physical qualification open. `packages/kodera-rs` holds the codec, the replay guard, the relay queue, the mDNS TXT record and QUIC challenge types, and the transport seam; the web client holds a matching codec and a same-browser cross-tab transport. `apps/ios` provides a foreground CoreBluetooth/Bonjour adapter and `apps/android` a foreground BLE GATT/NSD adapter. Two-device physical radio interoperability qualification remains open.
 
 1. **Local Wi-Fi / LAN (`mDNS + QUIC`):** while access points are powered, devices on the same subnet discover each other and exchange frames directly.
 2. **`BLE GATT`:** without Wi-Fi, laptops and phones advertise the `8 B` rotating beacon and exchange `<= 256 B` frames over Bluetooth Low Energy.
