@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 
-use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce, Tag};
+use aes_gcm::{aead::AeadInOut, Aes256Gcm, KeyInit, Nonce, Tag};
 use openmls::ciphersuite::hash_ref::make_key_package_ref;
 use openmls_traits::{
     crypto::OpenMlsCrypto, random::OpenMlsRand, signatures::Signer, storage::StorageProvider,
@@ -673,7 +673,7 @@ impl OpenMlsDevice {
         let aad = binding(&self.scope, &self.device_key(), generation);
         let cipher = Aes256Gcm::new_from_slice(key).map_err(failed)?;
         let tag = cipher
-            .encrypt_in_place_detached(Nonce::from_slice(&nonce), &aad, &mut plain.0)
+            .encrypt_inout_detached(&Nonce::from(nonce), &aad, plain.0.as_mut_slice().into())
             .map_err(failed)?;
         let mut sealed = Vec::with_capacity(HEADER_BYTES + plain.0.len() + TAG_BYTES);
         sealed.extend_from_slice(MAGIC);
@@ -701,11 +701,13 @@ impl OpenMlsDevice {
         let mut plain = CheckpointBuffer(sealed.0[HEADER_BYTES..tag_start].to_vec());
         Aes256Gcm::new_from_slice(key)
             .map_err(failed)?
-            .decrypt_in_place_detached(
-                Nonce::from_slice(&sealed.0[MAGIC.len()..HEADER_BYTES]),
+            .decrypt_inout_detached(
+                &Nonce::from(
+                    <[u8; 12]>::try_from(&sealed.0[MAGIC.len()..HEADER_BYTES]).map_err(failed)?,
+                ),
                 &aad,
-                &mut plain.0,
-                Tag::from_slice(&sealed.0[tag_start..]),
+                plain.0.as_mut_slice().into(),
+                &Tag::from(<[u8; 16]>::try_from(&sealed.0[tag_start..]).map_err(failed)?),
             )
             .map_err(failed)?;
 
@@ -1540,11 +1542,11 @@ pub(super) mod tests {
         let aad = binding(&scope(), &own.device_key(), store.generation);
         Aes256Gcm::new_from_slice(&vault_key)
             .unwrap()
-            .decrypt_in_place_detached(
-                Nonce::from_slice(&sealed.0[MAGIC.len()..HEADER_BYTES]),
+            .decrypt_inout_detached(
+                &Nonce::from(<[u8; 12]>::try_from(&sealed.0[MAGIC.len()..HEADER_BYTES]).unwrap()),
                 &aad,
-                &mut plain.0,
-                Tag::from_slice(&sealed.0[tag_start..]),
+                plain.0.as_mut_slice().into(),
+                &Tag::from(<[u8; 16]>::try_from(&sealed.0[tag_start..]).unwrap()),
             )
             .unwrap();
         let mut input = plain.0.as_slice();
@@ -1594,7 +1596,7 @@ pub(super) mod tests {
                 .unwrap();
             let tag = Aes256Gcm::new_from_slice(&vault_key)
                 .unwrap()
-                .encrypt_in_place_detached(Nonce::from_slice(&nonce), &aad, &mut broken.0)
+                .encrypt_inout_detached(&Nonce::from(nonce), &aad, broken.0.as_mut_slice().into())
                 .unwrap();
             let mut bytes = MAGIC.to_vec();
             bytes.extend_from_slice(&nonce);

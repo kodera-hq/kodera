@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce, Tag};
+use aes_gcm::{aead::AeadInOut, Aes256Gcm, KeyInit, Nonce, Tag};
 use openmls_traits::{crypto::OpenMlsCrypto, random::OpenMlsRand};
 use tls_codec::SecretVLBytes;
 
@@ -258,7 +258,11 @@ impl OpenMlsSession {
         let binding = aad(&self.scope, &self.device_key(), self.epoch(), generation);
         let cipher = Aes256Gcm::new_from_slice(key).map_err(failed)?;
         let tag = cipher
-            .encrypt_in_place_detached(Nonce::from_slice(&nonce), &binding, &mut plaintext.0)
+            .encrypt_inout_detached(
+                &Nonce::from(nonce),
+                &binding,
+                plaintext.0.as_mut_slice().into(),
+            )
             .map_err(failed)?;
         let mut sealed = Vec::with_capacity(HEADER_BYTES + plaintext.0.len() + TAG_BYTES);
         sealed.extend_from_slice(MAGIC);
@@ -303,11 +307,13 @@ impl OpenMlsSession {
         let mut plaintext = CheckpointBuffer(sealed.0[HEADER_BYTES..tag_start].to_vec());
         let cipher = Aes256Gcm::new_from_slice(key).map_err(failed)?;
         cipher
-            .decrypt_in_place_detached(
-                Nonce::from_slice(&sealed.0[MAGIC.len()..HEADER_BYTES]),
+            .decrypt_inout_detached(
+                &Nonce::from(
+                    <[u8; 12]>::try_from(&sealed.0[MAGIC.len()..HEADER_BYTES]).map_err(failed)?,
+                ),
                 &binding,
-                &mut plaintext.0,
-                Tag::from_slice(&sealed.0[tag_start..]),
+                plaintext.0.as_mut_slice().into(),
+                &Tag::from(<[u8; 16]>::try_from(&sealed.0[tag_start..]).map_err(failed)?),
             )
             .map_err(failed)?;
         let provisional = decode_provider(&plaintext.0)?;
@@ -390,6 +396,84 @@ mod tests {
             .unwrap();
         let b = bob.join(scope(1), &welcome, roster.clone()).unwrap();
         (a, b, roster)
+    }
+
+    #[test]
+    fn aes256_gcm_public_nist_vectors_keep_detached_bytes_and_refuse_tampering() {
+        fn bytes(value: &str) -> Vec<u8> {
+            value
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect()
+        }
+
+        // Public NIST CAVS gcmEncryptExtIV256.rsp vectors retained in the
+        // published aes-gcm 0.11.1 tests/aes256gcm.rs; no production key/state.
+        for (key, nonce, plaintext, aad, ciphertext, tag) in [
+            (
+                "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+                "516c33929df5a3284ff463d7",
+                "",
+                "",
+                "",
+                "bdc1ac884d332457a1d2664f168c76f0",
+            ),
+            (
+                "92e11dcdaa866f5ce790fd24501f92509aacf4cb8b1339d50c9c1240935dd08b",
+                "ac93a1a6145299bde902f21a",
+                "2d71bcfa914e4ac045b2aa60955fad24",
+                "1e0889016f67601c8ebea4943bc23ad6",
+                "8995ae2e6df3dbf96fac7b7137bae67f",
+                "eca5aa77d51d4a0a14d9c51e1da474ab",
+            ),
+        ] {
+            let key = bytes(key);
+            let nonce_bytes: [u8; 12] = bytes(nonce).try_into().unwrap();
+            let tag_bytes: [u8; 16] = bytes(tag).try_into().unwrap();
+            let nonce = Nonce::from(nonce_bytes);
+            let tag = Tag::from(tag_bytes);
+            let plaintext = bytes(plaintext);
+            let aad = bytes(aad);
+            let ciphertext = bytes(ciphertext);
+            let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+            let mut actual = plaintext.clone();
+            let actual_tag = cipher
+                .encrypt_inout_detached(&nonce, &aad, actual.as_mut_slice().into())
+                .unwrap();
+            assert_eq!(actual, ciphertext);
+            assert_eq!(actual_tag, tag);
+            let mut restored = ciphertext.clone();
+            cipher
+                .decrypt_inout_detached(&nonce, &aad, restored.as_mut_slice().into(), &tag)
+                .unwrap();
+            assert_eq!(restored, plaintext);
+            let mut wrong_tag = tag;
+            wrong_tag[0] ^= 1;
+            let mut rejected = ciphertext.clone();
+            assert!(cipher
+                .decrypt_inout_detached(&nonce, &aad, rejected.as_mut_slice().into(), &wrong_tag)
+                .is_err());
+            let mut wrong_nonce = nonce;
+            wrong_nonce[0] ^= 1;
+            let mut rejected = ciphertext.clone();
+            assert!(cipher
+                .decrypt_inout_detached(&wrong_nonce, &aad, rejected.as_mut_slice().into(), &tag)
+                .is_err());
+            let mut wrong_aad = aad.clone();
+            wrong_aad.push(1);
+            let mut rejected = ciphertext.clone();
+            assert!(cipher
+                .decrypt_inout_detached(&nonce, &wrong_aad, rejected.as_mut_slice().into(), &tag)
+                .is_err());
+            if !ciphertext.is_empty() {
+                let mut rejected = ciphertext.clone();
+                rejected[0] ^= 1;
+                assert!(cipher
+                    .decrypt_inout_detached(&nonce, &aad, rejected.as_mut_slice().into(), &tag)
+                    .is_err());
+            }
+        }
     }
 
     #[test]

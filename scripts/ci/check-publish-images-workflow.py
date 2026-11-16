@@ -16,7 +16,7 @@ EXPECTED_PINNED_ACTIONS = {
     "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
     "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069",
     "docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550",
-    "docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83",
+    "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
 }
 
 USES_LINE_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)")
@@ -112,6 +112,11 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
             continue
         action_ref = match.group(1).strip()
         seen_actions.add(action_ref)
+        if (
+            action_ref.startswith("docker/build-push-action@")
+            and action_ref != "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc"
+        ):
+            errors.append("unreviewed docker/build-push-action pin")
         if not PINNED_ACTION_RE.match(action_ref):
             errors.append(f"line {idx}: unpinned or non-40-hex action reference '{action_ref}'")
         if action_ref.startswith("actions/checkout@"):
@@ -167,6 +172,15 @@ def run_selftest(baseline: str) -> int:
 
     mutations: list[tuple[str, Callable[[str], str], str]] = [
         (
+            "unexpected fixed action SHA",
+            lambda s: s.replace(
+                "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+                "docker/build-push-action@0000000000000000000000000000000000000000",
+                1,
+            ),
+            "unreviewed docker/build-push-action pin",
+        ),
+        (
             "wrong workflow name",
             lambda s: s.replace("name: Publish images", "name: Publish image", 1),
             "workflow must start with exact line 'name: Publish images'",
@@ -179,8 +193,8 @@ def run_selftest(baseline: str) -> int:
         (
             "unpinned tag on docker/build-push-action",
             lambda s: s.replace(
-                "docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83",
-                "docker/build-push-action@v6",
+                "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
+                "docker/build-push-action@v7",
                 1,
             ),
             "unpinned or non-40-hex action reference",

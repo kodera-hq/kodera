@@ -18,7 +18,7 @@ EXPECTED_PINNED_ACTIONS = {
     "actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78",
     "gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c",
     "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
-    "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131",
+    "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
 }
 
 EXPECTED_RELEASE_FILES = (
@@ -144,6 +144,11 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
             continue
         action_ref = match.group(1).strip()
         seen_actions.add(action_ref)
+        if (
+            action_ref.startswith("actions/download-artifact@")
+            and action_ref != "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+        ):
+            errors.append("unreviewed actions/download-artifact pin")
         if not PINNED_ACTION_RE.match(action_ref):
             errors.append(f"line {idx}: unpinned or non-40-hex action reference '{action_ref}'")
         if action_ref.startswith("actions/checkout@"):
@@ -374,6 +379,15 @@ def run_selftest(baseline: str) -> int:
         return 1
 
     mutations: list[tuple[str, Callable[[str], str], str]] = [
+        (
+            "unexpected fixed action SHA",
+            lambda s: s.replace(
+                "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+                "actions/download-artifact@0000000000000000000000000000000000000000",
+                1,
+            ),
+            "unreviewed actions/download-artifact pin",
+        ),
         (
             "wrong workflow header",
             lambda s: s.replace("name: Release Binaries", "name: Build Binaries", 1),

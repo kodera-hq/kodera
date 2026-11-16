@@ -289,3 +289,46 @@ test('web auth first-frame shape and bounded selection awareness authenticate an
     await fixtureValue.close()
   }
 })
+
+test('automatic Pong backlog retains the library default bound on an admitted socket', async () => {
+  const value = await fixture()
+  let peer, serverSocket, originalPong
+  const completions = []
+  try {
+    peer = await connect(value, value.store.claims('editor'))
+    await until(peer.synced)
+    assert.equal(value.service.wss.clients.size, 1)
+    serverSocket = [...value.service.wss.clients][0]
+    assert.equal(serverSocket._maxPendingAutoPongs, 60)
+    // Complete a healthy real Ping/Pong before creating a controlled backlog.
+    let receivedPong = false
+    peer.socket.once('pong', () => { receivedPong = true })
+    peer.socket.ping(Buffer.from('public healthy control'))
+    await until(() => receivedPong)
+    await until(() => serverSocket._pendingAutoPongs === 0)
+    originalPong = serverSocket.pong
+    // Actual protocol responses still write to the peer. Only completion
+    // delivery is held to model backpressure deterministically without a flood.
+    serverSocket.pong = function (data, mask, callback) {
+      return originalPong.call(this, data, mask, error => {
+        completions.push(() => callback(error))
+      })
+    }
+    for (let count = 0; count < 60; count += 1) peer.socket.ping(Buffer.alloc(1))
+    await until(() => completions.length === 60)
+    assert.equal(serverSocket._pendingAutoPongs, 60)
+    assert.equal(peer.socket.readyState, WebSocket.OPEN)
+    let closeCode = null
+    peer.socket.once('close', code => { closeCode = code })
+    peer.socket.ping(Buffer.from('public over-bound control'))
+    await until(() => closeCode !== null)
+    assert.equal(closeCode, 1006)
+    assert.equal(serverSocket._pendingAutoPongs, 60)
+    assert.equal(completions.length, 60)
+  } finally {
+    if (serverSocket && originalPong) serverSocket.pong = originalPong
+    for (const complete of completions) complete()
+    peer?.doc.destroy()
+    await value.close()
+  }
+})

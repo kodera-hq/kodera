@@ -5,7 +5,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 
-use aes_gcm::{aead::AeadInPlace, Aes256Gcm, KeyInit, Nonce, Tag};
+use aes_gcm::{aead::AeadInOut, Aes256Gcm, KeyInit, Nonce, Tag};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use openmls_traits::{crypto::OpenMlsCrypto, random::OpenMlsRand};
 
@@ -2034,7 +2034,7 @@ impl DurableMlsRoom {
         let cipher = Aes256Gcm::new_from_slice(key).map_err(failed)?;
         let aad = Self::aad(&self.binding, self.epoch(), generation);
         let tag = cipher
-            .encrypt_in_place_detached(Nonce::from_slice(&nonce), &aad, &mut plain.0)
+            .encrypt_inout_detached(&Nonce::from(nonce), &aad, plain.0.as_mut_slice().into())
             .map_err(failed)?;
         let mut out = Vec::with_capacity(32 + plain.0.len());
         out.extend_from_slice(MAGIC);
@@ -2131,11 +2131,11 @@ impl DurableMlsRoom {
         let mut plaintext = CheckpointBuffer(sealed.0[16..end].to_vec());
         Aes256Gcm::new_from_slice(access.wrapping_key)
             .map_err(failed)?
-            .decrypt_in_place_detached(
-                Nonce::from_slice(&sealed.0[4..16]),
+            .decrypt_inout_detached(
+                &Nonce::from(<[u8; 12]>::try_from(&sealed.0[4..16]).map_err(failed)?),
                 &Self::aad(&binding, expected_epoch, expected_generation),
-                &mut plaintext.0,
-                Tag::from_slice(&sealed.0[end..]),
+                plaintext.0.as_mut_slice().into(),
+                &Tag::from(<[u8; 16]>::try_from(&sealed.0[end..]).map_err(failed)?),
             )
             .map_err(failed)?;
         let mut reader = Reader(&plaintext.0);
@@ -3344,10 +3344,10 @@ mod tests {
             let mut bytes = delivery.body().to_vec();
             let tag = Aes256Gcm::new_from_slice(&self.cache_key)
                 .unwrap()
-                .encrypt_in_place_detached(
-                    Nonce::from_slice(&nonce),
+                .encrypt_inout_detached(
+                    &Nonce::from(nonce),
                     b"test encrypted history",
-                    &mut bytes,
+                    bytes.as_mut_slice().into(),
                 )
                 .unwrap();
             let mut sealed = nonce.to_vec();
@@ -3370,11 +3370,11 @@ mod tests {
             let mut bytes = row.bytes[12..end].to_vec();
             Aes256Gcm::new_from_slice(&self.cache_key)
                 .unwrap()
-                .decrypt_in_place_detached(
-                    Nonce::from_slice(&row.bytes[..12]),
+                .decrypt_inout_detached(
+                    &Nonce::from(<[u8; 12]>::try_from(&row.bytes[..12]).unwrap()),
                     b"test encrypted history",
-                    &mut bytes,
-                    Tag::from_slice(&row.bytes[end..]),
+                    bytes.as_mut_slice().into(),
+                    &Tag::from(<[u8; 16]>::try_from(&row.bytes[end..]).unwrap()),
                 )
                 .unwrap();
             bytes
@@ -4675,11 +4675,11 @@ mod tests {
         let mut plain = CheckpointBuffer(old.0[16..end].to_vec());
         let cipher = Aes256Gcm::new_from_slice(&host.wrapping_key).unwrap();
         cipher
-            .decrypt_in_place_detached(
-                Nonce::from_slice(&old.0[4..16]),
+            .decrypt_inout_detached(
+                &Nonce::from(<[u8; 12]>::try_from(&old.0[4..16]).unwrap()),
                 &aad,
-                &mut plain.0,
-                Tag::from_slice(&old.0[end..]),
+                plain.0.as_mut_slice().into(),
+                &Tag::from(<[u8; 16]>::try_from(&old.0[end..]).unwrap()),
             )
             .unwrap();
         change(&mut plain.0);
@@ -4688,7 +4688,7 @@ mod tests {
             .random_array::<12>()
             .unwrap();
         let tag = cipher
-            .encrypt_in_place_detached(Nonce::from_slice(&nonce), &aad, &mut plain.0)
+            .encrypt_inout_detached(&Nonce::from(nonce), &aad, plain.0.as_mut_slice().into())
             .unwrap();
         let mut bytes = MAGIC.to_vec();
         bytes.extend_from_slice(&nonce);

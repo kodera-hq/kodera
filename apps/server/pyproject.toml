@@ -7,11 +7,11 @@ description = "Control plane of kodera.io: system of record and provisioning wor
 requires-python = ">=3.12,<3.13"
 license = { text = "AGPL-3.0-or-later" }
 dependencies = [
-  "gunicorn==27.0.0",
+  "gunicorn==27.0.1",
   "argon2-cffi==25.1.0",
   "Django==6.1.2",
   "djangorestframework==3.18.3",
-  "psycopg[binary]==3.3.8",
+  "psycopg[binary]==3.3.9",
   "django-environ==0.14.0",
   "PyJWT[crypto]==2.15.1",
   "cryptography==50.0.2",
@@ -40,7 +40,7 @@ dev = [
   # Validates the workspace operations' responses against the contract's schemas
   # (tests/test_workspace_onboarding.py, WS-14). Already locked through schemathesis;
   # declared because a test imports it.
-  "jsonschema-rs==0.61.1",
+  "jsonschema-rs==0.61.2",
   "ruff>=0.6",
   "mypy>=1.11",
   "pytest>=8.3",
