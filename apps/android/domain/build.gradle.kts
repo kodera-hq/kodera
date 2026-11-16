@@ -25,6 +25,6 @@ tasks.withType<JavaCompile>().configureEach { options.release.set(17) }
 dependencies {
     // Ed25519 for Android 8 to 12, whose platform provider has none (it arrives in API 33).
     // Only the lightweight API is used, never as a registered JCA provider.
-    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     testImplementation("junit:junit:4.13.2")
 }
