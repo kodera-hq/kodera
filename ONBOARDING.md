@@ -7,7 +7,7 @@ This 1-page map helps Core engineers, Satellite Team contributors, and external 
 ## Toolchain Prerequisites
 
 - **Node.js:** `.nvmrc` pins the `22` line; `package.json` `engines` accepts `^22.22.2 || ^24.15.0 || >=26.0.0` (so `23.x` and `25.x` are refused) — always install via `npm ci --ignore-scripts`
-- **Rust:** `1.80+` stable, as `Cargo.toml` declares in `rust-version` (`rustfmt` + `clippy`); the optional OpenMLS provider of `packages/kodera-rs` needs `1.91`
+- **Rust:** standalone `packages/kodera-rs` (`--no-default-features`) declares `rust-version = "1.80"` (`rustfmt` + `clippy`); workspace default checks (`cargo check --workspace`, including `kodera-desktop` `tao`/`wry`) require `1.88+`; the opt-in native OpenMLS crypto providers (`openmls_rust_crypto` / `openmls_basic_credential` backports) require `1.94+` (and WASM `browser-bindings` in CI uses `1.100.0`)
 - **Python:** `3.12` + `uv` (for `apps/server` and `packages/synapse-policy`)
 
 ## Role-Based Entry Points

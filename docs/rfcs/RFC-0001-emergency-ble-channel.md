@@ -1,6 +1,6 @@
 # RFC-0001: `#proximity` Local Proximity Channel (`BLE GATT` + `mDNS/QUIC`)
 
-- **Status:** Accepted specification. The frozen frame v1 codec and the v2 rotating codec are implemented and tested in `packages/kodera-rs`; the voluntary check-in API, the RAM-only broker and the foreground native radio adapters ship. Two-device physical radio interoperability qualification remains open.
+- **Status:** Accepted specification. The frozen frame v1 codec and the v2 rotating discovery-beacon codec are implemented and tested in `packages/kodera-rs`; the voluntary check-in API, the RAM-only broker and the foreground native radio adapters ship. Two-device physical radio interoperability qualification remains open.
 - **Component:** `packages/kodera-rs`, `apps/desktop`, `apps/ios`, `apps/android`, `apps/web`
 - **License Boundary:** The wire format, its verification and the client behaviour described here are open source (`Apache-2.0`).
 
@@ -23,9 +23,9 @@ This channel was first called `#urgence`. It is now **`proximity`** wherever a m
 - A member checks in only by an explicit action. Nothing checks a member in automatically, and leaving is as easy as arriving.
 - A check-in shows a pseudonymous handle, not a legal name or an account identifier.
 - **Named zones first.** A check-in names a zone the organisation defined ("3rd floor", "workshop", "site B"). That is the default and is enough for most uses.
-- **Coordinates are optional and short-lived.** A member may attach a more precise position; it is never required, it expires quickly, and it is not kept as a history of movements.
+- **Zero-GPS invariant.** Coordinate, latitude, longitude and GPS fields are explicitly refused (`422 gps-coordinates-forbidden`) across OpenAPI, `apps/server`, `packages/kodera-rs`, iOS and Android; presence uses named scopes and status notes alongside local coarse RSSI distance bands (`immediate | near | ambient`) with zero durable location storage.
 
-Status: Implemented. The check-in model above is the agreed behaviour, served by `/api/v1/proximity/{bootstrap,checkin,resolve,nearby,checkout}` over the RAM-only broker, with voluntary check-in screens in the web, iOS and Android clients.
+Status: Implemented. The zero-GPS check-in model above is the shipped behaviour, served by `/api/v1/proximity/{bootstrap,checkin,resolve,nearby,checkout}` over the RAM-only broker, with voluntary check-in screens in the web, iOS and Android clients.
 
 ### Explicit non-goals
 

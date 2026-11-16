@@ -1,6 +1,6 @@
 # `kodera-rs`
 
-Shared native Rust engine (`#![forbid(unsafe_code)]`) shared by the Kodera Desktop developer preview, **Kodera iOS (`SwiftUI`)** and **Kodera Android (`Jetpack Compose`)**.
+Shared native Rust engine (`#![forbid(unsafe_code)]`) shared by **Kodera Desktop (`v0.1.0`)**, **Kodera iOS (`SwiftUI`)** and **Kodera Android (`Jetpack Compose`)**.
 
 Status: Optional native cryptographic engines available for local integration; platform activation,
 hardware attestation, protected persistence and live radio/service acceptance remain pending.
@@ -32,8 +32,12 @@ Room epochs cannot decrease, and a room's established algorithm cannot change un
 The optional actual engines are separate from that metadata tracker. See
 [native crypto and discovery v2](docs/native-crypto.md) for their authenticated
 scope, real commit/key rotation, passkey assertion profile, replay rules and
-trusted adapter boundaries. The default crate and desktop dependency remain
-compatible with Rust 1.80; the optional OpenMLS provider requires Rust 1.91.
+trusted adapter boundaries. Standalone `packages/kodera-rs`
+(`--no-default-features`) declares `rust-version = "1.80"`; workspace default
+checks (`cargo check --workspace`, including `kodera-desktop` `tao`/`wry`)
+require `1.88+`; the opt-in native OpenMLS crypto providers
+(`openmls_rust_crypto` / `openmls_basic_credential` backports) require `1.94+`
+(and WASM `browser-bindings` in CI uses `1.100.0`).
 
 ## Docs link policy and native webhook seam
 

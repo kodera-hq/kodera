@@ -19,7 +19,8 @@ recorded in [`docs/specs/collaboration-status.md`](../../docs/specs/collaboratio
 The additive Core contract declares moderation and reports, reusable invite links,
 checksum-bound attachments, public-target URL previews, a private notification inbox,
 empty-body push wakeups, workspace documents and short-lived collaboration tickets.
-These declarations do not assert that their HTTP handlers or deployment are available.
+OpenAPI declarations and routed handlers are not evidence of a live deployment; server
+and client implementation lanes supply their own runtime proofs.
 There is no chat-to-document promotion operation.
 
 Acceptance requires byte-identical server/web copies, the explicit cursor inventory,
@@ -42,8 +43,12 @@ refusal is audited. Templates are `spec`, `adr`, `meeting_notes` and `runbook`.
 
 ## Collections, quotas, billing artifacts and privacy increment 0.44.0
 
-Status: Implemented. `apps/server` routes the collection, quota, credit-note and privacy
-operations of this increment; they are the Wave 4 boundary recorded in
+Status: Partially implemented. `apps/server` routes the collection
+([`apps/server/apps/docs/api/urls.py`](../../apps/server/apps/docs/api/urls.py)), quota,
+and credit-note operations of `0.44.0`, while the GDPR/privacy export and deletion
+storage and worker modules sit in `apps/server/apps/orgs/`
+([`PRIVATE_EXPORT_RUNTIME.md`](../../apps/server/apps/orgs/PRIVATE_EXPORT_RUNTIME.md))
+with their 10 HTTP endpoints still held unrouted; see
 [`docs/specs/collaboration-status.md`](../../docs/specs/collaboration-status.md).
 
 The additive contract defines typed collection properties and values, saved table,
@@ -73,7 +78,7 @@ lawfully required accounting snapshots under the ten-year retention clock; legal
 holds and pending retention remain explicit states. A last owner transfers ownership
 before deleting their account.
 
-A routed handler is not a deployment: nothing here is evidence of a running instance,
+OpenAPI declarations and routed handlers are not evidence of a live deployment,
 certified billing documents, a reachable VIES service or completed data deletion. Server
 and client implementation lanes supply their own runtime proofs.
 
