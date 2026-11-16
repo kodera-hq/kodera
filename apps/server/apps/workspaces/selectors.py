@@ -5,7 +5,18 @@ from uuid import UUID
 
 from django.db.models import Q
 
-from .models import Workspace, WorkspaceMemberRestriction
+from .models import Channel, Workspace, WorkspaceMemberRestriction
+
+
+def active_text_channel_id(*, workspace_id: UUID, channel_id: UUID) -> UUID | None:
+    """An active text channel in the exact workspace, without exporting its model."""
+    return (
+        Channel.objects.filter(
+            id=channel_id, workspace_id=workspace_id, kind="text", lifecycle="active"
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
 
 
 def workspace_organisation(*, workspace_id: UUID) -> UUID:

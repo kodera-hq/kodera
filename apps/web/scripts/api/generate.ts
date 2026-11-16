@@ -12,6 +12,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import openapiTS, { astToString } from 'openapi-typescript'
+import { optionalResponseHeadersForTypes } from './response-headers.ts'
 import { emitExamples, emitHandlers, emitProblems, emitProblemsReExport } from './emit.ts'
 import { ContractError, operations, problems, readPinnedSpec } from './spec.ts'
 import type { Operation, Spec } from './spec.ts'
@@ -73,7 +74,8 @@ function checkOrganisationCoherence(ops: Operation[], notes: string[]): void {
 export async function generate(options: GenerateOptions): Promise<GenerateResult> {
   const spec: Spec = readPinnedSpec(options.contract, options.lock)
 
-  const ast = await openapiTS(pathToFileURL(resolve(options.contract)), {
+  const ast = await openapiTS(JSON.stringify(optionalResponseHeadersForTypes(spec)), {
+    cwd: pathToFileURL(resolve(options.contract)),
     // The contract is the source of truth for what is optional; nothing here
     // second-guesses it, so no `defaultNonNullable` or `emptyObjectsUnknown`.
     alphabetize: false,

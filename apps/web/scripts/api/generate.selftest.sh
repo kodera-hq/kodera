@@ -81,3 +81,7 @@ code="$(run "$fixtures/complete.openapi.yaml" "$tmp/wrong.lock.json" "$tmp/drift
 grep -q 'sha256' "$tmp/stderr" || fail "the failure does not mention the hash"
 
 echo "generate.selftest: 3 cases, the two mutations were both caught."
+
+# The additional response-header controls exercise the actual pinned emitter and a bypass mutant.
+node --test "$here/response-headers.selftest.ts"
+echo "generate.selftest: 3 additional Node response-header controls passed."

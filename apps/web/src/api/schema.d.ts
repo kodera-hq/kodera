@@ -3931,6 +3931,170 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organisations/{organisation_id}/confidential/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * RegisterConfidentialDevice
+         * @description Register a bounded immutable public signing key for the current membership. Re-registering an active owned key yields its same device; revoked keys never reactivate. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is register-device. Resource coordinate is null.
+         */
+        post: operations["registerConfidentialDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/devices/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * RevokeConfidentialDevice
+         * @description Permanently revoke a device of the caller own identity and membership; discard all remaining directory payloads, including already-claimed packages, while retaining their claim and binding metadata. Revoked devices cannot publish, read or replay. Rejoining needs a new device key. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is revoke-device. Resource coordinate is null.
+         */
+        post: operations["revokeConfidentialDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/key-packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * PublishConfidentialKeyPackage
+         * @description Publish an opaque package for at most seven days. At most sixteen active unclaimed packages per device are admitted. The public SHA-256 reference remains a single-use tombstone after consumption. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is publish-key-package. Resource coordinate is null.
+         */
+        post: operations["publishConfidentialKeyPackage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/rooms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * CreateConfidentialRoom
+         * @description Create one explicit encrypted relay bound to an active text channel. Only owner/admin with current content visibility may create it. The algorithm is immutable; this never upgrades the existing ordinary Matrix room in place. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is create-room. Resource coordinate is null.
+         */
+        post: operations["createConfidentialRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/rooms/{room_id}/key-packages/claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * ClaimConfidentialKeyPackage
+         * @description Claim one eligible target device package once, bound to this room, current epoch and claimant. At most one claim is admitted for a target device in the same room and epoch; a duplicate claim under a new idempotency key returns 409. Only an admitted owner/admin can claim; concurrent claimants never receive the same package. A successful same-key retry may return its original public package only while current caller and target authority hold. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is claim-key-package. Resource coordinate is the path room UUID. The required signed epoch must equal the current room epoch; stale epochs return 409.
+         */
+        post: operations["claimConfidentialKeyPackage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/rooms/{room_id}/commits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * CommitConfidentialEpoch
+         * @description Atomically advance the expected epoch and admitted device roster. Only owner/admin may add a device or remove an otherwise eligible peer; any current admitted device may rotate or remove revoked leaves. Clients must cryptographically validate the opaque Commit and resulting roster before using keys. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is commit-epoch. Resource coordinate is the path room UUID.
+         */
+        post: operations["commitConfidentialEpoch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/rooms/{room_id}/participants/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * RetireConfidentialParticipant
+         * @description Retire the caller own admitted device or, for owner/admin, another admitted device. Immediately deny its reads/writes and gate application publication until a next-epoch removal Commit. This room retirement is distinct from permanent device revocation. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is retire-room-device. Resource coordinate is the path room UUID. The required signed epoch must equal the current room epoch; stale epochs return 409.
+         */
+        post: operations["retireConfidentialParticipant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * ListConfidentialEnvelopes
+         * @description Read current-authority ciphertext and public verification keys. Welcome is recipient-device scoped. Numeric after is a bounded protocol sequence continuation, with both row and byte budgets, not permission to fetch a hidden sequence. Historical keys or membership do not authorize this read. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms.
+         */
+        get: operations["listConfidentialEnvelopes"];
+        put?: never;
+        /**
+         * SendConfidentialEnvelope
+         * @description Append an opaque protocol Application at the exact current epoch. Never store plaintext, search content or media keys. A captured signature cannot append a second logical envelope under a new replay key. Current accepted membership and enabled identity are checked before any effect or replay metadata. Room-scoped operations additionally require explicit device admission and current channel visibility. Staff has no override. Device proof is possession, not human identity verification. Application publication observes mute/read-only policy and blocks until revoked leaves have been removed by an accepted next-epoch Commit. Busy privacy or authority fences fail closed with a transient 503. This operator-gated foundation does not qualify browser/native encryption or media transforms. A verified customer JWT and Ed25519 proof from the registration key or existing registered device are both required. The proof signs UTF-8 bytes: kodera-e2ee-relay-v1, then one NUL byte, then compact JSON [operation,organisation UUID,current membership UUID,room UUID or null,unsigned body]. Object keys are lexicographically sorted; comma and colon separators contain no whitespace. Strings use ASCII JSON escapes and forward slashes are not escaped. Integer fields use plain decimal notation, arrays retain their supplied order, and signature is omitted from unsigned body. All binary fields use canonical padded standard base64. Duplicate JSON keys, unknown fields, non-finite numbers and bodies over 786432 bytes are refused. Signing operation is send-application. Resource coordinate is the path room UUID.
+         */
+        post: operations["sendConfidentialEnvelope"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -11257,13 +11421,388 @@ export interface components {
             self: components["schemas"]["ProximityRadioSelf"];
             peers: components["schemas"]["ProximityRadioPeer"][];
         };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialDeviceRegistration: {
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 32 through 32 bytes.
+             */
+            signingKey: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+         *     }
+         */
+        ConfidentialDevice: {
+            /** Format: uuid */
+            deviceId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 32 through 32 bytes.
+             */
+            signingKey: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "targetDeviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialTargetDevice: {
+            /** Format: uuid */
+            deviceId: string;
+            /** Format: uuid */
+            targetDeviceId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "epoch": 0,
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "targetDeviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialEpochTargetDevice: {
+            /** @description Current room epoch, included in the unchanged signed unsigned-body transcript; stale epochs are refused. */
+            epoch: number;
+            /** Format: uuid */
+            deviceId: string;
+            /** Format: uuid */
+            targetDeviceId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "revoked": true
+         *     }
+         */
+        ConfidentialDeviceRevoked: {
+            /** Format: uuid */
+            deviceId: string;
+            /** @constant */
+            revoked: true;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "keyPackage": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialKeyPackagePublication: {
+            /** Format: uuid */
+            deviceId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 1 through 16384 bytes.
+             */
+            keyPackage: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "keyPackageId": "01950000-0000-7000-8000-0000000000a1",
+         *       "reference": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "expiresAt": "2030-01-08T00:00:00Z"
+         *     }
+         */
+        ConfidentialKeyPackagePublished: {
+            /** Format: uuid */
+            keyPackageId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 32 through 32 bytes.
+             */
+            reference: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "channelId": "01950000-0000-7000-8000-0000000000a1",
+         *       "algorithm": "io.kodera.mls.v1",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialRoomCreation: {
+            /** Format: uuid */
+            deviceId: string;
+            /** Format: uuid */
+            channelId: string;
+            /** @enum {string} */
+            algorithm: "io.kodera.mls.v1" | "m.megolm.v1.aes-sha2";
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "roomId": "01950000-0000-7000-8000-0000000000a1",
+         *       "algorithm": "io.kodera.mls.v1",
+         *       "epoch": 0,
+         *       "deviceIds": [
+         *         "01950000-0000-7000-8000-0000000000a2"
+         *       ]
+         *     }
+         */
+        ConfidentialRoomCreated: {
+            /** Format: uuid */
+            roomId: string;
+            /** @enum {string} */
+            algorithm: "io.kodera.mls.v1" | "m.megolm.v1.aes-sha2";
+            /** @constant */
+            epoch: 0;
+            deviceIds: string[];
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "keyPackageId": "01950000-0000-7000-8000-0000000000a1",
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "keyPackage": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "epoch": 0
+         *     }
+         */
+        ConfidentialKeyPackageClaimed: {
+            /** Format: uuid */
+            keyPackageId: string;
+            /** Format: uuid */
+            deviceId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 32 through 32 bytes.
+             */
+            signingKey: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 1 through 16384 bytes.
+             */
+            keyPackage: string;
+            epoch: number;
+        };
+        /**
+         * @description Expected current epoch; advancing requires an accepted next Commit. Welcome is required exactly when adding devices; one authenticated MLS Welcome may contain multiple recipient entries. Every added device needs a current room/epoch-bound single-use package claim. Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "epoch": 0,
+         *       "deviceIds": [
+         *         "01950000-0000-7000-8000-0000000000a2"
+         *       ],
+         *       "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialEpochCommit: {
+            /** Format: uuid */
+            deviceId: string;
+            epoch: number;
+            deviceIds: string[];
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 16 through 262144 bytes.
+             */
+            ciphertext: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 16 through 262144 bytes.
+             */
+            welcome?: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description When a Commit also appends a Welcome, headSequence can exceed commitSequence. Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "epoch": 1,
+         *       "commitEnvelopeId": "01950000-0000-7000-8000-0000000000c1",
+         *       "commitSequence": 1,
+         *       "headSequence": 1,
+         *       "deviceIds": [
+         *         "01950000-0000-7000-8000-0000000000a2"
+         *       ]
+         *     }
+         */
+        ConfidentialEpochCommitted: {
+            epoch: number;
+            /** Format: uuid */
+            commitEnvelopeId: string;
+            commitSequence: number;
+            headSequence: number;
+            deviceIds: string[];
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "epoch": 0,
+         *       "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+         *       "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+         *     }
+         */
+        ConfidentialApplication: {
+            /** Format: uuid */
+            deviceId: string;
+            epoch: number;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 16 through 81920 bytes.
+             */
+            ciphertext: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 64 through 64 bytes.
+             */
+            signature: string;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "envelopeId": "01950000-0000-7000-8000-0000000000a1",
+         *       "sequence": 1,
+         *       "epoch": 0
+         *     }
+         */
+        ConfidentialApplicationAccepted: {
+            /** Format: uuid */
+            envelopeId: string;
+            sequence: number;
+            epoch: number;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "epoch": 0,
+         *       "rekeyRequired": true
+         *     }
+         */
+        ConfidentialParticipantRetired: {
+            epoch: number;
+            /** @constant */
+            rekeyRequired: true;
+        };
+        /**
+         * @description Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "id": "01950000-0000-7000-8000-0000000000a1",
+         *       "kind": "application",
+         *       "epoch": 0,
+         *       "sequence": 1,
+         *       "senderDeviceId": "01950000-0000-7000-8000-0000000000a2",
+         *       "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+         *     }
+         */
+        ConfidentialEnvelope: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "application" | "commit" | "welcome";
+            epoch: number;
+            sequence: number;
+            /** Format: uuid */
+            senderDeviceId: string;
+            /**
+             * Format: byte
+             * @description Canonical padded standard base64; decoded size 16 through 262144 bytes.
+             */
+            ciphertext: string;
+        };
+        /**
+         * @description A protocol stream continuation, not a generic CursorPage. At most 100 envelopes and 512 KiB of raw ciphertext are returned. Continue with after=nextAfter while hasMore is true. Sequence gaps may belong to another device Welcome and do not grant access to it. New or rejoining devices receive no pre-admission history. Examples use public zero-byte wire placeholders, not valid protocol ciphertext, private keys or cryptographic evidence.
+         * @example {
+         *       "roomId": "01950000-0000-7000-8000-0000000000a1",
+         *       "algorithm": "io.kodera.mls.v1",
+         *       "epoch": 0,
+         *       "rekeyRequired": false,
+         *       "hasMore": false,
+         *       "nextAfter": 1,
+         *       "devices": [
+         *         {
+         *           "deviceId": "01950000-0000-7000-8000-0000000000a2",
+         *           "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+         *         }
+         *       ],
+         *       "envelopes": [
+         *         {
+         *           "id": "01950000-0000-7000-8000-0000000000a1",
+         *           "kind": "application",
+         *           "epoch": 0,
+         *           "sequence": 1,
+         *           "senderDeviceId": "01950000-0000-7000-8000-0000000000a2",
+         *           "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+         *         }
+         *       ]
+         *     }
+         */
+        ConfidentialEnvelopePage: {
+            /** Format: uuid */
+            roomId: string;
+            /** @enum {string} */
+            algorithm: "io.kodera.mls.v1" | "m.megolm.v1.aes-sha2";
+            epoch: number;
+            rekeyRequired: boolean;
+            hasMore: boolean;
+            nextAfter: number;
+            devices: components["schemas"]["ConfidentialDevice"][];
+            envelopes: components["schemas"]["ConfidentialEnvelope"][];
+        };
     };
     responses: {
         /** @description The request body or its parameters are malformed. */
         MalformedRequest: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11312,7 +11851,15 @@ export interface components {
         NotFound: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11323,7 +11870,15 @@ export interface components {
         Conflict: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11334,7 +11889,15 @@ export interface components {
         ValidationError: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11345,7 +11908,15 @@ export interface components {
         PayloadTooLarge: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11356,7 +11927,15 @@ export interface components {
         UnsupportedMediaType: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                /**
+                 * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                 *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                 *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                 *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                 *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                 *     `false`.
+                 */
+                "Idempotency-Replayed"?: "true";
                 [name: string]: unknown;
             };
             content: {
@@ -11367,7 +11946,8 @@ export interface components {
         RateLimited: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Retry-After": components["headers"]["RetryAfter"];
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
                 [name: string]: unknown;
             };
             content: {
@@ -11421,7 +12001,8 @@ export interface components {
         UpstreamUnavailable: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];
-                "Retry-After": components["headers"]["RetryAfter"];
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
                 [name: string]: unknown;
             };
             content: {
@@ -12066,7 +12647,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Opaque correlation reference for this committed intake operation.
                      * @example 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
@@ -12093,7 +12682,15 @@ export interface operations {
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Present if and only if the Problem `type` is `idempotency-key-in-flight`; absent
                      *     for `slug-taken` and `idempotency-key-reuse`.
@@ -12315,7 +12912,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     "Cache-Control"?: "no-store";
                     [name: string]: unknown;
                 };
@@ -12390,7 +12995,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the workspace; read it with `getWorkspace`.
                      * @example /api/v1/organisations/6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f/workspace
@@ -12406,7 +13019,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the workspace; read it with `getWorkspace`.
                      * @example /api/v1/organisations/6f1d2e3c-8a4b-4c5d-9e6f-0a1b2c3d4e5f/workspace
@@ -12472,7 +13093,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -12620,7 +13249,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -12732,7 +13369,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -12792,7 +13437,15 @@ export interface operations {
                 headers: {
                     ETag: components["headers"]["ETag"];
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13289,7 +13942,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13302,7 +13963,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13319,7 +13988,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -13412,7 +14082,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13430,7 +14108,15 @@ export interface operations {
             410: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13484,7 +14170,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13504,7 +14198,15 @@ export interface operations {
             403: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13519,7 +14221,15 @@ export interface operations {
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13530,7 +14240,15 @@ export interface operations {
             410: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13637,7 +14355,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -13890,7 +14616,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created order.
                      * @example /api/v1/orders/a1b2c3d4-e5f6-4718-8293-0a1b2c3d4e5f
@@ -13979,7 +14713,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14336,7 +15078,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14397,7 +15147,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14486,7 +15244,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -14610,7 +15376,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the tenant; read it with `getTenant`.
                      * @example /api/v1/tenants/2c9f0e7a-1b3d-4e5f-8a9b-0c1d2e3f4a5b
@@ -14781,7 +15555,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created domain.
                      * @example /api/v1/domains/b3c4d5e6-f708-491a-8b2c-3d4e5f6a7b8c
@@ -14952,7 +15734,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -15016,7 +15806,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15109,7 +15907,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created ticket.
                      * @example /api/v1/support/tickets/f6a7b8c9-d0e1-4f2a-8b3c-4d5e6f7a8b9c
@@ -15313,7 +16119,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -15461,7 +16275,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15764,7 +16586,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15779,7 +16609,15 @@ export interface operations {
             409: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15793,7 +16631,15 @@ export interface operations {
             410: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -15885,7 +16731,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created import.
                      * @example /api/v1/member-imports/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d
@@ -16053,7 +16907,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16182,7 +17044,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -16244,7 +17114,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -16336,7 +17214,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16454,7 +17340,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -16544,7 +17438,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16605,7 +17507,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -16702,7 +17612,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created provider.
                      * @example /api/v1/federation-providers/9b0c1d2e-3f40-4152-8a63-7b8c9d0e1f20
@@ -16960,7 +17878,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the created test.
                      * @example /api/v1/federation-tests/a1b2c3d4-5e6f-4708-8a19-2b3c4d5e6f70
@@ -17053,7 +17979,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     /**
                      * @description Canonical URL of the job.
                      * @example /api/v1/jobs/8b1f6d2e-4c3a-4b5d-9e0f-1a2b3c4d5e6f
@@ -17149,7 +18083,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17210,7 +18152,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17308,7 +18258,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17456,7 +18414,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17544,7 +18510,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17603,7 +18577,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17616,7 +18598,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17633,7 +18623,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -17687,7 +18678,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17700,7 +18699,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17717,7 +18724,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -17768,7 +18776,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17781,7 +18797,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17798,7 +18822,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -17884,7 +18909,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17897,7 +18930,15 @@ export interface operations {
             403: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -17988,7 +19029,15 @@ export interface operations {
             204: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -18175,7 +19224,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18188,7 +19245,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18205,7 +19270,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -18404,7 +19470,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18542,7 +19616,15 @@ export interface operations {
             201: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18555,7 +19637,15 @@ export interface operations {
             402: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18573,7 +19663,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -18746,7 +19837,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -18855,7 +19954,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19070,7 +20170,15 @@ export interface operations {
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19132,7 +20240,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19151,7 +20267,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19195,7 +20312,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19238,7 +20356,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19292,7 +20411,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19311,7 +20438,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19355,7 +20483,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19407,7 +20536,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19426,7 +20563,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19469,7 +20607,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19511,7 +20650,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19563,7 +20703,15 @@ export interface operations {
             202: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
@@ -19582,7 +20730,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -19625,7 +20774,8 @@ export interface operations {
             503: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
-                    "Retry-After": components["headers"]["RetryAfter"];
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -20109,6 +21259,884 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProximityRadioProblem"];
+                };
+            };
+        };
+    };
+    registerConfidentialDevice: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialDeviceRegistration"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialDevice"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    revokeConfidentialDevice: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialTargetDevice"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialDeviceRevoked"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    publishConfidentialKeyPackage: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialKeyPackagePublication"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialKeyPackagePublished"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createConfidentialRoom: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialRoomCreation"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialRoomCreated"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    claimConfidentialKeyPackage: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialEpochTargetDevice"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialKeyPackageClaimed"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    commitConfidentialEpoch: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialEpochCommit"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialEpochCommitted"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    retireConfidentialParticipant: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialEpochTargetDevice"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialParticipantRetired"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listConfidentialEnvelopes: {
+        parameters: {
+            query: {
+                deviceId: string;
+                after?: number;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialEnvelopePage"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sendConfidentialEnvelope: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfidentialApplication"];
+            };
+        };
+        responses: {
+            /** @description Opaque transport operation accepted; plaintext and private keys are never returned. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfidentialApplicationAccepted"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            405: {
+                headers: {
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+            /** @description Authentication, authority, validation, conflict, capacity or temporary contention refusal. */
+            503: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "Cache-Control"?: "no-store";
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
         };

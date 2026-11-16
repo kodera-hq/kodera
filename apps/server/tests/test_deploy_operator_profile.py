@@ -30,6 +30,7 @@ APPS = [
     "apps.extensions",
     "apps.media",
     "apps.notifications",
+    "apps.e2ee",
 ]
 COMMANDS = [
     "erase_core_workspace",

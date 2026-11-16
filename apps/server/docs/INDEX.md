@@ -151,6 +151,7 @@ Data classification, logging policy, retention schedule, secrets and crypto, and
 |---|---|---|---|
 | [`specs/FIRST_OWNER_BOOTSTRAP.md`](specs/FIRST_OWNER_BOOTSTRAP.md) | Accepted | API seat | Staff intake and first-owner claim: transactions, locks, the `bootstrap` principal, and its recorded decision boundaries |
 | [`specs/FIRST_SLICE_G1.md`](specs/FIRST_SLICE_G1.md) | Proposed | API seat | Reconciled 33-scenario expected-red boundary, three owner-independent decisions and the remaining owner gates |
+| [`specs/CONFIDENTIAL_ENVELOPE_RELAY.md`](specs/CONFIDENTIAL_ENVELOPE_RELAY.md) | Partially implemented | API seat | Opt-in opaque confidential relay: current device authority, epoch and privacy fences, self-retirement and remaining client integration boundaries |
 | [`specs/SLO.md`](specs/SLO.md) | Proposed | Infra seat | Three SLIs, error budget, exclusions, credit ladder |
 | [`specs/BACKUP_AND_RESTORE.md`](specs/BACKUP_AND_RESTORE.md) | Proposed | Infra seat | What is backed up, where it goes, the append-only key and lock, restore drills, the recovery numbers |
 | [`specs/OBSERVABILITY_STACK.md`](specs/OBSERVABILITY_STACK.md) | Proposed | Infra seat | How signals leave a tenant VM, where they are stored, what they may contain, which alert links to which runbook |

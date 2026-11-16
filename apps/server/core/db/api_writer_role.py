@@ -26,6 +26,12 @@ ROLE = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 # Read by the intake path itself, or by an `INSERT ... RETURNING` of a column with a database
 # default, or by the deferred constraint triggers of orgs.0002 that run at commit.
 SELECT = (
+    # Confidential transport stores public device keys and opaque ciphertext only.
+    "e2ee_device",
+    "e2ee_room",
+    "e2ee_participant",
+    "e2ee_keypackage",
+    "e2ee_envelope",
     "workspaces_workspacequota",
     "docs_collection",
     "docs_collectionrow",
@@ -142,6 +148,11 @@ SELECT = (
 # The rows one intake writes: the organisation, its reservation and intake record, the job, its
 # steps and audit rows, and the stored answer.
 INSERT = (
+    "e2ee_device",
+    "e2ee_room",
+    "e2ee_participant",
+    "e2ee_keypackage",
+    "e2ee_envelope",
     "docs_collection",
     "docs_collectionrow",
     "billing_viesconsultation",
@@ -291,6 +302,23 @@ INSERT = (
 #   resending, revoking and accepting; never its address, role, token or inviter.
 # - orgs_membership.accepted_at: accepting revives a removed membership of the same person.
 UPDATE_COLUMNS = (
+    # Revocation and single-use payload discard; public key bindings never change.
+    ("e2ee_device", "revoked_at"),
+    ("e2ee_device", "updated_at"),
+    ("e2ee_room", "epoch"),
+    ("e2ee_room", "head_sequence"),
+    ("e2ee_room", "rekey_required"),
+    ("e2ee_room", "updated_at"),
+    ("e2ee_participant", "joined_epoch"),
+    ("e2ee_participant", "left_epoch"),
+    ("e2ee_participant", "updated_at"),
+    ("e2ee_keypackage", "package"),
+    ("e2ee_keypackage", "discarded_at"),
+    ("e2ee_keypackage", "claimed_at"),
+    ("e2ee_keypackage", "claimed_for_id"),
+    ("e2ee_keypackage", "claimed_by_id"),
+    ("e2ee_keypackage", "claimed_epoch"),
+    ("e2ee_keypackage", "updated_at"),
     *(
         ("docs_collection", c)
         for c in (

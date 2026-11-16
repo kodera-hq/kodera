@@ -5913,6 +5913,184 @@ export const EXAMPLES = {
     idempotent: false,
     requiresIfMatch: false,
   },
+  "registerConfidentialDevice": {
+    operationId: "registerConfidentialDevice",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/devices",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "deviceId": "01950000-0000-7000-8000-0000000000a2",
+      "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "revokeConfidentialDevice": {
+    operationId: "revokeConfidentialDevice",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/devices/revoke",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "deviceId": "01950000-0000-7000-8000-0000000000a2",
+      "revoked": true
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "publishConfidentialKeyPackage": {
+    operationId: "publishConfidentialKeyPackage",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/key-packages",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "keyPackageId": "01950000-0000-7000-8000-0000000000a1",
+      "reference": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "expiresAt": "2030-01-08T00:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "createConfidentialRoom": {
+    operationId: "createConfidentialRoom",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/rooms",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "roomId": "01950000-0000-7000-8000-0000000000a1",
+      "algorithm": "io.kodera.mls.v1",
+      "epoch": 0,
+      "deviceIds": [
+        "01950000-0000-7000-8000-0000000000a2"
+      ]
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "claimConfidentialKeyPackage": {
+    operationId: "claimConfidentialKeyPackage",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/rooms/{room_id}/key-packages/claims",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "keyPackageId": "01950000-0000-7000-8000-0000000000a1",
+      "deviceId": "01950000-0000-7000-8000-0000000000a2",
+      "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "keyPackage": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "epoch": 0
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "commitConfidentialEpoch": {
+    operationId: "commitConfidentialEpoch",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/rooms/{room_id}/commits",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "epoch": 1,
+      "commitEnvelopeId": "01950000-0000-7000-8000-0000000000c1",
+      "commitSequence": 1,
+      "headSequence": 1,
+      "deviceIds": [
+        "01950000-0000-7000-8000-0000000000a2"
+      ]
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "retireConfidentialParticipant": {
+    operationId: "retireConfidentialParticipant",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/rooms/{room_id}/participants/retire",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "epoch": 0,
+      "rekeyRequired": true
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "listConfidentialEnvelopes": {
+    operationId: "listConfidentialEnvelopes",
+    method: "get",
+    path: "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "roomId": "01950000-0000-7000-8000-0000000000a1",
+      "algorithm": "io.kodera.mls.v1",
+      "epoch": 0,
+      "rekeyRequired": false,
+      "hasMore": false,
+      "nextAfter": 1,
+      "devices": [
+        {
+          "deviceId": "01950000-0000-7000-8000-0000000000a2",
+          "signingKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        }
+      ],
+      "envelopes": [
+        {
+          "id": "01950000-0000-7000-8000-0000000000a1",
+          "kind": "application",
+          "epoch": 0,
+          "sequence": 1,
+          "senderDeviceId": "01950000-0000-7000-8000-0000000000a2",
+          "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "sendConfidentialEnvelope": {
+    operationId: "sendConfidentialEnvelope",
+    method: "post",
+    path: "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "envelopeId": "01950000-0000-7000-8000-0000000000a1",
+      "sequence": 1,
+      "epoch": 0
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
 } satisfies Record<string, OperationExample>
 
 export type OperationId = keyof typeof EXAMPLES

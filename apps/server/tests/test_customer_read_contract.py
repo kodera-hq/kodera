@@ -983,8 +983,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.40.0: instant claim and the reserved Community host; N4 remains unchanged.
 # Rebound at 0.42.0: directory privacy, proximity and the theme vocabulary; N4 remains unchanged.
 # Rebound for additive workspace surfaces; existing assurance guards are unchanged.
-# Rebound at 0.46.0: additive Passport/webhook and proximity paths/schemas; assurance guards unchanged.
-N4_VERSION = "0.46.0"
+# Rebound at 0.47.0: additive Confidential paths/schemas and Commit marker; assurance guards unchanged.
+N4_VERSION = "0.47.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1032,7 +1032,8 @@ N4_VERSION = "0.46.0"
 # aliases, and the reserved proximity check-in schemas; no N4 bytes changed.
 # Rebound for PR132 at 94c19b5: Passport request 503 and explicit Stripe version/event contract.
 # Rebound for frozen PR132 canonical507 at 6194653b: three Passport conflict responses.
-N4_OLD_CONTRACT = "742a889ee69b31229a1c77a381b900bd46aee2106490f0d48734b30722861a4a"
+# Rebound after shared replay-header normalization; all prior wire definitions remain exact.
+N4_OLD_CONTRACT = "dcb6adea366d2748f9c4066704b12d427d925148e34fb457bf37d24110369603"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.
@@ -1055,8 +1056,8 @@ N4_OLD_CONTRACT = "742a889ee69b31229a1c77a381b900bd46aee2106490f0d48734b30722861
 # Rebound at 0.38.0: a changelog line for the reserved tenant slugs.
 # Rebound for open-core monorepo unification; no N4 clause changed.
 # Rebound at 0.39.0: a changelog line for the reserved organisation slugs.
-# Rebound at 0.46.0: named ephemeral proximity exceptions; assurance clauses remain checked.
-N4_OLD_CONVENTIONS = "67a6b99b272fba2021d2799ec6dab3015e7fb37bd5100450724386af4f432112"
+# Rebound at 0.47.0: Confidential stream conventions; assurance clauses remain checked.
+N4_OLD_CONVENTIONS = "f4bc5e9558ff9823a60f5c849599aa1a8a0f19f042c1640e9772dfc3b230b4fb"
 # Rebound: FIRST_OWNER_BOOTSTRAP.md §8.2 check 4 and its decision paragraph name the recent
 # `auth_time` requirement and the Console's `max_age`; no N4 clause changed. Rebound again for
 # the 2 s future tolerance, the commit-time bound, `max_age=0` and "narrows"; no N4 clause changed.

@@ -434,3 +434,29 @@ Checklist a reviewer applies to any endpoint pull request:
 Status: Active
 
 The ephemeral bootstrap/checkin/resolve/checkout POSTs take no Idempotency-Key and retain no durable response replay. Bootstrap and resolve read current authority; duplicate checkin token counters are refused; checkout is repeatable. The five endpoints always recheck current customer membership and refuse coordinates/GPS. No Job or durable customer location record is created. Proximity epoch_expires_at and presence expires_at explicitly use integer Unix seconds; lease expiry is exactly (epoch+1)*900 and clients receive no skew extension. Presence collections are bounded ephemeral snapshots, not durable cursor resources. Clients stop and wipe on lease expiry or failed authenticated rebootstrap; renewal never extends voluntary consent.
+
+
+## Confidential protocol stream (0.47, Planned)
+
+The nine organisation-scoped confidential transport operations use the common bearer,
+problem, request correlation, no-store and mutation-rate limits. Every POST retains the
+required Idempotency-Key parameter. Current membership/device/channel authority is checked
+before replay metadata, including after a successful earlier effect. No private signing key,
+protocol state, media exporter or plaintext appears in a request or response. Base64 values
+are canonical padded standard base64 with bounded decoded byte lengths; exact-field bodies
+and duplicate-key/non-finite JSON refusal are part of admission.
+
+`listConfidentialEnvelopes` is an ordered protocol stream, rather than a generic CursorPage.
+It uses `after`, the last processed sequence, and returns `nextAfter` and `hasMore`. A page
+contains at most 100 envelopes and 512 KiB raw ciphertext, and may omit recipient-private Welcome
+sequences. A sequence never grants authority or pre-admission history. Epochs and continuations
+are nonnegative exact JSON integers at most 9007199254740991. The operator gate defaults off;
+declaring this contract does not qualify browser/native persistence, human key verification or
+LiveKit encrypted frames. See [the relay specification](../specs/CONFIDENTIAL_ENVELOPE_RELAY.md).
+
+The Commit response names the actual Commit row as commitEnvelopeId and commitSequence;
+headSequence can additionally include a recipient-private Welcome and must never be used
+to infer the Commit marker. The UUID is canonical lowercase and non-nil, and the sequence is
+a positive safe JSON integer. The no-Welcome example has head equal to Commit sequence; the
+Welcome example has a later head. Current service and HTTP checks establish this relationship;
+individual schema domains cannot compare two fields.

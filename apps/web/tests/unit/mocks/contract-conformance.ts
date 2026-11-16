@@ -61,19 +61,30 @@ function pointerSegment(segment: string): string {
   return encodeURIComponent(segment.replace(/~/g, '~0').replace(/\//g, '~1'))
 }
 
+/** RFC 4648 standard alphabet, required padding and zero unused bits; no coercion or whitespace. */
+export function isCanonicalBase64Byte(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?(?![\s\S])/.test(
+      value
+    )
+  )
+}
+
 /**
  * Every `format` this check validates. `int64` and `binary` describe an encoding, not a shape
  * a JSON value can fail, so they accept what they are given. With `strict: false` Ajv only
  * warns about a format it does not know and then accepts any value for it, so a contract
  * that uses a format missing here is refused when the check is built.
  */
-const FORMATS: Readonly<Record<string, RegExp | true>> = {
+const FORMATS: Readonly<Record<string, RegExp | true | ((value: unknown) => boolean)>> = {
   uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   'date-time': /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/,
   date: /^\d{4}-\d{2}-\d{2}$/,
   email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
   uri: /^[a-z][a-z0-9+.-]*:\S*$/i,
   'uri-reference': /^\S*$/,
+  byte: isCanonicalBase64Byte,
   int64: true,
   binary: true,
 }

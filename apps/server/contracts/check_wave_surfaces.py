@@ -41,7 +41,15 @@ OPERATIONS = {
 
 
 def validate(document: dict[str, Any]) -> None:
-    if document["info"]["version"] not in {"0.43.0", "0.44.0", "0.44.1", "0.44.2", "0.45.0", "0.46.0"}:
+    if document["info"]["version"] not in {
+        "0.43.0",
+        "0.44.0",
+        "0.44.1",
+        "0.44.2",
+        "0.45.0",
+        "0.46.0",
+        "0.47.0",
+    }:
         raise ValueError("version")
     operations = {
         op["operationId"]: (method, op)
@@ -167,12 +175,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    if (
-        yaml.safe_load(Path(__file__).with_name("core-api.openapi.yaml").read_text())["info"][
-            "version"
-        ]
-        in {"0.44.0", "0.44.1", "0.44.2", "0.45.0", "0.46.0"}
-    ):
+    if yaml.safe_load(Path(__file__).with_name("core-api.openapi.yaml").read_text())["info"][
+        "version"
+    ] in {"0.44.0", "0.44.1", "0.44.2", "0.45.0", "0.46.0", "0.47.0"}:
         from check_wave4_surfaces import main as wave4_main
 
         wave4_main()
