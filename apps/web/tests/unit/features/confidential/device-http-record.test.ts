@@ -2,12 +2,12 @@
 // Public structural records only: none is a real signature, native seal or Core grant.
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import vectors from '../../../../../packages/kodera-rs/vectors/device-http-v1.json'
+import vectors from '../../../../../../packages/kodera-rs/vectors/device-http-v1.json'
 import {
   decodeDeviceHttpRecord, validateDeviceHttpBinding,
   encodeDeviceHttpAck, decodeDeviceHttpAck, verifyDeviceHttpAck,
   DeviceHttpRecordError,
-} from './device-http-record'
+} from '@/features/confidential/device-http-record'
 
 const fromHex = (value: string) => Uint8Array.from(Buffer.from(value, 'hex'))
 const digest = (value: Uint8Array) => createHash('sha256').update(value).digest('hex')
