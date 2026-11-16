@@ -34,11 +34,18 @@ describe('KDH1 shared structural contract', () => {
 
   it('refuses duplicate/unknown/reordered keys, whitespace and alternate number spelling', async () => {
     const json = row(0).canonicalJson
+    const prefix = '{"version":1,'
+    expect(json.startsWith(prefix) && json.endsWith('}')).toBe(true)
+    const duplicate = '{"version":1,' + json.slice(1)
+    const reordered = '{' + json.slice(prefix.length, -1) + ',"version":1}'
+    // These two cases change canonical spelling, not the parsed record schema.
+    expect(JSON.parse(duplicate)).toEqual(JSON.parse(json))
+    expect(JSON.parse(reordered)).toEqual(JSON.parse(json))
     for (const bad of [
-      json.replace('{', '{"version":1,'), json.replace('{', '{"unknown":1,'),
+      duplicate, '{"unknown":1,' + json.slice(1),
       json.replace('"version":1', '"version":1.0'),
       json.replace('"version":1,', '"version":1, '),
-      json.replace('"version":1,', '').replace('}', ',"version":1}'),
+      reordered,
     ]) await rejectJson(bad)
   })
 

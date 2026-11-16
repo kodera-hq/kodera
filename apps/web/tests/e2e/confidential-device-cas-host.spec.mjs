@@ -147,7 +147,15 @@ for (const mutation of ['unknown', 'duplicate', 'wrong-scope', 'wrong-record', '
       if (mode === 'skipped-G') request.meta.nextHostGeneration += 1
       if (mode === 'skipped-N') request.meta.nextNativeGeneration += 2
       metadata = window.metadata(request.meta)
-      if (mode === 'duplicate') metadata = metadata.replace('{', '{"version":2,')
+      if (mode === 'duplicate') {
+        if (!metadata.startsWith('{')) throw new Error('FIXTURE_METADATA_ROOT')
+        const original = JSON.parse(metadata)
+        metadata = '{"version":2,' + metadata.slice(1)
+        const duplicated = JSON.parse(metadata)
+        if (Object.keys(original).length !== Object.keys(duplicated).length ||
+            Object.keys(original).some((key) => original[key] !== duplicated[key]))
+          throw new Error('FIXTURE_DUPLICATE_SCHEMA')
+      }
       const failure = await window.captured(() => window.host.compareAndSwapDeviceV2(metadata, request.sealed, request.manifest))
       const current = await window.read(); return { failure, generation: current.generation, pending: current.state.pendingSends.length }
     }, mutation)
