@@ -14,7 +14,10 @@ retirement stamp, usable credential and mounted owner before binding. Pending im
 revive a departed account or workspace. Switching account, workspace or losing session authority
 stops the prior sink. No earlier events
 are buffered or replayed. Storage failure refuses opt-in and cannot prevent immediate opt-out.
-Cross-tab withdrawal stops collection too. An explicit static-server `--telemetry-host` flag
+Cross-tab withdrawal stops collection too. Confirming account or workspace deletion in workspace
+privacy settings revokes active consent and purges the corresponding local consent keys from browser
+storage. Unconfigured or non-EU deployments disable the privacy switch and state that zero diagnostic
+network bytes are sent. An explicit static-server `--telemetry-host` flag
 admits only the EU `/i/v0/e/` endpoint; unconfigured Community deployments have no such CSP origin.
 
 ## Privacy boundary

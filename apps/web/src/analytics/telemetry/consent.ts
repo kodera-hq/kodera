@@ -62,6 +62,53 @@ export function setTelemetryConsent(enabled: boolean): void {
   }
   notify()
 }
+export function purgeTelemetryConsent(target: {
+  readonly person?: string | undefined
+  readonly workspace?: string | undefined
+}): void {
+  if (!target.person && !target.workspace) return
+  const matches = (person: string, workspace: string): boolean =>
+    (target.person === undefined || person === target.person) &&
+    (target.workspace === undefined || workspace === target.workspace)
+
+  if (scope && matches(scope.person, scope.workspace)) {
+    accepted = false
+    denied.add(key(scope))
+  }
+  notify()
+
+  let storageKeys: string[] = []
+  try {
+    storageKeys = Object.keys(localStorage)
+  } catch {
+    /* Unavailable storage fails closed while preserving in-memory revocation. */
+  }
+  for (const storageKey of storageKeys) {
+    if (!storageKey.startsWith(PREFIX)) continue
+    let remove: boolean
+    try {
+      const parsed: unknown = JSON.parse(storageKey.slice(PREFIX.length))
+      remove =
+        Array.isArray(parsed) &&
+        parsed.length === 2 &&
+        typeof parsed[0] === 'string' &&
+        typeof parsed[1] === 'string' &&
+        matches(parsed[0], parsed[1])
+    } catch {
+      remove = true
+    }
+    if (remove) {
+      denied.add(storageKey)
+      try {
+        localStorage.removeItem(storageKey)
+        denied.delete(storageKey)
+      } catch {
+        /* Denial remains recorded in memory when storage removal fails. */
+      }
+    }
+  }
+  notify()
+}
 export function subscribeTelemetryConsent(listener: () => void): () => void {
   listeners.add(listener)
   return () => {

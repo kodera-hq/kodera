@@ -6,6 +6,7 @@ import {
   bindTelemetryScope,
   getTelemetryScope,
   hasTelemetryConsent,
+  purgeTelemetryConsent,
   refreshTelemetryConsent,
   setTelemetryConsent,
   setTelemetryScope,
@@ -351,6 +352,70 @@ describe('scoped consent and startup', () => {
     refreshTelemetryConsent(new StorageEvent('storage', { key: 'unrelated', newValue: null }))
     expect(hasTelemetryConsent()).toBe(true)
     refreshTelemetryConsent(new StorageEvent('storage', { key: null }))
+    expect(hasTelemetryConsent()).toBe(false)
+  })
+  it('purges account or workspace consent keys on erasure and fails closed when storage removal throws', async () => {
+    setTelemetryScope({ person: 'person-a', workspace: 'workspace-a', slug: 'sample' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-a', workspace: 'workspace-b', slug: 'other' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-b', workspace: 'workspace-a', slug: 'sample' })
+    setTelemetryConsent(true)
+    setTelemetryScope(scope)
+
+    const request = vi.fn().mockImplementation(() => new Promise(() => {}))
+    vi.stubGlobal('fetch', request)
+    disposals.push(
+      await startTelemetry(mockRouter().router, 'key', EU_INGESTION_HOST, async () => ({
+        createTelemetryTransport,
+      }))
+    )
+    await settle()
+    track('channel_joined', { kind: 'chat' })
+    expect(request).toHaveBeenCalledOnce()
+    const signal = request.mock.calls[0]![1].signal as AbortSignal
+
+    purgeTelemetryConsent({ workspace: 'workspace-a' })
+    expect(signal.aborted).toBe(true)
+    expect(hasTelemetryConsent()).toBe(false)
+    expect(
+      localStorage.getItem('kodera.telemetry.consent.v1:["person-a","workspace-a"]')
+    ).toBeNull()
+    expect(
+      localStorage.getItem('kodera.telemetry.consent.v1:["person-b","workspace-a"]')
+    ).toBeNull()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-a","workspace-b"]')).toBe(
+      'yes'
+    )
+
+    setTelemetryScope({ person: 'person-a', workspace: 'workspace-a', slug: 'sample' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-b', workspace: 'workspace-b', slug: 'other' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-a', workspace: 'workspace-b', slug: 'other' })
+    expect(hasTelemetryConsent()).toBe(true)
+
+    purgeTelemetryConsent({ person: 'person-a' })
+    expect(hasTelemetryConsent()).toBe(false)
+    expect(
+      localStorage.getItem('kodera.telemetry.consent.v1:["person-a","workspace-a"]')
+    ).toBeNull()
+    expect(
+      localStorage.getItem('kodera.telemetry.consent.v1:["person-a","workspace-b"]')
+    ).toBeNull()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-b","workspace-b"]')).toBe(
+      'yes'
+    )
+
+    setTelemetryScope(scope)
+    setTelemetryConsent(true)
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    purgeTelemetryConsent({ person: 'person-a' })
+    expect(hasTelemetryConsent()).toBe(false)
+    setTelemetryScope({ ...scope, workspace: 'workspace-b' })
+    setTelemetryScope(scope)
     expect(hasTelemetryConsent()).toBe(false)
   })
   it('retires synchronously when the authentication lifetime stamp changes', () => {

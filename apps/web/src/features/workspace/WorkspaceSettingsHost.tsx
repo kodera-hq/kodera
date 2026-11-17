@@ -8,6 +8,7 @@ const WorkspaceSettings = lazy(() => import('./WorkspaceSettings'))
 export interface WorkspaceSettingsProps {
   org: string
   organisationId: string
+  personId?: string | undefined
   organisationName: string
   displayName: string
   role: OrganisationRole

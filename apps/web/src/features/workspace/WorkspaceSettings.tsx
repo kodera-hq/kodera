@@ -475,6 +475,7 @@ function Members({
 export default function WorkspaceSettings({
   org,
   organisationId,
+  personId,
   organisationName,
   displayName,
   role,
@@ -733,7 +734,12 @@ export default function WorkspaceSettings({
                     />
                   ) : null}
                   {item === 'privacy' ? (
-                    <WorkspacePrivacyPanel org={org} organisationId={organisationId} role={role} />
+                    <WorkspacePrivacyPanel
+                      org={org}
+                      organisationId={organisationId}
+                      personId={personId}
+                      role={role}
+                    />
                   ) : null}
                   {item === 'hosting' ? (
                     <>

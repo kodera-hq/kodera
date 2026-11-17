@@ -4,6 +4,7 @@
 // `retention_pending`), time-bounded signed archive downloads, explicit slug re-entry
 // confirmation, and statutory `Code de commerce L123-22` retention disclosure.
 
+import { getTelemetryScope, purgeTelemetryConsent } from '../../analytics/telemetry/consent'
 import { TelemetryConsentPanel } from './TelemetryConsentPanel'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -56,6 +57,7 @@ const DELETION_PILL: Record<PrivacyDeletionStatus, StatusPillState> = {
 export interface WorkspacePrivacyPanelProps {
   org: string
   organisationId: string
+  personId?: string | undefined
   role: OrganisationRole
   initialAccountExport?: AnyPrivacyExport | null | undefined
   initialWorkspaceExport?: AnyPrivacyExport | null | undefined
@@ -112,9 +114,7 @@ function ExportStatusBlock({
         <span className="font-mono text-xs text-c-ink-3">
           {copy.requestIdLabel}: {job.id}
         </span>
-        <StatusPill state={EXPORT_PILL[job.status]}>
-          {copy.exportStatuses[job.status]}
-        </StatusPill>
+        <StatusPill state={EXPORT_PILL[job.status]}>{copy.exportStatuses[job.status]}</StatusPill>
       </div>
 
       <DefinitionList
@@ -225,9 +225,7 @@ function DeletionStatusBlock({
         </InlineAlert>
       ) : null}
 
-      {job.status === 'queued' ||
-      job.status === 'running' ||
-      job.status === 'retention_pending' ? (
+      {job.status === 'queued' || job.status === 'running' || job.status === 'retention_pending' ? (
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="secondary" size="sm" loading={refreshing} onClick={onRefresh}>
             {copy.refreshStatusAction}
@@ -241,6 +239,7 @@ function DeletionStatusBlock({
 export function WorkspacePrivacyPanel({
   org,
   organisationId,
+  personId,
   role,
   initialAccountExport,
   initialWorkspaceExport,
@@ -388,6 +387,7 @@ export function WorkspacePrivacyPanel({
       const created = await requestWorkspaceDeletion(organisationId, {
         ...(workspaceReason.trim() ? { reason: workspaceReason.trim() } : {}),
       })
+      purgeTelemetryConsent({ workspace: organisationId })
       setWorkspaceDeletion(created)
       setWorkspaceConfirmSlug('')
     } catch (error) {
@@ -419,6 +419,8 @@ export function WorkspacePrivacyPanel({
       const created = await requestAccountDeletion({
         ...(accountReason.trim() ? { reason: accountReason.trim() } : {}),
       })
+      const owner = personId ?? getTelemetryScope()?.person
+      purgeTelemetryConsent(owner ? { person: owner } : { workspace: organisationId })
       setAccountDeletion(created)
       setAccountConfirmSlug('')
     } catch (error) {

@@ -6,6 +6,7 @@ import {
   setTelemetryConsent,
   subscribeTelemetryConsent,
 } from '../../analytics/telemetry/consent'
+import { Switch } from '../../ui/Switch/Switch'
 import { telemetryCopy } from './telemetryMessages'
 
 export function TelemetryConsentPanel() {
@@ -17,26 +18,22 @@ export function TelemetryConsentPanel() {
     Boolean(import.meta.env.VITE_POSTHOG_KEY?.trim()) &&
     (!import.meta.env.VITE_POSTHOG_HOST ||
       import.meta.env.VITE_POSTHOG_HOST === 'https://eu.i.posthog.com')
+  const active = configured && consent
   return (
     <section
       data-ph-no-capture
       className="flex flex-col gap-3 rounded-lg border border-c-border p-5"
     >
       <h3 className="text-lg font-semibold text-c-ink">{copy.title}</h3>
-      <p className="text-sm text-c-ink-2">{copy.hint}</p>
-      <label className="flex items-center gap-2 text-sm text-c-ink">
-        <input
-          type="checkbox"
-          role="switch"
-          checked={consent}
-          disabled={!configured || !scope}
-          onChange={(event) => setTelemetryConsent(event.target.checked)}
-        />
-        <span>{copy.label}</span>
-      </label>
-      {!configured ? <p className="text-xs text-c-ink-3">{copy.unavailable}</p> : null}
+      <p className="text-sm text-c-ink-2">{configured ? copy.hint : copy.unconfiguredHint}</p>
+      <Switch
+        label={copy.label}
+        checked={active}
+        disabled={!configured || !scope}
+        onCheckedChange={setTelemetryConsent}
+      />
       <p role="status" className="text-xs text-c-ink-3">
-        {consent ? copy.enabled : copy.disabled}
+        {!configured ? copy.unavailable : active ? copy.enabled : copy.disabled}
       </p>
     </section>
   )

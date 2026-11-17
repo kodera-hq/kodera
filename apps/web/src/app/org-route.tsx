@@ -438,6 +438,7 @@ function OrgLayoutContent() {
           sessionExpiry={authorityMismatch ? undefined : <SessionExpiryDialog />}
           org={org}
           organisationId={membership.organisation.id}
+          personId={me.id}
           organisation={{ name: membership.organisation.name, slug: membership.organisation.slug }}
           {...(organisationMark === undefined ? {} : { organisationMark })}
           memberships={memberships}

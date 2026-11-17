@@ -26,6 +26,7 @@ const SKIP_LINK =
 export interface ShellProps {
   org: string
   organisationId: string
+  personId?: string | undefined
   organisation: OrgSwitcherOrganisation
   memberships?: readonly OrgSwitcherMembership[]
   onSwitchOrganisation?: (slug: string) => void
@@ -68,6 +69,7 @@ export interface ShellProps {
 export function Shell({
   org,
   organisationId,
+  personId,
   organisation,
   memberships,
   onSwitchOrganisation,
@@ -89,6 +91,7 @@ export function Shell({
     <WorkspaceSettingsHost
       org={org}
       organisationId={organisationId}
+      personId={personId}
       organisationName={organisation.name}
       displayName={user.displayName}
       role={role}
