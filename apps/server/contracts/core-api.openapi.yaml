@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kodera Core API
-  version: 0.47.0
+  version: 0.48.0
   summary: Control plane of kodera.io, consumed by kodera-web and by staff operators.
   description: |
     The Core API is the only backend of `kodera-web` (console ADR-0003) and the system of
@@ -10214,10 +10214,10 @@ components:
   securitySchemes:
     keycloakTenant:
       type: openIdConnect
-      openIdConnectUrl: https://id.kodera.io/realms/%7Brealm%7D/.well-known/openid-configuration
+      openIdConnectUrl: https://auth.kodera.io/realms/%7Brealm%7D/.well-known/openid-configuration
       description: |
         Tenant administrators and members, authenticated against **their own** Keycloak realm at
-        `id.kodera.io` (console ADR-0002). One realm per organisation, so `{realm}` is not a
+        `auth.kodera.io` (console ADR-0002). One realm per organisation, so `{realm}` is not a
         constant: the console resolves it with `POST /auth/discover` before starting the flow, and
         the discovery document URL is returned there.
 
@@ -10234,7 +10234,7 @@ components:
         `openIdConnectUrl` above carries `%7Brealm%7D`, that is `{realm}` percent-encoded so the
         value stays a legal URI for validators. Substitute the realm returned by
         `POST /auth/discover`; `x-kodera-realm-template` holds the same template unencoded.
-      x-kodera-realm-template: 'https://id.kodera.io/realms/{realm}'
+      x-kodera-realm-template: 'https://auth.kodera.io/realms/{realm}'
       x-kodera-flows: [authorization_code_with_pkce]
     keycloakStaff:
       type: openIdConnect
