@@ -1149,7 +1149,7 @@
   "console.security.settings.nonce": "Shared comparison nonce (base64)",
   "console.security.settings.passphrase": "Recovery passphrase",
   "console.security.settings.passphrase-help": "Use at least 12 characters and a long, unique phrase. Derivation uses 600,000 iterations; forgotten phrases cannot be reset.",
-  "console.security.settings.passphrase-mode": "Passphrase protected with PBKDF2-SHA-512",
+  "console.security.settings.passphrase-mode": "Personal recovery passphrase",
   "console.security.settings.peer": "Other device’s public descriptor (JSON)",
   "console.security.settings.peer-codes": "Enter the other device’s eight groups, separated by spaces",
   "console.security.settings.peer-endorsement": "Other device’s endorsement of this session (JSON)",

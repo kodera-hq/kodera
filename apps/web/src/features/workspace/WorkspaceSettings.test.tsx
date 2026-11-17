@@ -103,10 +103,8 @@ it('keeps appearance and audio available to a member while filtering admin desti
     screen.getByRole('radiogroup', { name: 'Signal de mention et message direct' })
   ).toBeVisible()
   await user.click(screen.getByRole('tab', { name: 'Hébergement & administration' }))
-  // « Sécurité & MFA » and « Fédération » are not offered: both routes render only the
-  // placeholder today, so following either lands on « Cette page n'est pas encore disponible »,
-  // which reads as something broken rather than as something not built.
-  expect(screen.queryByRole('link', { name: 'Sécurité & MFA' })).toBeNull()
+  // Security settings now has a real local verification/archive screen; federation remains a stub.
+  expect(screen.getByRole('link', { name: 'Sécurité & MFA' })).toHaveAttribute('href', '/community/security')
   expect(screen.queryByRole('link', { name: 'Fédération' })).toBeNull()
   expect(screen.getByRole('link', { name: 'Statut' })).toBeVisible()
   expect(screen.queryByRole('link', { name: 'Facturation' })).toBeNull()

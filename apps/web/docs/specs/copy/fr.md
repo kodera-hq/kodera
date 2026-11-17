@@ -2189,7 +2189,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.vault-absent` | Aucun coffre d’appareil local n’est disponible pour l’exportation. Vous pouvez importer une archive ; aucun appareil de remplacement n’est créé. |
 | `console.security.settings.mode` | Mode de récupération |
 | `console.security.settings.recovery-mode` | Clé de récupération aléatoire de 256 bits |
-| `console.security.settings.passphrase-mode` | Phrase secrète protégée par PBKDF2-SHA-512 |
+| `console.security.settings.passphrase-mode` | Phrase secrète personnelle de récupération |
 | `console.security.settings.passphrase` | Phrase secrète de récupération |
 | `console.security.settings.passphrase-help` | Utilisez au moins 12 caractères et une phrase longue et unique. La dérivation utilise 600 000 itérations ; une phrase oubliée ne peut pas être réinitialisée. |
 | `console.security.settings.seal` | Créer l’archive chiffrée |

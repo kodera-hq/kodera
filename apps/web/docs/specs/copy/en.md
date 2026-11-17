@@ -2175,7 +2175,7 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.vault-absent` | No local device vault is available to export. You can import an archive; no replacement device is generated. |
 | `console.security.settings.mode` | Recovery method |
 | `console.security.settings.recovery-mode` | Random 256-bit recovery key |
-| `console.security.settings.passphrase-mode` | Passphrase protected with PBKDF2-SHA-512 |
+| `console.security.settings.passphrase-mode` | Personal recovery passphrase |
 | `console.security.settings.passphrase` | Recovery passphrase |
 | `console.security.settings.passphrase-help` | Use at least 12 characters and a long, unique phrase. Derivation uses 600,000 iterations; forgotten phrases cannot be reset. |
 | `console.security.settings.seal` | Create encrypted archive |

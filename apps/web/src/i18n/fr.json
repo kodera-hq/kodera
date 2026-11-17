@@ -1149,7 +1149,7 @@
   "console.security.settings.nonce": "Identifiant de comparaison partagé (base64)",
   "console.security.settings.passphrase": "Phrase secrète de récupération",
   "console.security.settings.passphrase-help": "Utilisez au moins 12 caractères et une phrase longue et unique. La dérivation utilise 600 000 itérations ; une phrase oubliée ne peut pas être réinitialisée.",
-  "console.security.settings.passphrase-mode": "Phrase secrète protégée par PBKDF2-SHA-512",
+  "console.security.settings.passphrase-mode": "Phrase secrète personnelle de récupération",
   "console.security.settings.peer": "Description publique de l’autre appareil (JSON)",
   "console.security.settings.peer-codes": "Saisissez les huit groupes de l’autre appareil, séparés par des espaces",
   "console.security.settings.peer-endorsement": "Attestation de cette session par l’autre appareil (JSON)",

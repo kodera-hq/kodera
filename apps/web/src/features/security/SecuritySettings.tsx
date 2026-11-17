@@ -1,3 +1,4 @@
+import { LINK_TEXT } from '../../ui/linkText'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAuthLifetime } from '../../auth/AuthProvider'
@@ -425,7 +426,7 @@ export default function SecuritySettings(props: SecuritySettingsProps) {
             )}
             {archive && saved && (
               <a
-                className="text-c-accent-ink underline"
+                className={LINK_TEXT.standalone}
                 href={archive}
                 download="kodera-key-backup.kvkb"
               >
