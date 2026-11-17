@@ -229,6 +229,18 @@ named columns of `workspaces_workspace`, `workspaces_category`, `workspaces_chan
 role and shows a channel's kind and room state, a notice, a policy's deletion and the immutable
 bindings refused.
 
+It serves anonymous realm discovery (`POST /api/v1/auth/discover`,
+[`REALM_DISCOVERY.md`](REALM_DISCOVERY.md)): `SELECT` on `identity_discoveryquotagate` and
+`identity_discoveryquotaevent`, `UPDATE (singleton)` on `identity_discoveryquotagate` (the row lock
+of `SELECT … FOR UPDATE`; `singleton` is held to `true` by `NOT NULL` and `discovery_gate_singleton`,
+while `id` is never granted), `INSERT` and `DELETE` on `identity_discoveryquotaevent` (rolling
+60-second quota charges and horizon pruning, never `UPDATE`), and column-level
+`SELECT (organisation_id, job_id, issuer, realm, revoked_at)` on `orgs_realmreadiness` for
+`counting_realm_ready` (never staff recorder columns `id`, `recorded_by_identity_id`,
+`recorded_by_realm` or `recorded_at`). `tests/test_discovery_writer_role.py` runs `discoverRealm`
+under both a disposable writer role and `configure_api_role` (`kodera_api` via `config.deploy_wsgi`)
+and shows gate deletion/insertion, event rewrites and readiness recorder reads or writes refused.
+
 ## 5. Acceptance
 
 `tests/test_organisation_intake.py`, against the test database through the real resolver, the
