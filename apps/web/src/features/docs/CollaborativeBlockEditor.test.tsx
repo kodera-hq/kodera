@@ -133,7 +133,9 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
   })
 
   it('round-trips table cells containing backslashes and escaped pipes losslessly', () => {
-    const doc = markdownToTiptapDoc('| Key | Path |\n| --- | --- |\n| a \\| b | C:\\\\logs\\\\app |\n')
+    const doc = markdownToTiptapDoc(
+      '| Key | Path |\n| --- | --- |\n| a \\| b | C:\\\\logs\\\\app |\n'
+    )
     const serialized = tiptapDocToMarkdown(doc)
     expect(serialized).toContain('| a \\| b | C:\\\\logs\\\\app |')
     const reparsed = markdownToTiptapDoc(serialized)
@@ -293,12 +295,49 @@ describe('CollaborativeBlockEditor and WorkspaceCollaborativeDocs', () => {
     }
 
     it('never writes the unseeded editor body over REST, which would replace the page', async () => {
-      const put = await editOnce(async () => ({
-        wsUrl: 'wss://collab.example.org/documents/collab',
-        token: 'ticket',
-        expiresAt: '2099-01-01T00:00:00Z',
-        role: 'editor',
-      }), /Connexion en cours/)
+      const put = await editOnce(
+        async () => ({
+          wsUrl: 'wss://collab.example.org/documents/collab',
+          token: 'ticket',
+          expiresAt: '2099-01-01T00:00:00Z',
+          role: 'editor',
+        }),
+        /Connexion en cours/
+      )
+      expect(put).not.toHaveBeenCalled()
+    })
+
+    it('cancels a pending plaintext Markdown save when confidential protection is admitted', async () => {
+      const user = userEvent.setup()
+      vi.spyOn(docsApi, 'listWorkspaceDocuments').mockResolvedValue([page])
+      const get = vi
+        .spyOn(docsApi, 'getWorkspaceDocument')
+        .mockResolvedValue({ document: page, etag: '"t-1"' })
+      vi.spyOn(docsApi, 'listWorkspaceDocumentBacklinks').mockResolvedValue([])
+      vi.spyOn(docsApi, 'createWorkspaceDocumentCollabSession').mockRejectedValue(
+        new ApiProblem({ type: null, status: 501, title: 'Not Implemented' })
+      )
+      const put = vi
+        .spyOn(docsApi, 'updateWorkspaceDocument')
+        .mockResolvedValue({ document: page, etag: '"t-2"' })
+      const view = render(
+        <WorkspaceCollaborativeDocs organisationId="org-1" webSocketFactory={neverOpens} />
+      )
+      await waitFor(() => expect(get).toHaveBeenCalled())
+      await waitFor(() =>
+        expect(screen.getByTestId('docs-collab-status-pill')).toHaveTextContent(/Édition locale/)
+      )
+      await user.click(await screen.findByRole('button', { name: /Insérer un bloc/i }))
+      await user.click(screen.getByTestId('docs-slash-item-diagram'))
+      expect(put).not.toHaveBeenCalled()
+      view.rerender(
+        <WorkspaceCollaborativeDocs
+          organisationId="org-1"
+          webSocketFactory={neverOpens}
+          confidential={{ required: true, epoch: 7, cipher: null }}
+        />
+      )
+      await new Promise((resolve) => setTimeout(resolve, 500))
       expect(put).not.toHaveBeenCalled()
     })
 

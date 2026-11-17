@@ -184,8 +184,10 @@ export async function fetchRoomGrant(
   tokens: MatrixTokens,
   roomId: string,
   serverName: string,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
+  authorize?: () => void
 ): Promise<RoomGrant> {
+  authorize?.()
   const sent = tokens.current()
   try {
     return await requestRoomToken(homeserverBaseUrl, sent, roomId, serverName, fetchImpl)
@@ -204,5 +206,6 @@ export async function fetchRoomGrant(
           : 'network'
     )
   }
+  authorize?.()
   return requestRoomToken(homeserverBaseUrl, next, roomId, serverName, fetchImpl)
 }

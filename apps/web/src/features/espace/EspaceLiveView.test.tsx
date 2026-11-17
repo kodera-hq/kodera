@@ -4303,3 +4303,28 @@ it('refuses protected audio before any call token or media capture starts', asyn
   expect(call.join).not.toHaveBeenCalled()
   expect(screen.getByText(confidentialMessages.en.unavailable)).toBeInTheDocument()
 })
+
+it('allows protected audio through a call controller with an active media capability', async () => {
+  await act(async () => {
+    await i18n.changeLanguage('en')
+  })
+  const store = makeFakeStore()
+  store.getRoomBoundary = (roomId) =>
+    roomId === STANDUP_ROOM ? 'confidential-unavailable' : 'ordinary'
+  const call = {
+    ...makeFakeCall(),
+    canJoinProtectedRoom: (roomId: string) => roomId === STANDUP_ROOM,
+  }
+  render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme SA"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={store}
+      call={call}
+    />
+  )
+  await userEvent.setup().click(screen.getByRole('button', { name: /Join Point quotidien/ }))
+  expect(call.join).toHaveBeenCalledWith(STANDUP_ROOM)
+})

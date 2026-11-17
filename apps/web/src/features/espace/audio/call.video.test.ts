@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionState, RoomEvent, Track, VideoPresets } from 'livekit-client'
-import { createCallController, SCREEN_CAPTURE, type CallRoom } from './call'
+import {
+  createCallController,
+  SCREEN_CAPTURE,
+  type CallRoom,
+  type CallControllerOptions,
+} from './call'
 import { NO_CHOICE } from './devices'
 import { CallPreferences } from './callPreferences'
 import type { MicMeter } from './meter'
@@ -184,10 +189,17 @@ function grant(listenOnly = false) {
   )
 }
 
-function setup(options: { listenOnly?: boolean; preferences?: CallPreferences } = {}) {
+function setup(
+  options: {
+    listenOnly?: boolean
+    preferences?: CallPreferences
+    protection?: Pick<CallControllerOptions, 'roomBoundary' | 'subscribeRoomBoundary'>
+  } = {}
+) {
   const rooms: FakeRoom[] = []
   const preferences = options.preferences ?? new CallPreferences()
   const call = createCallController({
+    ...options.protection,
     homeserver: HS,
     serverName: 'acme-sa.kodera.test',
     tokens: { current: () => 'syt_member', renew: vi.fn(async () => 'syt_next') },
@@ -493,4 +505,55 @@ describe('push-to-talk at a join', () => {
     expect(room().localParticipant.setCameraEnabled).toHaveBeenCalledTimes(1)
     expect(call.getSnapshot().camera).toBe('on')
   })
+})
+
+it('stops a late camera permission result after an ordinary room becomes protected', async () => {
+  let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+  let notify!: () => void
+  const { call, room } = setup({
+    protection: {
+      roomBoundary: () => boundary,
+      subscribeRoomBoundary: (listener) => {
+        notify = listener
+        return () => {}
+      },
+    },
+  })
+  await call.join(STANDUP)
+  room().holdNext.add(Track.Source.Camera)
+  const starting = call.setCameraEnabled(true)
+  expect(room().hold[Track.Source.Camera]).toBeDefined()
+  boundary = 'confidential-unavailable'
+  notify()
+  room().hold[Track.Source.Camera]!.resolve()
+  await starting
+  expect(room().published.has(Track.Source.Camera)).toBe(false)
+  expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+  await call.leave()
+})
+
+it('rechecks authority after publishing camera-starting status before requesting capture', async () => {
+  let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+  let notify!: () => void
+  const { call, room } = setup({
+    protection: {
+      roomBoundary: () => boundary,
+      subscribeRoomBoundary: (listener) => {
+        notify = listener
+        return () => {}
+      },
+    },
+  })
+  await call.join(STANDUP)
+  const unsubscribe = call.subscribe(() => {
+    if (call.getSnapshot().camera === 'starting') {
+      boundary = 'confidential-unavailable'
+      notify()
+    }
+  })
+  await call.setCameraEnabled(true)
+  expect(room().localParticipant.setCameraEnabled).not.toHaveBeenCalled()
+  expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+  unsubscribe()
+  await call.leave()
 })

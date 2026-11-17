@@ -1,0 +1,257 @@
+// @vitest-environment node
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as Y from 'yjs'
+import * as encoding from 'lib0/encoding'
+import * as sync from 'y-protocols/sync'
+import { createCollabCryptoSession } from '../confidential/collab-crypto.worker'
+import type { ConfidentialCollabCipher } from '../confidential/collab-crypto-client'
+import { CollabSessionController, maySeedFromMarkdown, type WebSocketLike } from './collabSession'
+
+class Socket implements WebSocketLike {
+  binaryType: BinaryType = 'arraybuffer'
+  readyState = 0
+  onopen: WebSocketLike['onopen'] = null
+  onmessage: WebSocketLike['onmessage'] = null
+  onclose: WebSocketLike['onclose'] = null
+  onerror: WebSocketLike['onerror'] = null
+  frames: (string | Uint8Array)[] = []
+  relay: ((data: Uint8Array) => void) | undefined
+  send(data: string | Uint8Array) {
+    this.frames.push(typeof data === 'string' ? data : data.slice())
+    if (data instanceof Uint8Array) this.relay?.(data.slice())
+  }
+  open() {
+    this.readyState = 1
+    this.onopen?.(new Event('open'))
+  }
+  receive(data: Uint8Array) {
+    this.onmessage?.({ data } as MessageEvent)
+  }
+  close() {
+    this.readyState = 3
+    this.onclose?.({ code: 4403 } as CloseEvent)
+  }
+}
+const sessions: CollabSessionController[] = []
+afterEach(() => {
+  for (const session of sessions.splice(0)) {
+    session.destroy()
+    session.awareness.destroy()
+    session.ydoc.destroy()
+  }
+  vi.unstubAllGlobals()
+})
+const context = { scopeKey: 'workspace-a', documentId: 'page-a', epoch: 7 }
+function fakeCipher(overrides: Partial<ConfidentialCollabCipher> = {}): ConfidentialCollabCipher {
+  return {
+    ...context,
+    isActive: () => true,
+    seal: async () => new Uint8Array([75, 68, 69, 49, 1]),
+    open: async () => {
+      throw new Error('unauthenticated')
+    },
+    close: vi.fn(),
+    ...overrides,
+  }
+}
+function create(cipher: ConfidentialCollabCipher | null, socket = new Socket(), epoch = 7) {
+  const fetchSession = vi.fn(async () => ({
+    wsUrl: 'wss://relay.invalid/page',
+    token: 'short-ticket',
+    expiresAt: '',
+    role: 'editor' as const,
+  }))
+  const session = new CollabSessionController({
+    ...context,
+    user: { id: 'member-a', name: 'Member A' },
+    confidential: { required: true, epoch, cipher },
+    enableOfflineBuffer: true,
+    fetchSession,
+    webSocketFactory: () => socket,
+  })
+  sessions.push(session)
+  return { session, socket, fetchSession }
+}
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
+describe('confidential collaboration transport', () => {
+  it('never opens plaintext IndexedDB or permits REST Markdown seeding', () => {
+    const open = vi.fn()
+    vi.stubGlobal('indexedDB', { open })
+    create(fakeCipher())
+    expect(open).not.toHaveBeenCalled()
+    for (const remote of [true, false])
+      for (const status of ['local', 'synced', 'offline-buffered'] as const)
+        expect(
+          maySeedFromMarkdown(remote, status, { required: true, epoch: 7, cipher: null })
+        ).toBe(false)
+  })
+  it.each([
+    null,
+    fakeCipher({ epoch: 6 }),
+    fakeCipher({ documentId: 'other' }),
+    fakeCipher({ scopeKey: 'other' }),
+  ])('refuses absent or mismatched cipher before ticket request', async (cipher) => {
+    const { session, fetchSession, socket } = create(cipher)
+    await session.connect()
+    expect(fetchSession).not.toHaveBeenCalled()
+    expect(session.getSnapshot().status).toBe('forbidden')
+    expect(socket.frames).toHaveLength(0)
+  })
+  it.each([0, 1])('quarantines an incoming plaintext frame type %i immediately', async (kind) => {
+    const { session, socket } = create(fakeCipher())
+    await session.connect()
+    socket.open()
+    socket.receive(new Uint8Array([kind, 0]))
+    expect(socket.readyState).toBe(3)
+    expect(session.getSnapshot().status).toBe('forbidden')
+    await settle()
+    expect(socket.frames.filter((frame) => frame instanceof Uint8Array)).toHaveLength(0)
+    expect(session.ydoc.getText('body').toString()).toBe('')
+  })
+  it('does not send a seal that settles after authority revocation', async () => {
+    let active = true
+    let release!: (frame: Uint8Array) => void
+    const seal = vi.fn(
+      () =>
+        new Promise<Uint8Array>((resolve) => {
+          release = resolve
+        })
+    )
+    const { session, socket } = create(fakeCipher({ isActive: () => active, seal }))
+    await session.connect()
+    socket.open()
+    await Promise.resolve()
+    expect(seal).toHaveBeenCalledTimes(1)
+    active = false
+    release(new Uint8Array([75, 68, 69, 49, 99]))
+    await settle()
+    expect(socket.frames.filter((frame) => frame instanceof Uint8Array)).toHaveLength(0)
+    expect(session.getSnapshot().status).toBe('forbidden')
+  })
+  it('does not apply an open that settles after authority revocation', async () => {
+    let active = true
+    let release!: (frame: Uint8Array) => void
+    const { session, socket } = create(
+      fakeCipher({
+        isActive: () => active,
+        open: () =>
+          new Promise((resolve) => {
+            release = resolve
+          }),
+      })
+    )
+    await session.connect()
+    socket.open()
+    socket.receive(new Uint8Array([75, 68, 69, 49, 1]))
+    await Promise.resolve()
+    const doc = new Y.Doc()
+    doc.getText('body').insert(0, 'private update')
+    const update = Y.encodeStateAsUpdate(doc)
+    // Yjs update frame: kind 0, sync kind 2, varuint byte length.
+    const { createEncoder, writeVarUint, writeVarUint8Array, toUint8Array } =
+      await import('lib0/encoding')
+    const encoder = createEncoder()
+    writeVarUint(encoder, 0)
+    writeVarUint(encoder, 2)
+    writeVarUint8Array(encoder, update)
+    active = false
+    release(toUint8Array(encoder))
+    await settle()
+    expect(session.ydoc.getText('body').toString()).toBe('')
+    expect(socket.readyState).toBe(3)
+    doc.destroy()
+  })
+  it('quarantines cryptographic refusal without mutating the document', async () => {
+    const { session, socket } = create(fakeCipher())
+    await session.connect()
+    socket.open()
+    socket.receive(new Uint8Array([75, 68, 69, 49, 1]))
+    await settle()
+    expect(session.getSnapshot().status).toBe('forbidden')
+    expect(session.ydoc.getText('body').toString()).toBe('')
+  })
+})
+
+function realCipher(senderClientId: number, changes: Partial<typeof context> = {}) {
+  return createCollabCryptoSession(
+    { ...context, ...changes, senderClientId },
+    new Uint8Array(32).fill(17)
+  )
+}
+function updateFrame(text: string): Uint8Array {
+  const doc = new Y.Doc()
+  doc.getText('body').insert(0, text)
+  const encoder = encoding.createEncoder()
+  encoding.writeVarUint(encoder, 0)
+  sync.writeUpdate(encoder, Y.encodeStateAsUpdate(doc))
+  doc.destroy()
+  return encoding.toUint8Array(encoder)
+}
+describe('real encrypted Yjs peer transport', () => {
+  it('syncs two peers and awareness with no document substring on wire and no IndexedDB', async () => {
+    const open = vi.fn()
+    vi.stubGlobal('indexedDB', { open })
+    const alice = create(realCipher(101)),
+      bob = create(realCipher(202))
+    alice.socket.relay = (frame) => bob.socket.receive(frame)
+    bob.socket.relay = (frame) => alice.socket.receive(frame)
+    await Promise.all([alice.session.connect(), bob.session.connect()])
+    alice.socket.open()
+    bob.socket.open()
+    alice.session.ydoc.getText('body').insert(0, 'encrypted page sentinel')
+    alice.session.updateSelection({ anchor: 1, head: 3 })
+    await vi.waitFor(() => {
+      expect(bob.session.ydoc.getText('body').toString()).toBe('encrypted page sentinel')
+      expect(bob.session.getSnapshot().peers).toHaveLength(1)
+      expect(alice.session.getSnapshot().peers).toHaveLength(1)
+    })
+    bob.session.ydoc.getText('body').insert(23, ' and shared')
+    await vi.waitFor(() =>
+      expect(alice.session.ydoc.getText('body').toString()).toContain('and shared')
+    )
+    for (const frame of [...alice.socket.frames, ...bob.socket.frames]) {
+      if (frame instanceof Uint8Array) {
+        expect(Array.from(frame.slice(0, 4))).toEqual([75, 68, 69, 49])
+        expect(new TextDecoder().decode(frame)).not.toContain('encrypted page sentinel')
+        expect(new TextDecoder().decode(frame)).not.toContain('Member A')
+      }
+    }
+    expect(open).not.toHaveBeenCalled()
+  })
+  it.each(['tamper', 'wrong-document', 'wrong-scope', 'wrong-epoch', 'replay'] as const)(
+    'rejects %s without applying an unauthenticated update',
+    async (attack) => {
+      const sender = realCipher(
+        101,
+        attack === 'wrong-document'
+          ? { documentId: 'different-page' }
+          : attack === 'wrong-scope'
+            ? { scopeKey: 'different-workspace' }
+            : attack === 'wrong-epoch'
+              ? { epoch: 8 }
+              : {}
+      )
+      const target = create(realCipher(202))
+      await target.session.connect()
+      target.socket.open()
+      const frame = await sender.seal(updateFrame('protected update'))
+      if (attack === 'tamper') frame[frame.length - 1] = frame[frame.length - 1]! ^ 1
+      target.socket.receive(frame)
+      if (attack === 'replay') {
+        await vi.waitFor(() =>
+          expect(target.session.ydoc.getText('body').toString()).toBe('protected update')
+        )
+        target.socket.receive(frame)
+      }
+      await vi.waitFor(() => expect(target.session.getSnapshot().status).toBe('forbidden'))
+      expect(target.session.ydoc.getText('body').toString()).toBe(
+        attack === 'replay' ? 'protected update' : ''
+      )
+      expect(target.socket.readyState).toBe(3)
+      sender.close()
+    }
+  )
+})

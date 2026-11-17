@@ -468,6 +468,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       // Signed in as `@{sub}:{server name}` (`src/auth/matrix.ts`); an ID without one fails closed.
       serverName: serverNameOf(session.userId) ?? '',
       tokens: { current: accessToken, renew: renewAccessToken },
+      ...(activeStore.getRoomBoundary
+        ? {
+            roomBoundary: (roomId: string) => activeStore.getRoomBoundary?.(roomId) ?? 'unknown',
+            subscribeRoomBoundary: activeStore.subscribe,
+          }
+        : {}),
+      mediaEncryption: (roomId: string) =>
+        activeStore.getConfidentialMediaSession?.(roomId) ?? null,
     })
   }, [injectedCall, session, activeStore])
 
@@ -1122,7 +1130,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     ) => {
       if (activeCall === null || room === undefined) return
       const boundary = activeStore.getRoomBoundary?.(room.roomId)
-      if (boundary !== undefined && !permitsPlaintext(boundary)) {
+      if (
+        boundary !== undefined &&
+        !permitsPlaintext(boundary) &&
+        !activeCall.canJoinProtectedRoom?.(room.roomId)
+      ) {
         setAnnouncement(protectionCopy.unavailable)
         return
       }

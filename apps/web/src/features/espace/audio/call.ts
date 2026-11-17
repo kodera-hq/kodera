@@ -1,3 +1,5 @@
+import type { ConfidentialMediaSession } from '../../confidential/media-crypto-client'
+import { permitsPlaintext, type RoomBoundary } from '../../confidential/room-boundary'
 // The one thin Kodera layer over livekit-client (messaging-pilot design §2.7), as `matrix/` is
 // over matrix-js-sdk: an ESLint rule keeps the SDK from being imported anywhere else. A screen
 // reads the call through `subscribe` and `getSnapshot`, and acts on it through `join`, `leave`,
@@ -22,6 +24,7 @@
 // feeds through `videos` and draws each in its own `<video>` (`attachVideo`); the SDK stays here.
 
 import {
+  BaseKeyProvider,
   ConnectionState,
   DisconnectReason,
   LogLevel,
@@ -80,6 +83,9 @@ export type CallProblem =
    * ended so that nothing the member says reaches the room.
    */
   | 'microphone-stuck'
+  | 'media-encryption-unavailable'
+  | 'media-transforms-unavailable'
+  | 'media-encryption-revoked'
 
 /** What a video feed shows: a person's camera, or a screen they share. */
 export type VideoSource = 'camera' | 'screen'
@@ -173,6 +179,7 @@ export interface CallSnapshot {
 export type CallRoom = Pick<
   Room,
   | 'connect'
+  | 'setE2EEEnabled'
   | 'disconnect'
   | 'startAudio'
   | 'on'
@@ -199,7 +206,11 @@ export interface CallControllerOptions {
   serverName: string
   tokens: MatrixTokens
   /** The controller's one room, made at its first join and reconnected for each join after. */
-  createRoom?: () => CallRoom
+  createRoom?: (options?: RoomOptions) => CallRoom
+  /** A missing classification from an installed resolver is fail closed. */
+  roomBoundary?: (roomId: string) => RoomBoundary
+  mediaEncryption?: (roomId: string) => ConfidentialMediaSession | null
+  subscribeRoomBoundary?: (listener: () => void) => () => void
   fetch?: typeof fetch
   /** Where the hidden audio elements go: the document's body by default. */
   mount?: () => HTMLElement
@@ -380,11 +391,11 @@ export const ROOM_OPTIONS: Readonly<RoomOptions> = Object.freeze({
   publishDefaults: { stopMicTrackOnMute: true },
 })
 
-function defaultRoom(): CallRoom {
+function defaultRoom(options?: RoomOptions): CallRoom {
   // LiveKit's own logging stays at warnings: nothing it says about a connection reaches the
   // console at info level, where a URL or a token could.
   setLogLevel(LogLevel.warn)
-  return new Room({ ...ROOM_OPTIONS })
+  return new Room({ ...ROOM_OPTIONS, ...options })
 }
 
 /** The browser's capture under a local track has ended. */
@@ -419,6 +430,11 @@ interface LocalRetirement {
 }
 
 interface Session {
+  readonly scopeRoomId: string
+  protectionRevoked: boolean
+  media: ConfidentialMediaSession | null
+  mediaEpoch: number | null
+  mediaBoundary: RoomBoundary | null
   readonly room: CallRoom
   readonly container: HTMLElement
   /** The audio elements attached for each remote track. */
@@ -442,7 +458,10 @@ export class CallController {
   readonly #homeserver: string
   readonly #serverName: string
   readonly #tokens: MatrixTokens
-  readonly #createRoom: () => CallRoom
+  readonly #createRoom: (options?: RoomOptions) => CallRoom
+  readonly #roomBoundary: ((roomId: string) => RoomBoundary) | undefined
+  readonly #subscribeRoomBoundary: CallControllerOptions['subscribeRoomBoundary']
+  readonly #mediaEncryption: ((roomId: string) => ConfidentialMediaSession | null) | undefined
   readonly #fetch: typeof fetch | undefined
   readonly #mount: () => HTMLElement
   readonly #deadline: number
@@ -487,6 +506,9 @@ export class CallController {
     this.#serverName = options.serverName
     this.#tokens = options.tokens
     this.#createRoom = options.createRoom ?? defaultRoom
+    this.#roomBoundary = options.roomBoundary
+    this.#mediaEncryption = options.mediaEncryption
+    this.#subscribeRoomBoundary = options.subscribeRoomBoundary
     this.#fetch = options.fetch
     this.#mount = options.mount ?? (() => document.body)
     this.#deadline = options.microphoneDeadlineMs ?? MICROPHONE_DEADLINE_MS
@@ -503,6 +525,11 @@ export class CallController {
   }
 
   getSnapshot = (): CallSnapshot => this.#snapshot
+
+  canJoinProtectedRoom = (roomId: string): boolean => {
+    const media = this.#mediaEncryption?.(roomId)
+    return media !== null && media !== undefined && media.roomId === roomId && media.isActive()
+  }
 
   /**
    * The member's own microphone level now, 0 to 1, for a meter and the speaking ring. It is read
@@ -543,14 +570,52 @@ export class CallController {
       return
     }
     const intent = ++this.#intent
+    const boundary = this.#boundary(roomId)
+    const protectedRoom = !permitsPlaintext(boundary)
+    const media = protectedRoom ? (this.#mediaEncryption?.(roomId) ?? null) : null
+    let protectedOptions: RoomOptions | undefined
+    if (protectedRoom) {
+      let problem: CallProblem | undefined
+      if (!media || media.roomId !== roomId || !media.isActive())
+        problem = 'media-encryption-unavailable'
+      else {
+        const { supportsConfidentialMediaTransforms } =
+          await import('../../confidential/media-crypto-client')
+        if (this.#intent !== intent) return
+        if (!supportsConfidentialMediaTransforms()) problem = 'media-transforms-unavailable'
+        else if (!media.isActive()) problem = 'media-encryption-revoked'
+        else
+          protectedOptions = {
+            e2ee: { worker: media.worker, keyProvider: new BaseKeyProvider({ sharedKey: true }) },
+          }
+      }
+      if (problem) {
+        const refusalIntent = intent + 1
+        await this.leave()
+        media?.close()
+        if (this.#intent !== refusalIntent) return
+        this.#reset({ status: 'failed', roomId, problem, ...this.#choices() })
+        return
+      }
+    }
     const previous = this.#session
     const closing = previous === null ? undefined : this.#prepareClose(previous)
     const captured = [...this.#retirements].map((retirement) => retirement.settled)
     let session!: Session
     try {
       try {
-        session = this.#open()
+        session = this.#open(roomId, protectedOptions)
+        session.media = media
+        session.mediaEpoch = media?.epoch ?? null
+        session.mediaBoundary = media === null ? null : boundary
         this.#session = session
+        if (media) session.detach.push(media.subscribeRevocation(() => this.#revokeMedia(session)))
+        if (this.#subscribeRoomBoundary)
+          session.detach.push(
+            this.#subscribeRoomBoundary(() => {
+              if (!this.#mediaAuthorized(session)) this.#revokeMedia(session)
+            })
+          )
         this.#mutedBeforeDeafen = this.#chosenMuted
         const choices = this.#choices()
         // Push-to-talk: the microphone stays off until the key is held, from the join on, so it
@@ -581,16 +646,29 @@ export class CallController {
     // No await between the final empty/current check and starting this command's grant.
     if (this.#intent !== intent || this.#session !== session) return
     try {
+      this.#requireMedia(session)
+      if (media) {
+        await media.attach(session.room)
+        if (this.#session !== session) return
+        this.#requireMedia(session)
+      }
       const grant = await fetchRoomGrant(
         this.#homeserver,
         this.#tokens,
         roomId,
         this.#serverName,
-        this.#fetch
+        this.#fetch,
+        () => {
+          if (this.#session !== session || session.closed)
+            throw new MediaProtectionFailed('media-encryption-revoked')
+          this.#requireMedia(session)
+        }
       )
       if (this.#session !== session) return
+      this.#requireMedia(session)
       await session.room.connect(grant.url, grant.token)
       if (this.#session !== session) return
+      this.#requireMedia(session)
       // `connect` can resolve on a connection already gone (closed while it was being set up).
       if (session.room.state !== ConnectionState.Connected) throw new Error('not connected')
       const canPublish = session.room.localParticipant.permissions?.canPublish !== false
@@ -634,7 +712,12 @@ export class CallController {
       this.#reset({
         status: 'failed',
         roomId,
-        problem: error instanceof RoomAccessFailed ? error.problem : 'unavailable',
+        problem:
+          error instanceof MediaProtectionFailed
+            ? error.problem
+            : error instanceof RoomAccessFailed
+              ? error.problem
+              : 'unavailable',
         ...this.#choices(),
       })
     }
@@ -814,6 +897,10 @@ export class CallController {
       await this.#stopVideo(session, source)
       return
     }
+    if (!this.#mediaAuthorized(session)) {
+      this.#revokeMedia(session)
+      return
+    }
     if (this.#snapshot.listenOnly) {
       this.#set({ videoProblem: 'video-forbidden' })
       return
@@ -826,12 +913,17 @@ export class CallController {
     const local = session.room.localParticipant
     let publication: LocalTrackPublication | undefined
     try {
+      if (this.#session !== session || session.closed) return
+      this.#requireMedia(session)
       publication =
         source === 'camera'
           ? await local.setCameraEnabled(true, CAMERA_CAPTURE)
           : await local.setScreenShareEnabled(true, SCREEN_CAPTURE, SCREEN_PUBLISH)
     } catch (error) {
-      if (this.#session !== session || session.closed) return
+      if (this.#session !== session || session.closed) {
+        if (session.media || session.protectionRevoked) await this.#stopVideo(session, source)
+        return
+      }
       if (generation !== session.videoGeneration[source]) return
       session.videoWanted[source] = false
       const problem = source === 'camera' ? cameraProblemOf(error) : screenProblemOf(error)
@@ -840,10 +932,20 @@ export class CallController {
       await this.#stopVideo(session, source)
       return
     }
-    if (this.#session !== session || session.closed) return
+    if (this.#session !== session || session.closed) {
+      if (session.media || session.protectionRevoked) {
+        if (publication?.track) endCapture(publication.track)
+        await this.#stopVideo(session, source)
+      }
+      return
+    }
     if (generation !== session.videoGeneration[source] || !session.videoWanted[source]) {
       // Turned off while it started (a prompt open): it goes now.
       await this.#stopVideo(session, source)
+      return
+    }
+    if (!this.#mediaAuthorized(session)) {
+      this.#revokeMedia(session)
       return
     }
     publication ??= local.getTrackPublication(SOURCE_OF[source])
@@ -975,11 +1077,19 @@ export class CallController {
     captured: string | null
   ): Promise<unknown> {
     const { room } = session
+    if (!this.#mediaAuthorized(session)) {
+      this.#revokeMedia(session)
+      return new MediaProtectionFailed('media-encryption-revoked')
+    }
     try {
       // An id the member picked must be that device; the default may be named differently.
       await room.switchActiveDevice('audioinput', input ?? 'default', input !== null)
       return null
     } catch (refused) {
+      if (!this.#mediaAuthorized(session)) {
+        this.#revokeMedia(session)
+        return refused
+      }
       try {
         await room.switchActiveDevice('audioinput', captured ?? 'default', captured !== null)
       } catch (error) {
@@ -1137,14 +1247,21 @@ export class CallController {
     return status === 'connected' || status === 'reconnecting'
   }
 
-  #open(): Session {
-    this.#room ??= this.#createRoom()
+  #open(roomId: string, options?: RoomOptions): Session {
+    // A protected call owns a fresh SDK room whose transforms exist before negotiation.
+    if (options) this.#room = this.#createRoom({ ...ROOM_OPTIONS, ...options })
+    else this.#room ??= this.#createRoom()
     const room = this.#room
     const container = document.createElement('div')
     container.hidden = true
     container.dataset['espaceAudio'] = ''
     this.#mount().append(container)
     const session: Session = {
+      scopeRoomId: roomId,
+      protectionRevoked: false,
+      media: null,
+      mediaEpoch: null,
+      mediaBoundary: null,
       room,
       container,
       elements: new Map(),
@@ -1162,7 +1279,20 @@ export class CallController {
       room.on(event, handler)
       session.detach.push(() => room.off(event, handler))
     }
-    const mine = () => this.#session === session && !session.closed
+    const mine = () => {
+      if (this.#session !== session || session.closed) return false
+      if (!this.#mediaAuthorized(session)) {
+        this.#revokeMedia(session)
+        return false
+      }
+      return true
+    }
+    on(RoomEvent.EncryptionError, () => {
+      if (session.media) this.#revokeMedia(session)
+    })
+    on(RoomEvent.ParticipantEncryptionStatusChanged, (encrypted) => {
+      if (session.media && !encrypted) this.#revokeMedia(session)
+    })
     // The member's output, for this call's sound from its first participant on. One that is gone,
     // or a browser that cannot choose, plays on the system's output.
     const { output } = this.#deviceChoice
@@ -1346,6 +1476,10 @@ export class CallController {
    * muted while it ran (a permission prompt open, say).
    */
   async #turnOn(session: Session): Promise<void> {
+    if (!this.#mediaAuthorized(session)) {
+      this.#revokeMedia(session)
+      return
+    }
     const generation = ++this.#generation
     const local = session.room.localParticipant
     let restarts = false
@@ -1372,6 +1506,7 @@ export class CallController {
           .catch(() => undefined)
       }
       try {
+        this.#requireMedia(session)
         // The member's microphone, that one and no other (a first capture; an unmute restarts the
         // track on the device it already has).
         await local.setMicrophoneEnabled(true, {
@@ -1385,14 +1520,33 @@ export class CallController {
         // the call already has restarts on the device it was switched to, so it is switched too.
         this.#set({ inputMissing: true })
         await session.room.switchActiveDevice('audioinput', 'default', false)
+        this.#requireMedia(session)
         await local.setMicrophoneEnabled(true, { deviceId: SYSTEM_INPUT, ...this.#processing() })
       }
     } catch (error) {
+      if (
+        (session.media || session.protectionRevoked) &&
+        (this.#session !== session || session.closed)
+      ) {
+        await this.#stopMicrophone(session.room, true)
+        return
+      }
       if (generation !== this.#generation || this.#session !== session) return
       const silencing = this.#turnOff(session)
       // No microphone at all: the panel does not say the default is used.
       this.#set({ muted: true, inputMissing: false, problem: microphoneProblemOf(error) })
       await silencing
+      return
+    }
+    if (
+      (session.media || session.protectionRevoked) &&
+      (this.#session !== session || session.closed)
+    ) {
+      await this.#stopMicrophone(session.room, true)
+      return
+    }
+    if (!this.#mediaAuthorized(session)) {
+      this.#revokeMedia(session)
       return
     }
     // Chosen while the capture was starting (a permission prompt open): LiveKit started the one
@@ -1599,9 +1753,56 @@ export class CallController {
     return retirement
   }
 
+  #boundary(roomId: string): RoomBoundary {
+    return this.#roomBoundary ? (this.#roomBoundary(roomId) ?? 'unknown') : 'ordinary'
+  }
+
+  #mediaAuthorized(session: Session): boolean {
+    const media = session.media
+    const boundary = this.#boundary(session.scopeRoomId)
+    if (media === null) return permitsPlaintext(boundary)
+    return (
+      media.isActive() &&
+      media.epoch === session.mediaEpoch &&
+      media.roomId === session.scopeRoomId &&
+      this.#mediaEncryption?.(session.scopeRoomId) === media &&
+      boundary === session.mediaBoundary
+    )
+  }
+
+  #requireMedia(session: Session): void {
+    if (!this.#mediaAuthorized(session)) {
+      this.#revokeMedia(session)
+      throw new MediaProtectionFailed('media-encryption-revoked')
+    }
+  }
+
+  #revokeMedia(session: Session): void {
+    if (this.#session !== session || session.closed) return
+    session.protectionRevoked = true
+    // A capture prompt may settle after retirement. Keep that revoked SDK room isolated
+    // so late cleanup can never stop a newer admitted call's tracks.
+    if (this.#room === session.room) this.#room = null
+    ++this.#intent
+    ++this.#generation
+    this.#session = null
+    // Closing synchronously stops every capture and revokes the worker before awaiting disconnect.
+    void this.#close(session)
+    this.#reset({
+      status: 'failed',
+      roomId: this.#snapshot.roomId,
+      problem: 'media-encryption-revoked',
+      ...this.#choices(),
+    })
+  }
+
   #prepareClose(session: Session): LocalRetirement {
     if (session.retirement === null) {
       session.closed = true
+      if (session.media) {
+        session.media.close()
+        if (this.#room === session.room) this.#room = null
+      }
       session.retirement = this.#retire()
     }
     return session.retirement
@@ -1665,6 +1866,12 @@ export class CallController {
       // The disconnect stops it too.
     }
     await session.room.disconnect().catch(() => undefined)
+  }
+}
+
+class MediaProtectionFailed extends Error {
+  constructor(readonly problem: CallProblem) {
+    super(problem)
   }
 }
 
