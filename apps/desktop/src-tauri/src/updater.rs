@@ -150,6 +150,21 @@ fn validate_archive_listing(names: &str, detail: &str) -> Result<(), &'static st
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn copy_download(
+    input: impl std::io::Read,
+    output: &mut impl std::io::Write,
+    limit: u64,
+) -> Result<(), &'static str> {
+    let bound = limit.checked_add(1).ok_or("update_download_bounds")?;
+    let mut bounded = std::io::Read::take(input, bound);
+    let count = std::io::copy(&mut bounded, output).map_err(|_| "update_download_failed")?;
+    if count > limit {
+        return Err("update_download_bounds");
+    }
+    Ok(())
+}
+
 /// A ready value can only be constructed by native verification, never IPC deserialization.
 #[derive(Debug)]
 pub struct ReadyUpdate {
@@ -232,35 +247,47 @@ mod macos {
     }
 
     fn download(url: &str, path: &Path, limit: u64) -> Result<(), &'static str> {
-        // Redirects are refused, HTTPS/TLS required, time and byte bounds apply to both files.
-        run(
-            "/usr/bin/curl",
-            &[
-                "--disable".as_ref(),
-                "--fail".as_ref(),
-                "--silent".as_ref(),
-                "--show-error".as_ref(),
-                "--proto".as_ref(),
-                "=https".as_ref(),
-                "--tlsv1.2".as_ref(),
-                "--max-time".as_ref(),
-                "180".as_ref(),
-                "--max-filesize".as_ref(),
-                limit.to_string().as_ref(),
-                "--output".as_ref(),
-                path.as_os_str(),
-                url.as_ref(),
-            ],
-        )?;
-        if fs::metadata(path)
-            .map_err(|_| "update_download_missing")?
-            .len()
-            > limit
-        {
-            return Err("update_download_bounds");
+        // Bound streamed bytes independently of Content-Length and the platform curl version.
+        // Redirects are refused, the user curl configuration is disabled, and TLS is mandatory.
+        let mut child = Command::new("/usr/bin/curl")
+            .args([
+                "--disable",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--proto",
+                "=https",
+                "--tlsv1.2",
+                "--max-time",
+                "180",
+                url,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| "update_download_failed")?;
+        let copied = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|_| "update_download_failed")?;
+            let stream = child.stdout.take().ok_or("update_download_failed")?;
+            copy_download(stream, &mut file, limit)?;
+            Ok(())
+        })();
+        if copied.is_err() {
+            let _ = child.kill();
+        }
+        let status = child.wait().map_err(|_| "update_download_failed")?;
+        copied?;
+        if !status.success() {
+            return Err("update_download_failed");
         }
         Ok(())
     }
+
     fn signed_app(path: &Path) -> Result<(), &'static str> {
         run(
             "/usr/bin/codesign",
@@ -522,5 +549,17 @@ mod tests {
         ] {
             assert!(validate_archive_listing("Kodera.app/Contents/file", detail).is_err());
         }
+    }
+    #[test]
+    fn streamed_download_bound_does_not_trust_a_declared_length() {
+        let mut output = Vec::new();
+        assert_eq!(
+            copy_download(std::io::repeat(1), &mut output, 8),
+            Err("update_download_bounds")
+        );
+        assert_eq!(output.len(), 9);
+        output.clear();
+        assert!(copy_download(&b"complete"[..], &mut output, 8).is_ok());
+        assert_eq!(output, b"complete");
     }
 }
