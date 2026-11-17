@@ -173,6 +173,7 @@ export function TimelineMessage({
   )
   return (
     <article
+      data-ph-no-capture
       aria-labelledby={labelledBy}
       data-mention={isMention ? '' : undefined}
       data-focused={focused ? '' : undefined}

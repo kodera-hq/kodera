@@ -75,6 +75,18 @@ export async function boot(entry?: BootEntry): Promise<void> {
   }
 
   const router = await createAppRouter()
+  // Literal build gate: an unconfigured deployment emits no collection transport.
+  if (import.meta.env.VITE_POSTHOG_KEY?.trim()) {
+    const host = import.meta.env.VITE_POSTHOG_HOST || 'https://eu.i.posthog.com'
+    if (host === 'https://eu.i.posthog.com') {
+      try {
+        const { startTelemetry } = await import('./analytics/telemetry/bootstrap')
+        await startTelemetry(router, import.meta.env.VITE_POSTHOG_KEY, host)
+      } catch {
+        /* Optional diagnostics cannot prevent application startup. */
+      }
+    }
+  }
 
   createRoot(rootElement).render(
     <StrictMode>

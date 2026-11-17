@@ -1,3 +1,5 @@
+import type * as Diagnostics from '../analytics/telemetry/diagnostics'
+import { getTelemetryConsentVersion, hasTelemetryConsent } from '../analytics/telemetry/consent'
 // What a customer sees when a route fails to load (docs/specs/00-shell-and-login.md
 // §5, `shell` Error row: "`GET /me` fails → full-page error with retry and
 // support"). Without it the router falls back to its own boundary, which
@@ -228,7 +230,33 @@ function LoadFailedContent({ error, reset }: ErrorComponentProps) {
   )
 }
 
+/** A failed optional chunk must not affect the boundary or report after its consent expires. */
+export function reportBoundaryTelemetry(
+  error: unknown,
+  loadDiagnostics?: () => Promise<typeof Diagnostics>
+): (() => void) | undefined {
+  if (!import.meta.env.VITE_POSTHOG_KEY?.trim()) return
+  if (
+    import.meta.env.VITE_POSTHOG_HOST &&
+    import.meta.env.VITE_POSTHOG_HOST !== 'https://eu.i.posthog.com'
+  )
+    return
+  if (!hasTelemetryConsent()) return
+  const version = getTelemetryConsentVersion()
+  let live = true
+  void (loadDiagnostics ? loadDiagnostics() : import('../analytics/telemetry/diagnostics'))
+    .then(({ reportTelemetryError }) => {
+      if (live && hasTelemetryConsent() && version === getTelemetryConsentVersion())
+        reportTelemetryError(error, 'boundary', 'RouteError')
+    })
+    .catch(() => undefined)
+  return () => {
+    live = false
+  }
+}
+
 export function RouteError(props: ErrorComponentProps) {
+  useEffect(() => reportBoundaryTelemetry(props.error), [props.error])
   // The shell is on screen only when the organisation layout itself loaded;
   // its own failure, and every route outside it, get the whole page.
   const inShell = useMatches({

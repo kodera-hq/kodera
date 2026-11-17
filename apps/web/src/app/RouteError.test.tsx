@@ -15,7 +15,7 @@ import {
 } from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MockInstance } from 'vitest'
 import '@/i18n'
 import { ApiProblem } from '../api/client'
@@ -23,6 +23,9 @@ import { authAdapter } from '../auth/oidc'
 import type * as Analytics from './analytics'
 import { AppProviders, createQueryClient } from './providers'
 import { ROUTE_UNITS, createAppRouter } from './routeTree'
+import { reportBoundaryTelemetry } from './RouteError'
+import { setTelemetryConsent, setTelemetryScope } from '../analytics/telemetry/consent'
+import type * as Diagnostics from '../analytics/telemetry/diagnostics'
 
 const { loadCurrentUser, trackSessionExpiryDialogShown } = vi.hoisted(() => ({
   loadCurrentUser: vi.fn(),
@@ -420,5 +423,90 @@ describe('other 403s and unregistered problems, as before identity-unknown', () 
     ).toBeInTheDocument()
     expect(screen.queryByText("Pas encore d'organisation")).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Se reconnecter' })).not.toBeInTheDocument()
+  })
+})
+
+describe('optional boundary diagnostics', () => {
+  afterEach(() => {
+    setTelemetryScope(undefined)
+    localStorage.clear()
+    vi.unstubAllEnvs()
+  })
+  function consent(enabled: boolean) {
+    setTelemetryScope({
+      person: 'boundary-person',
+      workspace: 'boundary-workspace',
+      slug: 'sample',
+    })
+    setTelemetryConsent(enabled)
+  }
+  it.each([
+    ['', 'https://eu.i.posthog.com', true],
+    ['key', 'https://eu.i.posthog.com', false],
+    ['key', 'https://us.i.posthog.com', true],
+  ])(
+    'does not import diagnostics without configuration, EU host and consent',
+    async (key, host, enabled) => {
+      vi.stubEnv('VITE_POSTHOG_KEY', key)
+      vi.stubEnv('VITE_POSTHOG_HOST', host)
+      consent(enabled)
+      const load = vi.fn()
+      reportBoundaryTelemetry(new Error('private'), load)
+      await Promise.resolve()
+      expect(load).not.toHaveBeenCalled()
+    }
+  )
+  it('loads and reports a boundary only while the captured consent remains current', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'key')
+    vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
+    consent(true)
+    const reportTelemetryError = vi.fn()
+    const load = vi.fn(async () => ({ reportTelemetryError }) as unknown as typeof Diagnostics)
+    const error = new Error('private')
+    reportBoundaryTelemetry(error, load)
+    await waitFor(() =>
+      expect(reportTelemetryError).toHaveBeenCalledWith(error, 'boundary', 'RouteError')
+    )
+    expect(load).toHaveBeenCalledOnce()
+  })
+  it('drops a delayed import after withdrawal even if consent is subsequently restored', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'key')
+    vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
+    consent(true)
+    const reportTelemetryError = vi.fn()
+    let complete: ((value: typeof Diagnostics) => void) | undefined
+    reportBoundaryTelemetry(
+      new Error('private'),
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    setTelemetryConsent(false)
+    setTelemetryConsent(true)
+    complete!({ reportTelemetryError } as unknown as typeof Diagnostics)
+    await settle()
+    expect(reportTelemetryError).not.toHaveBeenCalled()
+  })
+  it('drops a delayed import after its boundary unmounts and contains loading failures', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'key')
+    vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
+    consent(true)
+    const reportTelemetryError = vi.fn()
+    let complete: ((value: typeof Diagnostics) => void) | undefined
+    const cancel = reportBoundaryTelemetry(
+      new Error('private'),
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        })
+    )
+    cancel!()
+    complete!({ reportTelemetryError } as unknown as typeof Diagnostics)
+    reportBoundaryTelemetry(new Error('private'), () =>
+      Promise.reject(new Error('chunk unavailable'))
+    )
+    await settle()
+    expect(reportTelemetryError).not.toHaveBeenCalled()
   })
 })

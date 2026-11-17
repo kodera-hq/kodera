@@ -1,3 +1,4 @@
+import { bindTelemetryScope, setTelemetryScope } from '../analytics/telemetry/consent'
 import { announcedTitleKey, contentTitleKey } from './contentTitle'
 // The `/$org` layout route: the auth guard, the slug → organisation
 // resolution `GET /me` does once (ADR-0005 consequence — the browser URL
@@ -15,7 +16,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { trackOrganisationSwitched } from './analytics'
 import type { components } from '../api/schema'
@@ -274,6 +275,13 @@ function OrgLayoutContent() {
   const hasUsableToken = auth.status === 'ready' && lifetime.hasUsableCredential()
   const mfaEnrolled = useMfaGuard(me, auth.user?.identity, org)
   const onMfaScreen = pathname === mfaEnrolPath(org)
+  useLayoutEffect(() => {
+    if (authorityMismatch || !hasUsableToken) return setTelemetryScope(undefined)
+    return bindTelemetryScope(
+      { person: me.id, workspace: membership.organisation.id, slug: org },
+      lifetime
+    )
+  }, [authorityMismatch, hasUsableToken, lifetime, me.id, membership.organisation.id, org])
 
   useEffect(() => {
     const unsubscribe = router.subscribe('onBeforeNavigate', (event) => {
@@ -375,6 +383,7 @@ function OrgLayoutContent() {
         {authorityMismatch ? <SessionExpiryDialog /> : null}
         <div
           className={authorityMismatch ? undefined : 'contents'}
+          data-ph-no-capture
           hidden={authorityMismatch}
           aria-hidden={authorityMismatch || undefined}
         >
@@ -415,6 +424,7 @@ function OrgLayoutContent() {
       {authorityMismatch ? <SessionExpiryDialog /> : null}
       <div
         className={authorityMismatch ? undefined : 'contents'}
+        data-ph-no-capture
         hidden={authorityMismatch}
         aria-hidden={authorityMismatch || undefined}
       >

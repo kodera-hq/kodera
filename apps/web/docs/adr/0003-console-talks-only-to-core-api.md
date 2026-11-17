@@ -1,6 +1,6 @@
 # ADR-0003: The console talks only to the Core API
 
-**Status:** Accepted; superseded in part by ADR-0011 (the workspace's homeserver, for Espace's chat only)
+**Status:** Accepted; superseded in part by ADR-0011 (workspace homeserver) and ADR-0015 (optional EU diagnostics only)
 **Date:** 2026-09-02
 **Deciders:** the crew (proposal by zôÖma)
 

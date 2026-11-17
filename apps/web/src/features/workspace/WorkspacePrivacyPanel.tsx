@@ -4,6 +4,7 @@
 // `retention_pending`), time-bounded signed archive downloads, explicit slug re-entry
 // confirmation, and statutory `Code de commerce L123-22` retention disclosure.
 
+import { TelemetryConsentPanel } from './TelemetryConsentPanel'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { OrganisationRole } from '../../app/Sidebar'
@@ -441,7 +442,8 @@ export function WorkspacePrivacyPanel({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div data-ph-no-capture className="flex flex-col gap-6">
+      <TelemetryConsentPanel />
       <p className="text-sm text-c-ink-2">{copy.intro}</p>
 
       {holdBanner !== null ? <Banner kind="incident" headline={holdBanner} /> : null}

@@ -25,7 +25,8 @@ const ATTACHMENT_BASE = '--attachment-base'
 // unreachable from the edge in front of it. No other address is accepted.
 const HOST = '--host'
 const HOSTS = ['127.0.0.1', '0.0.0.0']
-const FLAGS = [...REQUIRED, ...OPTIONAL, ATTACHMENT_BASE, HOST]
+const TELEMETRY_HOST = '--telemetry-host'
+const FLAGS = [...REQUIRED, ...OPTIONAL, ATTACHMENT_BASE, HOST, TELEMETRY_HOST]
 // A flag without a value.
 const ALLOW_LOOPBACK = '--allow-loopback'
 const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]']
@@ -205,6 +206,9 @@ async function configuration(arguments_) {
   ) {
     throw new Error('Invalid configuration')
   }
+  const telemetryHost = values.get(TELEMETRY_HOST) ?? null
+  if (telemetryHost !== null && telemetryHost !== 'https://eu.i.posthog.com')
+    throw new Error('Invalid configuration')
   const host = values.has(HOST) ? values.get(HOST) : '127.0.0.1'
   if (!HOSTS.includes(host)) throw new Error('Invalid configuration')
   const root = await realpath(values.get('--root'))
@@ -221,6 +225,7 @@ async function configuration(arguments_) {
     homeserverOrigin,
     liveKitOrigin,
     attachmentBase,
+    telemetryHost,
   }
 }
 
@@ -244,6 +249,7 @@ function headers(config, path) {
     "form-action 'self'",
     [
       "connect-src 'self'",
+      ...(config.telemetryHost === null ? [] : [`${config.telemetryHost}/i/v0/e/`]),
       `${config.coreOrigin}/api/v1/`,
       `${config.providerOrigin}/realms/`,
       // Every source under the matrix domain names its path: a host wildcard with a bare origin

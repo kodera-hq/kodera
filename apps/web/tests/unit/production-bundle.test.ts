@@ -96,3 +96,18 @@ describe('local workspace registry production isolation', () => {
     expect(readFileSync(join(root, SELFTEST), 'utf8')).toContain(marker)
   })
 })
+
+describe('unconfigured telemetry bundle isolation', () => {
+  const check = readFileSync(join(root, CHECK), 'utf8')
+  const selftest = readFileSync(join(root, SELFTEST), 'utf8')
+  it.each(['$process_person_profile', '$geoip_disable', '/i/v0/e/'])(
+    'pairs the %s transport marker with scanner and mutation proof',
+    (marker) => {
+      expect(readFileSync(join(root, 'src/analytics/telemetry/transport.ts'), 'utf8')).toContain(
+        marker
+      )
+      expect(check).toContain(marker)
+      expect(selftest).toContain(marker)
+    }
+  )
+})

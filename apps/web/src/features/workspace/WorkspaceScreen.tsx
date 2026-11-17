@@ -1,3 +1,4 @@
+import { track } from '../../analytics/track'
 import { CanvasNavigation } from './canvasNavigation'
 import { flushSync } from 'react-dom'
 import { readLocalWorkspaceView } from './localWorkspaceView'
@@ -408,6 +409,12 @@ function LiveWorkspace({
         .concat(liveWorkspace.uncategorised_channels)
         .find((entry) => entry.id === channelId)
     : currentChannel(liveWorkspace, channelId)
+  const selectedChannelId = channel?.id
+  const selectedChannelKind = channel?.kind
+  useEffect(() => {
+    if (selectedChannelId)
+      track('channel_opened', { kind: selectedChannelKind === 'audio' ? 'voice' : 'chat' })
+  }, [selectedChannelId, selectedChannelKind])
   const navigation = useChannelNavigation(org)
   const espace = useOpenEspace(serverSlug)
   useEffect(() => {

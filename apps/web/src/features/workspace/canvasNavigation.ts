@@ -1,3 +1,4 @@
+import { track } from '../../analytics/track'
 import type { CanvasMode } from '../espace/liveViewModel'
 
 interface Transition {
@@ -25,9 +26,16 @@ export class CanvasNavigation {
     if (mode === this.desired) return
     this.desired = mode
     const generation = ++this.generation
+    const start = performance.now()
     this.transition?.skipTransition()
     const update = () => {
-      if (generation === this.generation) this.apply(mode)
+      if (generation === this.generation) {
+        this.apply(mode)
+        track('workspace_surface_changed', {
+          surface: mode,
+          duration_ms: performance.now() - start,
+        })
+      }
     }
     if (this.options.start === undefined || this.options.reducedMotion()) {
       update()

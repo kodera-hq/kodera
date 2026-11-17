@@ -501,3 +501,17 @@ Bootstrap exports only the current epoch MAC capability, with strict expiry at t
 Proximity operations keep current authority fences through the broker call and response construction. Successful peer disclosure reconciles every target and is bounded to 512 distinct identities; excess capacity returns `503`, never a partial authorization snapshot. The broker retains opaque identity UUIDs rather than raw issuer/subject claims. Ordinary departure removes presence while preserving the short replay tombstone; permanent erasure removes both.
 
 Every newly admitted workspace/account erasure inventory requires the `proximity_ephemeral` receipt. A separately configured erasure worker must mount the same private socket with the reviewed UID and explicitly supply `ProximityWorkspaceErasureAdapter` or `ProximityAccountErasureAdapter`. No missing-service-as-empty fallback exists. The receipt covers logical absence from this live RAM-only service; it does not qualify other replicas, forensic RAM zeroization, physical radio interoperability or immediate offline revocation. Existing immutable erasure journals are not rewritten or retroactively certified by the new inventory migration.
+
+### Optional EU diagnostics
+
+Community deployments send no analytics by default. To offer optional diagnostics, add the public
+`VITE_POSTHOG_KEY` ingestion key to the web image's build arguments, with
+`VITE_POSTHOG_HOST=https://eu.i.posthog.com`, and append
+`--telemetry-host https://eu.i.posthog.com` to the web service's existing command. Rebuild the image.
+Never use a personal API key. The server refuses other telemetry hosts and admits only `/i/v0/e/`
+in `connect-src`; the default command admits no analytics origin. No analytics SDK, replay,
+autocapture or DOM reader is installed. Each member must also opt in under workspace privacy
+settings, separately for each account and workspace in this browser. Withdrawing consent stops
+collection, aborts pending delivery and discards the in-memory random session identifier.
+Previously delivered events are subject to the operator's analytics retention and erasure policy.
+See [the privacy specification](../../apps/web/docs/specs/privacy-first-telemetry.md).

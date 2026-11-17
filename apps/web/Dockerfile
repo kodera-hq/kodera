@@ -19,8 +19,11 @@ ARG VITE_OIDC_CLIENT_ID=console
 ARG VITE_MATRIX_DOMAIN
 ARG VITE_TENANT_DOMAIN
 ARG VITE_FIRST_OWNER_JOURNEY=0
+ARG VITE_POSTHOG_KEY=
+ARG VITE_POSTHOG_HOST=https://eu.i.posthog.com
+ENV VITE_POSTHOG_KEY=${VITE_POSTHOG_KEY} VITE_POSTHOG_HOST=${VITE_POSTHOG_HOST}
 ENV VITE_AUTH_MODE=oidc     VITE_ENABLE_MSW=0     VITE_CORE_API_URL=${VITE_CORE_API_URL}     VITE_KEYCLOAK_URL=${VITE_KEYCLOAK_URL}     VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID}     VITE_MATRIX_DOMAIN=${VITE_MATRIX_DOMAIN}     VITE_TENANT_DOMAIN=${VITE_TENANT_DOMAIN}     VITE_FIRST_OWNER_JOURNEY=${VITE_FIRST_OWNER_JOURNEY}
-RUN test -n "$VITE_CORE_API_URL" && test -n "$VITE_KEYCLOAK_URL" && test -n "$VITE_MATRIX_DOMAIN"  && npm run build  && profile=production && if [ "$VITE_FIRST_OWNER_JOURNEY" = 1 ]; then profile=staging; fi  && (cd apps/web && bash scripts/check-production-bundle.sh --profile "$profile" --scan-only dist)
+RUN test -n "$VITE_CORE_API_URL" && test -n "$VITE_KEYCLOAK_URL" && test -n "$VITE_MATRIX_DOMAIN"  && npm run build  && profile=production && if [ "$VITE_FIRST_OWNER_JOURNEY" = 1 ]; then profile=staging; fi  && telemetry=0 && if [ -n "$VITE_POSTHOG_KEY" ]; then telemetry=1; fi && (cd apps/web && bash scripts/check-production-bundle.sh --profile "$profile" --telemetry "$telemetry" --scan-only dist)
 
 FROM node:22-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
 ARG REVISION=unknown
