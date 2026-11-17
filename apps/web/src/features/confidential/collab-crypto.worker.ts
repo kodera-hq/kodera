@@ -41,6 +41,7 @@ export function createCollabCryptoSession(context: CollabCryptoContext, secret: 
   )
   return Object.freeze({
     epoch: scope.epoch,
+    senderClientId: scope.senderClientId,
     scopeKey: scope.scopeKey,
     documentId: scope.documentId,
     isActive: () => cryptor.isActive(),

@@ -117,7 +117,7 @@ export const ROUTE_UNITS = {
   }),
   security: unit({
     segments: ['security'],
-    load: () => withNamespaces([], () => import('../features/security/routes')),
+    load: () => withNamespaces(['security'], () => import('../features/security/routes')),
     routes: (module) => [module.securityRoute, module.securityMfaRoute],
   }),
   appearance: unit({

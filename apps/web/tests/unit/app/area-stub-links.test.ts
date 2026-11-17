@@ -113,11 +113,11 @@ describe('AreaStub reachability guard', () => {
     const ungatedMenu = [
       {
         relPath: 'src/features/workspace/FakeMenu.tsx',
-        source: 'export const item = { to: "/$org/security" }',
+        source: 'export const item = { to: "/$org/federation" }',
       },
     ]
     expect(findUngatedStubLinkViolations(ungatedMenu, STUB_AREAS)).toEqual([
-      "src/features/workspace/FakeMenu.tsx: references /$org/security without gating on isStubArea('security')",
+      "src/features/workspace/FakeMenu.tsx: references /$org/federation without gating on isStubArea('federation')",
     ])
   })
 })

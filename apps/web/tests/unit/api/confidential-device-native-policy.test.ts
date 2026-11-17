@@ -441,3 +441,64 @@ describe('collaboration and media worker isolation', () => {
     }
   )
 })
+
+describe('least-privilege inter-worker imports', () => {
+  const workerPath = (name: string) =>
+    fileURLToPath(new URL(`../../../src/features/confidential/${name}.worker.ts`, import.meta.url))
+  it.each([
+    'collab-crypto',
+    'media-crypto',
+    'attachment-crypto',
+    'cross-signing',
+    'key-backup',
+    'key-backup-vault',
+  ])('allows %s shared crypto imports while denying device native/CAS authority', async (name) => {
+    const path = workerPath(name)
+    await accepted("import {need} from './crypto-session.worker-core'; void need", path)
+    await accepted(
+      "import {need} from '/src/features/confidential/crypto-session.worker-core.ts'; void need",
+      path
+    )
+    for (const source of [
+      "import './native/kodera_rs.js'",
+      "void import('./native/kodera_rs.js')",
+      "export * from './device-cas-host'",
+      "void require('@/features/confidential/device-cas-host.ts')",
+      "export type Host = typeof import('./device-cas-host')",
+    ])
+      refused(await one(lint, source, path), workerImportRule)
+  })
+  it.each([
+    'cross-signing.worker',
+    'key-backup.worker',
+    'key-backup-vault.worker',
+    'security-rpc.worker',
+    'crypto-session.worker-core',
+    'worker-core-utils',
+  ])('denies main-thread imports of %s for all import forms', async (name) => {
+    for (const source of [
+      `import './${name}'`,
+      `void import('./${name}.ts')`,
+      `export * from '/src/features/confidential/${name}'`,
+      `void require('@/features/confidential/${name}')`,
+      `export type Worker = typeof import('./${name}')`,
+    ])
+      refused(await one(lint, source, other), workerImportRule)
+  })
+  it('does not treat nested or worker-core filenames as dedicated worker entries', async () => {
+    for (const relative of [
+      'nested/rogue.worker.ts',
+      'crypto-session.worker-core.ts',
+      'ordinary.ts',
+    ]) {
+      const path = fileURLToPath(
+        new URL(`../../../src/features/confidential/${relative}`, import.meta.url)
+      )
+      refused(
+        await one(lint, "import '/src/features/confidential/crypto-session.worker-core'", path),
+        workerImportRule
+      )
+    }
+    await accepted("import './native/kodera_rs.js'; import './device-cas-host'", workerEntry)
+  })
+})

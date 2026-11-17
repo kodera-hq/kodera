@@ -462,6 +462,7 @@ export class CollabSessionController {
     return (
       cipher !== null &&
       cipher.epoch === policy.epoch &&
+      cipher.senderClientId === this.ydoc.clientID &&
       cipher.scopeKey === this.scopeKey &&
       cipher.documentId === this.documentId &&
       cipher.isActive()

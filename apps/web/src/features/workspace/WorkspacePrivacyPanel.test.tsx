@@ -1,3 +1,4 @@
+import { registerSecuritySessionCleanup } from '../security/localSecuritySession'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -236,6 +237,9 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     })
     expect(toggle).toBeChecked()
 
+    const retireSecurity = vi.fn()
+    const unregisterSecurity = registerSecuritySessionCleanup(retireSecurity)
+
     // Rejected deletion (HTTP 409) does not purge consent
     apiMocks.requestWorkspaceDeletion.mockRejectedValueOnce(
       new ApiProblem({
@@ -253,6 +257,8 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     expect(hasTelemetryConsent()).toBe(true)
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-1"]')).toBe('yes')
 
+    expect(retireSecurity).not.toHaveBeenCalled()
+
     // Accepted workspace deletion revokes active consent and purges all org-1 consent keys
     apiMocks.requestWorkspaceDeletion.mockResolvedValueOnce({
       id: '00000000-0000-7000-8000-000000000030',
@@ -267,6 +273,7 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     })
     await user.click(screen.getByRole('button', { name: 'Confirmer la suppression de l’espace' }))
     await waitFor(() => expect(hasTelemetryConsent()).toBe(false))
+    expect(retireSecurity).toHaveBeenCalledTimes(1)
     expect(toggle).not.toBeChecked()
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-1"]')).toBeNull()
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-2","org-1"]')).toBeNull()
@@ -309,6 +316,8 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Confirmer la suppression de mon compte' }))
     await waitFor(() => expect(hasTelemetryConsent()).toBe(false))
+    expect(retireSecurity).toHaveBeenCalledTimes(2)
+    unregisterSecurity()
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-1"]')).toBeNull()
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-2"]')).toBeNull()
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-2","org-2"]')).toBe('yes')

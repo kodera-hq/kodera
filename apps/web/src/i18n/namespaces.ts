@@ -26,6 +26,7 @@ export const MESSAGE_NAMESPACES = [
   'onboarding',
   'order',
   'people',
+  'security',
   'shell',
   'status',
   'support',

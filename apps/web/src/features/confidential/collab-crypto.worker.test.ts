@@ -34,10 +34,16 @@ describe('worker confidential collaboration envelopes', () => {
     sender.close()
     receiver.close()
   })
+  it('rejects reflected own frames and empty collaboration plaintext', async () => {
+    const sender = peer()
+    await expect(sender.open(await sender.seal(body()))).rejects.toThrow()
+    expect(() => sender.seal(new Uint8Array())).toThrow()
+    sender.close()
+  })
   it('captures plaintext and context before asynchronous crypto', async () => {
     const scope = { ...context },
       sender = createCollabCryptoSession(scope, secret()),
-      receiver = peer()
+      receiver = peer({ senderClientId: 22 })
     const input = body(),
       operation = sender.seal(input)
     scope.documentId = 'wrong'
@@ -66,7 +72,7 @@ describe('worker confidential collaboration envelopes', () => {
     const sender = peer(),
       original = await sender.seal(body())
     for (const offset of [0, 4, 15, original.length - 1, original.length - 17]) {
-      const receiver = peer(),
+      const receiver = peer({ senderClientId: 22 }),
         changed = original.slice()
       changed[offset] = changed[offset]! ^ 1
       await expect(receiver.open(changed)).rejects.toThrow()
@@ -76,7 +82,7 @@ describe('worker confidential collaboration envelopes', () => {
   })
   it('serializes concurrent replay attempts and refuses stale sender sequences', async () => {
     const sender = peer(),
-      receiver = peer()
+      receiver = peer({ senderClientId: 22 })
     const first = await sender.seal(body()),
       second = await sender.seal(body())
     const raced = await Promise.allSettled([receiver.open(second), receiver.open(second)])
@@ -101,7 +107,7 @@ describe('worker confidential collaboration envelopes', () => {
   })
   it('does not release plaintext or ciphertext when authority closes during crypto', async () => {
     const sender = peer(),
-      receiver = peer(),
+      receiver = peer({ senderClientId: 22 }),
       envelope = await sender.seal(body())
     const opening = receiver.open(envelope)
     receiver.close()
@@ -124,6 +130,7 @@ describe('worker confidential collaboration envelopes', () => {
       'open',
       'scopeKey',
       'seal',
+      'senderClientId',
     ])
     expect(await receiver.open(await client.seal(body()))).toEqual(body())
     client.close()
@@ -153,7 +160,7 @@ describe('worker confidential collaboration envelopes', () => {
     await vi.waitFor(() => expect(replies).toHaveLength(2))
     const encrypted = replies[1] as { kind: string; frame: Uint8Array }
     expect(encrypted.kind).toBe('result')
-    const receiver = peer()
+    const receiver = peer({ senderClientId: 22 })
     expect(await receiver.open(encrypted.frame)).toEqual(body())
     close()
     keys.port1.close()

@@ -165,7 +165,7 @@ export class WorkerFrameCryptor {
     )
   }
   seal(input: Uint8Array, kind: string | number): Promise<Uint8Array<ArrayBuffer>> {
-    const plaintext = ownedBytes(input)
+    const plaintext = ownedBytes(input, this.domain === 'kodera-confidential-media' ? 0 : 1)
     const epoch = this.#epoch,
       ratchet = this.#ratchet
     return this.#run(async () => {
@@ -210,7 +210,11 @@ export class WorkerFrameCryptor {
         this.#current(epoch, ratchet)
         need(decoder.decode(envelope.subarray(0, 4)) === this.magic)
         const size = new DataView(envelope.buffer).getUint16(4)
-        need(size > 0 && size <= 1024 && envelope.length > 6 + size + 28)
+        need(
+          size > 0 &&
+            size <= 1024 &&
+            envelope.length >= 6 + size + 28 + (this.domain === 'kodera-confidential-media' ? 0 : 1)
+        )
         const encoded = decoder.decode(envelope.subarray(6, 6 + size))
         const raw = fields(JSON.parse(encoded) as unknown, [
           'epoch',
@@ -237,6 +241,7 @@ export class WorkerFrameCryptor {
         }
         need(
           JSON.stringify(meta) === encoded &&
+            meta.sender !== this.sender &&
             meta.epoch === epoch &&
             meta.ratchet === ratchet &&
             (expectedSender === undefined || meta.sender === expectedSender)
