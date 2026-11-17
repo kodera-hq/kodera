@@ -591,6 +591,11 @@ function LiveWorkspace({
           ) : null
         }
         {...navigation}
+        onNavigateChannel={(nextChannelId) => {
+          // A channel click is also a canvas choice, even when the route is unchanged.
+          setCanvas('chat')
+          return navigation.onNavigateChannel(nextChannelId)
+        }}
         {...(store ? {} : { onReconnect: () => void espace.open() })}
       />
       {createCategory ? (

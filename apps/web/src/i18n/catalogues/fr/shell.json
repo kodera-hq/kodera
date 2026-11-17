@@ -79,6 +79,7 @@
   "console.shell.session.body-restore-failed": "Déconnectez-vous, puis reconnectez-vous. Si cela persiste, écrivez-nous à {{email}}.",
   "console.shell.session.body-unrecognized": "Reconnectez-vous pour continuer.",
   "console.shell.session.error-expired": "Reconnectez-vous pour continuer.",
+  "console.shell.session.matrix-rate-limited": "Trop de tentatives de connexion à l’espace. Les relances automatiques sont arrêtées. Patientez avant de rouvrir votre espace.",
   "console.shell.session.status-restoring": "Restauration de votre session…",
   "console.shell.session.subtitle-expiring": "Par sécurité, votre session se fermera dans {{minutes}} minutes.",
   "console.shell.session.title-expired": "Votre session a expiré",

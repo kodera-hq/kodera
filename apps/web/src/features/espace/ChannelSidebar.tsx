@@ -429,7 +429,9 @@ function ChannelSidebarView({
                 <OrganisationHeader name={organisationName} slug={org} />
               </div>
             )}
-            {simulation ? null : <NotificationCenter />}
+            {simulation ? null : (
+              <NotificationCenter store={store} onSelectInvite={onSelectDirect} />
+            )}
           </div>
         )}
         {organisationActionSlot ?? null}

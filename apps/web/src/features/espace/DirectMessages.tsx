@@ -8,6 +8,7 @@ import { cx } from '../../ui/cx'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import type { EspaceStoreLike } from './liveViewModel'
 import type { DirectSummary } from './matrix/directs'
+import { PendingInvitations } from './PendingInvitations'
 import { useStoreSlice } from './useStoreSlice'
 
 const NONE: readonly DirectSummary[] = []
@@ -64,6 +65,7 @@ export function DirectMessages({
           />
         </Suspense>
       ) : null}
+      <PendingInvitations store={store} onSelect={onSelect} />
       {directs.length === 0 ? (
         <p className="px-2 text-xs text-c-ink-3">{t('console.workspace.directs.empty')}</p>
       ) : (

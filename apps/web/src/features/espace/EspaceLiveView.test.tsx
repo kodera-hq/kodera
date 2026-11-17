@@ -1,3 +1,5 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
 import {
   act,
   fireEvent,
@@ -18,6 +20,7 @@ import { EspaceLiveView } from './EspaceLiveView'
 import { confidentialMessages } from './confidentialMessages'
 import type { RoomBoundary } from '../confidential/room-boundary'
 import type { AudioCallLike, EspaceStoreLike } from './EspaceLiveView'
+import type { CanvasMode } from './liveViewModel'
 import type { CallSnapshot } from './audio/call'
 import {
   EspaceStore,
@@ -4327,4 +4330,172 @@ it('allows protected audio through a call controller with an active media capabi
   )
   await userEvent.setup().click(screen.getByRole('button', { name: /Join Point quotidien/ }))
   expect(call.join).toHaveBeenCalledWith(STANDUP_ROOM)
+})
+
+it.each(['docs', 'files'] as const)(
+  'returns to chat when the already-active channel is clicked from %s',
+  async (canvas) => {
+    const change = vi.fn()
+    const navigate = vi.fn()
+    render(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme"
+        workspace={WORKSPACE}
+        channelId={GENERAL}
+        store={makeFakeStore()}
+        activeCanvasMode={canvas}
+        onChangeCanvasMode={change}
+        onNavigateChannel={navigate}
+      />
+    )
+    await userEvent.setup().click(screen.getByRole('link', { name: /^général/ }))
+    expect(change).toHaveBeenCalledWith('chat')
+    expect(navigate).toHaveBeenCalledWith(GENERAL)
+  }
+)
+
+it('returns from Docs to chat on an audio selection even when protection prevents joining', async () => {
+  const store = makeFakeStore()
+  store.getRoomBoundary = () => 'confidential-unavailable'
+  const call = makeFakeCall()
+  const change = vi.fn()
+  render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={store}
+      call={call}
+      activeCanvasMode="docs"
+      onChangeCanvasMode={change}
+    />
+  )
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: 'Rejoindre Point quotidien, 2 personnes' }))
+  expect(change).toHaveBeenCalledWith('chat')
+  expect(call.join).not.toHaveBeenCalled()
+})
+
+it.each(['docs', 'files'] as const)(
+  'returns to chat when a direct conversation is selected from %s',
+  async (canvas) => {
+    const store = makeFakeStore()
+    store.getDirects = () => [
+      { roomId: GENERAL_ROOM, name: 'Alice', userIds: ['@alice:example.test'], unread: 0 },
+    ]
+    const change = vi.fn()
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme"
+          workspace={WORKSPACE}
+          channelId={GENERAL}
+          store={store}
+          activeCanvasMode={canvas}
+          onChangeCanvasMode={change}
+        />
+      </QueryClientProvider>
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Alice' }))
+    expect(change).toHaveBeenCalledWith('chat')
+  }
+)
+
+it('withholds the previous channel composer until an accepted invitation arrives in joined sync', async () => {
+  const store = makeFakeStore()
+  store.getDirects = () => []
+  store.acceptInvite = vi.fn(async () => undefined)
+  const snapshot = store.getSnapshot()
+  store.getSnapshot = () => snapshot
+  snapshot.invites = [
+    { roomId: '!new:example.test', name: 'Alice', inviter: '@alice:example.test', direct: true },
+  ]
+  render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={store}
+    />
+  )
+  expect(screen.getByRole('textbox', { name: /message/i })).toBeInTheDocument()
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Accepter et rejoindre' }))
+  await waitFor(() => expect(store.acceptInvite).toHaveBeenCalledWith('!new:example.test'))
+  expect(screen.queryByRole('textbox', { name: /message/i })).not.toBeInTheDocument()
+  expect(store.send).not.toHaveBeenCalled()
+})
+
+it('preserves direct selection and withholds the previous channel composer across a deferred startViewTransition canvas switch from docs', async () => {
+  await i18n.changeLanguage('fr')
+  const dmRoomId = '!dm-alice:matrix.acme.kodera.io'
+  const store = makeFakeStore()
+  const snapshot = store.getSnapshot()
+  snapshot.rooms = [
+    ...snapshot.rooms,
+    {
+      roomId: dmRoomId,
+      name: 'Alice',
+      alias: null,
+      kind: 'text',
+      unread: 0,
+      mentions: 0,
+      occupancy: null,
+    },
+  ]
+  snapshot.invites = [
+    { roomId: '!new:example.test', name: 'Bob', inviter: '@bob:example.test', direct: true },
+  ]
+  store.getSnapshot = () => snapshot
+  store.getDirects = () => [
+    { roomId: dmRoomId, name: 'Alice', userIds: ['@alice:matrix.acme.kodera.io'], unread: 0 },
+  ]
+  store.acceptInvite = vi.fn(async () => undefined)
+
+  function DeferredCanvasHarness({ initialMode }: { initialMode: CanvasMode }) {
+    const [mode, setMode] = useState<CanvasMode>(initialMode)
+    return (
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme"
+          workspace={WORKSPACE}
+          channelId={GENERAL}
+          store={store}
+          activeCanvasMode={mode}
+          onChangeCanvasMode={(next) => {
+            requestAnimationFrame(() => setMode(next))
+          }}
+        />
+      </QueryClientProvider>
+    )
+  }
+
+  const user = userEvent.setup()
+  const { unmount } = render(<DeferredCanvasHarness initialMode="docs" />)
+
+  await user.click(screen.getByRole('button', { name: 'Alice' }))
+  await waitFor(() =>
+    expect(screen.getByRole('heading', { level: 1, name: /Alice/ })).toBeVisible()
+  )
+  expect(screen.queryByRole('heading', { level: 1, name: /general/ })).toBeNull()
+  unmount()
+
+  render(<DeferredCanvasHarness initialMode="docs" />)
+  await user.click(screen.getByRole('button', { name: 'Accepter et rejoindre' }))
+  await waitFor(() => expect(store.acceptInvite).toHaveBeenCalledWith('!new:example.test'))
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+  })
+  expect(screen.queryByRole('heading', { level: 1, name: /general/ })).toBeNull()
+  expect(screen.queryByRole('textbox', { name: /message/i })).not.toBeInTheDocument()
+  expect(store.send).not.toHaveBeenCalled()
 })

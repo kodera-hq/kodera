@@ -8,10 +8,14 @@ import { cx } from '../../ui/cx'
 import { Popover } from '../../ui/Popover/Popover'
 import { Switch } from '../../ui/Switch/Switch'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
+import type { EspaceStoreLike } from '../espace/liveViewModel'
+import { PendingInvitations } from '../espace/PendingInvitations'
 import { NotificationFeed, POLL_MS, type Notification } from './notificationFeed'
 import { currentSubscription, disablePush, enablePush, pushSupported } from './push'
 
 const feed = new NotificationFeed()
+const subscribeToNone = () => () => undefined
+const noSnapshot = () => undefined
 
 function BellIcon() {
   return (
@@ -136,14 +140,27 @@ function NotificationItem({ item }: { item: Notification }) {
   )
 }
 
-export function NotificationCenter({ source = feed }: { source?: NotificationFeed }) {
+export function NotificationCenter({
+  source = feed,
+  store,
+  onSelectInvite,
+}: {
+  source?: NotificationFeed
+  store?: EspaceStoreLike
+  onSelectInvite?: ((roomId: string) => void) | undefined
+}) {
   const { t } = useTranslation()
   usePolling(source)
   const snapshot = useSyncExternalStore(source.subscribe, source.getSnapshot)
+  const matrix = useSyncExternalStore(
+    store?.subscribe ?? subscribeToNone,
+    store?.getSnapshot ?? noSnapshot
+  )
+  const unread = snapshot.unread + (matrix?.invites.length ?? 0)
   const label =
-    snapshot.unread === 0
+    unread === 0
       ? t('console.workspace.notifications.action-open')
-      : t('console.workspace.notifications.action-open-unread', { count: String(snapshot.unread) })
+      : t('console.workspace.notifications.action-open-unread', { count: String(unread) })
   return (
     <Popover
       label={t('console.workspace.notifications.title')}
@@ -159,12 +176,12 @@ export function NotificationCenter({ source = feed }: { source?: NotificationFee
           )}
         >
           <BellIcon />
-          {snapshot.unread > 0 ? (
+          {unread > 0 ? (
             <span
               aria-hidden="true"
               className="absolute -top-1 -right-1 min-w-5 rounded-full bg-c-action px-1 text-center text-xs font-bold text-c-on-inverse tabular-nums"
             >
-              {snapshot.unread > 99 ? '99+' : snapshot.unread}
+              {unread > 99 ? '99+' : unread}
             </span>
           ) : null}
         </button>
@@ -189,7 +206,12 @@ export function NotificationCenter({ source = feed }: { source?: NotificationFee
             {t('console.workspace.notifications.problem-unavailable')}
           </p>
         ) : null}
-        {snapshot.items.length === 0 && snapshot.status === 'ready' ? (
+        {store === undefined || onSelectInvite === undefined ? null : (
+          <PendingInvitations store={store} onSelect={onSelectInvite} />
+        )}
+        {snapshot.items.length === 0 &&
+        (matrix?.invites.length ?? 0) === 0 &&
+        snapshot.status === 'ready' ? (
           <p className="text-sm text-c-ink-2">{t('console.workspace.notifications.empty')}</p>
         ) : (
           <ul className="max-h-[320px] divide-y divide-c-border-soft overflow-y-auto">

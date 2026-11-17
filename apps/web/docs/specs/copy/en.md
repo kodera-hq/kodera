@@ -2189,3 +2189,9 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.restore-key` | Archive recovery key, including checksum |
 | `console.security.settings.restore` | Restore archive locally |
 | `console.security.settings.loading` | Loading security settings… |
+
+| `console.workspace.directs.action-accept` | Accept and join |
+| `console.workspace.directs.action-decline` | Decline |
+| `console.workspace.directs.invite-failed` | Could not update this invitation. Try again. |
+| `console.workspace.directs.invites` | Pending invitations ({count}) |
+| `console.shell.session.matrix-rate-limited` | Too many workspace sign-in attempts. Automatic retries have stopped. Wait before reopening your workspace. |

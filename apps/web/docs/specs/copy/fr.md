@@ -2203,3 +2203,9 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.security.settings.restore-key` | Clé de récupération de l’archive, groupe de contrôle inclus |
 | `console.security.settings.restore` | Restaurer l’archive localement |
 | `console.security.settings.loading` | Chargement des réglages de sécurité… |
+
+| `console.workspace.directs.action-accept` | Accepter et rejoindre |
+| `console.workspace.directs.action-decline` | Refuser |
+| `console.workspace.directs.invite-failed` | Impossible de mettre à jour cette invitation. Réessayez. |
+| `console.workspace.directs.invites` | Invitations en attente ({count}) |
+| `console.shell.session.matrix-rate-limited` | Trop de tentatives de connexion à l’espace. Les relances automatiques sont arrêtées. Patientez avant de rouvrir votre espace. |
