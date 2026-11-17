@@ -22,7 +22,11 @@ from apps.orgs.erasure_services import advance_erasure, begin_erasure, database_
 from apps.outbox.passport_erasure import PassportAccountOutboxErasureAdapter
 from apps.proximity.erasure import ProximityAccountErasureAdapter, ProximityWorkspaceErasureAdapter
 
-pytestmark = pytest.mark.django_db(transaction=True)
+# These non-concurrent checks share the caller connection. Roll back retained
+# synthetic financial obligations: Django's model flush cannot erase raw EE
+# ledger tables, and later migration tests must still exercise the real guard.
+# The separate interleave suite retains transaction=True for independent readers.
+pytestmark = pytest.mark.django_db
 
 
 @pytest.fixture(autouse=True)
@@ -235,3 +239,5 @@ def test_local_ee_passport_po_broker_and_relay_share_one_cutoff_and_preserve_sib
             )
             label, owner, total = cursor.fetchone()
         assert owner is None and label.startswith("erased") and total > 0
+        # Validate deferred database invariants before the fixture rolls back.
+        connection.check_constraints()
