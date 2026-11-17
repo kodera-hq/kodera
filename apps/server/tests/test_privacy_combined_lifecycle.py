@@ -3,6 +3,7 @@
 import importlib
 import json
 import os
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,7 +28,13 @@ pytestmark = pytest.mark.django_db(transaction=True)
 @pytest.fixture(autouse=True)
 def optional_enterprise_source(monkeypatch):
     """Admit the local optional package for this integration test only."""
+    previous = {name for name in sys.modules if name == "ee" or name.startswith("ee.")}
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
+    yield
+    # Preserve Community absence checks in later randomly ordered test modules.
+    for name in set(sys.modules) - previous:
+        if name == "ee" or name.startswith("ee."):
+            del sys.modules[name]
 
 
 def seed_ee_person(org, user):
