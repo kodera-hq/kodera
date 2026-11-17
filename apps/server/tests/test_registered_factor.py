@@ -11,10 +11,12 @@ from services.identity.access_tokens import (
     RegisteredFactorReason,
     VerifiedAccessToken,
     evaluate_registered_factor,
+    evaluate_staff_community_factor,
 )
 
 NOW = datetime(2033, 5, 18, 3, 33, 20, tzinfo=UTC)
 CLIENT = "kodera.console:test-1"
+COMMUNITY_ISSUER = "https://identity.test/realms/community"
 
 
 def evidence(**changes):
@@ -107,3 +109,125 @@ def test_all_consuming_profiles_call_the_shared_parser():
     for name in ("customer_http.py", "deploy.py", "e2e.py", "test.py"):
         source = (root / "config/settings" / name).read_text()
         assert "KODERA_CONSOLE_CLIENT_ID = console_client_id(os.environ)" in source
+
+
+@pytest.mark.parametrize("amr", [("pwd", "otp"), ("pwd", "hwk")])
+def test_community_issuer_admits_otp_or_hwk_when_mfa_enrolled_claim_absent(amr):
+    token = evidence(issuer=COMMUNITY_ISSUER, amr=amr, mfa_enrolled=None)
+    result = evaluate(token, community_issuer=COMMUNITY_ISSUER)
+    assert result.value is True
+    assert result.horizon == NOW + timedelta(seconds=290)
+    assert result.reason is RegisteredFactorReason.ADMITTED
+
+
+def test_community_issuer_preserves_explicit_false_and_refuses_missing_or_stale_evidence():
+    false_token = evidence(issuer=COMMUNITY_ISSUER, amr=("pwd", "otp"), mfa_enrolled=False)
+    false_result = evaluate(false_token, community_issuer=COMMUNITY_ISSUER)
+    assert false_result.value is False and false_result.reason is RegisteredFactorReason.ADMITTED
+
+    for bad_token, expected_reason in (
+        (
+            evidence(issuer=COMMUNITY_ISSUER, amr=("pwd",), mfa_enrolled=None),
+            RegisteredFactorReason.OTP_MISSING,
+        ),
+        (
+            evidence(issuer=COMMUNITY_ISSUER, amr=("mfa",), mfa_enrolled=None),
+            RegisteredFactorReason.OTP_MISSING,
+        ),
+        (
+            evidence(issuer=COMMUNITY_ISSUER, email_verified=False, mfa_enrolled=None),
+            RegisteredFactorReason.CONTACT_UNVERIFIED,
+        ),
+        (
+            evidence(issuer=COMMUNITY_ISSUER, authorized_party="other-client", mfa_enrolled=None),
+            RegisteredFactorReason.CLIENT_MISMATCH,
+        ),
+        (
+            evidence(
+                issuer=COMMUNITY_ISSUER,
+                issued_at=int(NOW.timestamp()) + 3,
+                mfa_enrolled=None,
+            ),
+            RegisteredFactorReason.FUTURE_IAT,
+        ),
+    ):
+        refused_result = evaluate(bad_token, community_issuer=COMMUNITY_ISSUER)
+        assert refused_result.value is None and refused_result.reason is expected_reason
+
+    stale_result = evaluate(
+        evidence(issuer=COMMUNITY_ISSUER, mfa_enrolled=None),
+        community_issuer=COMMUNITY_ISSUER,
+        database_now=NOW + timedelta(seconds=290),
+    )
+    assert stale_result.value is None and stale_result.reason is RegisteredFactorReason.STALE
+
+
+def test_community_issuer_never_relaxes_hosted_tenant_issuers_or_unconfigured_community():
+    tenant_missing_claim = evidence(mfa_enrolled=None)
+    assert (
+        evaluate(tenant_missing_claim, community_issuer=COMMUNITY_ISSUER).reason
+        is RegisteredFactorReason.EVIDENCE_UNKNOWN
+    )
+    tenant_hwk = evidence(amr=("pwd", "hwk"), mfa_enrolled=True)
+    assert (
+        evaluate(tenant_hwk, community_issuer=COMMUNITY_ISSUER).reason
+        is RegisteredFactorReason.OTP_MISSING
+    )
+    community_without_opt_in = evidence(issuer=COMMUNITY_ISSUER, mfa_enrolled=None)
+    assert (
+        evaluate(community_without_opt_in, community_issuer="").reason
+        is RegisteredFactorReason.EVIDENCE_UNKNOWN
+    )
+    assert (
+        evaluate(community_without_opt_in, community_issuer=None).reason
+        is RegisteredFactorReason.EVIDENCE_UNKNOWN
+    )
+
+
+@pytest.mark.parametrize("amr", [("pwd", "hwk"), ("pwd", "otp")])
+def test_staff_community_factor_admits_hwk_or_otp_within_horizon(amr):
+    staff_token = evidence(
+        issuer="https://identity.staff.test/realms/kodera-staff",
+        amr=amr,
+        mfa_enrolled=None,
+        authorized_party=None,
+    )
+    assert evaluate_staff_community_factor(verified=staff_token, database_now=NOW) is True
+    assert (
+        evaluate_staff_community_factor(
+            verified=staff_token, database_now=NOW + timedelta(seconds=289)
+        )
+        is True
+    )
+    assert (
+        evaluate_staff_community_factor(
+            verified=staff_token, database_now=NOW + timedelta(seconds=290)
+        )
+        is None
+    )
+
+
+def test_staff_community_factor_refuses_missing_factor_future_iat_or_naive_clock():
+    base = evidence(
+        issuer="https://identity.staff.test/realms/kodera-staff",
+        amr=("pwd",),
+        mfa_enrolled=None,
+    )
+    assert evaluate_staff_community_factor(verified=base, database_now=NOW) is None
+    mfa_only = replace(base, amr=("mfa",))
+    assert evaluate_staff_community_factor(verified=mfa_only, database_now=NOW) is None
+    future = replace(base, amr=("pwd", "hwk"), issued_at=int(NOW.timestamp()) + 3)
+    assert evaluate_staff_community_factor(verified=future, database_now=NOW) is None
+    valid = replace(base, amr=("pwd", "hwk"))
+    assert (
+        evaluate_staff_community_factor(verified=valid, database_now=NOW.replace(tzinfo=None))
+        is None
+    )
+    explicit_false = replace(base, amr=("pwd", "hwk"), mfa_enrolled=False)
+    assert evaluate_staff_community_factor(verified=explicit_false, database_now=NOW) is False
+    assert (
+        evaluate_staff_community_factor(
+            verified=explicit_false, database_now=NOW + timedelta(seconds=290)
+        )
+        is None
+    )

@@ -1,6 +1,7 @@
 import { createRoute } from '@tanstack/react-router'
 import { lazy, Suspense } from 'react'
 import { z } from '@/validation-policy'
+import { onCommunityHost } from '../../app/communityHost'
 import { rootRoute } from '../../app/root-route'
 import { SessionLoading } from '../../app/SessionLoading'
 import { LoginScreen } from './LoginScreen'
@@ -17,9 +18,20 @@ const CommunityWelcome = lazy(() =>
 // organisation-identifier fallback for a link sent from the welcome email or
 // the hub's "Se connecter"; zod-validated so a malformed query string is a
 // typed absence rather than a value the screen has to sniff (ADR-0005).
-const loginSearchSchema = z.object({
+export const loginSearchSchema = z.object({
   org: z.string().optional(),
+  mode: z.enum(['tenant']).optional().catch(undefined),
 })
+
+export function shouldRenderCommunityWelcome(
+  org: string | undefined,
+  mode: 'tenant' | undefined,
+  hostname?: string
+): boolean {
+  return (
+    org === 'community' || (org === undefined && mode !== 'tenant' && onCommunityHost(hostname))
+  )
+}
 
 export const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -29,8 +41,8 @@ export const loginRoute = createRoute({
 })
 
 function LoginRoute() {
-  const { org } = loginRoute.useSearch()
-  if (org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
+  const { org, mode } = loginRoute.useSearch()
+  if (import.meta.env.VITE_AUTH_MODE === 'oidc' && shouldRenderCommunityWelcome(org, mode)) {
     return (
       <Suspense fallback={<SessionLoading />}>
         <CommunityWelcome />

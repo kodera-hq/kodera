@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { authAdapter } from '../../auth/oidc'
@@ -44,6 +45,13 @@ export function CommunityWelcome() {
             </Button>
           </div>
           <p className="text-sm text-c-ink-3">{copy.hint}</p>
+          <Link
+            to="/login"
+            search={{ mode: 'tenant' }}
+            className="focus-visible:outline-c-accent self-start text-sm text-c-ink-3 underline-offset-4 hover:text-c-ink hover:underline focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+          >
+            {copy.dedicatedOrgSignIn}
+          </Link>
           {pending ? (
             <p role="status" className="text-sm text-c-ink-2">
               {copy.pending}

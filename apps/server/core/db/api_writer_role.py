@@ -121,10 +121,12 @@ SELECT = (
     # caller's and the organisation's recent tickets, which the creation limits count.
     "tenancy_tenant",
     "support_supportticket",
-    # createTenant (QUICK_WORKSPACE.md §4) reads the unbilled pack and its tier: catalogue rows,
-    # no personal data.
+    # Public billing catalogue reads (/api/v1/catalog/*) and createTenant (QUICK_WORKSPACE.md §4)
+    # read published plans, packs, capacity tiers and offered prices: catalogue rows, no personal data.
+    "billing_plan",
     "billing_pack",
     "billing_capacitytier",
+    "billing_price",
     # C1 zero-trust /staff/v1/* records and append-only SHA-256 hash-chained staff audit entries.
     "staff_api_role_grant",
     "staff_api_deal_card",

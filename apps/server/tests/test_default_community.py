@@ -307,7 +307,81 @@ def test_staff_http_profile_only_exposes_community(community, settings, http_sig
     data = response.json()
     assert data["staff"] is True
     assert data["identities"][0]["issuer"] == issuer
+    assert "mfa_enrolled" not in data["identities"][0]
     assert [m["organisation"]["slug"] for m in data["organisations"]] == ["community"]
+
+
+def test_community_owner_and_staff_mfa_enrolled_projection(
+    community, settings, http_signer, frozen_clock, monkeypatch
+):
+    from datetime import UTC, datetime
+
+    from customer_http_fixtures import configure, token as signed_token, trust_entry
+    from django.test import Client
+    from test_access_tokens import NOW
+
+    from apps.identity import services
+    from apps.orgs.community import bind_community_identity
+
+    staff_issuer = "https://identity.staff.test/realms/kodera-staff"
+    bind_community_identity(user_id=community.owner.id, subject="community-owner-totp")
+    Identity.objects.create(
+        user=community.owner,
+        issuer=staff_issuer,
+        realm="kodera-staff",
+        subject="staff-owner-hwk",
+        email=community.owner.email,
+    )
+    settings.KODERA_CONSOLE_CLIENT_ID = "synthetic-console"
+    configure(
+        settings,
+        [trust_entry(http_signer, staff_issuer, lane="staff"), trust_entry(http_signer, ISSUER)],
+    )
+    monkeypatch.setattr(services, "database_now", lambda: datetime.fromtimestamp(NOW, UTC))
+    client = Client()
+
+    owner_mfa = client.get(
+        "/api/v1/me",
+        HTTP_AUTHORIZATION="Bearer "
+        + signed_token(
+            http_signer,
+            ISSUER,
+            "community-owner-totp",
+            email_verified=True,
+            azp="synthetic-console",
+            amr=["pwd", "otp"],
+        ),
+    )
+    assert owner_mfa.status_code == 200, owner_mfa.content
+    owner_body = owner_mfa.json()
+    assert owner_body["identities"][0]["mfa_enrolled"] is True
+    assert owner_body["organisations"][0]["role"] == "org_owner"
+
+    owner_pwd_only = client.get(
+        "/api/v1/me",
+        HTTP_AUTHORIZATION="Bearer "
+        + signed_token(
+            http_signer,
+            ISSUER,
+            "community-owner-totp",
+            email_verified=True,
+            azp="synthetic-console",
+            amr=["pwd"],
+        ),
+    )
+    assert owner_pwd_only.status_code == 200, owner_pwd_only.content
+    assert "mfa_enrolled" not in owner_pwd_only.json()["identities"][0]
+
+    staff_hwk = client.get(
+        "/api/v1/me",
+        HTTP_AUTHORIZATION="Bearer "
+        + signed_token(http_signer, staff_issuer, "staff-owner-hwk", amr=["pwd", "hwk"]),
+    )
+    assert staff_hwk.status_code == 200, staff_hwk.content
+    staff_body = staff_hwk.json()
+    assert staff_body["staff"] is True
+    assert staff_body["identities"][0]["mfa_enrolled"] is True
+    assert staff_body["organisations"][0]["identity_id"] == staff_body["identities"][0]["id"]
 
 
 def test_cross_realm_exception_requires_explicit_selector_opt_in(community):

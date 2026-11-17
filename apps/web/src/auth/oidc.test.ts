@@ -863,6 +863,31 @@ describe('community registration', () => {
         },
       })
     )
-    expect(signinRedirect).toHaveBeenCalledTimes(1)
+    expect(signinRedirect.mock.calls).toEqual([[]])
+  })
+
+  it('passes kc_action=CONFIGURE_TOTP and prompt=login to signinRedirect for Community 2FA setup', async () => {
+    const adapter = new OidcAuthAdapter()
+    await adapter.signIn('community', { kcAction: 'CONFIGURE_TOTP', prompt: 'login' })
+    expect(signinRedirect).toHaveBeenCalledWith({
+      prompt: 'login',
+      extraQueryParams: { kc_action: 'CONFIGURE_TOTP' },
+    })
+  })
+
+  it('passes prompt=login without extraQueryParams for Community 2FA verification', async () => {
+    const adapter = new OidcAuthAdapter()
+    await adapter.signIn('community', { prompt: 'login' })
+    expect(signinRedirect).toHaveBeenCalledWith({ prompt: 'login' })
+  })
+
+  it('rejects unexpected kcAction or prompt values', async () => {
+    const adapter = new OidcAuthAdapter()
+    await expect(
+      adapter.signIn('community', { kcAction: 'UPDATE_PASSWORD' as never })
+    ).rejects.toThrow('Invalid authentication action.')
+    await expect(adapter.signIn('community', { prompt: 'none' as never })).rejects.toThrow(
+      'Invalid authentication prompt.'
+    )
   })
 })

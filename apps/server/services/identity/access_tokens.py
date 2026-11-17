@@ -211,12 +211,16 @@ def _instant(epoch: int) -> datetime | None:
         return None
 
 
+COMMUNITY_MFA_METHODS = frozenset({"otp", "hwk"})
+
+
 def evaluate_registered_factor(
     *,
     verified: VerifiedAccessToken,
     lane: str,
     console_client_id: str | None,
     database_now: datetime,
+    community_issuer: str | None = None,
 ) -> RegisteredFactor:
     """Return the current registered-factor fact without I/O or wall-clock access."""
 
@@ -231,7 +235,12 @@ def evaluate_registered_factor(
         return unknown(RegisteredFactorReason.CLIENT_UNCONFIGURED)
     if verified.authorized_party != console_client_id:
         return unknown(RegisteredFactorReason.CLIENT_MISMATCH)
-    if "otp" not in (verified.amr or ()):
+    is_community = bool(community_issuer) and verified.issuer == community_issuer
+    amr = verified.amr or ()
+    if is_community:
+        if not COMMUNITY_MFA_METHODS.intersection(amr):
+            return unknown(RegisteredFactorReason.OTP_MISSING)
+    elif "otp" not in amr:
         return unknown(RegisteredFactorReason.OTP_MISSING)
     issued_at = _instant(verified.issued_at)
     horizon = _instant(min(verified.expires_at + 30, verified.issued_at + 290))
@@ -243,8 +252,32 @@ def evaluate_registered_factor(
     if now >= horizon:
         return unknown(RegisteredFactorReason.STALE)
     if verified.mfa_enrolled is None:
+        if is_community:
+            return RegisteredFactor(True, horizon, RegisteredFactorReason.ADMITTED)
         return RegisteredFactor(None, horizon, RegisteredFactorReason.EVIDENCE_UNKNOWN)
     return RegisteredFactor(verified.mfa_enrolled, horizon, RegisteredFactorReason.ADMITTED)
+
+
+def evaluate_staff_community_factor(
+    *,
+    verified: VerifiedAccessToken,
+    database_now: datetime,
+) -> bool | None:
+    """Return whether a verified staff token proves current hardware-key or TOTP authentication."""
+    if not COMMUNITY_MFA_METHODS.intersection(verified.amr or ()):
+        return None
+    issued_at = _instant(verified.issued_at)
+    horizon = _instant(min(verified.expires_at + 30, verified.issued_at + 290))
+    if issued_at is None or horizon is None or database_now.tzinfo is None:
+        return None
+    now = database_now.astimezone(UTC)
+    if issued_at > now + timedelta(seconds=2):
+        return None
+    if now >= horizon:
+        return None
+    if verified.mfa_enrolled is False:
+        return False
+    return True
 
 
 def observe_registered_factor_reason(reason: RegisteredFactorReason) -> None:
