@@ -1674,8 +1674,9 @@ export class EspaceStore {
 
   #isDirectInvite(room: Room): boolean {
     const event = room.currentState.getMember(this.#me)?.events.member
-    if (event?.getContent().is_direct === true) return true
     const inviter = event?.getSender()
+    if (inviter !== undefined && this.#services.has(inviter)) return false
+    if (event?.getContent().is_direct === true) return true
     const members = room.currentState
       .getMembers()
       .filter((member) => member.membership === 'join' || member.membership === 'invite')
@@ -1683,6 +1684,7 @@ export class EspaceStore {
     return (
       inviter !== undefined &&
       inviter !== this.#me &&
+      !this.#services.has(inviter) &&
       !room.getCanonicalAlias() &&
       !room.currentState.getStateEvents(EventType.RoomName, '') &&
       members.length === 2 &&

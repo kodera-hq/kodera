@@ -546,8 +546,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
-  if (direct !== null && activeCanvasMode !== 'chat') {
-    setDirect(null)
+  const [observedCanvasMode, setObservedCanvasMode] = useState(activeCanvasMode)
+  if (observedCanvasMode !== activeCanvasMode) {
+    setObservedCanvasMode(activeCanvasMode)
+    if (activeCanvasMode !== 'chat' && direct !== null) {
+      setDirect(null)
+    }
   }
   const directRoomId =
     direct !== null && direct.over === selectedChannelId && activeCanvasMode === 'chat'

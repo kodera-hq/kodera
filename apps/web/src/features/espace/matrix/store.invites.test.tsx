@@ -12,9 +12,11 @@ import {
 import { afterEach, expect, it, vi } from 'vitest'
 import i18n from '../../../i18n'
 import { DirectMessages } from '../DirectMessages'
+import type { EspaceStoreLike } from '../liveViewModel'
+import { PendingInvitations } from '../PendingInvitations'
 import { NotificationCenter } from '../../notifications/NotificationCenter'
 import { NotificationFeed } from '../../notifications/notificationFeed'
-import { createEspaceStore, matrixClientForTests, type EspaceStore } from './store'
+import { createEspaceStore, matrixClientForTests, type EspaceStore, type InviteView } from './store'
 
 const ME = '@me:example.test'
 const ALICE = '@alice:example.test'
@@ -25,7 +27,17 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function invited({ direct = true, encrypted = false, named = false } = {}) {
+async function invited({
+  direct = true,
+  encrypted = false,
+  named = false,
+  inviter = ALICE,
+}: {
+  direct?: boolean
+  encrypted?: boolean
+  named?: boolean
+  inviter?: string
+} = {}) {
   await i18n.changeLanguage('en')
   const store = createEspaceStore(
     { baseUrl: 'https://matrix.example.test', userId: ME, deviceId: 'DEVICE', accessToken: 'test' },
@@ -37,10 +49,10 @@ async function invited({ direct = true, encrypted = false, named = false } = {})
   const room = new Room(ROOM, client, ME, { pendingEventOrdering: PendingEventOrdering.Detached })
   room.name = 'Alice'
   const state = (type: string, content: Record<string, unknown>, key = '') =>
-    new MatrixEvent({ type, state_key: key, room_id: ROOM, sender: ALICE, content })
+    new MatrixEvent({ type, state_key: key, room_id: ROOM, sender: inviter, content })
   room.currentState.setStateEvents([
-    state('m.room.create', { creator: ALICE }),
-    state('m.room.member', { membership: 'join', displayname: 'Alice' }, ALICE),
+    state('m.room.create', { creator: inviter }),
+    state('m.room.member', { membership: 'join', displayname: 'Alice' }, inviter),
     state('m.room.member', { membership: 'invite', ...(direct ? { is_direct: true } : {}) }, ME),
     ...(named ? [state('m.room.name', { name: 'Planning' })] : []),
     ...(encrypted ? [state('m.room.encryption', { algorithm: 'm.megolm.v1.aes-sha2' })] : []),
@@ -149,4 +161,94 @@ it('counts Matrix invites in the bell and renders actionable invitations in the 
     await userEvent.setup().click(within(panel).getByRole('button', { name: 'Accept and join' }))
   })
   expect(join).toHaveBeenCalledWith(ROOM)
+})
+
+it('excludes service accounts from legacy unnamed two-person direct invite detection and m.direct', async () => {
+  for (const service of ['@kodera-agent:example.test', '@room-access:example.test']) {
+    const entry = await invited({ direct: false, inviter: service })
+    expect(entry.store.getSnapshot().invites[0]?.direct).toBe(false)
+    await entry.store.acceptInvite(ROOM)
+    expect(entry.join).toHaveBeenCalledWith(ROOM)
+    expect(entry.setAccountData).not.toHaveBeenCalled()
+  }
+})
+
+it('sanitizes bidi/confusable invitation titles, isolates inviter MXIDs, falls back for Empty room/UUIDs, and binds button aria-describedby per row', async () => {
+  await i18n.changeLanguage('en')
+  const invites: readonly InviteView[] = [
+    {
+      roomId: '!bidi:example.test',
+      name: 'Alice\u202E Spoof',
+      inviter: '@alice\u202E:example.test',
+      direct: true,
+    },
+    {
+      roomId: '!confusable:example.test',
+      name: '＠admin։host',
+      inviter: '@mallory:example.test',
+      direct: true,
+    },
+    {
+      roomId: '!empty-uuid:example.test',
+      name: 'Empty room',
+      inviter: '@ce239589-a4bd-41db-9cfb-d06e66a77ff3:example.test',
+      direct: true,
+    },
+    {
+      roomId: '!roomid-uuid:example.test',
+      name: '!roomid-uuid:example.test',
+      inviter: '@88aa1122-a4bd-41db-9cfb-d06e66a77ff3:example.test',
+      direct: true,
+    },
+    {
+      roomId: '!room-bidi:example.test',
+      name: 'Planning\u202E Room',
+      inviter: '@lead:example.test',
+      direct: false,
+    },
+    {
+      roomId: '!room-fallback:example.test',
+      name: '\u202E   ',
+      inviter: '@lead:example.test',
+      direct: false,
+    },
+  ]
+  const fakeStore = {
+    subscribe: () => () => undefined,
+    getSnapshot: () => ({ status: 'live' as const, rooms: [], invites, channels: new Map() }),
+    acceptInvite: vi.fn(async () => undefined),
+    declineInvite: vi.fn(async () => undefined),
+  } as unknown as EspaceStoreLike
+
+  render(<PendingInvitations store={fakeStore} onSelect={vi.fn()} />)
+
+  const expectedTitles = [
+    'Alice Spoof',
+    'Mallory',
+    'Member · ce23',
+    'Member · 88aa',
+    'Planning Room',
+    '!room-fallback:example.test',
+  ]
+  for (const title of expectedTitles) {
+    expect(screen.getByText(title)).toBeVisible()
+  }
+  expect(screen.queryByText(/＠admin/)).toBeNull()
+  expect(screen.queryByText('Empty room')).toBeNull()
+
+  const bdi = screen.getByText('@alice:example.test')
+  expect(bdi.tagName.toLowerCase()).toBe('bdi')
+  expect(bdi).toHaveAttribute('dir', 'ltr')
+
+  const acceptButtons = screen.getAllByRole('button', { name: 'Accept and join' })
+  const declineButtons = screen.getAllByRole('button', { name: 'Decline' })
+  expect(acceptButtons).toHaveLength(expectedTitles.length)
+  expect(declineButtons).toHaveLength(expectedTitles.length)
+
+  acceptButtons.forEach((button, index) => {
+    const labelId = button.getAttribute('aria-describedby')
+    expect(labelId).toBeTruthy()
+    expect(declineButtons[index]).toHaveAttribute('aria-describedby', labelId)
+    expect(document.getElementById(labelId!)?.textContent).toBe(expectedTitles[index])
+  })
 })

@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
+import { cleanText } from '../../ui/safeText'
 import type { EspaceStoreLike } from './liveViewModel'
 import type { InviteView } from './matrix/store'
+import { safeDisplayName } from './memberName'
 import { useStoreSlice } from './useStoreSlice'
 
 const invitationsOf = (snapshot: ReturnType<EspaceStoreLike['getSnapshot']>) => snapshot.invites
@@ -17,8 +19,18 @@ function Invitation({
   onSelect: (roomId: string) => void
 }) {
   const { t } = useTranslation()
+  const labelId = useId()
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  const title =
+    invite.direct && invite.inviter !== null
+      ? safeDisplayName(
+          invite.name === invite.roomId || invite.name === 'Empty room' ? undefined : invite.name,
+          invite.inviter,
+          t('console.workspace.members.unnamed')
+        )
+      : cleanText(invite.name, 80) || cleanText(invite.roomId, 80)
+  const inviter = invite.inviter === null ? '' : cleanText(invite.inviter, 255)
   const act = async (accept: boolean) => {
     if (busy) return
     setBusy(true)
@@ -38,18 +50,33 @@ function Invitation({
   }
   return (
     <li className="flex flex-col gap-1 px-2 py-1">
-      <span className="text-sm text-c-ink">{invite.name}</span>
-      {invite.inviter === null ? null : (
-        <span className="text-xs break-all text-c-ink-3">{invite.inviter}</span>
+      <span id={labelId} className="text-sm text-c-ink">
+        {title}
+      </span>
+      {inviter === '' ? null : (
+        <span className="text-xs break-all text-c-ink-3">
+          <bdi dir="ltr">{inviter}</bdi>
+        </span>
       )}
       <div className="flex gap-2">
         {store.acceptInvite === undefined ? null : (
-          <Button size="sm" disabled={busy} onClick={() => void act(true)}>
+          <Button
+            size="sm"
+            disabled={busy}
+            aria-describedby={labelId}
+            onClick={() => void act(true)}
+          >
             {t('console.workspace.directs.action-accept')}
           </Button>
         )}
         {store.declineInvite === undefined ? null : (
-          <Button variant="secondary" size="sm" disabled={busy} onClick={() => void act(false)}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy}
+            aria-describedby={labelId}
+            onClick={() => void act(false)}
+          >
             {t('console.workspace.directs.action-decline')}
           </Button>
         )}
