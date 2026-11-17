@@ -17,7 +17,7 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Hardened `deploy/community` profile (Synapse on PostgreSQL, federation closed by default, rate limits, no public agent API), checked on every change
 - [x] End-to-end fresh-volume cold-start verification of `deploy/community` in CI, with measured runtime and memory footprint
 
-## Track 2 — Collaboration, Governance & Workspace Lifecycle (`Status: Implemented in tree; operator cutover in progress`)
+## Track 2 — Collaboration, Governance & Workspace Lifecycle (`Status: Implemented in tree; hosted Community cutover promoted`)
 
 - [x] Direct messages and bounded group conversations, file and image upload, and message search in the web client
 - [x] Camera video and screen sharing in rooms. LiveKit alone carries voice and video.
@@ -28,7 +28,8 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 - [x] Transactional workspace quotas, Factur-X `380`/`381` PDF/A-3 + XML deterministic invoice ledger, VIES VAT evidence, supervised dunning, Stripe billing webhook verification, and GDPR Art. 17/20 signed exports and erasure (`KODERA_BILLING_ENABLED=false` on self-hosted Community)
 - [x] Extension runtime v2 in the control plane: scoped workspace installation, key rotation, reconciliation, dual-key HMAC signed webhook/slash-command delivery with pinned-IP SSRF guards, and bounded `Slack` / `Discord` / `Notion` importers
 - [x] `Kodera Passport`: signed PKCE cross-workspace magic-link sign-in, multi-organisation workspace switcher and account-erasure integration alongside per-realm OIDC + WebAuthn passkeys
-- [ ] Human Community production cutover, backup/restore rehearsal and exact-release acceptance
+- [x] Hosted Community tenant promotion, identity-provider cutover to `auth.kodera.io` and release evidence
+- [ ] Backup/restore rehearsal and subsequent exact-release deployment acceptance
 
 ## Track 3 — Native Clients (`Status: Foundations implemented; native transports and distribution in progress`)
 
@@ -45,7 +46,10 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 - [x] Cryptographic primitives, device lifecycle, durable session state, modern `openmls_*` crypto-provider generation, `wasm32` browser device-proof bindings and LiveKit media-frame encryption seams in `packages/kodera-rs` (scoped OpenMLS RFC 9420 and Vodozemac Megolm), paired with atomic browser IndexedDB confidential vault storage (`apps/web/src/features/confidential/`), and default-off `/api/v1/organisations/{organisation_id}/confidential/*` opaque envelope and HPKE KeyPackage relay (`0.47.0`)
 - [x] Opt-in open Matrix federation (`KODERA_FEDERATION_MODE=open`, closed by default on `deploy/community`) alongside explicit partner-room federation governance in `packages/synapse-policy` (`0.1.6`)
-- [ ] Durable browser and native MLS/Megolm group coordinators, verified participant identity UX and encrypted LiveKit media-frame key rotation
+- [x] Refusal of plaintext fallback and room-store quarantine for unavailable confidential or unclassified sessions (#180)
+- [x] Worker-isolated attachment/Pages/LiveKit media cryptographic capabilities (#169, #177, #182), local SAS device comparison and `KVKB1` encrypted local key archives (#183)
+- [ ] Server-side confidential room/session discovery and trusted epoch provisioning; server cross-signing and backup publication
+- [ ] Durable browser/native group integration, native key management and interoperable LiveKit media qualification
 
 ## Track 5 — `#proximity` (`Status: Broker & foreground radio layers shipped; physical two-device qualification open`)
 
@@ -61,19 +65,22 @@ Kodera is a public open-core monorepo: nothing listed here is held back from the
 
 The generic invoice ledger and the payment engine already in `apps/server` stay open source; see [`GOVERNANCE.md`](./GOVERNANCE.md).
 
-## Track 7 — Universal Zero-Knowledge & End-to-End Encryption by Default (`Status: Planned — Next Wave`)
+## Track 7 — Universal Zero-Knowledge & End-to-End Encryption by Default (`Status: In progress`)
 
 - [ ] Universal client-side end-to-end encryption (MLS / Megolm) across **all** channels, direct messages and threads by default, retiring clear-text homeserver room storage so the operator holds zero readable message content
-- [ ] Client-side AEAD encryption of collaborative Yjs document updates, snapshots and uploaded attachments before relay or object storage
+- [x] Worker-isolated client AEAD capabilities for confidential Yjs document updates/snapshots and attachments; protected sessions refuse plaintext fallback
+- [x] Worker-isolated LiveKit media transforms, SAS device comparison and user-held encrypted `KVKB1` local key archives
+- [ ] Server confidential room/session discovery, encrypted collaboration relay admission and trusted epoch provisioning
+- [ ] Server cross-signing/backup publication and key management/rotation across browser and native clients
 - [ ] Mandatory `kodera-rs` cryptographic store binding across `apps/ios` and `apps/android`, and end-to-end media encryption (`SFrame` / MLS epoch keys) on all LiveKit voice, video and screen-sharing sessions
 - [ ] Metadata minimisation and client-local encrypted full-text search so search indexes never exist in plaintext on the server
 
-## Wave Summary (`Status: Waves 4–9 implemented or finishing; Wave 10 planned`)
+## Wave Summary (`Status: Waves 4–9 implemented or finishing; Wave 10 in progress`)
 
-The [collaboration status](./docs/specs/collaboration-status.md) records the completed Wave 2B through Wave 9 repository boundaries and separates merged source code from operator-run cutover and distribution gates:
+The [collaboration status](./docs/specs/collaboration-status.md) records the Wave 2B through Wave 10 repository boundaries and separates merged source code from operator-run cutover and distribution gates:
 
 - **Wave 4 (`Implemented`):** typed Collections, transactional quotas, Factur-X `380`/`381` ledger, VIES validation and GDPR Art. 17/20 export and erasure. Community self-hosting remains independent of billing.
 - **Wave 5 (`Foundations implemented; mobile transports and distribution open`):** `kodera-rs` OpenMLS/Megolm/Passkey/proximity codecs, reproducible native SBOM gates, Tauri v2 desktop shell/bridge and iOS/Android companion implementations.
 - **Wave 6 & 7 (`Implemented`):** extension runtime v2, 23 reference implementations, `Slack`/`Discord`/`Notion` importers, bounded partner-room and opt-in open federation controls, developer docs + `llms.txt`, and multi-surface security hardening.
-- **Wave 8 & 9 (`Implemented in tree; operator cutover, signing & group-coordinator gates open`):** `deploy/community` fresh-volume cold-start footprint gate, Zero-Trust `/staff/v1/*` surface and `.well-known` discovery, Desktop self-host stack deployment, `Kodera Passport` cross-workspace magic-link PKCE sign-in, Enterprise `ee/` (`SAML 2.0`, `SCIM 2.0`, `Ed25519` audit exports, `ee/billing/`), `kodera-rs` `wasm32` browser device-proof bindings, modern `openmls_*` crypto-provider generation, default-off `0.47.0` confidential envelope relay, atomic browser confidential local-state vault, RAM-only `#proximity` check-in broker + 15-minute HKDF epoch leases + foreground native BLE/mDNS layers, and multi-OS release workflow; durable MLS/Megolm group coordinators, physical two-device radio qualification and operator cutover/signing gates remain open.
-- **Wave 10 (`Planned`):** universal zero-knowledge architecture with end-to-end encryption by default across every room, collaborative document, attachment, native mobile flow and real-time call.
+- **Wave 8 & 9 (`Implemented in tree; hosted Community promoted; signing & group-integration gates open`):** `deploy/community` fresh-volume cold-start footprint gate, Zero-Trust `/staff/v1/*` surface and `.well-known` discovery, Desktop self-host stack deployment, `Kodera Passport` cross-workspace magic-link PKCE sign-in, Enterprise `ee/` (`SAML 2.0`, `SCIM 2.0`, `Ed25519` audit exports, `ee/billing/`), `kodera-rs` `wasm32` browser device-proof bindings, modern `openmls_*` crypto-provider generation, default-off `0.47.0` confidential envelope relay, atomic browser confidential local-state vault, RAM-only `#proximity` check-in broker + 15-minute HKDF epoch leases + foreground native BLE/mDNS layers, and multi-OS release workflow; durable group integration, physical two-device radio qualification, backup rehearsal and signing gates remain open.
+- **Wave 10 (`In progress`):** refusal of plaintext fallback and room quarantine, worker-isolated attachment/Pages/LiveKit media cryptographic capabilities, worker SAS device comparison and `KVKB1` encrypted local key archives are implemented. Server confidential room/session discovery, trusted epoch provisioning, cross-signing/backup publication, native integration and browser/codec qualification remain open. Universal encryption by default is still Planned.

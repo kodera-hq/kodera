@@ -82,7 +82,7 @@ function EspaceCallback() {
   }, [])
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-6">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 p-6">
       <p
         role="status"
         aria-live="polite"
@@ -91,10 +91,17 @@ function EspaceCallback() {
       >
         {failed === 'none'
           ? t('console.login.handoff.a11y-redirecting')
-          : failed === 'other-person'
-            ? t('console.shell.session.body-restore-failed')
-            : t('console.shell._.error-load-failed')}
+          : failed === 'rate-limited'
+            ? t('console.shell.session.matrix-rate-limited')
+            : failed === 'other-person'
+              ? t('console.shell.session.body-restore-failed')
+              : t('console.shell._.error-load-failed')}
       </p>
+      {failed === 'rate-limited' ? (
+        <a className="text-c-accent-ink underline" href="/">
+          {t('console.shell.session.action-sign-in-again')}
+        </a>
+      ) : null}
     </main>
   )
 }

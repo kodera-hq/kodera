@@ -562,10 +562,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         directRoom.name)
   const activeChannel = useMemo(
     () =>
-      directRoom !== undefined && directName !== undefined
-        ? directChannelOf(directRoom.roomId, directName)
+      directRoomId !== null
+        ? directRoom !== undefined && directName !== undefined
+          ? directChannelOf(directRoom.roomId, directName)
+          : undefined
         : currentChannel(workspace, selectedChannelId),
-    [workspace, selectedChannelId, directRoom, directName]
+    [workspace, selectedChannelId, directRoomId, directRoom, directName]
   )
   const activeRoom = useMemo(
     () =>
@@ -1128,6 +1130,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       room: RoomSummary | undefined,
       categoryName: string | undefined
     ) => {
+      closeChannelChooser()
+      onChangeCanvasMode?.('chat')
       if (activeCall === null || room === undefined) return
       const boundary = activeStore.getRoomBoundary?.(room.roomId)
       if (
@@ -1138,8 +1142,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         setAnnouncement(protectionCopy.unavailable)
         return
       }
-      closeChannelChooser()
-      onChangeCanvasMode?.('chat')
       setCallChannel({
         channelId: channel.id,
         roomId: room.roomId,

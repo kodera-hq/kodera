@@ -87,6 +87,8 @@ export function isProximityChannel(
 export type CanvasMode = 'chat' | 'docs' | 'files'
 
 export interface EspaceStoreLike {
+  acceptInvite?: (roomId: string) => Promise<void>
+  declineInvite?: (roomId: string) => Promise<void>
   readonly simulation?: boolean
   getInitialDocuments?: () => ChannelDocsWorkspace
   publishDocument?: (roomId: string, doc: ChannelDoc) => Promise<void>

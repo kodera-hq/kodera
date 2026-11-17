@@ -604,3 +604,35 @@ it('draft_reentrant_replacement_survives_old_target_logout', async () => {
   clearMatrixSession()
   expect(replacementStop).toHaveBeenCalledTimes(1)
 })
+
+it('recovers a rate-limited token exchange without persisting credentials', async () => {
+  vi.useFakeTimers()
+  try {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(json(429, { errcode: 'M_LIMIT_EXCEEDED', retry_after_ms: 1000 }))
+      .mockResolvedValueOnce(json(200, login))
+    const pending = completeMatrixSignIn(started().callback, SUB, { fetch, replaceUrl: () => {} })
+    // The recovery module is lazy and only fetched after a 429.
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0))
+    await vi.advanceTimersByTimeAsync(1000)
+    const result = await pending
+    expect(result.session.accessToken).toBe(login.access_token)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    for (const storage of [window.sessionStorage, window.localStorage]) {
+      expect(JSON.stringify(Object.values(storage))).not.toMatch(/syt_access|syr_refresh|syl_once/)
+    }
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('reports long Matrix cooldowns clearly without retrying early', async () => {
+  const fetch = vi
+    .fn<typeof globalThis.fetch>()
+    .mockResolvedValue(json(429, { retry_after_ms: 60000 }))
+  await expect(
+    completeMatrixSignIn(started().callback, SUB, { fetch, replaceUrl: () => {} })
+  ).rejects.toMatchObject({ problem: 'rate-limited' })
+  expect(fetch).toHaveBeenCalledTimes(1)
+})

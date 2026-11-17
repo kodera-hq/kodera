@@ -79,6 +79,7 @@
   "console.shell.session.body-restore-failed": "Sign out, then sign in again. If it continues, email us at {{email}}.",
   "console.shell.session.body-unrecognized": "Sign in again to continue.",
   "console.shell.session.error-expired": "Sign in again to continue.",
+  "console.shell.session.matrix-rate-limited": "Too many workspace sign-in attempts. Automatic retries have stopped. Wait before reopening your workspace.",
   "console.shell.session.status-restoring": "Restoring your session…",
   "console.shell.session.subtitle-expiring": "For security, you will be signed out in {{minutes}} minutes.",
   "console.shell.session.title-expired": "Your session has expired",
