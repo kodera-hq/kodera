@@ -61,11 +61,13 @@ vi.mock('../espace/EspaceLiveView', () => ({
     store,
     onNavigateChannel,
     onReconnect,
+    channelId,
     activeCanvasMode,
     onChangeCanvasMode,
     docsCanvasSlot,
     organisationActionSlot,
   }: {
+    channelId?: string
     activeCanvasMode?: string
     onChangeCanvasMode?: (mode: 'chat' | 'docs') => void
     docsCanvasSlot?: ReactNode
@@ -77,6 +79,7 @@ vi.mock('../espace/EspaceLiveView', () => ({
   }) => (
     <div>
       <button onClick={() => onChangeCanvasMode?.('docs')}>Docs canvas</button>
+      <button onClick={() => onNavigateChannel?.(channelId!)}>Current channel</button>
       <button onClick={() => onChangeCanvasMode?.('chat')}>Discussion canvas</button>
       {organisationActionSlot}
       {activeCanvasMode === 'docs' ? docsCanvasSlot : null}
@@ -1549,6 +1552,9 @@ it('wires the live Discussion and Docs canvas and preserves each channel draft',
   const user = userEvent.setup()
   renderScreen()
   await user.click(await screen.findByRole('button', { name: 'Docs canvas' }))
+  await user.click(screen.getByRole('button', { name: 'Current channel' }))
+  expect(screen.queryByRole('button', { name: 'Pages de l’espace' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
   // In the live workspace « Docs » opens on the collaborative Pages: the channel pads view is
   // the one a store supplies, and without one it is a draft held in this browser alone.
   expect(screen.getByRole('button', { name: 'Pages de l’espace' })).toHaveAttribute(

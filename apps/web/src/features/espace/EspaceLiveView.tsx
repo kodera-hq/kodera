@@ -546,8 +546,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
-  if (direct !== null && activeCanvasMode !== 'chat') {
-    setDirect(null)
+  const [observedCanvasMode, setObservedCanvasMode] = useState(activeCanvasMode)
+  if (observedCanvasMode !== activeCanvasMode) {
+    setObservedCanvasMode(activeCanvasMode)
+    if (activeCanvasMode !== 'chat' && direct !== null) {
+      setDirect(null)
+    }
   }
   const directRoomId =
     direct !== null && direct.over === selectedChannelId && activeCanvasMode === 'chat'
@@ -562,10 +566,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         directRoom.name)
   const activeChannel = useMemo(
     () =>
-      directRoom !== undefined && directName !== undefined
-        ? directChannelOf(directRoom.roomId, directName)
+      directRoomId !== null
+        ? directRoom !== undefined && directName !== undefined
+          ? directChannelOf(directRoom.roomId, directName)
+          : undefined
         : currentChannel(workspace, selectedChannelId),
-    [workspace, selectedChannelId, directRoom, directName]
+    [workspace, selectedChannelId, directRoomId, directRoom, directName]
   )
   const activeRoom = useMemo(
     () =>
@@ -1128,6 +1134,8 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       room: RoomSummary | undefined,
       categoryName: string | undefined
     ) => {
+      closeChannelChooser()
+      onChangeCanvasMode?.('chat')
       if (activeCall === null || room === undefined) return
       const boundary = activeStore.getRoomBoundary?.(room.roomId)
       if (
@@ -1138,8 +1146,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         setAnnouncement(protectionCopy.unavailable)
         return
       }
-      closeChannelChooser()
-      onChangeCanvasMode?.('chat')
       setCallChannel({
         channelId: channel.id,
         roomId: room.roomId,

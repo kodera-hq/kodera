@@ -61,6 +61,8 @@ export type MatrixSignInProblem =
   | 'other-person'
   /** Synapse answered something other than a login. */
   | 'unreadable'
+  /** Login cooldown exceeded the bounded automatic recovery budget. */
+  | 'rate-limited'
 
 export class MatrixSignInFailed extends Error {
   constructor(readonly problem: MatrixSignInProblem) {
@@ -370,13 +372,20 @@ export async function completeMatrixSignIn(
   } catch {
     // Storage blocked: a new device, which is all it costs.
   }
-  const response = await post(call, `${pending.baseUrl}/_matrix/client/v3/login`, {
-    type: 'm.login.token',
-    token: loginToken,
-    refresh_token: true,
-    initial_device_display_name: DEVICE_NAME,
-    ...(deviceId === null ? {} : { device_id: deviceId }),
-  })
+  const exchange = () =>
+    post(call, `${pending.baseUrl}/_matrix/client/v3/login`, {
+      type: 'm.login.token',
+      token: loginToken,
+      refresh_token: true,
+      initial_device_display_name: DEVICE_NAME,
+      ...(deviceId === null ? {} : { device_id: deviceId }),
+    })
+  let response = await exchange()
+  if (response.status === 429) {
+    const { retryLimitedLogin } = await import('../features/espace/matrix/loginRetry')
+    response = await retryLimitedLogin(response, exchange, () => sessionGeneration === generation)
+    if (response.status === 429) throw new MatrixSignInFailed('rate-limited')
+  }
   if (response.status === 401 || response.status === 403) throw new MatrixSignInFailed('refused')
   if (!response.ok) throw new MatrixSignInFailed('unreadable')
   let body: Record<string, unknown>

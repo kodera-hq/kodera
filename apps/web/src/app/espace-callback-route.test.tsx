@@ -304,3 +304,20 @@ describe('EspaceCallback route under StrictMode', () => {
     assertLoginTokenNeverStored()
   })
 })
+
+it('shows a specific Matrix cooldown notice and a console return action', async () => {
+  await i18n.changeLanguage('en')
+  startPendingCallback()
+  const request = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(new Response(JSON.stringify({ retry_after_ms: 60000 }), { status: 429 }))
+  vi.stubGlobal('fetch', request)
+  render(<EspaceCallback />)
+  await waitFor(() =>
+    expect(screen.getByRole('status')).toHaveAttribute('data-problem', 'rate-limited')
+  )
+  expect(screen.getByRole('status')).toHaveTextContent('Too many workspace sign-in attempts')
+  expect(screen.getByRole('link', { name: 'Sign in again' })).toHaveAttribute('href', '/')
+  expect(request).toHaveBeenCalledTimes(1)
+  assertLoginTokenNeverStored()
+})

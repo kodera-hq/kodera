@@ -131,6 +131,8 @@ export interface InviteView {
   roomId: string
   name: string
   inviter: string | null
+  /** Invitation metadata only; never establishes room protection. */
+  direct?: boolean
 }
 
 /**
@@ -450,6 +452,9 @@ export class EspaceStore {
   readonly #typingSent = new Map<string, number>()
   /** One content-free teardown dispatch per already active ordinary-room typing notice. */
   readonly #typingCleanup = new Set<string>()
+  /** Serialize local m.direct updates so accepting and creating rooms preserve one another. */
+  #directWrites: Promise<void> = Promise.resolve()
+  readonly #inviteActions = new Map<string, Promise<void>>()
   /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
   #directsChanged = false
   #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
@@ -967,6 +972,7 @@ export class EspaceStore {
           roomId: room.roomId,
           name: room.name,
           inviter: room.currentState.getMember(this.#me)?.events.member?.getSender() ?? null,
+          direct: this.#isDirectInvite(room),
         })),
       (r) => r.roomId
     )
@@ -1666,6 +1672,80 @@ export class EspaceStore {
     return this.#directs.list
   }
 
+  #isDirectInvite(room: Room): boolean {
+    const event = room.currentState.getMember(this.#me)?.events.member
+    const inviter = event?.getSender()
+    if (inviter !== undefined && this.#services.has(inviter)) return false
+    if (event?.getContent().is_direct === true) return true
+    const members = room.currentState
+      .getMembers()
+      .filter((member) => member.membership === 'join' || member.membership === 'invite')
+    // Older clients omit is_direct. Only an unnamed, unaliased two-person room qualifies.
+    return (
+      inviter !== undefined &&
+      inviter !== this.#me &&
+      !this.#services.has(inviter) &&
+      !room.getCanonicalAlias() &&
+      !room.currentState.getStateEvents(EventType.RoomName, '') &&
+      members.length === 2 &&
+      members.some((member) => member.userId === inviter) &&
+      members.some((member) => member.userId === this.#me)
+    )
+  }
+
+  /** Explicit membership consent only: no message, key or protection state is sent or inferred. */
+  acceptInvite(roomId: string): Promise<void> {
+    return this.#actOnInvite(roomId, true)
+  }
+
+  declineInvite(roomId: string): Promise<void> {
+    return this.#actOnInvite(roomId, false)
+  }
+
+  #actOnInvite(roomId: string, accept: boolean): Promise<void> {
+    const pending = this.#inviteActions.get(roomId)
+    if (pending !== undefined) return pending
+    const action = (async () => {
+      if (this.#stopped) throw new Error('Espace is stopped')
+      const room = this.#client.getRoom(roomId)
+      const invite = this.#snapshot.invites.find((item) => item.roomId === roomId)
+      if (room === null || invite === undefined || room.getMyMembership() !== 'invite')
+        throw new Error('Invitation unavailable')
+      if (!accept) {
+        await this.#client.leave(roomId)
+        return
+      }
+      const direct = this.#isDirectInvite(room)
+      const inviter = invite.inviter
+      // Record before joining so a failed account-data write leaves an actionable invitation.
+      // getDirects still excludes this room until authoritative joined membership arrives.
+      if (direct && inviter !== null && inviter !== this.#me && isMatrixUserId(inviter)) {
+        await this.#recordDirect(roomId, [inviter])
+      }
+      if (this.#stopped) throw new Error('Espace is stopped')
+      await this.#client.joinRoom(roomId)
+    })().finally(() => this.#inviteActions.delete(roomId))
+    this.#inviteActions.set(roomId, action)
+    return action
+  }
+
+  #recordDirect(roomId: string, people: readonly string[]): Promise<void> {
+    const write = this.#directWrites
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.#stopped) throw new Error('Espace is stopped')
+        const map = directMap(this.#client.getAccountData(EventType.Direct)?.getContent())
+        await this.#client.setAccountData(
+          EventType.Direct,
+          withDirect(map, roomId, people) as never
+        )
+        this.#directsChanged = true
+        this.#schedule()
+      })
+    this.#directWrites = write
+    return write
+  }
+
   /**
    * The direct conversation with these people: the joined one already held, else a new private
    * room, invited and listed in `m.direct` under each of them. Resolves to its room id.
@@ -1699,7 +1779,7 @@ export class EspaceStore {
       { history_visibility: HistoryVisibility.Invited },
       ''
     )
-    await this.#client.setAccountData(EventType.Direct, withDirect(map, roomId, people) as never)
+    await this.#recordDirect(roomId, people)
     return roomId
   }
 
