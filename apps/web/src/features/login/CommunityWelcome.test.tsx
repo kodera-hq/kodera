@@ -38,7 +38,15 @@ it('offers a retry after an auth setup failure without leaking the error', async
 })
 it('switches locale without leaving the welcome screen', async () => {
   render(<CommunityWelcome />)
+  expect(screen.getByRole('link', { name: 'Connexion organisation dédiée' })).toHaveAttribute(
+    'href',
+    '/login?mode=tenant'
+  )
   await userEvent.click(screen.getByRole('button', { name: 'EN' }))
   expect(screen.getByRole('button', { name: 'Create an account' })).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Dedicated organisation sign-in' })).toHaveAttribute(
+    'href',
+    '/login?mode=tenant'
+  )
   expect(sessionStorage.getItem('console:language')).toBe('en')
 })

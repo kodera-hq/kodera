@@ -210,11 +210,13 @@ ticket is granted for `UPDATE` and none is deleted: its mail mark is the operato
 `tests/test_support_writer_role.py` runs it as the role and shows it refused any change to or
 deletion of a ticket.
 
-It serves `createTenant` ([`QUICK_WORKSPACE.md`](QUICK_WORKSPACE.md) §4): `INSERT` on
+It serves `createTenant` ([`QUICK_WORKSPACE.md`](QUICK_WORKSPACE.md) §4) and the public billing
+catalogue reads (`listPlans`, `listPacks`, `listCapacityTiers` and `listPrices`): `INSERT` on
 `tenancy_tenant`, `legal_dpa` and `legal_acceptance`, `UPDATE` on the `legal_dpa` columns the DPA's
-preparation and acceptance set, and `SELECT` on `billing_pack` and `billing_capacitytier`. For the
-workspace guard it reads `legal_legaldocument`, and `legal_acceptance` by column only: what was
-accepted, for which tenant and DPA, never who accepted it or from where.
+preparation and acceptance set, and `SELECT` on `billing_plan`, `billing_pack`,
+`billing_capacitytier` and `billing_price` (never `INSERT`, `UPDATE` or `DELETE` on any catalogue
+table). For the workspace guard it reads `legal_legaldocument`, and `legal_acceptance` by column
+only: what was accepted, for which tenant and DPA, never who accepted it or from where.
 `tests/test_workspace_writer_role.py` runs both as the role.
 
 And it serves `getNoticeContacts` and `patchNoticeContacts`: `UPDATE (security_contact_email,

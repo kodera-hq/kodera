@@ -17,9 +17,21 @@ const CommunityWelcome = lazy(() =>
 // organisation-identifier fallback for a link sent from the welcome email or
 // the hub's "Se connecter"; zod-validated so a malformed query string is a
 // typed absence rather than a value the screen has to sniff (ADR-0005).
-const loginSearchSchema = z.object({
+export const loginSearchSchema = z.object({
   org: z.string().optional(),
+  mode: z.enum(['tenant']).optional().catch(undefined),
 })
+
+export function shouldRenderCommunityWelcome(
+  org: string | undefined,
+  mode: 'tenant' | undefined,
+  hostname: string | undefined = typeof window === 'undefined'
+    ? undefined
+    : window.location.hostname
+): boolean {
+  if (org === 'community') return true
+  return org === undefined && mode !== 'tenant' && Boolean(hostname?.startsWith('community.'))
+}
 
 export const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -29,8 +41,8 @@ export const loginRoute = createRoute({
 })
 
 function LoginRoute() {
-  const { org } = loginRoute.useSearch()
-  if (org === 'community' && import.meta.env.VITE_AUTH_MODE === 'oidc') {
+  const { org, mode } = loginRoute.useSearch()
+  if (import.meta.env.VITE_AUTH_MODE === 'oidc' && shouldRenderCommunityWelcome(org, mode)) {
     return (
       <Suspense fallback={<SessionLoading />}>
         <CommunityWelcome />

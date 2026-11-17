@@ -18,6 +18,7 @@ import type {
   OwnerClaimAuthContext,
   ProtectedAuthOperation,
   ProtectedSignInPurpose,
+  SignInOptions,
 } from './AuthAdapter'
 
 // The realm is discovered per login (ADR-0002), so it cannot be fixed at
@@ -238,7 +239,15 @@ export class OidcAuthAdapter implements AuthAdapter {
   #publishedAccessToken: string | undefined
   #listeners = new Set<() => void>()
   #restoration: Promise<boolean> | undefined
-  #signIn: { realm: string; registration: boolean; request: Promise<void> } | undefined
+  #signIn:
+    | {
+        realm: string
+        registration: boolean
+        kcAction: SignInOptions['kcAction']
+        prompt: SignInOptions['prompt']
+        request: Promise<void>
+      }
+    | undefined
   #expiringCallbacks = new Set<() => void>()
   #unwire: (() => void) | undefined
   #renewedCallbacks = new Set<() => void>()
@@ -441,12 +450,20 @@ export class OidcAuthAdapter implements AuthAdapter {
     return Object.freeze({ issuer, subject })
   }
 
-  async signIn(realm: string, options?: { registration?: boolean }): Promise<void> {
+  async signIn(realm: string, options?: SignInOptions): Promise<void> {
     const registration = options?.registration === true
+    const kcAction = options?.kcAction
+    const prompt = options?.prompt
     if (!isRealmHint(realm)) throw new Error('Invalid realm identifier.')
+    if (kcAction !== undefined && kcAction !== 'CONFIGURE_TOTP')
+      throw new Error('Invalid authentication action.')
+    if (prompt !== undefined && prompt !== 'login')
+      throw new Error('Invalid authentication prompt.')
     if (
       this.#signIn?.realm === realm &&
       this.#signIn.registration === registration &&
+      this.#signIn.kcAction === kcAction &&
+      this.#signIn.prompt === prompt &&
       this.#snapshot.status === 'pending'
     )
       return this.#signIn.request
@@ -464,7 +481,16 @@ export class OidcAuthAdapter implements AuthAdapter {
         const manager = managerFor(realm, false, registration)
         this.#manager = manager
         this.#wireEvents(manager)
-        return manager.signinRedirect()
+        const redirectArgs =
+          prompt !== undefined || kcAction !== undefined
+            ? {
+                ...(prompt === undefined ? {} : { prompt }),
+                ...(kcAction === undefined ? {} : { extraQueryParams: { kc_action: kcAction } }),
+              }
+            : undefined
+        return redirectArgs === undefined
+          ? manager.signinRedirect()
+          : manager.signinRedirect(redirectArgs)
       })
       .catch((error: unknown) => {
         if (this.#snapshot.generation === generation) {
@@ -481,7 +507,7 @@ export class OidcAuthAdapter implements AuthAdapter {
         }
         throw error
       })
-    this.#signIn = { realm, registration, request }
+    this.#signIn = { realm, registration, kcAction, prompt, request }
     this.#publish('pending', true)
     await request
   }

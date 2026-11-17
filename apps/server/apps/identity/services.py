@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from django.conf import settings
 from django.db import connection, transaction
 
 from apps.orgs.claim_readiness import database_now
@@ -13,9 +14,11 @@ from apps.orgs.selectors import (
     visible_organisation_ids,
 )
 from services.identity.access_tokens import (
+    COMMUNITY_MFA_METHODS,
     RegisteredFactorReason,
     VerifiedAccessToken,
     evaluate_registered_factor,
+    evaluate_staff_community_factor,
     observe_registered_factor_reason,
 )
 
@@ -40,7 +43,11 @@ class CustomerRead:
 
 
 def read_customer(
-    *, verified: VerifiedAccessToken, lane: str, console_client_id: str | None
+    *,
+    verified: VerifiedAccessToken,
+    lane: str,
+    console_client_id: str | None,
+    community_issuer: str | None = None,
 ) -> CustomerRead:
     subject = verified.subject
     if not 1 <= len(subject) <= 255 or not subject.isascii() or "\x00" in subject:
@@ -48,6 +55,11 @@ def read_customer(
     if connection.in_atomic_block:
         # Do not inherit an earlier request snapshot or silently downgrade isolation.
         raise RuntimeError("customer read requires its own transaction")
+    effective_community_issuer = (
+        getattr(settings, "KODERA_DEFAULT_COMMUNITY_ISSUER", None)
+        if community_issuer is None
+        else community_issuer
+    )
     from apps.orgs.community import ensure_community_membership
 
     ensure_community_membership(verified=verified)
@@ -75,6 +87,7 @@ def read_customer(
             lane=lane,
             console_client_id=console_client_id,
             database_now=database_now(),
+            community_issuer=effective_community_issuer,
         )
         if factor.reason is RegisteredFactorReason.FUTURE_IAT:
             observe_registered_factor_reason(factor.reason)
@@ -98,6 +111,11 @@ def read_staff_community(*, verified: VerifiedAccessToken) -> CustomerRead:
     if shared is None:
         raise CustomerReadForbiddenError()
     principal, member = shared
+    mfa_enrolled = (
+        evaluate_staff_community_factor(verified=verified, database_now=database_now())
+        if COMMUNITY_MFA_METHODS.intersection(verified.amr or ())
+        else None
+    )
     return CustomerRead(
         principal.user,
         (
@@ -116,5 +134,5 @@ def read_staff_community(*, verified: VerifiedAccessToken) -> CustomerRead:
             if m.organisation.id == member.organisation_id
         ),
         principal.id,
-        None,
+        mfa_enrolled,
     )

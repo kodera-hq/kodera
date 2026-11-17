@@ -281,3 +281,27 @@ def test_the_writer_role_cannot_change_the_workspace_it_created(w, writer, state
         assert refused(statement) == INSUFFICIENT_PRIVILEGE, statement
     # Control: the schema owner is not refused by privilege, so the refusal above is the role's.
     assert refused(statement) != INSUFFICIENT_PRIVILEGE, statement
+
+
+def test_the_writer_role_reads_public_catalogue_and_cannot_mutate_it(w, bare_writer):
+    from test_create_tenant import offer
+
+    offer()
+    with acting_as(bare_writer):
+        assert current_user() == bare_writer
+        for path in (
+            "/api/v1/catalog/plans",
+            "/api/v1/catalog/packs",
+            "/api/v1/catalog/capacity-tiers",
+            "/api/v1/catalog/prices",
+        ):
+            response = w.client.get(path)
+            assert response.status_code == 200, (path, response.content)
+            assert len(response.json()["data"]) >= 1, path
+        for statement in (
+            "UPDATE billing_plan SET name = 'Tampered'",
+            "DELETE FROM billing_plan",
+            "UPDATE billing_price SET amount_minor = 1",
+            "DELETE FROM billing_price",
+        ):
+            assert refused(statement) == INSUFFICIENT_PRIVILEGE, statement
