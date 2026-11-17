@@ -7,7 +7,7 @@ export function contentTitleKey(pathname: string, role: OrganisationRole): Messa
   const area = pathname.split('/')[2]
   // The workspace is its own surface beside the console (`railModules.ts`), not a console area.
   if (area === 'workspace') return 'console.workspace._.title'
-  // Nested MFA (`/security/mfa`) keeps its area title even while `/security` itself is a stub.
+  // Nested MFA (`/security/mfa`) keeps the security settings area title.
   if (area === 'security') return 'console.shell.account.action-security'
   const navigation = navItemsFor(role).find((item) => item.to.split('/')[2] === area)
   if (navigation) return navigation.titleKey
