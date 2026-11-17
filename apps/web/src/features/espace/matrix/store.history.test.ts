@@ -44,6 +44,9 @@ function homeserver(timeline: Event[], messages: (from: string) => Response | Pr
     if (method === 'POST' && path === `/_matrix/client/v3/user/${ME}/filter`) {
       return json(200, { filter_id: 'f' })
     }
+    if (method === 'GET' && path === `/_matrix/client/v3/profile/${ME}`) {
+      return json(200, {})
+    }
     if (path === '/_matrix/client/v3/sync') {
       if (++synced === 1) {
         return json(200, {

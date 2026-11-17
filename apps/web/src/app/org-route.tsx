@@ -426,6 +426,7 @@ function OrgLayoutContent() {
           {...(organisationMark === undefined ? {} : { organisationMark })}
           memberships={memberships}
           onSwitchOrganisation={switchOrganisation}
+          staff={me.staff}
           role={membership.role}
           contentTitleKey={titleKey}
           surface={surfaceOf(shownPathname)}

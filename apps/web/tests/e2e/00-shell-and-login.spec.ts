@@ -493,14 +493,12 @@ test.describe('narrow', () => {
     await tabs.getByRole('button', { name: 'Plus' }).focus()
     await page.keyboard.press('Enter')
     const sheet = page.getByRole('dialog', { name: 'Plus' })
-    await sheet.getByRole('link', { name: 'Sécurité et connexion' }).focus()
+    await sheet.getByRole('link', { name: 'Apparence' }).focus()
     await page.keyboard.press('Enter')
-    await expect(page).toHaveURL(/\/acme-sa\/security$/)
+    await expect(page).toHaveURL(/\/acme-sa\/appearance$/)
     await expect(sheet).toHaveCount(0)
-    await expect(
-      page.getByRole('heading', { level: 1, name: 'Sécurité et connexion' })
-    ).toBeFocused()
-    await expect(page.getByText('Page Sécurité et connexion chargée.')).toHaveCount(1)
+    await expect(page.getByRole('heading', { level: 1, name: 'Apparence' })).toBeFocused()
+    await expect(page.getByText('Page Apparence chargée.')).toHaveCount(1)
   })
 })
 
@@ -825,9 +823,7 @@ test('shell/session: signs back in without losing what was typed', async ({ page
   await expect(page.getByRole('radio', { name: /^Administrateur —/ })).toBeChecked()
   expect(posts).toBe(0)
   await expect
-    .poll(() =>
-      page.evaluate(() => sessionStorage.getItem('kodera.web.people.invitationRecovery'))
-    )
+    .poll(() => page.evaluate(() => sessionStorage.getItem('kodera.web.people.invitationRecovery')))
     .toBeNull()
   const sent = page.waitForRequest(
     (request) => request.method() === 'POST' && request.url().endsWith('/invitations')

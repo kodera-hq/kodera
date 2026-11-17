@@ -234,14 +234,31 @@ for (const width of [1440, 390]) {
     await expect(source).toHaveValue(linkedContent)
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
-    const files = page.getByRole(width === 390 ? 'region' : 'dialog', {
-      name: en ? 'Files' : 'Fichiers',
+    const files = page.getByRole('region', {
+      name: en ? 'Workspace files' : 'Fichiers de l’espace',
       exact: true,
     })
+    await expect(files).toBeVisible()
+    if (width === 1440) {
+      await expect(
+        page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true })
+      ).toHaveAttribute('aria-current', 'page')
+      await expect(
+        page.getByRole('link', { name: 'announcements', exact: true })
+      ).not.toHaveAttribute('aria-current', 'page')
+    }
     expect(
       (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
         .violations
     ).toEqual([])
+    // Choosing a channel returns the canvas from Files back to the conversation
+    await navigation()
+    await page.getByRole('link', { name: 'announcements', exact: true }).click()
+    await expect(page.getByRole('log')).toBeVisible()
+    await expect(files).toHaveCount(0)
+    await navigation()
+    await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
+    await expect(files).toBeVisible()
     await files
       .getByRole('button', {
         name: new RegExp(en ? '^Community guide review' : '^Revue du guide communautaire'),
@@ -255,6 +272,7 @@ for (const width of [1440, 390]) {
     ).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
+    await expect(files).toBeVisible()
     await files
       .getByRole('button', { name: new RegExp(en ? '^Review notes' : '^Notes de revue') })
       .click()
@@ -277,6 +295,7 @@ for (const width of [1440, 390]) {
     await notificationPanel.getByRole('button', { name: /#announcements/ }).click()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
+    await expect(files).toBeVisible()
     expect(
       (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
         .violations
@@ -290,6 +309,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('heading', { name: 'announcements', exact: true })).toBeVisible()
     await navigation()
     await page.getByRole('button', { name: en ? 'Files' : 'Fichiers', exact: true }).click()
+    await expect(files).toBeVisible()
     await files
       .getByRole('button', { name: new RegExp(en ? '^Review notes' : '^Notes de revue') })
       .click()

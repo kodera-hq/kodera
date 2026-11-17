@@ -4,6 +4,9 @@
 // rules without importing another part.
 
 import type { DirectSummary } from './matrix/directs'
+import { displayNameOf, isNamedProfile, isOpaqueLocalpart, safeDisplayName } from './memberName'
+
+export { displayNameOf, isNamedProfile, isOpaqueLocalpart, safeDisplayName }
 import type { KeyboardEvent, ReactNode } from 'react'
 import type { ChannelDoc, ChannelDocsWorkspace } from '../docs/ChannelDocsEditor'
 import type { MemberProfileRole } from '../profile/UserProfilePopover'
@@ -74,6 +77,13 @@ export function isProximityChannel(
   return flaggedChannelIds.has(channel.id)
 }
 
+/**
+ * What the workspace's main area is showing: the channel's conversation, the documents written in
+ * it, or the workspace's files. One channel is chosen throughout; the canvas says what is drawn
+ * of it, and choosing a channel always brings it back to the conversation.
+ */
+export type CanvasMode = 'chat' | 'docs' | 'files'
+
 export interface EspaceStoreLike {
   readonly simulation?: boolean
   getInitialDocuments?: () => ChannelDocsWorkspace
@@ -89,6 +99,16 @@ export interface EspaceStoreLike {
   getThread: (roomId: string, rootEventId: string) => readonly MessageView[]
   /** The member's direct conversations (`m.direct`); absent where there are none, as in the demo. */
   getDirects?: () => readonly DirectSummary[]
+  /** The member's own Matrix profile, as their homeserver holds it for every room. */
+  getOwnProfile?: () => { displayName: string | undefined; avatarUrl: string | undefined }
+  /** The member's own avatar as bytes; `null` where there is none. */
+  fetchOwnAvatar?: (size?: number) => Promise<Blob | null>
+  /** Names the member on their homeserver, for every room at once. */
+  setProfileDisplayName?: (displayName: string) => Promise<void>
+  /** Uploads the picture to the member's own homeserver and makes it their avatar. */
+  setProfileAvatar?: (file: Blob, filename: string) => Promise<string>
+  /** Removes the member's avatar. */
+  clearProfileAvatar?: () => Promise<void>
   /** Opens, or starts, the direct conversation with these people; resolves to its room id. */
   openDirect?: (userIds: readonly string[]) => Promise<string>
   send: (roomId: string, body: string, options?: SendOptions) => Promise<void>
@@ -201,20 +221,9 @@ export function roomRowId(sidebarHeadingId: string, channelId: string): string {
   return `${sidebarHeadingId}-room-${channelId}`
 }
 
-/** The name drawn for a member the room holds no display name for: its id's localpart. */
-export function displayNameOf(userId: string): string {
-  if (!userId.startsWith('@')) return userId
-  const localpart = userId.slice(1).split(':')[0] ?? userId
-  return localpart
-    .split(/[._-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
-/** A message's author as drawn: the room's display name, else the id's localpart. */
-export function nameOf(message: MessageView): string {
-  return message.senderName ?? displayNameOf(message.sender)
+/** A message's author as drawn: the room's sanitized display name, else the id's safe fallback. */
+export function nameOf(message: MessageView, unnamed?: string): string {
+  return safeDisplayName(message.senderName, message.sender, unnamed)
 }
 
 /**
@@ -285,12 +294,16 @@ export function activeJoinTargetIds(
   return ordered
 }
 
-export function occupantsForRoom(room: RoomSummary | undefined): RoomOccupant[] {
+export function occupantsForRoom(
+  room: RoomSummary | undefined,
+  /** The word this language has for a member no name is held for. */
+  unnamed?: string
+): RoomOccupant[] {
   if (room?.occupancy === null || room?.occupancy === undefined) return []
   const sharing = new Set(room.occupancy.screenShare)
   return room.occupancy.participants.map((userId) => ({
     id: userId,
-    name: room.names?.[userId] ?? displayNameOf(userId),
+    name: safeDisplayName(room.names?.[userId], userId, unnamed),
     sharingScreen: sharing.has(userId),
   }))
 }

@@ -7,11 +7,13 @@
 // `VoiceCallDock`. What they share lives in `liveViewModel.ts`.
 
 import { MessagingOrganisation } from '../messaging/organisationContext'
+import { cleanText } from '../../ui/safeText'
 import { demoMessages } from '../../app/demoMessages'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import { StudioNavigation } from '../workspace/StudioNavigation'
 import {
   Fragment,
+  lazy,
   memo,
   useCallback,
   useEffect,
@@ -22,6 +24,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  Suspense,
 } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import { useRouter } from '@tanstack/react-router'
@@ -44,10 +47,12 @@ import { profileMessages } from '../profile/profileMessages'
 import {
   getWorkspaceSettingsEpoch,
   registerWorkspaceSettingsRuntime,
+  type WorkspaceSettingsProfile,
 } from '../workspace/settingsRuntime'
 import { PersonIcon } from '../../ui/icons/Person'
 import { CloseIcon } from '../../ui/icons/Close'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
+import { Skeleton } from '../../ui/Skeleton/Skeleton'
 import { ThreadPanel } from '../../ui/ThreadPanel/ThreadPanel'
 import { useNarrowViewport } from '../../app/useNarrowViewport'
 import { withdrawn } from '../workspace/ChannelSearch'
@@ -76,6 +81,8 @@ import {
   activeJoinTargetIds,
   composing,
   displayNameOf,
+  isNamedProfile,
+  safeDisplayName,
   isProximityChannel,
   LIVE_CALL,
   NO_MESSAGES,
@@ -88,6 +95,7 @@ import {
   subscribeToNoCall,
   type AudioCallLike,
   type CallChannel,
+  type CanvasMode,
   type EspaceStoreLike,
   type TimelineInsert,
 } from './liveViewModel'
@@ -145,6 +153,12 @@ function directChannelOf(roomId: string, name: string): WorkspaceChannel {
   } as WorkspaceChannel
 }
 
+// Drawn only once « Fichiers » is chosen: the hub and its aggregation never weigh on opening a
+// channel, and the chunk is fetched on the click that needs it.
+const LazyWorkspaceFilesPanel = lazy(() =>
+  import('./WorkspaceFilesPanel').then((module) => ({ default: module.WorkspaceFilesPanel }))
+)
+
 export interface EspaceLiveViewProps {
   /** Optional presentation metadata; never an access grant. */
   categoryDescriptions?: Readonly<Record<string, string>> | undefined
@@ -164,10 +178,16 @@ export interface EspaceLiveViewProps {
   /** Whether the router is between two addresses: nothing is sent until it has settled. */
   navigationPending?: boolean
   onReconnect?: () => void
+  /**
+   * The name the console's own account carries (`Me.display_name`, else the address's local part).
+   * A homeserver names a new account by its id, so without this the settings panel would offer
+   * « Ce239589 A4bd … » as the member's own name.
+   */
+  readonly accountName?: string | undefined
   readonly defaultMembersOpen?: boolean | undefined
   readonly focusedDocs?: boolean | undefined
-  readonly activeCanvasMode?: 'chat' | 'docs' | undefined
-  readonly onChangeCanvasMode?: ((mode: 'chat' | 'docs') => void) | undefined
+  readonly activeCanvasMode?: CanvasMode | undefined
+  readonly onChangeCanvasMode?: ((mode: CanvasMode) => void) | undefined
   readonly documents?: readonly ChannelDoc[]
   readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
   readonly docsCanvasSlot?: ReactNode | undefined
@@ -335,6 +355,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   onNavigateChannel,
   navigationPending = false,
   onReconnect,
+  accountName,
   defaultMembersOpen = false,
   focusedDocs = false,
   activeCanvasMode = 'chat',
@@ -513,7 +534,13 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [direct, setDirect] = useState<{ roomId: string; over: string | null | undefined } | null>(
     null
   )
-  const directRoomId = direct !== null && direct.over === selectedChannelId ? direct.roomId : null
+  if (direct !== null && activeCanvasMode !== 'chat') {
+    setDirect(null)
+  }
+  const directRoomId =
+    direct !== null && direct.over === selectedChannelId && activeCanvasMode === 'chat'
+      ? direct.roomId
+      : null
   const directRoom =
     directRoomId === null ? undefined : snapshot.rooms.find((room) => room.roomId === directRoomId)
   const directName =
@@ -538,6 +565,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   )
   const selectDirect = useStableHandler((roomId: string) => {
     closeChannelChooser()
+    onChangeCanvasMode?.('chat')
     setDirect({ roomId, over: selectedChannelId })
   })
   // No room, no messages and nowhere to send them: never a channel id taken for a room id.
@@ -711,6 +739,42 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   }
   const viewerId = activeStore.getUserId()
   const { profile: localProfile, hasProfile } = useLocalProfile(viewerId)
+  // The profile the homeserver holds for the member, re-read whenever the sync moves: a name or a
+  // picture set on another device arrives here without a request of its own.
+  void snapshot
+  const ownProfileRead = activeStore.getOwnProfile?.()
+  // The homeserver answers with a fresh object every time; what changes is the name and the
+  // address inside it. Memoised on those, so the settings panel's avatar is fetched when the
+  // avatar changes and not once per sync.
+  const ownDisplayName = ownProfileRead?.displayName
+  const ownAvatarUrl = ownProfileRead?.avatarUrl
+  const ownMatrixProfile = useMemo(
+    () =>
+      ownDisplayName === undefined && ownAvatarUrl === undefined
+        ? undefined
+        : { displayName: ownDisplayName, avatarUrl: ownAvatarUrl },
+    [ownDisplayName, ownAvatarUrl]
+  )
+  const settingsProfile = useMemo((): WorkspaceSettingsProfile | undefined => {
+    const { setProfileDisplayName, setProfileAvatar, clearProfileAvatar, fetchOwnAvatar } =
+      activeStore
+    if (!setProfileDisplayName || !setProfileAvatar || !clearProfileAvatar || !fetchOwnAvatar) {
+      return undefined
+    }
+    return {
+      // Cleaned before judged, as everywhere else: the settings panel seeds its field from this.
+      matrixDisplayName: isNamedProfile(cleanText(ownMatrixProfile?.displayName, 80), viewerId)
+        ? cleanText(ownMatrixProfile?.displayName, 80)
+        : undefined,
+      avatarKey: ownMatrixProfile?.avatarUrl,
+      fetchAvatar: (size) => fetchOwnAvatar.call(activeStore, size),
+      setDisplayName: (displayName) => setProfileDisplayName.call(activeStore, displayName),
+      setAvatar: async (file, filename) => {
+        await setProfileAvatar.call(activeStore, file, filename)
+      },
+      clearAvatar: () => clearProfileAvatar.call(activeStore),
+    }
+  }, [activeStore, ownMatrixProfile, viewerId])
   const profileCopy = profileMessages(i18n.resolvedLanguage)
   const roomMembers = useMemo(() => {
     void snapshot
@@ -720,20 +784,37 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     void snapshot
     return activeRoomId === null ? [] : (activeStore.getRoster?.(activeRoomId) ?? roomMembers ?? [])
   }, [activeRoomId, activeStore, roomMembers, snapshot])
+  // The word this language has for a member no name is held for; `displayNameOf` adds the few
+  // characters that tell two of them apart.
+  const unnamedMember = t('console.workspace.members.unnamed')
+  const nameOfMember = (member: MemberView) =>
+    safeDisplayName(member.name, member.userId, unnamedMember)
+  /**
+   * The member's own name, from the closest thing to a name there is: what they set on this
+   * device, then what their homeserver holds, then what a room holds for them, then the name
+   * their console account carries. Only when none of those says anything does the id stand in.
+   */
+  const viewerName =
+    localProfile.displayName ||
+    [
+      ownMatrixProfile?.displayName,
+      roomMembers?.find((member) => member.userId === viewerId)?.name,
+      rawRoster.find((member) => member.userId === viewerId)?.name,
+    ]
+      // Cleaned before judged, as `safeDisplayName` does: the name a screen draws is the one
+      // that has to hold up, not the one that arrived.
+      .map((name) => cleanText(name, 80))
+      .filter((name) => isNamedProfile(name, viewerId))[0] ||
+    accountName ||
+    displayNameOf(viewerId, unnamedMember)
   const roster =
     rawRoster.some((member) => member.userId === viewerId) || !hasProfile
       ? rawRoster
-      : [
-          ...rawRoster,
-          { userId: viewerId, name: localProfile.displayName || displayNameOf(viewerId) },
-        ]
+      : [...rawRoster, { userId: viewerId, name: viewerName }]
   function memberProfile(member: MemberView): MemberProfile {
     return {
       userId: member.userId,
-      name:
-        member.userId === viewerId && localProfile.displayName
-          ? localProfile.displayName
-          : (member.name ?? displayNameOf(member.userId)),
+      name: member.userId === viewerId ? viewerName : nameOfMember(member),
       presence:
         member.userId === viewerId && hasProfile
           ? localProfile.presence
@@ -750,21 +831,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         {
           org,
           userId: viewerId,
-          displayName:
-            localProfile.displayName ||
-            roomMembers?.find((member) => member.userId === viewerId)?.name ||
-            displayNameOf(viewerId),
+          displayName: viewerName,
+          ...(accountName === undefined ? {} : { accountName }),
           members: [
             ...rawRoster.filter((member) => member.userId !== viewerId),
-            {
-              userId: viewerId,
-              name:
-                localProfile.displayName ||
-                rawRoster.find((member) => member.userId === viewerId)?.name ||
-                displayNameOf(viewerId),
-            },
+            { userId: viewerId, name: viewerName },
           ],
           call: deviceSettings,
+          ...(settingsProfile === undefined ? {} : { profile: settingsProfile }),
           invite:
             activeRoomId !== null && activeStore.inviteToRoom
               ? (userId) => activeStore.inviteToRoom!(activeRoomId, userId)
@@ -779,11 +853,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     [
       org,
       viewerId,
-      localProfile.displayName,
-      roomMembers,
+      viewerName,
+      accountName,
       rawRoster,
       settingsEpoch,
       deviceSettings,
+      settingsProfile,
       activeRoomId,
       activeStore,
     ]
@@ -796,12 +871,15 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     if (activeRoomId === null) return
     return () => activeStore.setTyping?.(activeRoomId, false)
   }, [activeStore, activeRoomId])
-  const mentionCandidates = useMemo(
-    () =>
-      roomMembers?.map(({ userId, name }) => ({ userId, label: name ?? displayNameOf(userId) })) ??
-      NO_CANDIDATES,
-    [roomMembers]
-  )
+  const mentionCandidates = useMemo(() => {
+    const unnamed = t('console.workspace.members.unnamed')
+    return (
+      roomMembers?.map(({ userId, name }) => ({
+        userId,
+        label: safeDisplayName(name, userId, unnamed),
+      })) ?? NO_CANDIDATES
+    )
+  }, [roomMembers, t])
 
   // The memory's epoch: a new one is a new lease to ask for. Read here, since the outer view's
   // own reading of the memory no longer draws this one.
@@ -1016,22 +1094,43 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
 
     for (const msg of candidates) {
       if (current.seenKeys.has(msg.key)) continue
-      if (!msg.redacted && msg.mentionsMe === true && msg.sender !== viewerId) {
-        void soundEngine.play('msg_mention', {
-          channelId: activeChannelId,
-          senderId: msg.sender,
-          currentUserId: viewerId,
-        })
-      }
+      if (msg.redacted || msg.sender === viewerId) continue
+      // One cue per message, the most particular one first: being named, then a message in a
+      // direct conversation, then a message arriving in a channel. The engine's own rules decide
+      // whether it is heard at all — the pack, the mode, do-not-disturb, a hidden tab.
+      const cue =
+        msg.mentionsMe === true
+          ? 'msg_mention'
+          : directRoomId !== null
+            ? 'msg_dm'
+            : 'msg_channel_unread'
+      void soundEngine.play(cue, {
+        channelId: activeChannelId,
+        roomId: activeRoomId,
+        senderId: msg.sender,
+        currentUserId: viewerId,
+      })
     }
     for (const msg of timeline) current.seenKeys.add(msg.key)
     current.lastTailKey = timeline.at(-1)?.key ?? null
-  }, [activeStore, activeRoomId, activeChannelId, snapshot.status, timeline, history, viewerId])
+  }, [
+    activeStore,
+    activeRoomId,
+    activeChannelId,
+    directRoomId,
+    snapshot.status,
+    timeline,
+    history,
+    viewerId,
+  ])
 
   /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
     closeChannelChooser()
     setDirect(null)
+    // A conversation chosen is a conversation asked for: the canvas comes back to the chat, or the
+    // member would stay in the documents with both the channel and « Docs » drawn as current.
+    onChangeCanvasMode?.('chat')
     if (onNavigateChannel === undefined) {
       setClickedChannelId(nextChannelId)
       return
@@ -1056,6 +1155,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     ) => {
       if (activeCall === null || room === undefined) return
       closeChannelChooser()
+      onChangeCanvasMode?.('chat')
       setCallChannel({
         channelId: channel.id,
         roomId: room.roomId,
@@ -1083,7 +1183,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   )
   const inviteTrigger = useRef<HTMLButtonElement>(null)
   const canInvite =
-    activeRoom !== undefined && activeChannel != null && !focusedDocs && !navigationUnsettled
+    activeRoom !== undefined &&
+    activeChannel != null &&
+    !focusedDocs &&
+    activeCanvasMode === 'chat' &&
+    !navigationUnsettled
   const openInvitation = useCallback(() => inviteTrigger.current?.click(), [])
 
   const searchEntries = useMemo<ChannelSearchEntry[]>(
@@ -1123,7 +1227,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       ? row
       : null
   })
+  const changeCanvas = useStableHandler((mode: CanvasMode) => {
+    if (mode !== 'chat') setDirect(null)
+    onChangeCanvasMode?.(mode)
+  })
   const openDocument = useStableHandler((doc: ChannelDoc) => {
+    setDirect(null)
     onOpenDocument?.(doc)
     requestAnimationFrame(() => headingRef.current?.focus())
     leaveChannelChooser()
@@ -1134,7 +1243,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     if (entry.kind === 'text') onChangeCanvasMode?.('chat')
     return openFromSearch(entry)
   })
-  const switchCanvas = useStableHandler((mode: 'chat' | 'docs') => {
+  // Whether « Docs » has been opened in this view's life; see the pane below.
+  const [docsEverOpened, setDocsEverOpened] = useState(activeCanvasMode === 'docs')
+  if (activeCanvasMode === 'docs' && !docsEverOpened) setDocsEverOpened(true)
+  const switchCanvas = useStableHandler((mode: CanvasMode) => {
+    if (mode !== 'chat') setDirect(null)
     onChangeCanvasMode?.(mode)
     leaveChannelChooser()
   })
@@ -1379,7 +1492,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       onChooseFromSearch={openFromSearch}
       onOpenChannel={openStudioChannel}
       onOpenDocument={openStudioDocument}
-      onChangeCanvasMode={onChangeCanvasMode}
+      onChangeCanvasMode={onChangeCanvasMode ? changeCanvas : undefined}
       onSwitchCanvas={onChangeCanvasMode ? switchCanvas : undefined}
       onSelectTextChannel={selectTextChannel}
       activeDirectRoomId={directRoomId}
@@ -1505,29 +1618,35 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                     glyph, never a character of their id. */}
                   {memberCount !== null && faces.length > 0 ? (
                     <span className="flex shrink-0 gap-1 narrow:hidden">
-                      {faces.map((face) => (
-                        <Avatar
-                          key={face.userId}
-                          name={face.name ?? displayNameOf(face.userId)}
-                          identity={face.userId}
-                          onlineLabel={
-                            activeStore.isOnline?.(face.userId)
-                              ? simulation
-                                ? demoCopy.presence
-                                : t('console.workspace.presence.online')
-                              : undefined
-                          }
-                          anonymous={face.name === undefined}
-                          size="xs"
-                          className="ring-2 ring-c-surface"
-                        />
-                      ))}
+                      {faces.map((face) => {
+                        const named = isNamedProfile(cleanText(face.name, 80), face.userId)
+                        return (
+                          <Avatar
+                            key={face.userId}
+                            name={safeDisplayName(face.name, face.userId, unnamedMember)}
+                            identity={face.userId}
+                            onlineLabel={
+                              activeStore.isOnline?.(face.userId)
+                                ? simulation
+                                  ? demoCopy.presence
+                                  : t('console.workspace.presence.online')
+                                : undefined
+                            }
+                            anonymous={!named}
+                            size="xs"
+                            className="ring-2 ring-c-surface"
+                          />
+                        )
+                      })}
                     </span>
                   ) : null}
                 </div>
               ) : null}
             </div>
-            {activeRoom !== undefined && activeChannel != null && !focusedDocs ? (
+            {activeRoom !== undefined &&
+            activeChannel != null &&
+            !focusedDocs &&
+            activeCanvasMode === 'chat' ? (
               <ChannelInviteDialog
                 key={`${org}:${activeRoom.roomId}`}
                 triggerRef={inviteTrigger}
@@ -1538,7 +1657,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                 unavailable={navigationUnsettled || signedOut}
               />
             ) : null}
-            {activeRoomId === null || focusedDocs || activeCanvasMode === 'docs' ? null : (
+            {activeRoomId === null || focusedDocs || activeCanvasMode !== 'chat' ? null : (
               <>
                 <MessageSearch store={activeStore} roomId={activeRoomId} onShow={showMessage} />
                 <PinnedMessages store={activeStore} roomId={activeRoomId} onShow={showMessage} />
@@ -1590,7 +1709,14 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             </div>
           ) : null}
 
-          {activeChannel != null && directRoomId === null && docsCanvasSlot !== undefined ? (
+          {/* The documents pane stays mounted once it has been opened, so coming back to it is
+              instant — but not before: mounting it on every visit to a channel loads the
+              collaborative editor's chunk and reads the workspace's documents for a member who
+              never opens « Docs ». */}
+          {docsEverOpened &&
+          activeChannel != null &&
+          directRoomId === null &&
+          docsCanvasSlot !== undefined ? (
             <div
               hidden={activeCanvasMode !== 'docs'}
               data-testid="espace-inline-docs-canvas"
@@ -1599,7 +1725,30 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               {docsCanvasSlot}
             </div>
           ) : null}
-          {activeChannel == null || activeCanvasMode === 'docs' ? null : (
+          {activeCanvasMode === 'files' ? (
+            <div data-testid="espace-files-canvas" className="flex min-h-0 flex-1 flex-col">
+              <Suspense
+                fallback={
+                  // The page's own ground, so the canvas does not blink a different colour on
+                  // the way in.
+                  <div className="flex min-h-0 flex-1 flex-col gap-3 bg-c-surface p-4">
+                    <Skeleton shape="text" />
+                    <Skeleton shape="block" />
+                  </div>
+                }
+              >
+                <LazyWorkspaceFilesPanel
+                  store={activeStore}
+                  snapshot={snapshot}
+                  searchEntries={searchEntries}
+                  documents={documents}
+                  {...(openStudioDocument === undefined ? {} : { onOpenDocument })}
+                  onOpenChannel={(channelId) => selectTextChannel(channelId)}
+                />
+              </Suspense>
+            </div>
+          ) : null}
+          {activeChannel == null || activeCanvasMode !== 'chat' ? null : (
             <>
               {isProximityChannel(activeChannel, proximityChannelIds) &&
               renderProximityPanel !== undefined ? (

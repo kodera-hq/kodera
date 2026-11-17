@@ -232,7 +232,12 @@ function headers(config, path) {
     "script-src-attr 'none'",
     "style-src 'self'",
     "style-src-attr 'none'",
-    "img-src 'self'",
+    // `'self'` and the blobs this page itself makes. A member's own avatar is fetched from their
+    // homeserver through `connect-src` and drawn from the bytes received, so no remote origin is
+    // ever an image source and no host learns who drew it — the reason `img-src` is narrow
+    // (docs/specs/messaging-media-and-notifications.md). `data:` stays out: an address written
+    // into a message must never become an image, and `safeUnfurl.ts` keeps refusing `blob:` too.
+    "img-src 'self' blob:",
     "font-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",

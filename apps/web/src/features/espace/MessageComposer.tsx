@@ -21,7 +21,13 @@ import { useDraftSlice, type DraftChannel } from './draftChannel'
 import { replaceShortcodes } from './emoji'
 import { EmojiPalette } from './EmojiPalette'
 import type { ChannelDraft, RoomTarget } from './EspaceDraftProvider'
-import { composing, displayNameOf, nameOf, sameItems, type EspaceStoreLike } from './liveViewModel'
+import {
+  composing,
+  nameOf,
+  safeDisplayName,
+  sameItems,
+  type EspaceStoreLike,
+} from './liveViewModel'
 import type { MemberView, SendOptions } from './matrix/store'
 import type { MessageView } from './matrix/timeline'
 import { MentionInput } from './MentionInput'
@@ -63,7 +69,8 @@ function useAttachmentQueue(): AttachmentQueue | null {
  * any more as « Plusieurs personnes ». Empty when no one is.
  */
 function typingLine(members: readonly MemberView[], t: TFunction): string {
-  const names = members.map(({ userId, name }) => name ?? displayNameOf(userId))
+  const unnamed = t('console.workspace.members.unnamed')
+  const names = members.map(({ userId, name }) => safeDisplayName(name, userId, unnamed))
   const [first, second] = names
   if (first === undefined) return ''
   if (second === undefined) return t('console.workspace.channel.typing-one', { name: first })

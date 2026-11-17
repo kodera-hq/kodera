@@ -287,6 +287,9 @@ function protocol() {
       if (method === 'POST' && path === `/_matrix/client/v3/user/${MATRIX_USER}/filter`) {
         return json({ filter_id: 'draft-filter' })
       }
+      if (method === 'GET' && path === `/_matrix/client/v3/profile/${MATRIX_USER}`) {
+        return json({})
+      }
       if (
         method === 'GET' &&
         path === `/_matrix/client/v3/directory/room/#kodera-ch-${CHANNEL}:${SERVER}`

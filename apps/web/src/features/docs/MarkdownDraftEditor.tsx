@@ -7,6 +7,7 @@ import type { DocumentComment, DocumentMember } from './documentComments'
 import { Dialog } from '../../ui/Dialog/Dialog'
 import { LINK_TEXT } from '../../ui/linkText'
 import { StudioGlyph } from '../../ui/icons/StudioGlyph'
+import { safeDisplayName } from '../espace/memberName'
 import { studioMessages } from '../workspace/studioMessages'
 import {
   applyMarkdownCommand,
@@ -411,44 +412,49 @@ export function MarkdownDraftEditor({
             </span>
           </h3>
           <ul className="mt-3 flex flex-col gap-4">
-            {commentThreads.map((comment) => (
-              <li key={comment.id} className="flex flex-col gap-2 text-sm text-c-ink">
-                <div className="flex items-center gap-2">
-                  <Avatar name={comment.authorName} identity={comment.authorId} size="md" />
-                  <div>
-                    <strong>{comment.authorName}</strong>
-                    <p className="text-xs text-c-ink-2">{comment.createdAtLabel}</p>
+            {commentThreads.map((comment) => {
+              const commentAuthor = safeDisplayName(comment.authorName, comment.authorId)
+              return (
+                <li key={comment.id} className="flex flex-col gap-2 text-sm text-c-ink">
+                  <div className="flex items-center gap-2">
+                    <Avatar name={commentAuthor} identity={comment.authorId} size="md" />
+                    <div>
+                      <strong>{commentAuthor}</strong>
+                      <p className="text-xs text-c-ink-2">{comment.createdAtLabel}</p>
+                    </div>
                   </div>
-                </div>
-                {comment.quote ? (
-                  <blockquote className="border-l border-c-border-strong pl-3 text-xs break-words text-c-ink-2">
-                    {comment.quote}
-                  </blockquote>
-                ) : null}
-                <p className="rounded-md bg-c-muted p-3 break-words whitespace-pre-wrap">
-                  {comment.body}
-                </p>
-                {comment.resolved ? (
-                  <span className="text-xs text-c-ink-2">{copy.resolved}</span>
-                ) : null}
-                {onCommentsChange ? (
-                  <button
-                    type="button"
-                    aria-pressed={comment.resolved}
-                    className="min-h-10 self-start rounded-sm px-2 text-sm font-bold focus-visible:ring"
-                    onClick={() =>
-                      onCommentsChange(
-                        commentThreads.map((entry) =>
-                          entry.id === comment.id ? { ...entry, resolved: !entry.resolved } : entry
+                  {comment.quote ? (
+                    <blockquote className="border-l border-c-border-strong pl-3 text-xs break-words text-c-ink-2">
+                      {comment.quote}
+                    </blockquote>
+                  ) : null}
+                  <p className="rounded-md bg-c-muted p-3 break-words whitespace-pre-wrap">
+                    {comment.body}
+                  </p>
+                  {comment.resolved ? (
+                    <span className="text-xs text-c-ink-2">{copy.resolved}</span>
+                  ) : null}
+                  {onCommentsChange ? (
+                    <button
+                      type="button"
+                      aria-pressed={comment.resolved}
+                      className="min-h-10 self-start rounded-sm px-2 text-sm font-bold focus-visible:ring"
+                      onClick={() =>
+                        onCommentsChange(
+                          commentThreads.map((entry) =>
+                            entry.id === comment.id
+                              ? { ...entry, resolved: !entry.resolved }
+                              : entry
+                          )
                         )
-                      )
-                    }
-                  >
-                    {comment.resolved ? copy.reopen : copy.resolve}
-                  </button>
-                ) : null}
-              </li>
-            ))}
+                      }
+                    >
+                      {comment.resolved ? copy.reopen : copy.resolve}
+                    </button>
+                  ) : null}
+                </li>
+              )
+            })}
           </ul>
           {!commentThreads.length ? (
             <p className="mt-3 text-sm text-c-ink-2">
@@ -467,7 +473,7 @@ export function MarkdownDraftEditor({
                   {
                     id: crypto.randomUUID(),
                     authorId: author.userId,
-                    authorName: author.name ?? author.userId,
+                    authorName: safeDisplayName(author.name, author.userId),
                     createdAtLabel: copy.justNow,
                     body: commentBody.trim(),
                     resolved: false,

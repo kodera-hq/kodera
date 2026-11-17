@@ -31,11 +31,13 @@ import {
   roomRowId,
   subscribeToNoCall,
   type AudioCallLike,
+  type CanvasMode,
   type EspaceStoreLike,
 } from './liveViewModel'
 import type { RoomSummary } from './matrix/store'
 import type { MentionCandidate } from './mentions'
 import { useStoreSlice } from './useStoreSlice'
+import { workspaceFilesOf } from './workspaceFiles'
 import { cssProperty } from '../../ui/cssom'
 
 /** What a right-click on a channel's row tells the view's owner. */
@@ -114,14 +116,15 @@ function AudioRoom({
   // Rings only in the room the member is in: who speaks reaches only the people in the call.
   // The member's own face follows their microphone, frame by frame, so it rings alone too;
   // the others' follow the call's speakers, which go stale while it reconnects.
-  const occupants = occupantsForRoom(room).map((occupant) =>
-    callSnapshot === null
-      ? occupant
-      : occupant.id === callSnapshot.self
-        ? { ...occupant, speakingRef }
-        : callSnapshot.status === 'connected' && callSnapshot.speakers.includes(occupant.id)
-          ? { ...occupant, speaking: true }
-          : occupant
+  const occupants = occupantsForRoom(room, t('console.workspace.members.unnamed')).map(
+    (occupant) =>
+      callSnapshot === null
+        ? occupant
+        : occupant.id === callSnapshot.self
+          ? { ...occupant, speakingRef }
+          : callSnapshot.status === 'connected' && callSnapshot.speakers.includes(occupant.id)
+            ? { ...occupant, speaking: true }
+            : occupant
   )
   const unavailable = !resolved
     ? t('console.workspace.channel.label-preparing')
@@ -191,7 +194,7 @@ export interface ChannelSidebarProps {
   /** The column's width, as the member resized it; not applied on a phone. */
   width: number
   activeChannelId: string | undefined
-  canvasMode: 'chat' | 'docs'
+  canvasMode: CanvasMode
   /** Optional presentation metadata; never an access grant. */
   categoryDescriptions: Readonly<Record<string, string>> | undefined
   /** Channels the server flags as the proximity room; see `isProximityChannel`. */
@@ -212,9 +215,9 @@ export interface ChannelSidebarProps {
   onOpenChannel: (entry: ChannelSearchEntry) => HTMLElement | null
   onOpenDocument: ((doc: ChannelDoc) => HTMLElement | null) | undefined
   /** The search's « Docs » action: the canvas changes, and the chooser stays as it is. */
-  onChangeCanvasMode: ((mode: 'chat' | 'docs') => void) | undefined
+  onChangeCanvasMode: ((mode: CanvasMode) => void) | undefined
   /** The studio's sections: the canvas changes, and a phone's chooser closes on it. */
-  onSwitchCanvas: ((mode: 'chat' | 'docs') => void) | undefined
+  onSwitchCanvas: ((mode: CanvasMode) => void) | undefined
   onSelectTextChannel: (channelId: string) => void
   /** The direct conversation shown, and how one is chosen; absent where there are none. */
   activeDirectRoomId?: string | null
@@ -297,7 +300,7 @@ function ChannelSidebarView({
 
     const unreadCount = room?.unread ?? 0
     const mentionCount = room?.mentions ?? 0
-    const isSelected = channel.id === activeChannelId
+    const isSelected = canvasMode === 'chat' && channel.id === activeChannelId
     const isArchived = channel.lifecycle === 'archived'
     const readOnly = isArchived
       ? t('console.workspace.channel.label-archived')
@@ -372,26 +375,14 @@ function ChannelSidebarView({
         Number(b.unread > 0) - Number(a.unread > 0) ||
         b.ts - a.ts
     )
-  const files = searchEntries.flatMap((channel) => {
-    const resolved = snapshot.channels.get(channel.id)
-    const attachments =
-      resolved?.state === 'resolved'
-        ? store
-            .getTimeline(resolved.roomId)
-            .filter((message) => !message.redacted && message.attachment)
-            .map((message) => ({
-              id: `${channel.id}:${message.eventId}`,
-              title: message.attachment!.name,
-              channel,
-            }))
-        : []
-    return [
-      ...documents
-        .filter((doc) => doc.channelId === channel.id)
-        .map((doc) => ({ id: doc.id, title: doc.title, channel, document: doc })),
-      ...attachments,
-    ]
-  })
+  // One list for the dock's panel and for « Fichiers », so the two never disagree about what the
+  // workspace holds (`workspaceFiles.ts`).
+  const files = workspaceFilesOf(store, snapshot, searchEntries, documents).map((entry) => ({
+    id: entry.id,
+    title: entry.name,
+    channel: entry.channel,
+    ...(entry.document === undefined ? {} : { document: entry.document }),
+  }))
 
   function renderCategory(category: WorkspaceCategory, index: number) {
     const catLabel = categoryLabel(category, t)
@@ -512,6 +503,7 @@ function ChannelSidebarView({
             store={store}
             activeRoomId={activeDirectRoomId ?? null}
             onSelect={onSelectDirect}
+            searchEntries={searchEntries}
           />
         )}
       </div>

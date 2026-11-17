@@ -365,4 +365,42 @@ describe('SoundEngine policy & precedence matrix (SoundEngine.ts)', () => {
     expect(setSinkId).toHaveBeenCalledWith('usb-headset-42')
     expect(engine.getPreferences().outputDeviceId).toBe('usb-headset-42')
   })
+
+  it('keeps gesture unlock listeners armed when modifier keydown or pointerdown fails to resume, detaching only once running', async () => {
+    let state: AudioContextState = 'suspended'
+    let allowResume = false
+    const resume = vi.fn(async () => {
+      if (!allowResume) throw new DOMException('Not allowed', 'NotAllowedError')
+      state = 'running'
+    })
+    const engine = new SoundEngine({
+      audioContextFactory: () =>
+        ({
+          get state() {
+            return state
+          },
+          resume,
+        }) as unknown as SinkCapableAudioContext,
+    })
+    try {
+      // Modifier keydown rejects resume() -> listener must NOT disarm permanently
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta' }))
+      await Promise.resolve()
+      expect(resume).toHaveBeenCalledTimes(1)
+      expect(state).toBe('suspended')
+
+      // Subsequent real click unlocks WebAudio -> transitions to running -> detaches listeners
+      allowResume = true
+      document.dispatchEvent(new MouseEvent('click'))
+      await vi.waitFor(() => expect(state).toBe('running'))
+      expect(resume).toHaveBeenCalledTimes(2)
+
+      // Further gestures no longer invoke resume()
+      document.dispatchEvent(new Event('pointerup'))
+      document.dispatchEvent(new MouseEvent('click'))
+      expect(resume).toHaveBeenCalledTimes(2)
+    } finally {
+      engine.destroy()
+    }
+  })
 })

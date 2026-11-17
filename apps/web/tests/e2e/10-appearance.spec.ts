@@ -705,13 +705,7 @@ test('appearance/entry: opens from the account menu on a desktop and from Plus o
   await expect(page).toHaveURL(new RegExp(`/${ORG}/home$`))
   await tabs.getByRole('button', { name: 'Plus' }).click()
   const sheet = page.getByRole('dialog', { name: 'Plus' })
-  // Beside « Sécurité et connexion », the other account place.
-  await expect(sheet.getByRole('link')).toHaveText([
-    'Personnes',
-    'Domaine & identité',
-    'Sécurité et connexion',
-    'Apparence',
-  ])
+  await expect(sheet.getByRole('link')).toHaveText(['Personnes', 'Domaine & identité', 'Apparence'])
   await sheet.getByRole('link', { name: 'Apparence' }).click()
   await expect(page).toHaveURL(new RegExp(`/${ORG}/appearance$`))
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Apparence')

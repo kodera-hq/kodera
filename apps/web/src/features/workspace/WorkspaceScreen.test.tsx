@@ -94,6 +94,9 @@ vi.mock('../../app/org-route', () => ({
   orgRoute: {
     useParams: () => ({ org: session.slug }),
     useLoaderData: () => ({
+      // The loader's `me`, as the route really returns it: the screen names the member from it
+      // when neither this browser nor the homeserver holds a name for them.
+      me: { id: 'person-1', email: 'alex.martin@acme.example', display_name: 'Alex Martin' },
       membership: {
         role: session.role,
         // Another organisation is another id: each one's reads are its own.
@@ -1546,6 +1549,13 @@ it('wires the live Discussion and Docs canvas and preserves each channel draft',
   const user = userEvent.setup()
   renderScreen()
   await user.click(await screen.findByRole('button', { name: 'Docs canvas' }))
+  // In the live workspace « Docs » opens on the collaborative Pages: the channel pads view is
+  // the one a store supplies, and without one it is a draft held in this browser alone.
+  expect(screen.getByRole('button', { name: 'Pages de l’espace' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await user.click(screen.getByRole('button', { name: 'Pads de l’équipe' }))
   const editor = screen
     .getAllByTestId('docs-inline-textarea')
     .find((node) => !node.closest('[hidden]'))!
@@ -1553,6 +1563,7 @@ it('wires the live Discussion and Docs canvas and preserves each channel draft',
   await user.type(editor, 'Production draft')
   await user.click(screen.getByRole('button', { name: 'Discussion canvas' }))
   await user.click(screen.getByRole('button', { name: 'Docs canvas' }))
+  await user.click(screen.getByRole('button', { name: 'Pads de l’équipe' }))
   const returned = screen
     .getAllByTestId('docs-inline-textarea')
     .find((node) => !node.closest('[hidden]'))!

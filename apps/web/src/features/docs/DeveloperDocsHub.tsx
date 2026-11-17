@@ -112,7 +112,9 @@ export function DeveloperDocsHub({
               <h3
                 id={`${id}-${active.id}-${section.id}`}
                 tabIndex={-1}
-                className="mb-3 scroll-mt-4 text-lg font-semibold text-c-ink focus-visible:ring focus-visible:outline-hidden"
+                // Focused by its anchor so reading resumes here; it is not a control, so it draws
+                // no ring — as the route headings do not (`src/index.css`).
+                className="mb-3 scroll-mt-4 text-lg font-semibold text-c-ink outline-hidden"
               >
                 {section.title}
               </h3>

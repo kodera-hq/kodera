@@ -810,8 +810,10 @@ describe('EspaceLiveView', () => {
     const occupants = screen.getByRole('list', { name: 'Dans Point quotidien' })
     expect(within(occupants).getByText('Marina Loiseau')).toBeInTheDocument()
     expect(screen.queryByText(/3f2a1b2c/i)).toBeNull()
-    // A member without a display name falls back to the id's localpart.
-    expect(within(occupants).getByText(/^7d8e9f0a/i)).toBeInTheDocument()
+    // A member no name is held for is named by the word for one, and by the few characters that
+    // tell two of them apart — never by the whole subject dressed up as a name.
+    expect(within(occupants).getByText('Membre · 7d8e')).toBeInTheDocument()
+    expect(screen.queryByText(/7d8e9f0a/i)).toBeNull()
   })
 
   it("names a thread's faces and the reply banner by display name too", async () => {
@@ -1912,6 +1914,9 @@ function snapshotFixture(
     }
     if (method === 'POST' && path === `/_matrix/client/v3/user/${SNAPSHOT_ME}/filter`) {
       return json(200, { filter_id: 'snapshot-filter' })
+    }
+    if (method === 'GET' && path === `/_matrix/client/v3/profile/${SNAPSHOT_ME}`) {
+      return json(200, {})
     }
     if (
       method === 'GET' &&

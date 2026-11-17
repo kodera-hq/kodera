@@ -171,7 +171,12 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
               <RadixDialog.Title
                 ref={titleRef}
                 tabIndex={initialFocus === 'title' ? -1 : undefined}
-                className="text-lg font-semibold text-c-ink focus-visible:ring focus-visible:outline-hidden"
+                // Where reading resumes when the dialog opens, not a control: it draws no ring,
+                // as the route headings do not (`src/index.css`).
+                className={cx(
+                  'text-lg font-semibold text-c-ink',
+                  initialFocus === 'title' && 'outline-hidden'
+                )}
               >
                 {title}
               </RadixDialog.Title>

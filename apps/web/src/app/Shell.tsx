@@ -29,6 +29,8 @@ export interface ShellProps {
   organisation: OrgSwitcherOrganisation
   memberships?: readonly OrgSwitcherMembership[]
   onSwitchOrganisation?: (slug: string) => void
+  /** Whether the signed-in identity is staff (`Me.staff`); shared with the workspace's own menu. */
+  staff?: boolean
   user: UserBlockUser
   role: OrganisationRole
   onSignOut: () => void
@@ -69,6 +71,7 @@ export function Shell({
   organisation,
   memberships,
   onSwitchOrganisation,
+  staff = false,
   user,
   role,
   onSignOut,
@@ -103,7 +106,7 @@ export function Shell({
     const organisationSwitch: OrganisationSwitch | undefined =
       memberships === undefined || onSwitchOrganisation === undefined
         ? undefined
-        : { memberships, onSwitch: onSwitchOrganisation }
+        : { memberships, onSwitch: onSwitchOrganisation, staff }
     return (
       <OrganisationSwitchContext.Provider value={organisationSwitch}>
         <div className="flex min-h-screen flex-col">
@@ -167,7 +170,7 @@ export function Shell({
     const organisationSwitch: OrganisationSwitch | undefined =
       memberships === undefined || onSwitchOrganisation === undefined
         ? undefined
-        : { memberships, onSwitch: onSwitchOrganisation }
+        : { memberships, onSwitch: onSwitchOrganisation, staff }
     return (
       <OrganisationSwitchContext.Provider value={organisationSwitch}>
         <div className="flex min-h-screen">

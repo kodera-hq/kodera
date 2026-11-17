@@ -221,8 +221,10 @@ export function FirstRunOnboardingModal({
       }}
     >
       <Modal.Portal>
-        <Modal.Overlay className="fixed inset-0 z-50 bg-c-sunken" />
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        {/* A scrim darkens the page; a surface role replaces it, which reads as the screen
+            changing colour on the way in. */}
+        <Modal.Overlay className="fixed inset-0 z-40 bg-c-scrim" />
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
           <Modal.Content
             asChild
             aria-describedby={undefined}

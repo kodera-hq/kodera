@@ -1,58 +1,42 @@
 // The sidebar's direct conversations (docs/specs/messaging-media-and-notifications.md): the rooms
 // `m.direct` lists, joined, and a field to start one with one to eight people by Matrix id.
 
-import { useCallback, useId, useState } from 'react'
+import { lazy, Suspense, useCallback, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
-import { TextField } from '../../ui/TextField/TextField'
+import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
 import type { EspaceStoreLike } from './liveViewModel'
 import type { DirectSummary } from './matrix/directs'
 import { useStoreSlice } from './useStoreSlice'
 
 const NONE: readonly DirectSummary[] = []
 
+// Chosen only when « Nouveau » is pressed: the picker and its roster never weigh on opening the
+// workspace, and the dialog's chunk is fetched on the click that needs it.
+const LazyDirectMessageDialog = lazy(() =>
+  import('./DirectMessageDialog').then((module) => ({ default: module.DirectMessageDialog }))
+)
+
 export interface DirectMessagesProps {
   store: EspaceStoreLike
   activeRoomId: string | null
   onSelect: (roomId: string) => void
+  /** Every channel of the workspace: where the picker gathers the people to choose from. */
+  searchEntries: readonly ChannelSearchEntry[]
 }
 
-export function DirectMessages({ store, activeRoomId, onSelect }: DirectMessagesProps) {
+export function DirectMessages({
+  store,
+  activeRoomId,
+  onSelect,
+  searchEntries,
+}: DirectMessagesProps) {
   const { t } = useTranslation()
   const headingId = useId()
   const directsOf = useCallback(() => store.getDirects?.() ?? NONE, [store])
   const directs = useStoreSlice(store.subscribe, store.getSnapshot, directsOf)
   const [composing, setComposing] = useState(false)
-  const [people, setPeople] = useState('')
-  const [problem, setProblem] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  function start() {
-    if (store.openDirect === undefined) return
-    const ids = people
-      .split(/[\s,;]+/u)
-      .map((id) => id.trim())
-      .filter((id) => id !== '')
-    setProblem('')
-    setBusy(true)
-    store.openDirect(ids).then(
-      (roomId) => {
-        setBusy(false)
-        setComposing(false)
-        setPeople('')
-        onSelect(roomId)
-      },
-      (error: unknown) => {
-        setBusy(false)
-        setProblem(
-          error instanceof Error && error.message === 'Invalid Matrix user ID'
-            ? t('console.workspace.directs.problem-id')
-            : t('console.workspace.directs.problem-open')
-        )
-      }
-    )
-  }
 
   return (
     <section
@@ -64,40 +48,22 @@ export function DirectMessages({ store, activeRoomId, onSelect }: DirectMessages
           {t('console.workspace.directs.title')}
         </h3>
         {store.openDirect === undefined ? null : (
-          <Button variant="secondary" size="sm" onClick={() => setComposing((open) => !open)}>
+          <Button variant="secondary" size="sm" onClick={() => setComposing(true)}>
             {t('console.workspace.directs.action-new')}
           </Button>
         )}
       </div>
       {composing ? (
-        <div className="flex flex-col gap-2 px-2">
-          <TextField
-            label={t('console.workspace.directs.field-people')}
-            help={t('console.workspace.directs.help-people')}
-            value={people}
-            onChange={(event) => setPeople(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !busy) {
-                event.preventDefault()
-                start()
-              }
-            }}
+        <Suspense fallback={null}>
+          <LazyDirectMessageDialog
+            open
+            onOpenChange={setComposing}
+            store={store}
+            searchEntries={searchEntries}
+            onOpened={onSelect}
           />
-          <div>
-            <Button
-              variant="primary"
-              size="sm"
-              disabled={busy || people.trim() === ''}
-              onClick={start}
-            >
-              {t('console.workspace.directs.action-open')}
-            </Button>
-          </div>
-        </div>
+        </Suspense>
       ) : null}
-      <p role="status" className="px-2 text-xs text-c-bad-ink empty:sr-only">
-        {problem}
-      </p>
       {directs.length === 0 ? (
         <p className="px-2 text-xs text-c-ink-3">{t('console.workspace.directs.empty')}</p>
       ) : (

@@ -37,20 +37,31 @@ async function installSessionFetchGate(page: Page) {
     type Kind = 'token' | 'core'
     type Cell = { kind: Kind; afterToken: boolean; release(): void; listening(): boolean }
     const cells = new Set<Cell>()
-    let active = false, tokenArmed = false, coreArmed = false, tokenReleased = false
-    let total = 0, tokenStarted = 0, tokenEntered = 0, coreEntered = 0
+    let active = false,
+      tokenArmed = false,
+      coreArmed = false,
+      tokenReleased = false
+    let total = 0,
+      tokenStarted = 0,
+      tokenEntered = 0,
+      coreEntered = 0
     let failure: string | null = null
     function release(kind?: Kind) {
       for (const cell of [...cells]) if (kind === undefined || cell.kind === kind) cell.release()
     }
     function refuse(code: string) {
       failure ??= code
-      tokenArmed = false; coreArmed = false
+      tokenArmed = false
+      coreArmed = false
       release()
     }
     function kindOf(url: URL, method: string): Kind | undefined {
       if (url.origin !== window.location.origin || url.search || url.hash) return undefined
-      if (method === 'POST' && url.pathname === '/auth/realms/community/protocol/openid-connect/token') return 'token'
+      if (
+        method === 'POST' &&
+        url.pathname === '/auth/realms/community/protocol/openid-connect/token'
+      )
+        return 'token'
       if (method === 'GET' && url.pathname === '/api/v1/me') return 'core'
       return undefined
     }
@@ -63,41 +74,69 @@ async function installSessionFetchGate(page: Page) {
       const signal = overrideSignal === undefined ? request?.signal : overrideSignal
       const method = (init?.method ?? request?.method ?? 'GET').toUpperCase()
       let kind: Kind | undefined
-      try { kind = kindOf(new URL(request?.url ?? String(input), window.location.href), method) }
-      catch { /* An invalid native request still follows the original fetch path. */ }
+      try {
+        kind = kindOf(new URL(request?.url ?? String(input), window.location.href), method)
+      } catch {
+        /* An invalid native request still follows the original fetch path. */
+      }
       const afterToken = tokenReleased
       if (watching && kind === 'token') {
         if (tokenStarted === 8) refuse('response-storm')
         else tokenStarted++
       }
       // Preserve original arguments, native errors, MSW, and the SDK transport.
-      const response = await Reflect.apply(original, window, args) as Response
-      if (!watching || !active || failure !== null || kind === undefined ||
-          !(kind === 'token' ? tokenArmed : coreArmed)) return response
+      const response = (await Reflect.apply(original, window, args)) as Response
+      if (
+        !watching ||
+        !active ||
+        failure !== null ||
+        kind === undefined ||
+        !(kind === 'token' ? tokenArmed : coreArmed)
+      )
+        return response
       let responseKind: Kind | undefined
-      try { responseKind = kindOf(new URL(response.url), method) } catch { /* Refused below. */ }
-      if (response.status !== 200 || responseKind !== kind) {
-        refuse('unexpected-response'); return response
+      try {
+        responseKind = kindOf(new URL(response.url), method)
+      } catch {
+        /* Refused below. */
       }
-      if (total === 8) { refuse('response-storm'); return response }
+      if (response.status !== 200 || responseKind !== kind) {
+        refuse('unexpected-response')
+        return response
+      }
+      if (total === 8) {
+        refuse('response-storm')
+        return response
+      }
       total++
       if (kind === 'token') tokenEntered++
       else coreEntered++
       const heldKind = kind
       return new Promise<Response>((resolve, reject) => {
-        let settled = false, listening = false
-        const cell: Cell = { kind: heldKind, afterToken, release: () => finish(false), listening: () => listening }
+        let settled = false,
+          listening = false
+        const cell: Cell = {
+          kind: heldKind,
+          afterToken,
+          release: () => finish(false),
+          listening: () => listening,
+        }
         const abort = () => finish(true)
         function finish(aborted: boolean) {
           if (settled) return
-          settled = true; cells.delete(cell)
-          if (listening) { signal?.removeEventListener('abort', abort); listening = false }
+          settled = true
+          cells.delete(cell)
+          if (listening) {
+            signal?.removeEventListener('abort', abort)
+            listening = false
+          }
           if (aborted) reject(signal?.reason)
           else resolve(response)
         }
         cells.add(cell)
         if (signal !== undefined && signal !== null) {
-          signal.addEventListener('abort', abort, { once: true }); listening = true
+          signal.addEventListener('abort', abort, { once: true })
+          listening = true
           // Covers an abort before/between listener registration and this check.
           if (signal.aborted) abort()
         }
@@ -106,34 +145,64 @@ async function installSessionFetchGate(page: Page) {
     window.fetch = wrapper
     window.__healthySessionFetchGate = {
       armBoth() {
-        if (active || failure !== null || window.fetch !== wrapper) { refuse('invalid-arm'); return }
-        active = true; tokenArmed = true; coreArmed = true
+        if (active || failure !== null || window.fetch !== wrapper) {
+          refuse('invalid-arm')
+          return
+        }
+        active = true
+        tokenArmed = true
+        coreArmed = true
       },
       status() {
         const current = [...cells]
-        return { ownsFetch: window.fetch === wrapper, tokenArmed, coreArmed,
-          tokenStarted, tokenEntered, tokenHeld: current.filter((cell) => cell.kind === 'token').length,
-          coreEntered, coreHeld: current.filter((cell) => cell.kind === 'core').length,
-          coreHeldAfterTokenRelease: current.filter((cell) => cell.kind === 'core' && cell.afterToken).length,
-          abortListeners: current.filter((cell) => cell.listening()).length, failure }
+        return {
+          ownsFetch: window.fetch === wrapper,
+          tokenArmed,
+          coreArmed,
+          tokenStarted,
+          tokenEntered,
+          tokenHeld: current.filter((cell) => cell.kind === 'token').length,
+          coreEntered,
+          coreHeld: current.filter((cell) => cell.kind === 'core').length,
+          coreHeldAfterTokenRelease: current.filter(
+            (cell) => cell.kind === 'core' && cell.afterToken
+          ).length,
+          abortListeners: current.filter((cell) => cell.listening()).length,
+          failure,
+        }
       },
       releaseTokenOnly() {
-        if (!tokenArmed || !coreArmed) { refuse('invalid-token-release'); return }
-        tokenArmed = false; tokenReleased = true; release('token')
+        if (!tokenArmed || !coreArmed) {
+          refuse('invalid-token-release')
+          return
+        }
+        tokenArmed = false
+        tokenReleased = true
+        release('token')
       },
       releaseCoreOnly() {
-        if (tokenArmed || !tokenReleased || !coreArmed) { refuse('invalid-core-release'); return }
-        coreArmed = false; release('core')
+        if (tokenArmed || !tokenReleased || !coreArmed) {
+          refuse('invalid-core-release')
+          return
+        }
+        coreArmed = false
+        release('core')
       },
       cleanup() {
-        active = false; tokenArmed = false; coreArmed = false; release()
+        active = false
+        tokenArmed = false
+        coreArmed = false
+        release()
         if (window.fetch === wrapper) window.fetch = original
       },
     }
   })
 }
 
-async function sessionGate(page: Page, action?: 'armBoth' | 'releaseTokenOnly' | 'releaseCoreOnly' | 'cleanup') {
+async function sessionGate(
+  page: Page,
+  action?: 'armBoth' | 'releaseTokenOnly' | 'releaseCoreOnly' | 'cleanup'
+) {
   return page.evaluate((action) => {
     const gate = window.__healthySessionFetchGate
     if (gate === undefined) throw new Error('Session response gate is not installed.')
@@ -168,13 +237,16 @@ test('community sidebar, both menus, appearance and product dialogs are usable',
     0
   )
   for (const [name, theme] of [
-    ['Clair · Givre', 'light'],
-    ['Sombre · Ardoise', 'dark'],
-    ['Noir OLED', 'black'],
+    ['Clair', 'light'],
+    ['Sombre', 'dark'],
+    ['Noir', 'black'],
   ] as const) {
     await menu(page, 'Réglages de l’espace…', true)
     await page.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
-    await page.getByRole('button', { name: new RegExp(name) }).click()
+    for (const cardLabel of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
+      await expect(page.getByRole('button', { name: cardLabel, exact: true })).toBeVisible()
+    }
+    await page.getByRole('button', { name, exact: true }).click()
     await page.keyboard.press('Escape')
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
     await page.screenshot({
@@ -335,24 +407,42 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
     await page.waitForTimeout(61_000)
     // Keep the interval's actual token response pending through focus: one SDK renewal.
     await expect.poll(async () => (await sessionGate(page)).tokenHeld).toBeGreaterThan(0)
-    expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, tokenEntered: 1, failure: null })
+    expect(await sessionGate(page)).toMatchObject({
+      tokenStarted: 1,
+      tokenEntered: 1,
+      failure: null,
+    })
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, tokenHeld: 1, failure: null })
     expect(await sessionGate(page, 'releaseTokenOnly')).toMatchObject({
-      tokenArmed: false, tokenHeld: 0, coreArmed: true, failure: null,
+      tokenArmed: false,
+      tokenHeld: 0,
+      coreArmed: true,
+      failure: null,
     })
     // The real SDK adopts the response before the new authority read can enter.
-    await expect.poll(async () => (await sessionGate(page)).coreHeldAfterTokenRelease).toBeGreaterThan(0)
+    await expect
+      .poll(async () => (await sessionGate(page)).coreHeldAfterTokenRelease)
+      .toBeGreaterThan(0)
     expect(await sessionGate(page)).toMatchObject({ tokenStarted: 1, failure: null })
-    const retainedTrigger = page.getByRole('button', {
-      name: /changer d’organisation/, includeHidden: true,
-    }).last()
+    const retainedTrigger = page
+      .getByRole('button', {
+        name: /changer d’organisation/,
+        includeHidden: true,
+      })
+      .last()
     await expect(retainedTrigger).toBeAttached()
-    await expect(retainedTrigger.locator('xpath=ancestor::*[@hidden and @aria-hidden="true"]').first()).toBeAttached()
+    await expect(
+      retainedTrigger.locator('xpath=ancestor::*[@hidden and @aria-hidden="true"]').first()
+    ).toBeAttached()
     await expect(retainedTrigger).toBeHidden()
     await expect(page.getByText(/Votre session va expirer/)).toHaveCount(0)
     expect(await sessionGate(page, 'releaseCoreOnly')).toMatchObject({
-      tokenArmed: false, coreArmed: false, coreHeld: 0, abortListeners: 0, failure: null,
+      tokenArmed: false,
+      coreArmed: false,
+      coreHeld: 0,
+      abortListeners: 0,
+      failure: null,
     })
     const acceptedTrigger = page.getByRole('button', { name: /changer d’organisation/ }).last()
     await expect(acceptedTrigger).toBeVisible()
@@ -389,7 +479,10 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
       .last()
       .click()
     await expect(
-      page.getByRole('menuitemradio', { name: 'Kodera Community Communauté & Support', exact: true })
+      page.getByRole('menuitemradio', {
+        name: 'Kodera Community Communauté & Support',
+        exact: true,
+      })
     ).toHaveAttribute('aria-checked', 'true')
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: 'Salons', exact: true }).click()
@@ -403,18 +496,28 @@ test('a healthy session stays unobstructed after one minute and keyboard focus',
     await page.screenshot({ path: info.outputPath('workspace-mobile-voice.png'), fullPage: true })
     await page.getByRole('button', { name: 'Quitter', exact: true }).click()
 
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-      true
-    )
-    expect(await sessionGate(page)).toMatchObject({ ownsFetch: true, tokenStarted: 1, failure: null })
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+    ).toBe(true)
+    expect(await sessionGate(page)).toMatchObject({
+      ownsFetch: true,
+      tokenStarted: 1,
+      failure: null,
+    })
     completed = true
   } finally {
     // A failed/closed page must not mask the original assertion; a passing case proves cleanup.
     const cleaned = await sessionGate(page, 'cleanup').catch(() => null)
-    if (completed) expect(cleaned).toMatchObject({
-      ownsFetch: false, tokenArmed: false, coreArmed: false,
-      tokenHeld: 0, coreHeld: 0, abortListeners: 0, failure: null,
-    })
+    if (completed)
+      expect(cleaned).toMatchObject({
+        ownsFetch: false,
+        tokenArmed: false,
+        coreArmed: false,
+        tokenHeld: 0,
+        coreHeld: 0,
+        abortListeners: 0,
+        failure: null,
+      })
   }
 })
 

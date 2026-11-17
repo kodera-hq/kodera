@@ -1,6 +1,7 @@
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { onCommunityHost } from '../../app/communityHost'
 import { useOrganisationSwitch } from '../../app/organisationSwitch'
 import { workspaceMenuCopy } from './workspaceMenuMessages'
 import { initialsOf } from '../../ui/Avatar/Avatar'
@@ -68,9 +69,14 @@ export function WorkspaceMenu({
             ))}
           </Menu.RadioGroup>
           <Menu.Separator className="my-1 h-px bg-c-border-soft" />
-          <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('configure')}>
-            {copy.create}
-          </Menu.Item>
+          {/* On the public community's own host an ordinary member has one workspace, this one,
+              and no way to create another: the entry opened a setup they could not finish. Staff
+              keep it, and every other deployment is unchanged. */}
+          {onCommunityHost() && organisationSwitch?.staff !== true ? null : (
+            <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('configure')}>
+              {copy.create}
+            </Menu.Item>
+          )}
           <Menu.Item className={ITEM} onSelect={() => openWorkspaceCommand('settings')}>
             {copy.settings}
           </Menu.Item>

@@ -54,8 +54,10 @@ export function Tabs({ items, value, onValueChange, ariaLabel }: TabsProps) {
           </RadixTabs.Trigger>
         ))}
       </RadixTabs.List>
+      {/* Radix makes each panel focusable so the keyboard reaches its content. A panel is read,
+          not operated, so it draws no ring — as the route headings do not (`src/index.css`). */}
       {items.map((item) => (
-        <RadixTabs.Content key={item.value} value={item.value} className="pt-4">
+        <RadixTabs.Content key={item.value} value={item.value} className="pt-4 outline-hidden">
           {item.content}
         </RadixTabs.Content>
       ))}

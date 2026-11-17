@@ -34,6 +34,16 @@ const PANEL_COPY = {
     schemaLabel: 'Schéma de manifeste :',
     schemaSuffix: '• Moindre privilège et signature HMAC-SHA256',
     filterGroupLabel: "Filtrer par catégorie d'extension",
+    searchLabel: 'Rechercher un connecteur',
+    searchEmpty: 'Aucun connecteur ne correspond à cette recherche ni à ce filtre.',
+    connect: 'Connecter',
+    connected: 'Configuration ouverte',
+    setupHeading: 'Configurer',
+    setupStep1: '1. Ouvrez le service et créez-y un webhook sortant.',
+    setupStep2: '2. Collez ci-dessous l’URL de destination et vérifiez-la.',
+    setupStep3: '3. Signez vos appels avec le secret partagé (HMAC-SHA256).',
+    technical: 'Détails techniques & sécurité',
+    nothingChosen: 'Choisissez un connecteur pour voir sa configuration.',
     verifiedBadge: 'Schéma v1 vérifié',
     inspectorRegionLabel: 'Inspecteur de commande slash et de webhook',
     registeredCommands: 'Commandes slash enregistrées',
@@ -48,6 +58,16 @@ const PANEL_COPY = {
     schemaLabel: 'Manifest schema:',
     schemaSuffix: '• Least privilege and HMAC-SHA256 signing',
     filterGroupLabel: 'Filter by extension category',
+    searchLabel: 'Search for a connector',
+    searchEmpty: 'No connector matches this search or this filter.',
+    connect: 'Connect',
+    connected: 'Setup open',
+    setupHeading: 'Set up',
+    setupStep1: '1. Open the service and create an outgoing webhook there.',
+    setupStep2: '2. Paste its destination URL below and verify it.',
+    setupStep3: '3. Sign your calls with the shared secret (HMAC-SHA256).',
+    technical: 'Technical details & security',
+    nothingChosen: 'Choose a connector to see how to set it up.',
     verifiedBadge: 'Verified v1 schema',
     inspectorRegionLabel: 'Slash command and webhook inspector',
     registeredCommands: 'Registered slash commands',
@@ -60,7 +80,9 @@ const PANEL_COPY = {
 
 export function ExtensionsCatalogPanel({
   extensions = OFFICIAL_EXTENSIONS_CATALOG,
-  defaultSelectedId = 'io.kodera.ext.hello-webhook',
+  // No connector is chosen on arrival. A card drawn as chosen that nobody chose reads as a stray
+  // selection box, and it opened a setup panel for a service the member had not asked about.
+  defaultSelectedId,
   defaultCategory = 'all',
   defaultWebhookUrl = '',
   onSelectExtension,
@@ -71,42 +93,39 @@ export function ExtensionsCatalogPanel({
   const copy = isEn ? PANEL_COPY.en : PANEL_COPY.fr
   const headingId = useId()
   const webhookInputId = useId()
+  const searchInputId = useId()
 
   const [selectedCategory, setSelectedCategory] = useState<ExtensionCategoryFilter>(defaultCategory)
-  const [selectedId, setSelectedId] = useState<OfficialExtensionId>(defaultSelectedId)
+  const [selectedId, setSelectedId] = useState<OfficialExtensionId | null>(defaultSelectedId ?? null)
+  const [term, setTerm] = useState('')
   const [webhookUrlInput, setWebhookUrlInput] = useState<string>(defaultWebhookUrl)
   const [validationResult, setValidationResult] = useState<ExtensionWebhookValidationResult | null>(
     null
   )
 
-  const filteredExtensions = useMemo<readonly OfficialExtensionDescriptor[]>(
-    () =>
-      selectedCategory === 'all'
-        ? extensions
-        : extensions.filter((ext) => ext.category === selectedCategory),
-    [extensions, selectedCategory]
+  const filteredExtensions = useMemo<readonly OfficialExtensionDescriptor[]>(() => {
+    const needle = term.trim().toLocaleLowerCase()
+    return extensions.filter(
+      (ext) =>
+        (selectedCategory === 'all' || ext.category === selectedCategory) &&
+        (needle === '' ||
+          `${ext.name} ${ext.nameEn} ${ext.description} ${ext.descriptionEn} ${ext.slashCommand}`
+            .toLocaleLowerCase()
+            .includes(needle))
+    )
+  }, [extensions, selectedCategory, term])
+
+  /** The connector whose setup is open, or `undefined` while none has been chosen. */
+  const selectedExtension = useMemo<OfficialExtensionDescriptor | undefined>(
+    () => (selectedId === null ? undefined : extensions.find((ext) => ext.id === selectedId)),
+    [extensions, selectedId]
   )
 
-  const selectedExtension = useMemo<OfficialExtensionDescriptor>(
-    () =>
-      filteredExtensions.find((ext) => ext.id === selectedId) ??
-      filteredExtensions[0] ??
-      extensions.find((ext) => ext.id === selectedId) ??
-      extensions[0] ??
-      OFFICIAL_EXTENSIONS_CATALOG[0]!,
-    [extensions, filteredExtensions, selectedId]
-  )
-
+  // Filtering narrows the list; it does not choose for the member. Choosing the first row of a
+  // new filter opened a setup panel nobody asked for, and the row it chose was not always in the
+  // filter the member had just picked.
   const handleSelectCategory = (category: ExtensionCategoryFilter) => {
     setSelectedCategory(category)
-    const matching =
-      category === 'all' ? extensions : extensions.filter((ext) => ext.category === category)
-    if (matching.length > 0 && !matching.some((ext) => ext.id === selectedId)) {
-      const nextSelected = matching[0]!
-      setSelectedId(nextSelected.id)
-      setValidationResult(null)
-      onSelectExtension?.(nextSelected)
-    }
   }
 
   const handleSelect = (extension: OfficialExtensionDescriptor) => {
@@ -116,6 +135,7 @@ export function ExtensionsCatalogPanel({
   }
 
   const handleValidateWebhook = () => {
+    if (selectedExtension === undefined) return
     const res = validateExtensionWebhookUrl(webhookUrlInput)
     setValidationResult(res)
     if (res.ok) {
@@ -136,13 +156,6 @@ export function ExtensionsCatalogPanel({
                 <h2 id={headingId} className="text-lg font-semibold text-c-ink">
                   {copy.heading}
                 </h2>
-                <p className="text-sm font-regular text-c-ink-2">
-                  {copy.schemaLabel}{' '}
-                  <span className="font-mono font-medium text-c-ink">
-                    {EXTENSION_SCHEMA_VERSION}
-                  </span>{' '}
-                  {copy.schemaSuffix}
-                </p>
                 {/* What the list is, said where it is drawn: starters to adapt, connected to no
                     account. Not an endorsement by the services they name. */}
                 <p className="text-sm font-regular text-c-ink-2">
@@ -153,6 +166,19 @@ export function ExtensionsCatalogPanel({
             <StatusPill state="neutral">
               {t('console.onboarding.extensions.count-reference', { count: extensions.length })}
             </StatusPill>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label htmlFor={searchInputId} className="text-xs font-medium text-c-ink-2">
+              {copy.searchLabel}
+            </label>
+            <input
+              id={searchInputId}
+              type="search"
+              value={term}
+              onChange={(event) => setTerm(event.target.value)}
+              className="h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+            />
           </div>
 
           <div
@@ -186,7 +212,7 @@ export function ExtensionsCatalogPanel({
             className="grid grid-cols-1 gap-3 md:grid-cols-2"
           >
             {filteredExtensions.map((ext) => {
-              const isSelected = ext.id === selectedExtension.id
+              const isSelected = ext.id === selectedExtension?.id
               const displayName = isEn ? ext.nameEn : ext.name
               const displayDescription =
                 ext.slug === 'frameio-review-bridge'
@@ -199,6 +225,7 @@ export function ExtensionsCatalogPanel({
                   <button
                     type="button"
                     aria-pressed={isSelected}
+                    aria-label={`${displayName} — ${copy.connect}`}
                     onClick={() => handleSelect(ext)}
                     className={
                       isSelected
@@ -206,7 +233,7 @@ export function ExtensionsCatalogPanel({
                         : 'flex w-full flex-col items-start gap-2 rounded-md border border-c-border-soft bg-c-surface p-3 text-left hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
                     }
                   >
-                    <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                    <span className="flex w-full flex-wrap items-center justify-between gap-2">
                       <BrandIcon name={EXTENSION_BRANDS[ext.id]} decorative />
                       <span
                         className={
@@ -220,10 +247,22 @@ export function ExtensionsCatalogPanel({
                       <span className="rounded-sm bg-c-muted px-2 py-1 font-mono text-xs font-semibold text-c-ink">
                         {ext.slashCommand}
                       </span>
-                    </div>
+                    </span>
 
-                    <div className="flex w-full flex-wrap items-center justify-between gap-2">
-                      <span className="font-mono text-xs text-c-ink-3">{ext.id}</span>
+                    {/* What it does, before what it is made of: the manifest id and the scopes it
+                        asks for are in « Détails techniques & sécurité » below. */}
+                    <p className="text-sm font-regular text-c-ink-2">{displayDescription}</p>
+
+                    <span className="flex w-full flex-wrap items-center justify-between gap-2">
+                      <span
+                        className={
+                          isSelected
+                            ? 'text-xs font-semibold text-c-accent-ink'
+                            : 'text-xs font-semibold text-c-ink-2'
+                        }
+                      >
+                        {isSelected ? copy.connected : copy.connect}
+                      </span>
                       {ext.verifiedManifest ? (
                         <span
                           data-testid={`extension-verified-${ext.slug}`}
@@ -232,26 +271,24 @@ export function ExtensionsCatalogPanel({
                           {copy.verifiedBadge}
                         </span>
                       ) : null}
-                    </div>
-
-                    <p className="text-xs font-regular text-c-ink-2">{displayDescription}</p>
-
-                    <div className="flex flex-wrap items-center gap-1">
-                      {ext.scopes.map((scope) => (
-                        <span
-                          key={`${ext.id}-${scope}`}
-                          className="rounded-sm border border-c-border-soft bg-c-surface px-2 py-1 font-mono text-xs text-c-ink-2"
-                        >
-                          {scope}
-                        </span>
-                      ))}
-                    </div>
+                    </span>
                   </button>
                 </li>
               )
             })}
           </ul>
+          {filteredExtensions.length === 0 ? (
+            <p role="status" className="text-sm text-c-ink-3">
+              {copy.searchEmpty}
+            </p>
+          ) : null}
 
+          {/* The setup of the connector the member chose, and nothing before they choose one. */}
+          {selectedExtension === undefined ? (
+            <p className="rounded-md border border-c-border-soft bg-c-sunken p-4 text-sm text-c-ink-2">
+              {copy.nothingChosen}
+            </p>
+          ) : (
           <div
             role="region"
             aria-label={copy.inspectorRegionLabel}
@@ -261,11 +298,7 @@ export function ExtensionsCatalogPanel({
               <BrandIcon name={EXTENSION_BRANDS[selectedExtension.id]} decorative />
               <div className="flex flex-col gap-1">
                 <span className="text-md font-semibold text-c-ink">
-                  {isEn ? selectedExtension.nameEn : selectedExtension.name} (
-                  {selectedExtension.slashCommand})
-                </span>
-                <span className="font-mono text-xs text-c-ink-3">
-                  {selectedExtension.id} • v{selectedExtension.version}
+                  {copy.setupHeading} {isEn ? selectedExtension.nameEn : selectedExtension.name}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -276,20 +309,12 @@ export function ExtensionsCatalogPanel({
               </div>
             </div>
 
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-semibold text-c-ink-2">{copy.registeredCommands}</span>
-              {selectedExtension.commands.map((cmd) => (
-                <div
-                  key={cmd.name}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs"
-                >
-                  <span className="font-mono font-semibold text-c-ink">{cmd.usage}</span>
-                  <span className="text-c-ink-2">
-                    {isEn ? cmd.descriptionEn : cmd.description}
-                  </span>
-                </div>
-              ))}
-            </div>
+            {/* The three steps, in the order the member carries them out. */}
+            <ol className="flex flex-col gap-1 text-sm text-c-ink-2">
+              <li>{copy.setupStep1}</li>
+              <li>{copy.setupStep2}</li>
+              <li>{copy.setupStep3}</li>
+            </ol>
 
             <div className="flex flex-col gap-2 border-t border-c-border-soft pt-3">
               <div className="flex flex-col gap-1">
@@ -338,8 +363,58 @@ export function ExtensionsCatalogPanel({
                 </div>
               ) : null}
             </div>
-            <WebhookSignatureTester key={selectedExtension.id} extensionId={selectedExtension.id} />
+            {/* The manifest, the scopes and the signature: what a developer needs and what an
+                administrator reads once. Out of the way of setting a connector up, not hidden —
+                a `details` keeps every word in the page and findable. */}
+            <details className="border-t border-c-border-soft pt-3">
+              <summary className="cursor-pointer text-sm font-medium text-c-ink-2 focus-visible:ring focus-visible:outline-hidden">
+                {copy.technical}
+              </summary>
+              <div className="flex flex-col gap-3 pt-3">
+                <p className="text-sm font-regular text-c-ink-2">
+                  {copy.schemaLabel}{' '}
+                  <span className="font-mono font-medium text-c-ink">
+                    {EXTENSION_SCHEMA_VERSION}
+                  </span>{' '}
+                  {copy.schemaSuffix}
+                </p>
+                <span className="font-mono text-xs text-c-ink-3">
+                  {selectedExtension.id} • v{selectedExtension.version}
+                </span>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold text-c-ink-2">
+                    {copy.registeredCommands}
+                  </span>
+                  {selectedExtension.commands.map((cmd) => (
+                    <div
+                      key={cmd.name}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs"
+                    >
+                      <span className="font-mono font-semibold text-c-ink">{cmd.usage}</span>
+                      <span className="text-c-ink-2">
+                        {isEn ? cmd.descriptionEn : cmd.description}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  {selectedExtension.scopes.map((scope) => (
+                    <span
+                      key={`${selectedExtension.id}-${scope}`}
+                      className="rounded-sm border border-c-border-soft bg-c-surface px-2 py-1 font-mono text-xs text-c-ink-2"
+                    >
+                      {scope}
+                    </span>
+                  ))}
+                </div>
+                <WebhookSignatureTester
+                  key={selectedExtension.id}
+                  extensionId={selectedExtension.id}
+                />
+              </div>
+            </details>
           </div>
+          )}
         </CardBody>
       </Card>
     </section>

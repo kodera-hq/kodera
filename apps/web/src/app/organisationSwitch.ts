@@ -11,6 +11,12 @@ export interface OrganisationSwitch {
   readonly memberships: readonly OrgSwitcherMembership[]
   /** Opens the chosen organisation; `OrgLayout` keeps the area and handles a different realm. */
   readonly onSwitch: (slug: string) => void
+  /**
+   * Whether the signed-in identity is staff (`Me.staff`). On the public community's own host an
+   * ordinary member has no workspace of their own to create, so the menu does not offer to create
+   * one; staff, who operate the fleet, keep it.
+   */
+  readonly staff?: boolean | undefined
 }
 
 export const OrganisationSwitchContext = createContext<OrganisationSwitch | undefined>(undefined)

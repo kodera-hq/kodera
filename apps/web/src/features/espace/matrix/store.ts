@@ -34,7 +34,10 @@ import {
   type RoomState,
 } from 'matrix-js-sdk'
 import { clearMatrixSession } from '@/auth/matrix'
+import { cleanText } from '../../../ui/safeText'
+import { AVATAR_TYPES, inspectRasterImage, MAX_AVATAR_BYTES } from '../../profile/avatarImage'
 import { channelRoomAlias, isChannelId, serverNameOf } from '../homeserver'
+import { isNamedProfile, safeDisplayName } from '../memberName'
 import { isMatrixUserId } from '../roomInvitations'
 import {
   directMap,
@@ -253,9 +256,10 @@ function relationOf(content: Record<string, unknown>): Relation | null {
  */
 function displayName(room: Room, userId: string, disambiguate = true): string | undefined {
   const member = room.getMember(userId)
-  const name = member?.rawDisplayName
-  if (member === null || name === undefined || name === '' || name === userId) return undefined
-  return disambiguate && member.disambiguate ? `${name} (${userId.slice(1, 5)})` : name
+  if (member === null) return undefined
+  const clean = cleanText(member.rawDisplayName, 80)
+  if (!isNamedProfile(clean, userId)) return undefined
+  return disambiguate && member.disambiguate ? `${clean} (${userId.slice(1, 5)})` : clean
 }
 
 /**
@@ -266,8 +270,54 @@ function displayName(room: Room, userId: string, disambiguate = true): string | 
  */
 function faceOf(room: Room, userId: string): MemberView {
   const name = displayName(room, userId, false)
-  const localpart = userId.slice(1).split(':')[0]
-  return name === undefined || name === localpart ? { userId } : { userId, name }
+  return name === undefined ? { userId } : { userId, name }
+}
+
+async function readBoundedAvatarBytes(
+  response: Response,
+  maxBytes: number
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  const lengthHeader = response.headers.get('content-length')
+  if (lengthHeader !== null) {
+    const declared = Number(lengthHeader)
+    if (!Number.isFinite(declared) || declared < 0 || declared > maxBytes) {
+      await response.body?.cancel().catch(() => undefined)
+      return null
+    }
+  }
+  try {
+    if (response.body !== null) {
+      const reader = response.body.getReader()
+      const chunks: Uint8Array[] = []
+      let total = 0
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          total += value.byteLength
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined)
+            return null
+          }
+          chunks.push(value)
+        }
+      } finally {
+        reader.releaseLock()
+      }
+      const out = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) {
+        out.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+      return out
+    }
+    const buffer = await response.arrayBuffer()
+    if (buffer.byteLength > maxBytes) return null
+    return new Uint8Array(buffer)
+  } catch {
+    return null
+  }
 }
 
 function same(a: unknown, b: unknown): boolean {
@@ -341,8 +391,12 @@ export class EspaceStore {
   #accessToken: string
   #refreshToken: string | undefined
   readonly #refresh: EspaceSession['refresh']
+  readonly #fetch: typeof fetch
   /** The refresh in flight: the SDK's requests and the room-access call share it. */
   #renewing: Promise<string> | null = null
+  /** Local profile overrides and lazy-sync hydration for the signed-in member. */
+  #ownProfile: { displayName?: string | undefined; avatarUrl?: string | undefined } = {}
+  #ownProfileFetched = false
   /** The channels the screen asked for: the only ones asked again after a 404 or a failure. */
   #watched = new Set<string>()
   /** Each answer the directory gave, by channel id, and until when it stands. */
@@ -417,6 +471,13 @@ export class EspaceStore {
     this.#me = session.userId
     const server = session.userId.slice(session.userId.indexOf(':') + 1)
     this.#services = new Set(SERVICE_LOCALPARTS.map((localpart) => `@${localpart}:${server}`))
+    this.#fetch =
+      this.#refresh === undefined || this.#refreshToken === undefined
+        ? base
+        : refreshingFetch(base, {
+            current: () => this.#accessToken,
+            refresh: () => this.#renew(),
+          })
     this.#client = createClient({
       baseUrl: session.baseUrl,
       userId: session.userId,
@@ -425,13 +486,7 @@ export class EspaceStore {
       // In memory: the SDK's default store writes to localStorage.
       store: new MemoryStore(),
       // The SDK is never handed the refresh token (see refresh.ts).
-      fetchFn:
-        this.#refresh === undefined || this.#refreshToken === undefined
-          ? base
-          : refreshingFetch(base, {
-              current: () => this.#accessToken,
-              refresh: () => this.#renew(),
-            }),
+      fetchFn: this.#fetch,
     })
     clients.set(this, this.#client)
   }
@@ -856,6 +911,7 @@ export class EspaceStore {
     }
     const status = this.#stopped ? this.#snapshot.status : this.#status
     if (status === 'live') {
+      this.#loadOwnProfileIfMissing()
       this.#syncWantedJoins(rooms)
       this.#recheck(rooms, invites)
     }
@@ -1003,7 +1059,11 @@ export class EspaceStore {
         const name = displayName(room, member.userId)
         return name === undefined ? { userId: member.userId } : { userId: member.userId, name }
       })
-      .sort((a, b) => (a.name ?? a.userId).localeCompare(b.name ?? b.userId))
+      .sort(
+        (a, b) =>
+          Number(a.name === undefined) - Number(b.name === undefined) ||
+          (a.name ?? a.userId).localeCompare(b.name ?? b.userId)
+      )
   }
 
   /** The panel's joined human roster includes the viewer; mention suggestions do not. */
@@ -1014,7 +1074,11 @@ export class EspaceStore {
       .getJoinedMembers()
       .filter((member) => !this.#services.has(member.userId))
       .map((member) => faceOf(room, member.userId))
-      .sort((a, b) => (a.name ?? a.userId).localeCompare(b.name ?? b.userId))
+      .sort(
+        (a, b) =>
+          Number(a.name === undefined) - Number(b.name === undefined) ||
+          (a.name ?? a.userId).localeCompare(b.name ?? b.userId)
+      )
     const roster = reuse(this.#rosters.get(roomId), next, (member) => member.userId)
     this.#rosters.set(roomId, roster)
     return roster
@@ -1459,7 +1523,7 @@ export class EspaceStore {
       const summary = snapshot.rooms.find((room) => room.roomId === roomId)
       const room = this.#client.getRoom(roomId)
       if (summary === undefined || room === null) continue
-      const names = userIds.map((userId) => displayName(room, userId) ?? userId)
+      const names = userIds.map((userId) => safeDisplayName(displayName(room, userId), userId))
       list.push({ roomId, userIds, name: names.join(', '), unread: summary.unread })
     }
     list.sort((a, b) => a.name.localeCompare(b.name))
@@ -1517,6 +1581,161 @@ export class EspaceStore {
   async inviteToRoom(roomId: string, userId: string): Promise<void> {
     if (!isMatrixUserId(userId)) throw new Error('Invalid Matrix user ID')
     await this.#client.invite(roomId, userId)
+  }
+
+  #loadOwnProfileIfMissing(): void {
+    if (this.#ownProfileFetched || this.#stopped) return
+    const user = this.#client.getUser(this.#me)
+    if (user?.displayName && user?.avatarUrl) {
+      this.#ownProfileFetched = true
+      return
+    }
+    this.#ownProfileFetched = true
+    void this.#client
+      .getProfileInfo(this.#me)
+      .then((info) => {
+        if (this.#stopped) return
+        const displayName =
+          typeof info.displayname === 'string' && info.displayname !== ''
+            ? info.displayname
+            : undefined
+        const avatarUrl =
+          typeof info.avatar_url === 'string' && info.avatar_url !== ''
+            ? info.avatar_url
+            : undefined
+        let changed = false
+        if (!('displayName' in this.#ownProfile) && displayName !== undefined) {
+          this.#ownProfile = { ...this.#ownProfile, displayName }
+          changed = true
+        }
+        if (!('avatarUrl' in this.#ownProfile) && avatarUrl !== undefined) {
+          this.#ownProfile = { ...this.#ownProfile, avatarUrl }
+          changed = true
+        }
+        if (changed) {
+          this.#snapshot = { ...this.#snapshot }
+          this.#emit()
+        }
+      })
+      .catch(() => undefined)
+  }
+
+  /**
+   * The member's own Matrix profile, as the homeserver holds it (`m.room.member` global profile):
+   * what every other client in every room draws for them. Read from the store's own state, so no
+   * extra request is made to draw the settings panel.
+   */
+  getOwnProfile = (): { displayName: string | undefined; avatarUrl: string | undefined } => {
+    const user = this.#client.getUser(this.#me)
+    return {
+      displayName:
+        'displayName' in this.#ownProfile
+          ? this.#ownProfile.displayName
+          : (user?.displayName ?? undefined),
+      avatarUrl:
+        'avatarUrl' in this.#ownProfile
+          ? this.#ownProfile.avatarUrl
+          : (user?.avatarUrl ?? undefined),
+    }
+  }
+
+  /**
+   * The member's own avatar as bytes, fetched from their homeserver's media endpoint with their
+   * own token. The bytes, not the address: the console's policy names no remote image source
+   * (`img-src 'self' blob:`), so what is drawn is a blob this page holds. `null` where there is no
+   * avatar, where the address is malformed or cross-origin, where the homeserver refuses, or where
+   * what came back is not a bounded raster PNG, JPEG or WebP image.
+   */
+  async fetchOwnAvatar(size = 96): Promise<Blob | null> {
+    if (this.#stopped) return null
+    const mxcUrl = this.getOwnProfile().avatarUrl
+    if (mxcUrl === undefined || !mxcUrl.startsWith('mxc://')) return null
+    const href = this.#client.mxcUrlToHttp(mxcUrl, size, size, 'crop', undefined, true, true)
+    if (!href) return null
+    let parsed: URL
+    let expectedOrigin: string
+    try {
+      parsed = new URL(href)
+      expectedOrigin = new URL(this.#client.baseUrl).origin
+    } catch {
+      return null
+    }
+    if (
+      expectedOrigin === 'null' ||
+      (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+      parsed.origin !== expectedOrigin
+    ) {
+      return null
+    }
+    let response: Response
+    try {
+      const token = this.#accessToken || this.#client.getAccessToken()
+      response = await this.#fetch(parsed.href, {
+        redirect: 'error',
+        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      })
+    } catch {
+      return null
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined)
+      return null
+    }
+    const declaredMime =
+      response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? ''
+    if (!(AVATAR_TYPES as readonly string[]).includes(declaredMime)) {
+      await response.body?.cancel().catch(() => undefined)
+      return null
+    }
+    const bytes = await readBoundedAvatarBytes(response, MAX_AVATAR_BYTES)
+    if (bytes === null) return null
+    const inspected = inspectRasterImage(bytes)
+    if (!inspected.ok) return null
+    return new Blob([bytes], { type: inspected.mime })
+  }
+
+  /** Names the member on their homeserver, for every room at once. */
+  async setProfileDisplayName(displayName: string): Promise<void> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const trimmed = displayName.trim()
+    if (trimmed === '') throw new Error('Empty display name')
+    const next = trimmed.slice(0, 80)
+    await this.#client.setDisplayName(next)
+    if (this.#stopped) return
+    this.#ownProfile = { ...this.#ownProfile, displayName: next }
+    this.#snapshot = { ...this.#snapshot }
+    this.#emit()
+  }
+
+  /**
+   * Uploads the picture and makes it the member's avatar. The file is sent to the member's own
+   * homeserver and nowhere else; its address is an `mxc://` one, which only a Matrix client
+   * resolves.
+   */
+  async setProfileAvatar(file: Blob, filename: string): Promise<string> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    const { content_uri: uri } = await this.#client.uploadContent(file, {
+      name: filename,
+      type: file.type || 'image/png',
+      includeFilename: true,
+    })
+    await this.#client.setAvatarUrl(uri)
+    if (!this.#stopped) {
+      this.#ownProfile = { ...this.#ownProfile, avatarUrl: uri }
+      this.#snapshot = { ...this.#snapshot }
+      this.#emit()
+    }
+    return uri
+  }
+
+  /** Removes the member's avatar; their initials stand for them again. */
+  async clearProfileAvatar(): Promise<void> {
+    if (this.#stopped) throw new Error('Espace is stopped')
+    await this.#client.setAvatarUrl('')
+    if (this.#stopped) return
+    this.#ownProfile = { ...this.#ownProfile, avatarUrl: undefined }
+    this.#snapshot = { ...this.#snapshot }
+    this.#emit()
   }
 
   #setJoinState(roomId: string, state: RoomJoinState): void {
