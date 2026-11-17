@@ -1525,7 +1525,12 @@ mod native_runtime {
         monitors: &[MonitorWorkArea],
     ) -> WindowBuilder {
         let (min_width, min_height) = super::effective_gui_min_inner_size(placement, monitors);
+        const WINDOW_ICON: &[u8; 256 * 256 * 4] = include_bytes!("../icons/window-icon.rgba");
         WindowBuilder::new()
+            .with_window_icon(Some(
+                tao::window::Icon::from_rgba(WINDOW_ICON.to_vec(), 256, 256)
+                    .expect("official window icon has verified RGBA dimensions"),
+            ))
             .with_title(DESKTOP_WINDOW_TITLE)
             .with_inner_size(LogicalSize::new(
                 f64::from(placement.bounds.width),

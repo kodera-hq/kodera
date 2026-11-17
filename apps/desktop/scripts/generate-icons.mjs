@@ -110,7 +110,7 @@ function polygon(path) {
   return points;
 }
 
-function renderPng(size, spec) {
+function renderPng(size, spec, rgbaOnly = false) {
   const factor = 4;
   const side = size * factor;
   const coverage = new Uint8Array(side * side);
@@ -137,6 +137,11 @@ function renderPng(size, spec) {
     const at = y * (size * 4 + 1) + 1 + x * 4;
     for (let c = 0; c < 3; c++) raw[at + c] = Math.round(rgb[0][c] + (rgb[1][c] - rgb[0][c]) * count / (factor * factor));
     raw[at + 3] = 255;
+  }
+  if (rgbaOnly) {
+    const rgba = Buffer.alloc(size * size * 4);
+    for (let y = 0; y < size; y++) raw.copy(rgba, y * size * 4, y * (size * 4 + 1) + 1, (y + 1) * (size * 4 + 1));
+    return rgba;
   }
   const header = Buffer.alloc(13);
   header.writeUInt32BE(size, 0); header.writeUInt32BE(size, 4); header[8] = 8; header[9] = 6;
@@ -170,6 +175,7 @@ export function buildIconFiles() {
   const pngs = Object.fromEntries(sizes.map((size) => [size, renderPng(size, spec)]));
   const files = Object.fromEntries(sizes.map((size) => [`${size}x${size}.png`, pngs[size]]));
   files['128x128@2x.png'] = pngs[256]; files['icon.png'] = pngs[256];
+  files['window-icon.rgba'] = renderPng(256, spec, true);
   return { ...files, icns: buildDeterministicIcns(pngs[32], pngs[128], pngs[256], pngs), ico: buildDeterministicIco(pngs[32], pngs[256], pngs) };
 }
 

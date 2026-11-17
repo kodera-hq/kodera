@@ -63,14 +63,20 @@ test('native icon containers include independent official raster frames at every
   assert.equal(at, files.icns.length);
   assert.deepEqual(icns, ['icp4', 'icp5', 'icp6', 'ic07', 'ic08', 'ic09', 'ic10']);
   assert.equal(files.ico.readUInt16LE(4), 6);
+  const nativePixels = [];
+
   for (const size of [16, 32, 48, 64, 128, 256, 512, 1024]) {
     const png = files[`${size}x${size}.png`]; assert.equal(png.readUInt32BE(16), size); assert.equal(png.readUInt32BE(20), size);
     const pixels = inflateSync(png.subarray(41, 41 + png.readUInt32BE(33)));
     assert.equal(pixels.length, size * (size * 4 + 1));
     assert.deepEqual([...pixels.subarray(1, 5)], [43, 75, 219, 255]);
     assert.ok(pixels.includes(238), 'official Givre foreground must be present');
+    if (size === 256) for (let y = 0; y < size; y++) nativePixels.push(pixels.subarray(y * (size * 4 + 1) + 1, (y + 1) * (size * 4 + 1)));
+
     assert.ok(readFileSync(new URL(`../src-tauri/icons/${size}x${size}.png`, import.meta.url)).equals(png));
   }
+  assert.ok(Buffer.concat(nativePixels).equals(files['window-icon.rgba']));
+  assert.ok(readFileSync(new URL('../src-tauri/icons/window-icon.rgba', import.meta.url)).equals(files['window-icon.rgba']));
 });
 
 test('restart helper replaces and rolls back failed replacement with hostile path text', async () => {

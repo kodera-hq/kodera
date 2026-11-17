@@ -267,7 +267,7 @@ mod macos {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| "update_download_failed")?;
-        let copied = (|| {
+        let copied: Result<(), &'static str> = (|| {
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
