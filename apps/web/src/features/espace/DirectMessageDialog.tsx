@@ -1,11 +1,7 @@
-// Starting a direct conversation by choosing people, not by typing their ids. Until this existed
-// the only way in was a free-text field: a member had to open someone's profile, copy an
-// `@uuid:host` and paste it — so the people already in the workspace were the hardest to reach.
-//
-// The list is the union of every resolved channel's roster (`workspaceRoster.ts`): the closest
-// thing to a member directory the Matrix layer can answer without a new Core surface. The field
-// stays, below the list and clearly secondary, because a federated peer is in no room here and
-// can only be named by id.
+import { directoryMessages } from './directoryMessages'
+// The picker combines known channel rosters with authoritative IDs the homeserver directory
+// makes discoverable. A directory result does not assert workspace membership. Manual federated
+// IDs remain available for a person the server does not expose in search.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -48,7 +44,8 @@ export function DirectMessageDialog({
   searchEntries,
   onOpened,
 }: DirectMessageDialogProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const copy = directoryMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const listId = useId()
   const viewerId = store.getUserId()
   const snapshot = useStoreSlice(store.subscribe, store.getSnapshot, (value) => value)
@@ -57,6 +54,44 @@ export function DirectMessageDialog({
     [store, snapshot, searchEntries, viewerId]
   )
   const [term, setTerm] = useState('')
+  const [directory, setDirectory] = useState<{
+    store: EspaceStoreLike
+    query: string
+    members: readonly WorkspaceMember[]
+    failed: boolean
+  } | null>(null)
+  const query = term.trim()
+  useEffect(() => {
+    if (!open || store.searchMembers === undefined || query.length < 2) return
+    let current = true
+    const timer = setTimeout(() => {
+      void store.searchMembers!(query).then(
+        (members) => {
+          if (!current) return
+          const checked = members.filter(
+            (member) =>
+              member.userId !== viewerId &&
+              isMatrixUserId(member.userId) &&
+              !/^@(kodera-agent|room-access):/.test(member.userId)
+          )
+          setDirectory({
+            store,
+            query,
+            members: checked.slice(0, 30).map((member) => ({ ...member, channels: [] })),
+            failed: false,
+          })
+        },
+        () => {
+          if (current) setDirectory({ store, query, members: [], failed: true })
+        }
+      )
+    }, 300)
+    return () => {
+      current = false
+      clearTimeout(timer)
+    }
+  }, [open, store, query, viewerId])
+
   const [chosen, setChosen] = useState<readonly string[]>([])
   const [manual, setManual] = useState('')
   const [problem, setProblem] = useState('')
@@ -84,7 +119,16 @@ export function DirectMessageDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, store, searchEntries])
 
-  const shown = useMemo(() => filterWorkspaceRoster(roster, term), [roster, term])
+  const matchingDirectory =
+    directory?.store === store && directory.query === query ? directory : null
+  const shown = useMemo(() => {
+    const byId = new Map(
+      filterWorkspaceRoster(roster, term).map((member) => [member.userId, member])
+    )
+    for (const member of matchingDirectory?.members ?? [])
+      if (!byId.has(member.userId)) byId.set(member.userId, member)
+    return [...byId.values()]
+  }, [roster, term, matchingDirectory])
   const unnamed = t('console.workspace.members.unnamed')
   /**
    * The name a row draws. A display name is whatever the member set for themselves in a room, so
@@ -169,17 +213,33 @@ export function DirectMessageDialog({
         <TextField
           label={t('console.workspace.directs.field-search')}
           value={term}
+          maxLength={80}
           onChange={(event) => setTerm(event.target.value)}
           {...(shown.length === 0 && roster.length > 0
             ? { help: t('console.workspace.directs.empty-search') }
             : {})}
         />
-        {roster.length === 0 ? (
-          <p className="text-sm text-c-ink-3">{t('console.workspace.directs.empty-roster')}</p>
+        {store.searchMembers === undefined ? null : (
+          <p className="text-xs text-c-ink-3">
+            {matchingDirectory?.failed ? copy.unavailable : copy.hint}
+          </p>
+        )}
+        {shown.length === 0 ? (
+          <p className="text-sm text-c-ink-3">
+            {t(
+              query.length > 0
+                ? 'console.workspace.directs.empty-search'
+                : 'console.workspace.directs.empty-roster'
+            )}
+          </p>
         ) : (
           <ul
             id={listId}
-            aria-label={t('console.workspace.directs.label-members')}
+            aria-label={
+              matchingDirectory?.members.length
+                ? copy.label
+                : t('console.workspace.directs.label-members')
+            }
             className="flex max-h-[320px] flex-col gap-1 overflow-y-auto"
           >
             {shown.map((member) => {
@@ -221,7 +281,9 @@ export function DirectMessageDialog({
                         <bdi dir="ltr">{member.userId}</bdi>
                       </span>
                       <span className="truncate text-xs text-c-ink-3">
-                        {member.channels.map((channel) => `#${channel}`).join(' · ')}
+                        {member.channels.length === 0
+                          ? copy.result
+                          : member.channels.map((channel) => `#${channel}`).join(' · ')}
                       </span>
                     </span>
                     {picked ? (

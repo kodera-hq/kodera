@@ -113,7 +113,7 @@ export function Sidebar({
   return (
     <nav
       aria-label={t('console.shell.nav.a11y-label')}
-      className="sticky top-0 flex h-screen w-shell-sidebar-width shrink-0 flex-col border-r border-c-border-soft bg-c-sunken"
+      className="material-panel sticky top-0 flex h-screen w-shell-sidebar-width shrink-0 flex-col border-r border-c-border-soft"
     >
       <div className="p-3">
         <OrgSwitcher

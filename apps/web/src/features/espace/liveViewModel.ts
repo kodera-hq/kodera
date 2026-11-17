@@ -141,6 +141,8 @@ export interface EspaceStoreLike {
   resolveChannels?: (channelIds: readonly string[]) => Promise<void> | void
   /** The room's members but the signed-in one, whom the composer offers to mention. */
   getRoster?: (roomId: string) => readonly MemberView[]
+  /** Authoritative discoverable Matrix IDs; visibility is decided by the homeserver. */
+  searchMembers?: (term: string) => Promise<readonly MemberView[]>
   getMemberRole?: (roomId: string, userId: string) => 'admin' | 'member'
   getProfileRole?: (roomId: string, userId: string) => MemberProfileRole
   isOnline?: (userId: string) => boolean

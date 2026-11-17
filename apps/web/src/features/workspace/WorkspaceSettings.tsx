@@ -3,7 +3,7 @@ import * as Tabs from '@radix-ui/react-tabs'
 import { Link } from '@tanstack/react-router'
 import { isStubArea } from '../../app/stubAreas'
 import { useNarrowViewport } from '../../app/useNarrowViewport'
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Avatar } from '../../ui/Avatar/Avatar'
 import { Button } from '../../ui/Button/Button'
@@ -39,6 +39,10 @@ import {
 import { settingsCopy } from './settingsMessages'
 import type { WorkspaceSettingsProps } from './WorkspaceSettingsHost'
 import type { MessageKey } from '../../i18n'
+
+const LazySoundsScreen = lazy(() =>
+  import('../sounds/SoundsScreen').then((module) => ({ default: module.SoundsScreen }))
+)
 
 export type Section =
   | 'profile'
@@ -102,6 +106,13 @@ function AvatarActions({
   const { t } = useTranslation()
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const live = useRef(false)
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
 
   async function choose(file: File | undefined) {
     if (file === undefined || busy) return
@@ -109,9 +120,11 @@ function AvatarActions({
     onSaved('saving')
     try {
       const square = await squareAvatarPng(file)
+      if (!live.current) return
       await profile.setAvatar(square, 'avatar.png')
-      onSaved('saved')
+      if (live.current) onSaved('saved')
     } catch (error) {
+      if (!live.current) return
       onSaved(
         error instanceof AvatarRefused
           ? error.reason === 'size'
@@ -120,7 +133,7 @@ function AvatarActions({
           : 'problem'
       )
     } finally {
-      setBusy(false)
+      if (live.current) setBusy(false)
       if (input.current) input.current.value = ''
     }
   }
@@ -160,12 +173,17 @@ function AvatarActions({
                 .clearAvatar()
                 .then(
                   () => {
+                    if (!live.current) return
                     onClearOptimistic()
                     onSaved('saved')
                   },
-                  () => onSaved('problem')
+                  () => {
+                    if (live.current) onSaved('problem')
+                  }
                 )
-                .finally(() => setBusy(false))
+                .finally(() => {
+                  if (live.current) setBusy(false)
+                })
             }}
           >
             {t('console.workspace.profile.action-remove-avatar')}
@@ -524,7 +542,7 @@ export default function WorkspaceSettings({
             if (target?.isConnected) target.focus()
             else document.querySelector<HTMLElement>('[data-workspace-settings-trigger]')?.focus()
           }}
-          className="fixed inset-0 z-40 flex flex-col bg-c-surface text-c-ink outline-hidden"
+          className="material-dialog fixed inset-0 z-40 flex flex-col text-c-ink outline-hidden"
         >
           <header className="flex shrink-0 items-center justify-between gap-4 border-b border-c-border-soft px-6 py-4">
             <div>
@@ -559,7 +577,7 @@ export default function WorkspaceSettings({
           >
             <Tabs.List
               aria-label={copy.title}
-              className="flex w-shell-sidebar-width shrink-0 flex-col gap-1 overflow-y-auto border-r border-c-border-soft bg-c-sunken p-4 narrow:w-full narrow:flex-row narrow:overflow-x-auto narrow:border-r-0 narrow:border-b"
+              className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-1 overflow-y-auto border-r border-c-border-soft p-4 narrow:w-full narrow:flex-row narrow:overflow-x-auto narrow:border-r-0 narrow:border-b"
             >
               {[
                 { title: copy.personal, items: PERSONAL },
@@ -688,6 +706,9 @@ export default function WorkspaceSettings({
                     <>
                       <p className="text-sm text-c-ink-2">{copy.audioHint}</p>
                       <Voice runtime={runtime} />
+                      <Suspense fallback={null}>
+                        <LazySoundsScreen embedded />
+                      </Suspense>
                     </>
                   ) : null}
                   {item === 'members' ? (
@@ -700,7 +721,9 @@ export default function WorkspaceSettings({
                       <p className="text-sm text-c-ink-2">{copy.moderationRestricted}</p>
                     )
                   ) : null}
-                  {item === 'extensions' ? <ExtensionsCatalogPanel /> : null}
+                  {item === 'extensions' ? (
+                    <ExtensionsCatalogPanel channels={runtime?.channels} />
+                  ) : null}
                   {item === 'quotas' ? (
                     <WorkspaceQuotasPanel
                       org={org}

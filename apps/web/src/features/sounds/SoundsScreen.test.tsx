@@ -24,9 +24,7 @@ describe('SoundsScreen (SoundsScreen.tsx)', () => {
   it('renders the 6 sound pack radio options with Givre chosen by default and zero nested buttons', () => {
     const { container } = render(<SoundsScreen engine={engine} />)
 
-    expect(
-      screen.getByRole('heading', { level: 1, name: 'Ambiance sonore' })
-    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Ambiance sonore' })).toBeInTheDocument()
 
     const packGroup = screen.getByRole('radiogroup', { name: 'Signature sonore' })
     const radios = within(packGroup).getAllByRole('radio')
@@ -113,12 +111,18 @@ describe('SoundsScreen (SoundsScreen.tsx)', () => {
     render(<SoundsScreen engine={engine} />)
     await user.click(screen.getByRole('radio', { name: 'Souffle' }))
 
-    expect(screen.getByRole('radio', { name: 'Souffle' })).toHaveAttribute(
-      'aria-checked',
-      'true'
-    )
-    expect(screen.getByRole('status')).toHaveTextContent(
-      /Ce navigateur ne conserve pas ce réglage/
-    )
+    expect(screen.getByRole('radio', { name: 'Souffle' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('status')).toHaveTextContent(/Ce navigateur ne conserve pas ce réglage/)
+  })
+
+  it('demotes headings to h3/h4 when embedded inside workspace settings', () => {
+    render(<SoundsScreen engine={engine} embedded />)
+
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+    expect(screen.getByRole('heading', { level: 3, name: 'Ambiance sonore' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 4, name: 'Signature sonore' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 4, name: 'Catégories sonores' })
+    ).toBeInTheDocument()
   })
 })

@@ -68,7 +68,7 @@ export function WorkspaceDialog({
             onCloseAutoFocus={closeAutoFocusHandler(returnTarget)}
             // Focused by the dialog opening, not by the keyboard: `:focus-visible` does not match
             // a programmatic focus in every browser, so the outline is removed unconditionally.
-            className={cx('outline-hidden', className)}
+            className={cx('material-dialog outline-hidden', className)}
           >
             {children}
           </RadixDialog.Content>

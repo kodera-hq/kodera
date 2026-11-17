@@ -19,6 +19,7 @@ import {
 } from './catalog'
 
 export interface ExtensionsCatalogPanelProps {
+  readonly channels?: readonly { id: string; label: string }[] | undefined
   readonly extensions?: readonly OfficialExtensionDescriptor[] | undefined
   readonly defaultSelectedId?: OfficialExtensionId | undefined
   readonly defaultCategory?: ExtensionCategoryFilter | undefined
@@ -30,6 +31,10 @@ export interface ExtensionsCatalogPanelProps {
 
 const PANEL_COPY = {
   fr: {
+    targetChannel: 'Salon de destination',
+    chooseChannel: 'Choisir un salon',
+    channelHint: 'Ce choix prépare la configuration. Aucune connexion n’est encore activée.',
+    noChannels: 'Ouvrez un espace avec un salon accessible pour choisir la destination.',
     heading: "Catalogue d'extensions Kodera v1",
     schemaLabel: 'Schéma de manifeste :',
     schemaSuffix: '• Moindre privilège et signature HMAC-SHA256',
@@ -47,13 +52,16 @@ const PANEL_COPY = {
     verifiedBadge: 'Schéma v1 vérifié',
     inspectorRegionLabel: 'Inspecteur de commande slash et de webhook',
     registeredCommands: 'Commandes slash enregistrées',
-    webhookLabel:
-      'URL de destination du webhook (HTTPS public uniquement, protection anti-SSRF)',
+    webhookLabel: 'URL de destination du webhook (HTTPS public uniquement, protection anti-SSRF)',
     verifyWebhookButton: "Vérifier l'URL du webhook",
     rejectedUrl: 'URL refusée',
     allowedEndpoint: 'Point de terminaison HTTPS autorisé :',
   },
   en: {
+    targetChannel: 'Destination channel',
+    chooseChannel: 'Choose a channel',
+    channelHint: 'This choice prepares setup. No connection has been activated yet.',
+    noChannels: 'Open a workspace with an available channel to choose a destination.',
     heading: 'Kodera v1 extension catalogue',
     schemaLabel: 'Manifest schema:',
     schemaSuffix: '• Least privilege and HMAC-SHA256 signing',
@@ -79,6 +87,7 @@ const PANEL_COPY = {
 } as const
 
 export function ExtensionsCatalogPanel({
+  channels = [],
   extensions = OFFICIAL_EXTENSIONS_CATALOG,
   // No connector is chosen on arrival. A card drawn as chosen that nobody chose reads as a stray
   // selection box, and it opened a setup panel for a service the member had not asked about.
@@ -94,9 +103,13 @@ export function ExtensionsCatalogPanel({
   const headingId = useId()
   const webhookInputId = useId()
   const searchInputId = useId()
+  const channelInputId = useId()
+  const [channelId, setChannelId] = useState('')
 
   const [selectedCategory, setSelectedCategory] = useState<ExtensionCategoryFilter>(defaultCategory)
-  const [selectedId, setSelectedId] = useState<OfficialExtensionId | null>(defaultSelectedId ?? null)
+  const [selectedId, setSelectedId] = useState<OfficialExtensionId | null>(
+    defaultSelectedId ?? null
+  )
   const [term, setTerm] = useState('')
   const [webhookUrlInput, setWebhookUrlInput] = useState<string>(defaultWebhookUrl)
   const [validationResult, setValidationResult] = useState<ExtensionWebhookValidationResult | null>(
@@ -263,14 +276,6 @@ export function ExtensionsCatalogPanel({
                       >
                         {isSelected ? copy.connected : copy.connect}
                       </span>
-                      {ext.verifiedManifest ? (
-                        <span
-                          data-testid={`extension-verified-${ext.slug}`}
-                          className="rounded-full border border-c-ok-border bg-c-ok-soft px-2 py-1 text-xs font-medium text-c-ok-ink"
-                        >
-                          {copy.verifiedBadge}
-                        </span>
-                      ) : null}
                     </span>
                   </button>
                 </li>
@@ -289,131 +294,159 @@ export function ExtensionsCatalogPanel({
               {copy.nothingChosen}
             </p>
           ) : (
-          <div
-            role="region"
-            aria-label={copy.inspectorRegionLabel}
-            className="flex flex-col gap-3 rounded-md border border-c-border bg-c-sunken p-4"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <BrandIcon name={EXTENSION_BRANDS[selectedExtension.id]} decorative />
-              <div className="flex flex-col gap-1">
-                <span className="text-md font-semibold text-c-ink">
-                  {copy.setupHeading} {isEn ? selectedExtension.nameEn : selectedExtension.name}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {selectedExtension.verifiedManifest ? (
-                  <StatusPill state="success">{copy.verifiedBadge}</StatusPill>
-                ) : null}
-                <StatusPill state="info">{selectedExtension.slashCommand}</StatusPill>
-              </div>
-            </div>
-
-            {/* The three steps, in the order the member carries them out. */}
-            <ol className="flex flex-col gap-1 text-sm text-c-ink-2">
-              <li>{copy.setupStep1}</li>
-              <li>{copy.setupStep2}</li>
-              <li>{copy.setupStep3}</li>
-            </ol>
-
-            <div className="flex flex-col gap-2 border-t border-c-border-soft pt-3">
-              <div className="flex flex-col gap-1">
-                <label htmlFor={webhookInputId} className="text-xs font-medium text-c-ink-2">
-                  {copy.webhookLabel}
-                </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    id={webhookInputId}
-                    type="url"
-                    value={webhookUrlInput}
-                    onChange={(event) => {
-                      setWebhookUrlInput(event.target.value)
-                      setValidationResult(null)
-                    }}
-                    placeholder={selectedExtension.defaultWebhookExample}
-                    className="h-8 flex-1 rounded-md border border-c-border-input bg-c-surface px-3 font-mono text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
-                  />
-                  <Button size="sm" variant="primary" onClick={handleValidateWebhook}>
-                    {copy.verifyWebhookButton}
-                  </Button>
-                </div>
-              </div>
-
-              {validationResult !== null && !validationResult.ok ? (
-                <div
-                  role="alert"
-                  data-testid="extension-webhook-error"
-                  className="flex flex-col gap-1 rounded-md border border-c-bad bg-c-bad-soft px-3 py-2 text-xs font-medium text-c-bad-ink"
-                >
-                  <span>
-                    {copy.rejectedUrl} ({validationResult.code}) : {validationResult.message}
+            <div
+              role="region"
+              aria-label={copy.inspectorRegionLabel}
+              className="flex flex-col gap-3 rounded-md border border-c-border bg-c-sunken p-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <BrandIcon name={EXTENSION_BRANDS[selectedExtension.id]} decorative />
+                <div className="flex flex-col gap-1">
+                  <span className="text-md font-semibold text-c-ink">
+                    {copy.setupHeading} {isEn ? selectedExtension.nameEn : selectedExtension.name}
                   </span>
                 </div>
-              ) : null}
-
-              {validationResult !== null && validationResult.ok ? (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  data-testid="extension-webhook-valid"
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-ok-border bg-c-ok-soft px-3 py-2 text-xs font-medium text-c-ok-ink"
-                >
-                  <span>{copy.allowedEndpoint}</span>
-                  <span className="font-mono text-c-ok-ink">{validationResult.normalizedUrl}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill state="info">{selectedExtension.slashCommand}</StatusPill>
                 </div>
-              ) : null}
-            </div>
-            {/* The manifest, the scopes and the signature: what a developer needs and what an
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label htmlFor={channelInputId} className="text-sm font-medium text-c-ink">
+                  {copy.targetChannel}
+                </label>
+                <select
+                  id={channelInputId}
+                  value={channels.some((channel) => channel.id === channelId) ? channelId : ''}
+                  onChange={(event) => setChannelId(event.target.value)}
+                  disabled={channels.length === 0}
+                  className="min-h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-sm text-c-ink focus-visible:ring focus-visible:outline-hidden"
+                >
+                  <option value="">{copy.chooseChannel}</option>
+                  {channels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>
+                      #{channel.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-c-ink-3">
+                  {channels.length === 0 ? copy.noChannels : copy.channelHint}
+                </p>
+              </div>
+              {/* The manifest, the scopes and the signature: what a developer needs and what an
                 administrator reads once. Out of the way of setting a connector up, not hidden —
                 a `details` keeps every word in the page and findable. */}
-            <details className="border-t border-c-border-soft pt-3">
-              <summary className="cursor-pointer text-sm font-medium text-c-ink-2 focus-visible:ring focus-visible:outline-hidden">
-                {copy.technical}
-              </summary>
-              <div className="flex flex-col gap-3 pt-3">
-                <p className="text-sm font-regular text-c-ink-2">
-                  {copy.schemaLabel}{' '}
-                  <span className="font-mono font-medium text-c-ink">
-                    {EXTENSION_SCHEMA_VERSION}
-                  </span>{' '}
-                  {copy.schemaSuffix}
-                </p>
-                <span className="font-mono text-xs text-c-ink-3">
-                  {selectedExtension.id} • v{selectedExtension.version}
-                </span>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold text-c-ink-2">
-                    {copy.registeredCommands}
-                  </span>
-                  {selectedExtension.commands.map((cmd) => (
+              <details className="border-t border-c-border-soft pt-3">
+                <summary className="cursor-pointer text-sm font-medium text-c-ink-2 focus-visible:ring focus-visible:outline-hidden">
+                  {copy.technical}
+                </summary>
+                {/* The three steps, in the order the member carries them out. */}
+                <ol className="flex flex-col gap-1 text-sm text-c-ink-2">
+                  <li>{copy.setupStep1}</li>
+                  <li>{copy.setupStep2}</li>
+                  <li>{copy.setupStep3}</li>
+                </ol>
+
+                <div className="flex flex-col gap-2 border-t border-c-border-soft pt-3">
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor={webhookInputId} className="text-xs font-medium text-c-ink-2">
+                      {copy.webhookLabel}
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        id={webhookInputId}
+                        type="url"
+                        value={webhookUrlInput}
+                        onChange={(event) => {
+                          setWebhookUrlInput(event.target.value)
+                          setValidationResult(null)
+                        }}
+                        placeholder={selectedExtension.defaultWebhookExample}
+                        className="h-8 flex-1 rounded-md border border-c-border-input bg-c-surface px-3 font-mono text-sm text-c-ink placeholder:text-c-placeholder focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
+                      />
+                      <Button size="sm" variant="primary" onClick={handleValidateWebhook}>
+                        {copy.verifyWebhookButton}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {validationResult !== null && !validationResult.ok ? (
                     <div
-                      key={cmd.name}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs"
+                      role="alert"
+                      data-testid="extension-webhook-error"
+                      className="flex flex-col gap-1 rounded-md border border-c-bad bg-c-bad-soft px-3 py-2 text-xs font-medium text-c-bad-ink"
                     >
-                      <span className="font-mono font-semibold text-c-ink">{cmd.usage}</span>
-                      <span className="text-c-ink-2">
-                        {isEn ? cmd.descriptionEn : cmd.description}
+                      <span>
+                        {copy.rejectedUrl} ({validationResult.code}) : {validationResult.message}
                       </span>
                     </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center gap-1">
-                  {selectedExtension.scopes.map((scope) => (
-                    <span
-                      key={`${selectedExtension.id}-${scope}`}
-                      className="rounded-sm border border-c-border-soft bg-c-surface px-2 py-1 font-mono text-xs text-c-ink-2"
+                  ) : null}
+
+                  {validationResult !== null && validationResult.ok ? (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      data-testid="extension-webhook-valid"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-ok-border bg-c-ok-soft px-3 py-2 text-xs font-medium text-c-ok-ink"
                     >
-                      {scope}
-                    </span>
-                  ))}
+                      <span>{copy.allowedEndpoint}</span>
+                      <span className="font-mono text-c-ok-ink">
+                        {validationResult.normalizedUrl}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
-                <WebhookSignatureTester
-                  key={selectedExtension.id}
-                  extensionId={selectedExtension.id}
-                />
-              </div>
-            </details>
-          </div>
+                <div className="flex flex-col gap-3 pt-3">
+                  {selectedExtension.verifiedManifest ? (
+                    <StatusPill state="success">
+                      <span data-testid={`extension-verified-${selectedExtension.slug}`}>
+                        {copy.verifiedBadge}
+                      </span>
+                    </StatusPill>
+                  ) : null}
+                  <p className="text-sm font-regular text-c-ink-2">
+                    {copy.schemaLabel}{' '}
+                    <span className="font-mono font-medium text-c-ink">
+                      {EXTENSION_SCHEMA_VERSION}
+                    </span>{' '}
+                    {copy.schemaSuffix}
+                  </p>
+                  <span className="font-mono text-xs text-c-ink-3">
+                    {selectedExtension.id} • v{selectedExtension.version}
+                  </span>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-c-ink-2">
+                      {copy.registeredCommands}
+                    </span>
+                    {selectedExtension.commands.map((cmd) => (
+                      <div
+                        key={cmd.name}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-c-border-soft bg-c-surface px-3 py-2 text-xs"
+                      >
+                        <span className="font-mono font-semibold text-c-ink">{cmd.usage}</span>
+                        <span className="text-c-ink-2">
+                          {isEn ? cmd.descriptionEn : cmd.description}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {selectedExtension.scopes.map((scope) => (
+                      <span
+                        key={`${selectedExtension.id}-${scope}`}
+                        className="rounded-sm border border-c-border-soft bg-c-surface px-2 py-1 font-mono text-xs text-c-ink-2"
+                      >
+                        {scope}
+                      </span>
+                    ))}
+                  </div>
+                  <WebhookSignatureTester
+                    key={selectedExtension.id}
+                    extensionId={selectedExtension.id}
+                  />
+                </div>
+              </details>
+            </div>
           )}
         </CardBody>
       </Card>

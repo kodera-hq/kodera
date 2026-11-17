@@ -18,8 +18,8 @@ import { TextField } from './TextField/TextField'
 // primitive that drifts back to the role it used before fails by name. The
 // contrast of every pair is gated in the tokens package, not here.
 
-describe('overlays sit on elevated, over the scrim', () => {
-  it('Dialog: elevated surface with an edge, scrim behind, offset gaps in elevated', async () => {
+describe('overlays use their material or elevated roles over the scrim', () => {
+  it('Dialog: dialog material with an edge, scrim behind, offset gaps in elevated', async () => {
     const user = userEvent.setup()
     render(
       <Dialog trigger={<button type="button">Ouvrir</button>} title="Titre" closeLabel="Fermer">
@@ -28,7 +28,8 @@ describe('overlays sit on elevated, over the scrim', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Ouvrir' }))
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveClass('bg-c-elevated', 'border-c-border', FOCUS_GROUND_ELEVATED)
+    expect(dialog).toHaveClass('material-dialog', 'border-c-border', FOCUS_GROUND_ELEVATED)
+    expect(dialog).not.toHaveClass('bg-c-elevated')
     expect(dialog).not.toHaveClass('bg-c-surface')
     expect(document.querySelector('.bg-c-scrim')).not.toBeNull()
     expect(document.querySelector('.bg-c-shadow-2')).toBeNull()
@@ -49,7 +50,7 @@ describe('overlays sit on elevated, over the scrim', () => {
     )
   })
 
-  it('DropdownMenu: elevated, and a highlight that is tint, ink and an inset edge', async () => {
+  it('DropdownMenu: popover material, and a highlight that is tint, ink and an inset edge', async () => {
     const user = userEvent.setup()
     render(
       <DropdownMenu
@@ -62,7 +63,8 @@ describe('overlays sit on elevated, over the scrim', () => {
       />
     )
     await user.click(screen.getByRole('button', { name: '···' }))
-    expect(screen.getByRole('menu')).toHaveClass('bg-c-elevated')
+    expect(screen.getByRole('menu')).toHaveClass('material-popover')
+    expect(screen.getByRole('menu')).not.toHaveClass('bg-c-elevated')
     expect(screen.getByRole('menuitem', { name: 'Modifier' })).toHaveClass(
       'data-[highlighted]:bg-c-accent-soft',
       'data-[highlighted]:text-c-accent-ink',

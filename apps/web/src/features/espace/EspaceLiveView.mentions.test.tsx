@@ -356,7 +356,7 @@ describe('a message that mentions the viewer', () => {
     expect(plain[0]).not.toHaveAttribute('data-mention')
   })
 
-  it('plays the mention cue on a live incoming mention from a peer, the channel cue on a plain one, and nothing on initial history load or self-authored messages', () => {
+  it('keeps selected-room messages silent, including mentions, initial history and self-authored messages', () => {
     soundEngine.resetCooldowns()
     const playSpy = vi.spyOn(soundEngine, 'play')
 
@@ -415,34 +415,14 @@ describe('a message that mentions the viewer', () => {
       })
       expect(playSpy).not.toHaveBeenCalled()
 
-      // 3. A live message from a peer that names nobody is a message arriving, not a mention:
-      //    it plays the channel's own cue, never the mention one.
+      // The selected room is being read: incoming channel messages and mentions remain silent.
       act(() => {
-        publishTimeline([...currentTimeline, message('$m4', ALICE, 'Simple message sans mention')])
+        publishTimeline([...currentTimeline, message('$m4', ALICE, 'Message')])
       })
-      expect(playSpy).toHaveBeenCalledTimes(1)
-      expect(playSpy).toHaveBeenCalledWith('msg_channel_unread', {
-        channelId: GENERAL,
-        roomId: ROOM,
-        senderId: ALICE,
-        currentUserId: ME,
-      })
-      playSpy.mockClear()
-
-      // 4. Live incoming mention from a peer MUST trigger msg_mention with channelId, senderId, currentUserId
       act(() => {
-        publishTimeline([
-          ...currentTimeline,
-          message('$m5', BOB, '@Moi tu peux valider la PR ?', { mentionsMe: true }),
-        ])
+        publishTimeline([...currentTimeline, message('$m5', BOB, '@Moi', { mentionsMe: true })])
       })
-      expect(playSpy).toHaveBeenCalledTimes(1)
-      expect(playSpy).toHaveBeenCalledWith('msg_mention', {
-        channelId: GENERAL,
-        roomId: ROOM,
-        senderId: BOB,
-        currentUserId: ME,
-      })
+      expect(playSpy).not.toHaveBeenCalled()
     } finally {
       playSpy.mockRestore()
       soundEngine.resetCooldowns()

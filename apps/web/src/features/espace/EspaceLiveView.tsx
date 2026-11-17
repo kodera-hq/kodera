@@ -1,3 +1,4 @@
+import { MessageCueTracker } from './messageCues'
 // Espace's live view: one organisation's channels, the channel shown with its messages, its
 // composer and its members, an open thread, and the audio room the member is in. This module is
 // the view's owner: it decides which channel and which room are shown, holds the lease on the
@@ -825,6 +826,24 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       ...(member.userId === viewerId ? { status: localProfile.status } : {}),
     }
   }
+  const connectorChannels = useMemo(
+    () =>
+      [
+        ...workspace.categories.flatMap((category) => category.channels),
+        ...workspace.uncategorised_channels,
+      ]
+        .filter((channel) => {
+          const room = snapshot.channels.get(channel.id)
+          return (
+            channel.kind === 'text' &&
+            room?.state === 'resolved' &&
+            snapshot.rooms.some((joined) => joined.roomId === room.roomId) &&
+            activeStore.canSendMessage?.(room.roomId) !== false
+          )
+        })
+        .map((channel) => ({ id: channel.id, label: channelLabel(channel, t) })),
+    [workspace, snapshot, activeStore, t]
+  )
   useEffect(
     () =>
       registerWorkspaceSettingsRuntime(
@@ -833,6 +852,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
           userId: viewerId,
           displayName: viewerName,
           ...(accountName === undefined ? {} : { accountName }),
+          channels: connectorChannels,
           members: [
             ...rawRoster.filter((member) => member.userId !== viewerId),
             { userId: viewerId, name: viewerName },
@@ -859,6 +879,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       settingsEpoch,
       deviceSettings,
       settingsProfile,
+      connectorChannels,
       activeRoomId,
       activeStore,
     ]
@@ -1043,86 +1064,20 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       : (activeStore.firstShownAfter?.(activeRoomId, readAtOpen.eventId) ?? null)
   useMarkRead({ room: activeRoom, newestKey: timeline.at(-1)?.key, store: activeStore })
 
-  const liveMentionTracker = useRef<{
-    store: EspaceStoreLike
-    roomId: string | null
-    primed: boolean
-    seenKeys: Set<string>
-    lastTailKey: string | null
-  } | null>(null)
-  const activeChannelId = activeChannel?.id
+  const messageCues = useRef<{ store: EspaceStoreLike; tracker: MessageCueTracker } | null>(null)
   useEffect(() => {
-    if (activeRoomId === null || activeChannelId === undefined) {
-      liveMentionTracker.current = {
-        store: activeStore,
-        roomId: null,
-        primed: false,
-        seenKeys: new Set(),
-        lastTailKey: null,
-      }
-      return
+    if (messageCues.current?.store !== activeStore) {
+      messageCues.current = { store: activeStore, tracker: new MessageCueTracker() }
     }
-    const current = liveMentionTracker.current
-    if (current === null || current.store !== activeStore || current.roomId !== activeRoomId) {
-      liveMentionTracker.current = {
-        store: activeStore,
-        roomId: activeRoomId,
-        primed: snapshot.status === 'live',
-        seenKeys: new Set(timeline.map((msg) => msg.key)),
-        lastTailKey: timeline.at(-1)?.key ?? null,
-      }
-      return
-    }
-    if (!current.primed) {
-      for (const msg of timeline) current.seenKeys.add(msg.key)
-      current.lastTailKey = timeline.at(-1)?.key ?? null
-      if (snapshot.status === 'live') current.primed = true
-      return
-    }
-    if (snapshot.status !== 'live') return
-
-    const prevTailIndex =
-      current.lastTailKey === null
-        ? -1
-        : timeline.findIndex((msg) => msg.key === current.lastTailKey)
-    const candidates =
-      prevTailIndex >= 0
-        ? timeline.slice(prevTailIndex + 1)
-        : history === 'loading'
-          ? NO_MESSAGES
-          : timeline
-
-    for (const msg of candidates) {
-      if (current.seenKeys.has(msg.key)) continue
-      if (msg.redacted || msg.sender === viewerId) continue
-      // One cue per message, the most particular one first: being named, then a message in a
-      // direct conversation, then a message arriving in a channel. The engine's own rules decide
-      // whether it is heard at all — the pack, the mode, do-not-disturb, a hidden tab.
-      const cue =
-        msg.mentionsMe === true
-          ? 'msg_mention'
-          : directRoomId !== null
-            ? 'msg_dm'
-            : 'msg_channel_unread'
-      void soundEngine.play(cue, {
-        channelId: activeChannelId,
-        roomId: activeRoomId,
-        senderId: msg.sender,
-        currentUserId: viewerId,
-      })
-    }
-    for (const msg of timeline) current.seenKeys.add(msg.key)
-    current.lastTailKey = timeline.at(-1)?.key ?? null
-  }, [
-    activeStore,
-    activeRoomId,
-    activeChannelId,
-    directRoomId,
-    snapshot.status,
-    timeline,
-    history,
-    viewerId,
-  ])
+    messageCues.current.tracker.update(
+      activeStore,
+      snapshot,
+      (cue, context) => {
+        soundEngine.play(cue, context)
+      },
+      activeCanvasMode === 'chat' ? activeRoomId : null
+    )
+  }, [activeStore, snapshot, timeline, activeRoomId, activeCanvasMode])
 
   /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
@@ -1563,7 +1518,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
         <section
           ref={channelColumn}
           onKeyDown={columnKeyDown}
-          className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:overflow-visible narrow:bg-transparent narrow:p-0"
+          className="workspace-canvas flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto bg-c-surface px-6 py-5 narrow:overflow-visible narrow:bg-transparent narrow:p-0"
         >
           <p aria-live="polite" aria-atomic="true" className="sr-only">
             {announcement.count === 0 ? null : (
@@ -1720,13 +1675,18 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             <div
               hidden={activeCanvasMode !== 'docs'}
               data-testid="espace-inline-docs-canvas"
-              className={activeCanvasMode === 'docs' ? 'flex min-h-0 flex-1 flex-col' : ''}
+              className={
+                activeCanvasMode === 'docs' ? 'canvas-enter flex min-h-0 flex-1 flex-col' : ''
+              }
             >
               {docsCanvasSlot}
             </div>
           ) : null}
           {activeCanvasMode === 'files' ? (
-            <div data-testid="espace-files-canvas" className="flex min-h-0 flex-1 flex-col">
+            <div
+              data-testid="espace-files-canvas"
+              className="canvas-enter flex min-h-0 flex-1 flex-col"
+            >
               <Suspense
                 fallback={
                   // The page's own ground, so the canvas does not blink a different colour on
@@ -1744,6 +1704,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   documents={documents}
                   {...(openStudioDocument === undefined ? {} : { onOpenDocument })}
                   onOpenChannel={(channelId) => selectTextChannel(channelId)}
+                  onOpenDirect={selectDirect}
                 />
               </Suspense>
             </div>
@@ -1855,7 +1816,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
             }}
             aria-label={t('console.workspace.members.title')}
             ref={cssProperty('width', narrow ? undefined : `${rightSidebarWidth}px`)}
-            className="flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft bg-c-sunken p-4 narrow:w-full"
+            className="material-panel flex w-shell-sidebar-width shrink-0 flex-col gap-3 overflow-y-auto border-l border-c-border-soft p-4 narrow:w-full"
           >
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-c-ink">

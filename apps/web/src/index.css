@@ -288,6 +288,23 @@
     caret-color: transparent;
   }
 
+  /* Modal scroll lock withdraws the app behind its body portal. Live regions can
+     keep ancestors out of aria-hidden, so use the actual lock too. Nested panels
+     already share their dialog's filtered backdrop and need no second sampling. */
+  body[data-scroll-locked]
+    #root
+    :is(.material-bar, .material-panel, .material-popover, .material-dialog),
+  .material-dialog :is(.material-bar, .material-panel),
+  [aria-hidden='true'] :is(.material-bar, .material-panel, .material-popover, .material-dialog),
+  :is(.material-bar, .material-panel, .material-popover, .material-dialog)[aria-hidden='true'] {
+    --material-bar-bg: var(--material-bar-fallback);
+    --material-panel-bg: var(--material-panel-fallback);
+    --material-popover-bg: var(--material-popover-fallback);
+    --material-dialog-bg: var(--material-dialog-fallback);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
   /* The ground a focus ring's offset gap is painted in: the surface a control
      usually sits on. `focus-ground-*` below changes it for a subtree. */
   :root,
@@ -449,5 +466,52 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Canvas changes animate only compositor properties; reduced motion skips them entirely. */
+@layer components {
+  @media (prefers-reduced-motion: no-preference) {
+    .canvas-enter {
+      animation: canvas-enter var(--dur-fast) var(--ease-out);
+    }
+    @keyframes canvas-enter {
+      from {
+        opacity: 0;
+        transform: translateY(var(--sp-1));
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  }
+}
+
+@layer components {
+  .workspace-canvas {
+    view-transition-name: workspace-canvas;
+  }
+  :root:active-view-transition .canvas-enter {
+    animation: none;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-group(workspace-canvas) {
+    animation: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    ::view-transition-old(workspace-canvas) {
+      animation: canvas-exit var(--dur-fast) var(--ease-out) both;
+    }
+    ::view-transition-new(workspace-canvas) {
+      animation: canvas-enter var(--dur-fast) var(--ease-out) both;
+    }
+    @keyframes canvas-exit {
+      to {
+        opacity: 0;
+        transform: translateY(calc(-1 * var(--sp-1)));
+      }
+    }
   }
 }

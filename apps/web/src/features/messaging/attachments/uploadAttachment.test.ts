@@ -121,3 +121,39 @@ describe('sending an attachment', () => {
     ).rejects.toThrow('complete')
   })
 })
+
+it('does not create a ticket after cancellation while hashing, and forwards the signal to admission', async () => {
+  let finish!: (value: ArrayBuffer) => void
+  const file = new Blob(['file'], { type: 'application/pdf' })
+  vi.spyOn(file, 'arrayBuffer').mockReturnValue(
+    new Promise<ArrayBuffer>((resolve) => {
+      finish = resolve
+    })
+  )
+  const abort = new AbortController()
+  const put = vi.fn()
+  const uploading = uploadAttachment({
+    organisationId: ORG,
+    file,
+    checked,
+    signal: abort.signal,
+    put,
+  })
+  abort.abort()
+  finish(new ArrayBuffer(4))
+  await expect(uploading).rejects.toThrow()
+  expect(mutate).not.toHaveBeenCalled()
+  expect(put).not.toHaveBeenCalled()
+
+  const active = new AbortController()
+  mutate.mockImplementationOnce(async (_operation, input) => {
+    expect(input.signal).toBe(active.signal)
+    active.abort()
+    return ticket()
+  })
+  await expect(
+    uploadAttachment({ organisationId: ORG, file: bytes, checked, signal: active.signal, put })
+  ).rejects.toThrow()
+  expect(mutate).toHaveBeenCalledOnce()
+  expect(put).not.toHaveBeenCalled()
+})

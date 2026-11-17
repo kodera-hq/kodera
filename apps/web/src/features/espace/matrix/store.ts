@@ -1578,6 +1578,30 @@ export class EspaceStore {
     return roomId
   }
 
+  /** Names and IDs returned by the homeserver directory, never inferred from Core identities. */
+  async searchMembers(term: string): Promise<readonly MemberView[]> {
+    if (this.#stopped) return NO_MEMBERS
+    const query = term.trim().slice(0, 80)
+    if (query.length < 2) return NO_MEMBERS
+    const response = await this.#client.searchUserDirectory({ term: query, limit: 30 })
+    if (this.#stopped || !Array.isArray(response.results)) return NO_MEMBERS
+    const members = new Map<string, MemberView>()
+    for (const result of response.results.slice(0, 30)) {
+      const id = result?.user_id
+      if (
+        typeof id !== 'string' ||
+        id.length > 255 ||
+        !isMatrixUserId(id) ||
+        id === this.#me ||
+        SERVICE_LOCALPARTS.some((localpart) => id.startsWith(`@${localpart}:`))
+      )
+        continue
+      const name = cleanText(result.display_name, 80)
+      members.set(id, { userId: id, ...(name === '' ? {} : { name }) })
+    }
+    return [...members.values()]
+  }
+
   async inviteToRoom(roomId: string, userId: string): Promise<void> {
     if (!isMatrixUserId(userId)) throw new Error('Invalid Matrix user ID')
     await this.#client.invite(roomId, userId)
@@ -1719,6 +1743,7 @@ export class EspaceStore {
       type: file.type || 'image/png',
       includeFilename: true,
     })
+    if (this.#stopped) throw new Error('Espace is stopped')
     await this.#client.setAvatarUrl(uri)
     if (!this.#stopped) {
       this.#ownProfile = { ...this.#ownProfile, avatarUrl: uri }

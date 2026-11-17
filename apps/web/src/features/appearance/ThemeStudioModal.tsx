@@ -7,6 +7,7 @@ import { cx } from '../../ui/cx'
 import { WorkspaceDialog, WorkspaceDialogTitle } from '../../ui/WorkspaceDialog'
 import { THEME_PREFERENCES, themeMode, type AppliedTheme } from '../../theme/theme'
 import { applyCustomTokensToDocument } from './themeOverrides'
+import { hasReadableTheme } from './themeContrast'
 import { themeStudioMessages } from './themeStudioMessages'
 export { applyCustomTokensToDocument } from './themeOverrides'
 import {
@@ -62,7 +63,7 @@ export const CURATED_COMMUNITY_PRESETS: readonly CommunityThemeDefinition[] = [
       '--c-page': 'rgb(0, 0, 0)',
       '--c-surface': 'rgb(16, 14, 10)',
       '--c-sunken': 'rgb(10, 8, 5)',
-      '--c-action': 'rgb(216, 155, 60)',
+      '--c-action': 'rgb(137, 92, 21)',
       '--c-ink': 'rgb(245, 230, 200)',
     },
   },
@@ -75,7 +76,7 @@ export const CURATED_COMMUNITY_PRESETS: readonly CommunityThemeDefinition[] = [
       '--c-page': 'rgb(8, 16, 12)',
       '--c-surface': 'rgb(14, 26, 20)',
       '--c-sunken': 'rgb(10, 19, 14)',
-      '--c-action': 'rgb(53, 169, 106)',
+      '--c-action': 'rgb(28, 112, 66)',
       '--c-ink': 'rgb(235, 245, 239)',
     },
   },
@@ -146,7 +147,11 @@ export function ThemeStudioModal({
 
   const [importedId, setImportedId] = useState<string | null>(null)
   const [customName, setCustomName] = useState<string>(copy.defaultName)
-  const [tokens, setTokens] = useState<CustomThemeTokens>(CURATED_COMMUNITY_PRESETS[0]!.tokens)
+  const [tokens, setTokens] = useState<CustomThemeTokens>(
+    () =>
+      CURATED_COMMUNITY_PRESETS.find((preset) => preset.baseMode === themeMode(currentThemeMode))!
+        .tokens
+  )
   const [savedThemes, setSavedThemes] =
     useState<readonly CommunityThemeDefinition[]>(loadSavedCommunityThemes)
   const [importCode, setImportCode] = useState<string>('')
@@ -170,7 +175,12 @@ export function ThemeStudioModal({
 
   // Only what the strict decoder accepts back is ever offered as a code or saved.
   const encoded = useMemo(() => encodeShareableTheme(currentDefinition), [currentDefinition])
-  const shareCode = encoded.ok ? encoded.code : ''
+  const readable = hasReadableTheme(tokens, currentDefinition.baseMode)
+  const shareCode = encoded.ok && readable ? encoded.code : ''
+  const refuseContrast = () => {
+    setStatusIsRefusal(true)
+    setStatusMessageText(copy.contrastRefused)
+  }
   const showRefusal = (reason: ThemeRefusal) => {
     setStatusIsRefusal(true)
     setStatusMessageText(t(REFUSAL_MESSAGE[reason]))
@@ -183,11 +193,15 @@ export function ThemeStudioModal({
   }
 
   const handleApplyPreset = (preset: CommunityThemeDefinition) => {
+    if (!hasReadableTheme(preset.tokens, preset.baseMode)) {
+      refuseContrast()
+      return
+    }
     onSelectCoreTheme(preset.baseMode)
     setImportedId(preset.id)
     setCustomName(preset.name)
     setTokens(preset.tokens)
-    applyCustomTokensToDocument(preset.tokens)
+    applyCustomTokensToDocument(preset.tokens, preset.baseMode)
     setStatusMessage(copy.applied(preset.name))
   }
 
@@ -199,7 +213,9 @@ export function ThemeStudioModal({
     setTokens(next)
     // A half-typed or foreign colour stays in the field and never reaches the document.
     if (CUSTOM_TOKEN_KEYS.every((tokenKey) => isCanonicalRgb(next[tokenKey]))) {
-      applyCustomTokensToDocument(next)
+      if (hasReadableTheme(next, themeMode(currentThemeMode)))
+        applyCustomTokensToDocument(next, themeMode(currentThemeMode))
+      else refuseContrast()
     }
   }
 
@@ -209,6 +225,10 @@ export function ThemeStudioModal({
   }
 
   const handleSaveTheme = () => {
+    if (!readable) {
+      refuseContrast()
+      return
+    }
     if (!encoded.ok) {
       showRefusal(encoded.reason)
       return
@@ -227,12 +247,16 @@ export function ThemeStudioModal({
       return
     }
     setSavedThemes(nextList)
-    applyCustomTokensToDocument(currentDefinition.tokens)
+    applyCustomTokensToDocument(currentDefinition.tokens, currentDefinition.baseMode)
     setStatusMessage(copy.saveDone(currentDefinition.name))
   }
 
   const handleShareToChannel = async () => {
     if (!onShareToChannel || sharing) return
+    if (!readable) {
+      refuseContrast()
+      return
+    }
     if (!encoded.ok) {
       showRefusal(encoded.reason)
       return
@@ -256,11 +280,15 @@ export function ThemeStudioModal({
       showRefusal(decoded.reason)
       return
     }
+    if (!hasReadableTheme(decoded.theme.tokens, decoded.theme.baseMode)) {
+      refuseContrast()
+      return
+    }
     onSelectCoreTheme(decoded.theme.baseMode)
     setImportedId(decoded.theme.id)
     setCustomName(decoded.theme.name)
     setTokens(decoded.theme.tokens)
-    applyCustomTokensToDocument(decoded.theme.tokens)
+    applyCustomTokensToDocument(decoded.theme.tokens, decoded.theme.baseMode)
     setStatusMessage(copy.importDone(decoded.theme.name))
   }
 
@@ -270,7 +298,7 @@ export function ThemeStudioModal({
       onClose={onClose}
       returnFocusTo={returnFocusTo}
       data-testid="kodera-theme-studio-modal"
-      className="flex h-[90%] w-full max-w-[960px] flex-col gap-4 overflow-y-auto rounded-lg border border-c-border bg-c-surface p-6 shadow-pop shadow-c-shadow-2"
+      className="flex h-[90%] w-full max-w-[960px] flex-col gap-4 overflow-y-auto rounded-lg border border-c-border p-6 shadow-pop shadow-c-shadow-2"
     >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-c-border-soft pb-3">
         <div className="flex flex-wrap items-center gap-2">

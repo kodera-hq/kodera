@@ -33,7 +33,7 @@ export function TopBar({ label, title, subtitle, leading, actions }: TopBarProps
   return (
     <header
       aria-label={label}
-      className="flex h-shell-header-height shrink-0 items-center gap-3 border-b border-c-border-soft bg-c-surface px-6"
+      className="material-bar flex h-shell-header-height shrink-0 items-center gap-3 border-b border-c-border-soft px-6"
     >
       {leading}
       <div className="flex min-w-0 flex-1 items-baseline gap-3">
