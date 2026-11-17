@@ -531,3 +531,29 @@ it('stops a late camera permission result after an ordinary room becomes protect
   expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
   await call.leave()
 })
+
+it('rechecks authority after publishing camera-starting status before requesting capture', async () => {
+  let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+  let notify!: () => void
+  const { call, room } = setup({
+    protection: {
+      roomBoundary: () => boundary,
+      subscribeRoomBoundary: (listener) => {
+        notify = listener
+        return () => {}
+      },
+    },
+  })
+  await call.join(STANDUP)
+  const unsubscribe = call.subscribe(() => {
+    if (call.getSnapshot().camera === 'starting') {
+      boundary = 'confidential-unavailable'
+      notify()
+    }
+  })
+  await call.setCameraEnabled(true)
+  expect(room().localParticipant.setCameraEnabled).not.toHaveBeenCalled()
+  expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+  unsubscribe()
+  await call.leave()
+})

@@ -913,6 +913,8 @@ export class CallController {
     const local = session.room.localParticipant
     let publication: LocalTrackPublication | undefined
     try {
+      if (this.#session !== session || session.closed) return
+      this.#requireMedia(session)
       publication =
         source === 'camera'
           ? await local.setCameraEnabled(true, CAMERA_CAPTURE)
