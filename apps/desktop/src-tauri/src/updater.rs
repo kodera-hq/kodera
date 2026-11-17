@@ -165,6 +165,86 @@ fn copy_download(
     Ok(())
 }
 
+// Parse only the bounded universal-binary header. Client machines do not need lipo or
+// Xcode command-line tools, and malformed slice bounds never authorize an update.
+#[cfg(any(target_os = "macos", test))]
+fn verify_universal_macho(header: &[u8], file_len: u64) -> Result<(), &'static str> {
+    if header.len() < 8 {
+        return Err("update_invalid_architecture");
+    }
+    let magic = u32::from_be_bytes(header[..4].try_into().expect("bounded magic"));
+    let (wide, little) = match magic {
+        0xcafebabe => (false, false),
+        0xbebafeca => (false, true),
+        0xcafebabf => (true, false),
+        0xbfbafeca => (true, true),
+        _ => return Err("update_invalid_architecture"),
+    };
+    let read32 = |at| {
+        let bytes = header[at..at + 4]
+            .try_into()
+            .expect("bounded architecture field");
+        if little {
+            u32::from_le_bytes(bytes)
+        } else {
+            u32::from_be_bytes(bytes)
+        }
+    };
+    if read32(4) != 2 {
+        return Err("update_invalid_architecture");
+    }
+    let stride = if wide { 32 } else { 20 };
+    let header_len = 8 + 2 * stride;
+    if header.len() < header_len {
+        return Err("update_invalid_architecture");
+    }
+    let read64 = |at| {
+        let bytes = header[at..at + 8]
+            .try_into()
+            .expect("bounded architecture field");
+        if little {
+            u64::from_le_bytes(bytes)
+        } else {
+            u64::from_be_bytes(bytes)
+        }
+    };
+    let mut architectures = 0;
+    let mut slices = [(0, 0); 2];
+    for (i, slice) in slices.iter_mut().enumerate() {
+        let at = 8 + i * stride;
+        let bit = match read32(at) {
+            0x01000007 => 1,
+            0x0100000c => 2,
+            _ => return Err("update_invalid_architecture"),
+        };
+        if architectures & bit != 0 {
+            return Err("update_invalid_architecture");
+        }
+        architectures |= bit;
+        let offset = if wide {
+            read64(at + 8)
+        } else {
+            u64::from(read32(at + 8))
+        };
+        let size = if wide {
+            read64(at + 16)
+        } else {
+            u64::from(read32(at + 12))
+        };
+        let end = offset
+            .checked_add(size)
+            .ok_or("update_invalid_architecture")?;
+        if offset < header_len as u64 || size < 32 || end > file_len {
+            return Err("update_invalid_architecture");
+        }
+        *slice = (offset, end);
+    }
+    if architectures != 3 || (slices[0].0 < slices[1].1 && slices[1].0 < slices[0].1) {
+        return Err("update_invalid_architecture");
+    }
+    Ok(())
+}
+
 /// A ready value can only be constructed by native verification, never IPC deserialization.
 #[derive(Debug)]
 pub struct ReadyUpdate {
@@ -359,15 +439,17 @@ mod macos {
             }
         }
         let exe = app.join("Contents/MacOS/kodera-desktop");
-        run(
-            "/usr/bin/lipo",
-            &[
-                "-verify_arch".as_ref(),
-                "arm64".as_ref(),
-                "x86_64".as_ref(),
-                exe.as_os_str(),
-            ],
-        )?;
+        let binary = fs::File::open(exe).map_err(|_| "update_invalid_architecture")?;
+        let size = binary
+            .metadata()
+            .map_err(|_| "update_invalid_architecture")?
+            .len();
+        let mut header = Vec::new();
+        binary
+            .take(72)
+            .read_to_end(&mut header)
+            .map_err(|_| "update_invalid_architecture")?;
+        verify_universal_macho(&header, size)?;
         Ok(app)
     }
     pub(super) fn check(feed: &str, key: &str) -> Result<ReadyUpdate, &'static str> {
@@ -561,5 +643,71 @@ mod tests {
         output.clear();
         assert!(copy_download(&b"complete"[..], &mut output, 8).is_ok());
         assert_eq!(output, b"complete");
+    }
+    #[test]
+    fn universal_headers_bind_both_architectures_and_bounded_distinct_slices() {
+        for (wide, little) in [(false, false), (false, true), (true, false), (true, true)] {
+            let stride = if wide { 32 } else { 20 };
+            let mut header = vec![0u8; 8 + 2 * stride];
+            header[..4]
+                .copy_from_slice(&(if wide { 0xcafebabfu32 } else { 0xcafebabeu32 }).to_be_bytes());
+            if little {
+                header[..4].reverse();
+            }
+            let put32 = |out: &mut [u8], at, value: u32| {
+                out[at..at + 4].copy_from_slice(&if little {
+                    value.to_le_bytes()
+                } else {
+                    value.to_be_bytes()
+                })
+            };
+            put32(&mut header, 4, 2);
+            for (i, cpu) in [0x01000007u32, 0x0100000cu32].into_iter().enumerate() {
+                let at = 8 + i * stride;
+                put32(&mut header, at, cpu);
+                let offset = 4096 + i as u64 * 4096;
+                if wide {
+                    header[at + 8..at + 16].copy_from_slice(&if little {
+                        offset.to_le_bytes()
+                    } else {
+                        offset.to_be_bytes()
+                    });
+                    header[at + 16..at + 24].copy_from_slice(&if little {
+                        4096u64.to_le_bytes()
+                    } else {
+                        4096u64.to_be_bytes()
+                    });
+                } else {
+                    put32(&mut header, at + 8, offset as u32);
+                    put32(&mut header, at + 12, 4096);
+                }
+            }
+            assert!(verify_universal_macho(&header, 12288).is_ok());
+            assert!(verify_universal_macho(&header, 12000).is_err());
+            assert!(verify_universal_macho(&header[..20], 12288).is_err());
+            let mut duplicate = header.clone();
+            put32(&mut duplicate, 8 + stride, 0x01000007);
+            assert!(verify_universal_macho(&duplicate, 12288).is_err());
+            let mut unknown = header.clone();
+            put32(&mut unknown, 8, 7);
+            assert!(verify_universal_macho(&unknown, 12288).is_err());
+            if wide {
+                let mut overflow = header.clone();
+                overflow[16..24].copy_from_slice(&if little {
+                    u64::MAX.to_le_bytes()
+                } else {
+                    u64::MAX.to_be_bytes()
+                });
+                assert!(verify_universal_macho(&overflow, u64::MAX).is_err());
+            }
+            let mut thin = header.clone();
+            put32(&mut thin, 4, 1);
+            assert!(verify_universal_macho(&thin, 12288).is_err());
+            let mut overlap = header.clone();
+            overlap[8 + stride + 8..8 + stride + 8 + if wide { 8 } else { 4 }]
+                .copy_from_slice(&header[16..16 + if wide { 8 } else { 4 }]);
+            assert!(verify_universal_macho(&overlap, 12288).is_err());
+        }
+        assert!(verify_universal_macho(&[], 0).is_err());
     }
 }
