@@ -56,7 +56,7 @@ pub const READINESS_MAX_POLL_ATTEMPTS: u8 = 12;
 /// Byte length (`32` bytes -> `64` lowercase hex chars) for hex-encoded secrets.
 pub const HEX_SECRET_BYTES: usize = 32;
 
-/// Byte length (`32` bytes -> `44` padded base64url chars) for AES-256-GCM / HMAC seal keys.
+/// Byte length (`32` bytes -> `44` padded base64 / base64url chars) for 32-byte seal and HMAC keys.
 pub const SEAL_KEY_BYTES: usize = 32;
 
 /// Random byte length (`12` bytes -> `lk_` + `24` hex chars) for `LIVEKIT_API_KEY`.
@@ -69,6 +69,9 @@ const SHELL_METACHARS: &[char] = &[
     ';', '|', '&', '$', '`', '>', '<', '*', '?', '(', ')', '[', ']', '{', '}', '!', '\'', '"',
     '\\', '#', '~',
 ];
+
+const BASE64_STANDARD_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 const BASE64URL_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -885,38 +888,49 @@ fn csprng_hex(byte_len: usize) -> Result<String, CommunityDeployError> {
     Ok(kodera_rs::encode_hex(&buf))
 }
 
+fn csprng_base64_32() -> Result<String, CommunityDeployError> {
+    let raw = csprng_bytes::<SEAL_KEY_BYTES>()?;
+    Ok(encode_base64_padded_32(&raw))
+}
+
 fn csprng_base64url_32() -> Result<String, CommunityDeployError> {
     let raw = csprng_bytes::<SEAL_KEY_BYTES>()?;
     Ok(encode_base64url_padded_32(&raw))
 }
 
+fn encode_base64_padded_32(bytes: &[u8; 32]) -> String {
+    encode_base64_alphabet_padded_32(bytes, BASE64_STANDARD_ALPHABET)
+}
+
 fn encode_base64url_padded_32(bytes: &[u8; 32]) -> String {
+    encode_base64_alphabet_padded_32(bytes, BASE64URL_ALPHABET)
+}
+
+fn encode_base64_alphabet_padded_32(bytes: &[u8; 32], alphabet: &[u8; 64]) -> String {
     let mut out = String::with_capacity(44);
     let mut i = 0usize;
     while i + 3 <= 32 {
         let b0 = bytes[i];
         let b1 = bytes[i + 1];
         let b2 = bytes[i + 2];
-        out.push(char::from(BASE64URL_ALPHABET[usize::from(b0 >> 2)]));
+        out.push(char::from(alphabet[usize::from(b0 >> 2)]));
         out.push(char::from(
-            BASE64URL_ALPHABET[usize::from(((b0 & 0x03) << 4) | (b1 >> 4))],
+            alphabet[usize::from(((b0 & 0x03) << 4) | (b1 >> 4))],
         ));
         out.push(char::from(
-            BASE64URL_ALPHABET[usize::from(((b1 & 0x0f) << 2) | (b2 >> 6))],
+            alphabet[usize::from(((b1 & 0x0f) << 2) | (b2 >> 6))],
         ));
-        out.push(char::from(BASE64URL_ALPHABET[usize::from(b2 & 0x3f)]));
+        out.push(char::from(alphabet[usize::from(b2 & 0x3f)]));
         i += 3;
     }
     // Final 2 bytes (indices 30 and 31) -> 3 chars + '=' padding (44 chars total).
     let b0 = bytes[30];
     let b1 = bytes[31];
-    out.push(char::from(BASE64URL_ALPHABET[usize::from(b0 >> 2)]));
+    out.push(char::from(alphabet[usize::from(b0 >> 2)]));
     out.push(char::from(
-        BASE64URL_ALPHABET[usize::from(((b0 & 0x03) << 4) | (b1 >> 4))],
+        alphabet[usize::from(((b0 & 0x03) << 4) | (b1 >> 4))],
     ));
-    out.push(char::from(
-        BASE64URL_ALPHABET[usize::from((b1 & 0x0f) << 2)],
-    ));
+    out.push(char::from(alphabet[usize::from((b1 & 0x0f) << 2)]));
     out.push('=');
     out
 }
@@ -940,7 +954,7 @@ fn render_community_dotenv(
     let contact_seal_key = csprng_base64url_32()?;
     let outbox_seal_key = csprng_base64url_32()?;
     let membership_cursor_key = csprng_hex(HEX_SECRET_BYTES)?;
-    let discovery_hmac_key = csprng_hex(HEX_SECRET_BYTES)?;
+    let discovery_hmac_key = csprng_base64_32()?;
     let collab_ticket_key = csprng_base64url_32()?;
     let room_access_matrix_token = csprng_hex(HEX_SECRET_BYTES)?;
     let livekit_api_key = format!("lk_{}", csprng_hex(LIVEKIT_KEY_RANDOM_BYTES)?);
@@ -963,7 +977,7 @@ fn render_community_dotenv(
         ("KODERA_HTTPS_PORT", https_port.to_string()),
         (
             "DJANGO_ALLOWED_HOSTS",
-            format!("{normalized_domain},127.0.0.1"),
+            format!("{normalized_domain},127.0.0.1,server"),
         ),
         ("KODERA_OIDC_PROVIDER_ORIGIN", oidc_origin.to_owned()),
         ("KODERA_OIDC_CLIENT_ID", "console".to_owned()),
@@ -2000,6 +2014,12 @@ mod tests {
             .map(|l| l.split_once('=').unwrap())
             .collect();
 
+        assert_eq!(
+            parsed.get("DJANGO_ALLOWED_HOSTS").copied(),
+            Some("chat.example.org,127.0.0.1,server"),
+            "DJANGO_ALLOWED_HOSTS must admit internal server host for tenant-agent polling"
+        );
+
         // Verify 64-char hex CSPRNG secrets are distinct and have exact length 64.
         let hex_keys = [
             "POSTGRES_PASSWORD",
@@ -2008,7 +2028,6 @@ mod tests {
             "SYNAPSE_POSTGRES_PASSWORD",
             "DJANGO_SECRET_KEY",
             "KODERA_MEMBERSHIP_CURSOR_KEY",
-            "KODERA_DISCOVERY_HMAC_KEY",
             "ROOM_ACCESS_MATRIX_TOKEN",
             "LIVEKIT_API_SECRET",
             "KODERA_SYNAPSE_OIDC_CLIENT_SECRET",
@@ -2030,6 +2049,23 @@ mod tests {
                 "prepare report leaked secret {key}"
             );
         }
+
+        // Verify canonical 44-char padded standard Base64 discovery HMAC key (32 bytes).
+        let discovery_val = parsed
+            .get("KODERA_DISCOVERY_HMAC_KEY")
+            .copied()
+            .expect("KODERA_DISCOVERY_HMAC_KEY");
+        let decoded_discovery = decode_canonical_standard_base64_32(discovery_val)
+            .expect("KODERA_DISCOVERY_HMAC_KEY must be canonical 44-char standard Base64");
+        assert_eq!(encode_base64_padded_32(&decoded_discovery), discovery_val);
+        assert!(
+            unique_secrets.insert(discovery_val),
+            "KODERA_DISCOVERY_HMAC_KEY reused entropy"
+        );
+        assert!(
+            !format!("{report:?}").contains(discovery_val),
+            "prepare report leaked KODERA_DISCOVERY_HMAC_KEY"
+        );
 
         // Verify 44-char padded base64url seal keys.
         for seal_key in [
@@ -2518,8 +2554,52 @@ mod tests {
         }
     }
 
+    fn decode_canonical_standard_base64_32(raw: &str) -> Option<[u8; 32]> {
+        if raw.len() != 44 || !raw.ends_with('=') {
+            return None;
+        }
+        let sextet = |b: u8| -> Option<u8> {
+            match b {
+                b'A'..=b'Z' => Some(b - b'A'),
+                b'a'..=b'z' => Some(b - b'a' + 26),
+                b'0'..=b'9' => Some(b - b'0' + 52),
+                b'+' => Some(62),
+                b'/' => Some(63),
+                _ => None,
+            }
+        };
+        let bytes = raw.as_bytes();
+        let mut out = [0u8; 32];
+        let mut in_idx = 0usize;
+        let mut out_idx = 0usize;
+        while in_idx < 40 {
+            let s0 = sextet(bytes[in_idx])?;
+            let s1 = sextet(bytes[in_idx + 1])?;
+            let s2 = sextet(bytes[in_idx + 2])?;
+            let s3 = sextet(bytes[in_idx + 3])?;
+            out[out_idx] = (s0 << 2) | (s1 >> 4);
+            out[out_idx + 1] = (s1 << 4) | (s2 >> 2);
+            out[out_idx + 2] = (s2 << 6) | s3;
+            in_idx += 4;
+            out_idx += 3;
+        }
+        let s0 = sextet(bytes[40])?;
+        let s1 = sextet(bytes[41])?;
+        let s2 = sextet(bytes[42])?;
+        if (s2 & 0x03) != 0 {
+            return None;
+        }
+        out[30] = (s0 << 2) | (s1 >> 4);
+        out[31] = (s1 << 4) | (s2 >> 2);
+        if encode_base64_padded_32(&out) == raw {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
     #[test]
-    fn encode_base64url_padded_32_matches_rfc4648_vector() {
+    fn encode_base64_and_base64url_padded_32_match_rfc4648_vectors() {
         let zero_key = [0u8; 32];
         let encoded_zeros = encode_base64url_padded_32(&zero_key);
         assert_eq!(encoded_zeros.len(), 44);
@@ -2527,11 +2607,41 @@ mod tests {
             encoded_zeros,
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         );
+        assert_eq!(
+            encode_base64_padded_32(&zero_key),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        );
+        assert_eq!(
+            decode_canonical_standard_base64_32(&encode_base64_padded_32(&zero_key)),
+            Some(zero_key)
+        );
 
         let ff_key = [0xffu8; 32];
         let encoded_ff = encode_base64url_padded_32(&ff_key);
         assert_eq!(encoded_ff.len(), 44);
         assert_eq!(encoded_ff, "__________________________________________8=");
+
+        let std_ff = encode_base64_padded_32(&ff_key);
+        assert_eq!(std_ff.len(), 44);
+        assert_eq!(std_ff, "//////////////////////////////////////////8=");
+        assert_eq!(decode_canonical_standard_base64_32(&std_ff), Some(ff_key));
+
+        let fb_key = [0xfbu8; 32];
+        let std_fb = encode_base64_padded_32(&fb_key);
+        assert_eq!(std_fb, "+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/s=");
+        assert_eq!(decode_canonical_standard_base64_32(&std_fb), Some(fb_key));
+
+        // Non-standard or non-canonical encodings must be rejected, matching server configured_key().
+        assert_eq!(decode_canonical_standard_base64_32(&encoded_ff), None);
+        assert_eq!(decode_canonical_standard_base64_32(&"ab".repeat(32)), None);
+        assert_eq!(
+            decode_canonical_standard_base64_32(&format!("{}B=", "A".repeat(42))),
+            None
+        );
+        assert_eq!(
+            decode_canonical_standard_base64_32("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            None
+        );
     }
 
     #[test]

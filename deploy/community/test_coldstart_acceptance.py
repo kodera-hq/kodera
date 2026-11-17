@@ -1,5 +1,6 @@
 """Refusal proofs for the hosted Community runtime qualification controller."""
 
+import base64
 import copy
 import io
 import sys
@@ -161,6 +162,29 @@ class QualificationBoundaryTests(unittest.TestCase):
             with self.assertRaises(acceptance.Refused):
                 controller.cleanup()
         self.assertFalse(scratch.exists())
+
+    def test_placeholder_secret_generation_matches_consumer_key_encodings(self):
+        env_lines = (acceptance.ROOT / "deploy/community/.env.example").read_text(encoding="utf-8").splitlines()
+        placeholders = {
+            line.split("=", 1)[0]: line.split("=", 1)[1]
+            for line in env_lines
+            if "=" in line and not line.startswith("#")
+        }
+        self.assertIn("BASE64_32", placeholders["KODERA_DISCOVERY_HMAC_KEY"])
+        self.assertNotIn("BASE64URL", placeholders["KODERA_DISCOVERY_HMAC_KEY"])
+        discovery_key = acceptance.generate_placeholder_secret(placeholders["KODERA_DISCOVERY_HMAC_KEY"])
+        decoded = base64.b64decode(discovery_key, validate=True)
+        self.assertEqual(len(discovery_key), 44)
+        self.assertEqual(len(decoded), 32)
+        self.assertEqual(base64.b64encode(decoded).decode("ascii"), discovery_key)
+
+        seal_key = acceptance.generate_placeholder_secret(placeholders["KODERA_CONTACT_SEAL_KEY"])
+        self.assertEqual(len(seal_key), 44)
+        self.assertEqual(len(base64.urlsafe_b64decode(seal_key)), 32)
+
+        cursor_key = acceptance.generate_placeholder_secret(placeholders["KODERA_MEMBERSHIP_CURSOR_KEY"])
+        self.assertEqual(len(cursor_key), 64)
+        self.assertEqual(len(bytes.fromhex(cursor_key)), 32)
 
 
 if __name__ == "__main__":

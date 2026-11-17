@@ -390,6 +390,11 @@ def check_community_deploy(
                 errors.append(
                     f"non-placeholder secret value in .env.example for {key} (must start with CHANGE_ME_)"
                 )
+    discovery_placeholder = env_map.get("KODERA_DISCOVERY_HMAC_KEY", "")
+    if "BASE64_32" not in discovery_placeholder or "BASE64URL" in discovery_placeholder:
+        errors.append(
+            "KODERA_DISCOVERY_HMAC_KEY in .env.example must request 32-byte standard base64 (BASE64_32)"
+        )
 
     # 1b. No committed default is shaped like key material, whatever its variable is called.
     for key, value in env_map.items():
@@ -1753,6 +1758,16 @@ def _base64url_32_bytes(value: str) -> bool:
         return False
 
 
+def _base64_32_bytes(value: str) -> bool:
+    if len(value) != 44:
+        return False
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return len(decoded) == 32 and base64.b64encode(decoded).decode("ascii") == value
+
+
 def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     """Check an operator's .env against .env.example. Names keys, never values."""
     example, _ = parse_env_example(env_example_text)
@@ -1784,6 +1799,12 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
         elif "BASE64URL_32" in example.get(key, "") and not _base64url_32_bytes(value):
             # The collaboration server and the seal keys refuse to start on any other length.
             errors.append(f"{key} must be 32 random bytes in URL-safe base64")
+        elif (
+            key == "KODERA_DISCOVERY_HMAC_KEY"
+            or ("BASE64_32" in example.get(key, "") and "BASE64URL_32" not in example.get(key, ""))
+        ) and not _base64_32_bytes(value):
+            # Realm discovery refuses any key that is not canonical 44-char standard base64 for 32 bytes.
+            errors.append(f"{key} must be 32 random bytes in canonical 44-character standard base64")
         elif key == "KODERA_AUTH_TRUST":
             try:
                 entries = json.loads(value)
@@ -2171,6 +2192,19 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "KODERA_AUTH_TRUST gets a default in .env.example",
             lambda c, e, cf: (c, re.sub(r"(?m)^KODERA_AUTH_TRUST=.*$", "KODERA_AUTH_TRUST=[]", e, count=1), cf),
             "KODERA_AUTH_TRUST in .env.example must be a CHANGE_ME_ placeholder",
+        ),
+        (
+            "KODERA_DISCOVERY_HMAC_KEY reverts to a hex placeholder in .env.example",
+            lambda c, e, cf: (
+                c,
+                e.replace(
+                    "KODERA_DISCOVERY_HMAC_KEY=CHANGE_ME_GENERATE_WITH_OPENSSL_RAND_BASE64_32",
+                    "KODERA_DISCOVERY_HMAC_KEY=CHANGE_ME_GENERATE_WITH_OPENSSL_RAND_HEX_32",
+                    1,
+                ),
+                cf,
+            ),
+            "KODERA_DISCOVERY_HMAC_KEY in .env.example must request 32-byte standard base64 (BASE64_32)",
         ),
     ]
 
@@ -2593,6 +2627,34 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
             "KODERA_CONTACT_SEAL_KEY must be 32 random bytes in URL-safe base64",
         ),
         (
+            "the discovery HMAC key is 64-char hex, not standard base64",
+            lambda env: re.sub(r"(?m)^KODERA_DISCOVERY_HMAC_KEY=.*$", "KODERA_DISCOVERY_HMAC_KEY=" + "ab" * 32, env),
+            "KODERA_DISCOVERY_HMAC_KEY must be 32 random bytes in canonical 44-character standard base64",
+        ),
+        (
+            "the discovery HMAC key uses URL-safe base64 instead of standard base64",
+            lambda env: re.sub(
+                r"(?m)^KODERA_DISCOVERY_HMAC_KEY=.*$",
+                "KODERA_DISCOVERY_HMAC_KEY=" + base64.urlsafe_b64encode(b"\xfb\xff" * 16).decode("ascii"),
+                env,
+            ),
+            "KODERA_DISCOVERY_HMAC_KEY must be 32 random bytes in canonical 44-character standard base64",
+        ),
+        (
+            "the discovery HMAC key is non-canonical standard base64",
+            lambda env: re.sub(r"(?m)^KODERA_DISCOVERY_HMAC_KEY=.*$", "KODERA_DISCOVERY_HMAC_KEY=" + "A" * 42 + "B=", env),
+            "KODERA_DISCOVERY_HMAC_KEY must be 32 random bytes in canonical 44-character standard base64",
+        ),
+        (
+            "the discovery HMAC key is unpadded 43-char base64",
+            lambda env: re.sub(
+                r"(?m)^KODERA_DISCOVERY_HMAC_KEY=.*$",
+                "KODERA_DISCOVERY_HMAC_KEY=" + base64.b64encode(bytes(32)).decode("ascii").rstrip("="),
+                env,
+            ),
+            "KODERA_DISCOVERY_HMAC_KEY must be 32 random bytes in canonical 44-character standard base64",
+        ),
+        (
             "the provider origin is plain http",
             lambda env: re.sub(r"(?m)^KODERA_OIDC_PROVIDER_ORIGIN=.*$", "KODERA_OIDC_PROVIDER_ORIGIN=http://id.example.net", env),
             "KODERA_OIDC_PROVIDER_ORIGIN is not a public https origin",
@@ -2605,7 +2667,8 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
-        else f"{key}={base64.urlsafe_b64encode(bytes([i]) * 32).decode()}" if "BASE64URL_32" in value
+        else f"{key}={base64.urlsafe_b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64URL_32" in value
+        else f"{key}={base64.b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64_32" in value
         else f"{key}=filled-value-{i}"
         for i, (key, value) in enumerate(parse_env_example(env_text)[0].items())
     ) + "\n"
@@ -2757,6 +2820,12 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ("Community naming its own issuer for Synapse", with_values(canonical, **{SYNAPSE_OIDC_ISSUER_ENV_NAME: "https://id.example.net/realms/community"})),
     ]
     hardening_accepted.append(("explicit bounded partner channel", with_values(filled, **{FEDERATION_ENV_NAME: "partner.example.net", "KODERA_MATRIX_PARTNER_CHANNELS": partner_example})))
+    hardening_accepted.append(
+        (
+            "discovery HMAC key containing standard base64 + and / characters",
+            with_values(filled, KODERA_DISCOVERY_HMAC_KEY=base64.b64encode(b"\xfb\xff" * 16).decode("ascii")),
+        )
+    )
     for label, value in hardening_accepted:
         if preflight_env(env_text, value):
             print(f"[FAIL] preflight refused '{label}': {preflight_env(env_text, value)}", file=sys.stderr)
@@ -3107,6 +3176,13 @@ def run_generator_selftest(deploy_source: str, suite_source: str) -> int:
             "deploy",
             "allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1,server'",
             "allowed_hosts = domain('api.' + matrix_domain) + ',127.0.0.1'",
+            "kodera_deploy.py selftest failed",
+        ),
+        (
+            "generator writes hex instead of standard base64 for BASE64_32",
+            "deploy",
+            "elif 'BASE64_32' in value:",
+            "elif False:",
             "kodera_deploy.py selftest failed",
         ),
         (

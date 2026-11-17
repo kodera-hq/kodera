@@ -2,16 +2,17 @@
 to serve the workspace read and its initialisation (docs/specs/PILOT_WORKSPACE_ONBOARDING.md §9), to
 administer the workspace's structure and channel access (docs/specs/ESPACE_STRUCTURE.md §11), to
 administer memberships and enqueue their realm access deliveries
-(docs/specs/MEMBERSHIP_LIFECYCLE.md §7), to open support tickets (docs/specs/SUPPORT_TICKETS.md), and
+(docs/specs/MEMBERSHIP_LIFECYCLE.md §7), to open support tickets (docs/specs/SUPPORT_TICKETS.md),
+to serve anonymous realm discovery and rolling quota admission (docs/specs/REALM_DISCOVERY.md), and
 to serve the Agent API's member-set command loop (docs/adr/0016-engines-and-permission-intents.md).
 
 The one list ORGANISATION_INTAKE.md §4 (its table and the paragraphs under it) and the tests
 tests/test_intake_writer_role.py, tests/test_workspace_writer_role.py,
-tests/test_membership_writer_role.py, tests/test_engine_intents_writer_role.py and
-tests/test_support_writer_role.py read. Every privilege
+tests/test_membership_writer_role.py, tests/test_engine_intents_writer_role.py,
+tests/test_support_writer_role.py and tests/test_discovery_writer_role.py read. Every privilege
 is the narrowest the intake and workspace paths need, statement by statement, including the writes its triggers
 make with the invoker's rights. Nothing here grants `TRUNCATE`, `REFERENCES`, `TRIGGER`, a
-`DELETE` outside the replay store, an empty category and a policy's rules, or an `UPDATE` beyond
+`DELETE` outside the replay store, rolling rate-limit horizons, an empty category and a policy's rules, or an `UPDATE` beyond
 the named columns below.
 
 These grants come on top of the customer reads' own (`dev/accept_customer_http.py`
@@ -37,7 +38,10 @@ SELECT = (
     "docs_collectionrow",
     "billing_billingartifact",
     "billing_viesconsultation",
-    # Passport cross-workspace magic-link sign-in, Stripe webhook reconciliation, and EE billing.
+    # Passport cross-workspace magic-link sign-in, anonymous realm discovery quotas, Stripe
+    # webhook reconciliation, and EE billing.
+    "identity_discoveryquotagate",
+    "identity_discoveryquotaevent",
     "identity_passportmagiclinktoken",
     "identity_passportoutboxbinding",
     "identity_passportratelimitevent",
@@ -156,6 +160,7 @@ INSERT = (
     "docs_collection",
     "docs_collectionrow",
     "billing_viesconsultation",
+    "identity_discoveryquotaevent",
     "identity_passportmagiclinktoken",
     "identity_passportoutboxbinding",
     "identity_passportratelimitevent",
@@ -257,6 +262,9 @@ INSERT = (
     "ee_audit_signing_key",
 )
 # One column each, and why:
+# - identity_discoveryquotagate.singleton: `SELECT ... FOR UPDATE` on the single discovery quota
+#   gate row needs UPDATE on one column; `singleton` is held to `true` by `NOT NULL` and
+#   `discovery_gate_singleton` (`CHECK (singleton = true)`), while `id` is never granted.
 # - identity_staffrole.created_at: `SELECT ... FOR SHARE` of the grant (current_staff_grant) needs
 #   UPDATE on one column of the table. `created_at` is one the immutability trigger already
 #   refuses to change (staffrole_immutable_grant); `revoked_at` is never granted.
@@ -420,6 +428,7 @@ UPDATE_COLUMNS = (
     ("docs_documentsnapshot", "updated_at"),
     ("docs_documentlink", "target_id"),
     ("docs_documentlink", "updated_at"),
+    ("identity_discoveryquotagate", "singleton"),
     ("identity_identity", "id"),
     ("identity_staffrole", "created_at"),
     ("orgs_organisation", "owner_guard_revision"),
@@ -598,6 +607,7 @@ UPDATE_COLUMNS = (
 # or `ee_audit_signing_key`.
 DELETE = (
     "docs_collectionrow",
+    "identity_discoveryquotaevent",
     "identity_passportmagiclinktoken",
     "identity_passportratelimitevent",
     "idempotency_record",
@@ -627,15 +637,24 @@ EXECUTE_FUNCTIONS = (
 # SQL column-level SELECT restriction: `legal_acceptance` grants only the linkage columns the
 # guard reads (which documents were accepted, for which tenant and DPA), never personal or
 # network attributes (`identity_id`, `accepted_by_name`, `accepted_by_role`, `source_ip_trunc`,
-# `user_agent`). `billing_subscription` carries table-wide `SELECT` under the shared `kodera_api`
+# `user_agent`). `orgs_realmreadiness` grants only the readiness predicate columns read by
+# `counting_realm_ready` (`organisation_id`, `job_id`, `issuer`, `realm`, `revoked_at`), never
+# staff recorder attributes (`id`, `recorded_by_identity_id`, `recorded_by_realm`, `recorded_at`).
+# `billing_subscription` carries table-wide `SELECT` under the shared `kodera_api`
 # role for customer `/api/v1/*` `Subscription.objects` reads and routed Stripe webhook
 # reconciliation; `/staff/v1/*` FinOps enforces its aggregate-only MRR projection at the SQL
 # query (`SELECT ... state, billing_period, total_excl_vat_minor` in `core/staff_api/services.py`)
 # and HTTP serializer boundary (never exposing `organisation_id`, `order_id`, `tenant_id`,
 # `subscription_id`, or `provider_*`).
-SELECT_COLUMNS = tuple(
-    ("legal_acceptance", column)
-    for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")
+SELECT_COLUMNS = (
+    *(
+        ("legal_acceptance", column)
+        for column in ("id", "organisation_id", "order_id", "tenant_id", "document_id", "dpa_id")
+    ),
+    *(
+        ("orgs_realmreadiness", column)
+        for column in ("organisation_id", "job_id", "issuer", "realm", "revoked_at")
+    ),
 )
 
 

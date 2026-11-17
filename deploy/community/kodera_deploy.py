@@ -152,9 +152,15 @@ def generate(args):
             if key in values:
                 value = values[key]
             elif 'CHANGE_ME_' in value:
-                # The placeholder names the encoding each consumer decodes: a 32-byte key in
-                # base64url (seal keys, the collaboration ticket key) or 32 random bytes in hex.
-                value = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode() if 'BASE64URL_32' in value else secrets.token_hex(32)
+                # The placeholder names the encoding each consumer decodes: 32 random bytes in
+                # base64url (seal keys, the collaboration ticket key), standard base64 (discovery
+                # HMAC key) or hex.
+                if 'BASE64URL_32' in value:
+                    value = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('ascii')
+                elif 'BASE64_32' in value:
+                    value = base64.b64encode(secrets.token_bytes(32)).decode('ascii')
+                else:
+                    value = secrets.token_hex(32)
             line = key+'='+value
         lines.append(line)
     content = '\n'.join(lines)+'\n'
@@ -279,6 +285,10 @@ def selftest():
         # The collaboration server refuses to start unless its key decodes to exactly 32 bytes.
         collab_key = next(line.split('=', 1)[1] for line in content.splitlines() if line.startswith('KODERA_COLLAB_TICKET_KEY='))
         assert len(base64.urlsafe_b64decode(collab_key)) == 32
+        # Realm discovery refuses any key that is not canonical 44-char standard base64 for 32 bytes.
+        discovery_key = next(line.split('=', 1)[1] for line in content.splitlines() if line.startswith('KODERA_DISCOVERY_HMAC_KEY='))
+        decoded_discovery = base64.b64decode(discovery_key, validate=True)
+        assert len(discovery_key) == 44 and len(decoded_discovery) == 32 and base64.b64encode(decoded_discovery).decode('ascii') == discovery_key
         for changes in [dict(oidc_issuer='http://id.example.org/realm'), dict(domain='bad;command'), dict(oidc_origin='https://localhost'), dict(trust_file=None)]:
             try:
                 generate(args(**changes))

@@ -39,17 +39,20 @@ cp .env.example .env
 # 1. Set KODERA_DOMAIN and KODERA_ACME_EMAIL.
 # 2. Set KODERA_OIDC_PROVIDER_ORIGIN and KODERA_AUTH_TRUST (see "Sign-in").
 #    For the canonical shared workspace, complete "Canonical Community" below first.
-# 3. Generate hex secrets (POSTGRES_PASSWORD, SYNAPSE_POSTGRES_PASSWORD, DJANGO_SECRET_KEY,
-#    HMAC and LiveKit secrets):
+# 3. Generate hex secrets (database passwords, DJANGO_SECRET_KEY,
+#    KODERA_MEMBERSHIP_CURSOR_KEY, ROOM_ACCESS_MATRIX_TOKEN, LIVEKIT_API_SECRET):
 #      openssl rand -hex 32
-# 4. Generate 32-byte base64url seal keys (KODERA_CONTACT_SEAL_KEY, KODERA_OUTBOX_SEAL_KEY):
+# 4. Generate the 32-byte standard base64 discovery HMAC key (KODERA_DISCOVERY_HMAC_KEY):
+#      openssl rand -base64 32
+# 5. Generate 32-byte base64url keys (KODERA_CONTACT_SEAL_KEY, KODERA_OUTBOX_SEAL_KEY,
+#    KODERA_COLLAB_TICKET_KEY):
 #      openssl rand -base64 32 | tr '+/' '-_'
-# 5. Check your .env before starting: it names keys only, never prints a value.
+# 6. Check your .env before starting: it names keys only, never prints a value.
 python3 ../../scripts/ci/check-community-deploy.py --preflight .env
 docker compose --profile community-governance up -d
 ```
 
-The preflight refuses to pass while any key of `.env.example` is missing or empty, while any `CHANGE_ME_` placeholder is left, or while `KODERA_AUTH_TRUST` and `KODERA_OIDC_PROVIDER_ORIGIN` do not name a public `https` issuer. Compose itself also refuses to start without `KODERA_AUTH_TRUST` and `KODERA_OIDC_PROVIDER_ORIGIN`.
+The preflight refuses to pass while any key of `.env.example` is missing or empty, while any `CHANGE_ME_` placeholder is left, while a 32-byte standard base64 or base64url key has the wrong encoding or length, or while `KODERA_AUTH_TRUST` and `KODERA_OIDC_PROVIDER_ORIGIN` do not name a public `https` issuer. Compose itself also refuses to start without `KODERA_AUTH_TRUST` and `KODERA_OIDC_PROVIDER_ORIGIN`.
 
 ## Topologies
 
