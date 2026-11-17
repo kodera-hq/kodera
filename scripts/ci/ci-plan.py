@@ -27,8 +27,11 @@ AREAS: dict[str, str] = {
     r"|packages/api-contract/|packages/create-kodera/|packages/extension-sdk/|packages/kodera-rs/vectors/"
     r"|extensions/|\.github/workflows/ci-web\.yml$",
     "rust": r"Cargo\.toml$|Cargo\.lock$|rust-toolchain(\.toml)?$|packages/kodera-rs/|apps/desktop/"
-    r"|security/backports/glib-0\.18\.5/|scripts/ci/qualify-glib-iterator\.py$"
-    r"|apps/web/tests/wasm/|apps/web/src/features/confidential/(local-state|device-http-record|device-cas-host)\.ts$"
+    r"|security/backports/(?:glib-0\.18\.5|openmls_basic_credential-0\.6\.0|openmls_rust_crypto-0\.6\.0)/|scripts/ci/qualify-glib-iterator\.py$"
+    r"|apps/web/tests/wasm/|apps/web/src/features/confidential/local-state\.ts$"
+    r"|apps/web/src/features/confidential/(?:native/|(?:device-http-record|device-cas-host|device-worker-protocol|device-worker-client|device\.worker)\.ts$)"
+    r"|apps/web/native-generated/|apps/web/scripts/check-native-generated(\.selftest)?\.mjs$"
+    r"|apps/web/tests/worker-device/"
     r"|scripts/ci/build-wasm-browser-proof(-selftest)?\.py$|package(-lock)?\.json$|apps/web/package\.json$"
     r"|scripts/ci/(check-release-workflow\.py|assemble-release-sbom\.py|package-desktop-release\.mjs)$"
     r"|\.nvmrc$|\.github/workflows/(ci-rust-desktop|release-binaries)\.yml$",
@@ -141,6 +144,39 @@ def selftest() -> None:
             dict.fromkeys(AREAS, False),
         ),
     ]
+    # These changed paths include deletion-only changes: absent generated inputs
+    # still require verification rather than making the qualification disappear.
+    for path in [
+        "security/backports/openmls_basic_credential-0.6.0/src/lib.rs",
+        "security/backports/openmls_rust_crypto-0.6.0/src/lib.rs",
+    ]:
+        cases.append((f"native backport reaches Rust: {path}", [path],
+                      {"server": False, "web": False, "rust": True, "mobile": False}))
+    for path in [
+        "apps/web/src/features/confidential/native/kodera_rs_bg.wasm",
+        "apps/web/src/features/confidential/native/snippets/kodera-rs-0123/inline0.js",
+        "apps/web/native-generated/manifest.json",
+        "apps/web/native-generated/provenance/result.json",
+        "apps/web/scripts/check-native-generated.mjs",
+        "apps/web/scripts/check-native-generated.selftest.mjs",
+        "apps/web/src/features/confidential/device-http-record.ts",
+        "apps/web/src/features/confidential/device-cas-host.ts",
+        "apps/web/src/features/confidential/device-worker-protocol.ts",
+        "apps/web/src/features/confidential/device-worker-client.ts",
+        "apps/web/src/features/confidential/device.worker.ts",
+        "apps/web/tests/worker-device/client.ts",
+    ]:
+        cases.append((f"checked native consumer reaches web and Rust: {path}", [path],
+                      {"server": False, "web": True, "rust": True, "mobile": False}))
+    for path in [
+        "apps/web/src/features/confidential/native-other/file.js",
+        "apps/web/native-generated-other/manifest.json",
+        "apps/web/scripts/check-native-generated-other.mjs",
+        "apps/web/src/features/confidential/device.worker.ts.backup",
+        "apps/web/tests/worker-device-other/client.ts",
+    ]:
+        cases.append((f"native consumer lookalike stays web only: {path}", [path],
+                      {"server": False, "web": True, "rust": False, "mobile": False}))
     failures = [name for name, paths, want in cases if plan(paths) != want]
     if changed_paths("0" * 40, "HEAD") is not None:
         failures.append("an all-zero base must be unknown")

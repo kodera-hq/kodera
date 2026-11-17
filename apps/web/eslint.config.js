@@ -3,6 +3,8 @@ import jsxA11y from 'eslint-plugin-jsx-a11y'
 import reactHooks from 'eslint-plugin-react-hooks'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const ownerClaimNativeRule = {
   meta: {
@@ -165,7 +167,9 @@ const ownerClaimNativeRule = {
           if (!enclosing) form = 'outside'
           else if (
             enclosing.type !== 'FunctionDeclaration' ||
-            enclosing.id?.name !== 'invokeOwnerClaimNative'
+            !['invokeOwnerClaimNative', 'invokeConfidentialDeviceNative'].includes(
+              enclosing.id?.name
+            )
           )
             form = 'nested'
           else if (enclosing.async) form = 'async'
@@ -179,6 +183,28 @@ const ownerClaimNativeRule = {
             add(identifier, 'NATIVE_FETCH_BOUNDARY', form)
             continue
           }
+          if (enclosing.id.name === 'invokeConfidentialDeviceNative') {
+            const member = (node, property) =>
+              node?.type === 'MemberExpression' &&
+              !node.computed &&
+              !node.optional &&
+              node.object.type === 'Identifier' &&
+              node.object.name === 'cell' &&
+              node.property.type === 'Identifier' &&
+              node.property.name === property
+            const call = identifier.parent
+            if (
+              enclosing.params.length !== 1 ||
+              enclosing.params[0].type !== 'Identifier' ||
+              enclosing.params[0].name !== 'cell' ||
+              call.arguments.length !== 2 ||
+              !member(call.arguments[0], 'url') ||
+              !member(call.arguments[1], 'init')
+            ) {
+              add(identifier, 'NATIVE_FETCH_BOUNDARY', 'device-call')
+              continue
+            }
+          }
           eligible.push(identifier)
           functions.add(enclosing)
         }
@@ -187,9 +213,7 @@ const ownerClaimNativeRule = {
           const variables = sourceCode.getDeclaredVariables(declaration)
           if (!Array.isArray(variables))
             throw new Error('NATIVE_FETCH_DECLARED_VARIABLES_UNAVAILABLE')
-          const variable = variables.find(
-            (candidate) => candidate.name === 'invokeOwnerClaimNative'
-          )
+          const variable = variables.find((candidate) => candidate.name === declaration.id.name)
           if (!variable || variable.defs.length !== 1 || variable.defs[0].node !== declaration) {
             add(declaration.id, 'NATIVE_FETCH_BOUNDARY', 'helper-escape')
             continue
@@ -207,9 +231,14 @@ const ownerClaimNativeRule = {
           }
         }
 
-        eligible.sort((left, right) => left.range[0] - right.range[0])
-        for (const identifier of eligible.slice(1)) {
-          add(identifier, 'NATIVE_FETCH_MULTIPLICITY', 'second-callsite')
+        for (const declaration of functions) {
+          const calls = eligible.filter(
+            (identifier) => immediateFunction(identifier) === declaration
+          )
+          calls.sort((left, right) => left.range[0] - right.range[0])
+          for (const identifier of calls.slice(1)) {
+            add(identifier, 'NATIVE_FETCH_MULTIPLICITY', 'second-callsite')
+          }
         }
         for (const report of [...reports.values()].sort(
           (left, right) => left.node.range[0] - right.node.range[0]
@@ -218,6 +247,218 @@ const ownerClaimNativeRule = {
         }
       },
     }
+  },
+}
+
+const srcRoot = fileURLToPath(new URL('./src', import.meta.url))
+const clientModule = fileURLToPath(new URL('./src/api/client', import.meta.url))
+const deviceFactory = fileURLToPath(
+  new URL('./src/features/confidential/device-worker-client.ts', import.meta.url)
+)
+const deviceWorkerEntry = fileURLToPath(
+  new URL('./src/features/confidential/device.worker.ts', import.meta.url)
+).replaceAll('\\', '/')
+const confidentialRoot = fileURLToPath(
+  new URL('./src/features/confidential', import.meta.url)
+).replaceAll('\\', '/')
+const devicePrivateImportRule = {
+  meta: {
+    type: 'problem',
+    schema: [],
+    messages: {
+      DEVICE_DISPATCH_PRIVATE_IMPORT: 'DEVICE_DISPATCH_PRIVATE_IMPORT',
+    },
+  },
+  create(context) {
+    const filename = context.filename
+    const variables = []
+    const report = (node) => context.report({ node, messageId: 'DEVICE_DISPATCH_PRIVATE_IMPORT' })
+    const erased = (node) => {
+      for (let current = node; current; current = current.parent) {
+        if (
+          [
+            'TSTypeAnnotation',
+            'TSTypeQuery',
+            'TSTypeAliasDeclaration',
+            'TSInterfaceDeclaration',
+            'TSImportType',
+            'TSTypeParameterInstantiation',
+          ].includes(current.type)
+        )
+          return true
+      }
+      return false
+    }
+    const target = (node) => {
+      if (typeof node?.value !== 'string') return false
+      const value = node.value.split(/[?#]/, 1)[0].replaceAll('\\', '/')
+      const absolute = value.startsWith('@/')
+        ? resolve(dirname(clientModule), '..', value.slice(2))
+        : value.startsWith('/src/')
+          ? resolve(dirname(clientModule), '../..', value.slice(1))
+          : value.startsWith('.')
+            ? resolve(dirname(filename), value)
+            : ''
+      return absolute.replace(/\.(?:[cm]?[jt]s)$/, '') === clientModule
+    }
+    return {
+      ImportDeclaration(node) {
+        if (!target(node.source) || node.importKind === 'type') return
+        for (const specifier of node.specifiers) {
+          if (specifier.importKind === 'type') continue
+          if (specifier.type !== 'ImportSpecifier') {
+            report(specifier)
+            continue
+          }
+          const name = specifier.imported.name ?? specifier.imported.value
+          if (name !== 'bindConfidentialDeviceDispatch') continue
+          if (filename !== deviceFactory || /[?#]/.test(node.source.value)) {
+            report(specifier)
+            continue
+          }
+          const declared = context.sourceCode.getDeclaredVariables(node)
+          const variable = declared.find((value) => value.name === specifier.local.name)
+          if (!variable || !Array.isArray(variable.references))
+            throw new Error('DEVICE_DISPATCH_IMPORT_SCOPE_UNAVAILABLE')
+          variables.push(variable)
+        }
+      },
+      ExportNamedDeclaration(node) {
+        if (node.exportKind === 'type' || !target(node.source)) return
+        for (const specifier of node.specifiers) {
+          if (specifier.exportKind === 'type') continue
+          if ((specifier.local.name ?? specifier.local.value) === 'bindConfidentialDeviceDispatch')
+            report(specifier)
+        }
+      },
+      ExportAllDeclaration(node) {
+        if (node.exportKind !== 'type' && target(node.source)) report(node)
+      },
+      ImportExpression(node) {
+        if (!erased(node) && target(node.source)) report(node)
+      },
+      CallExpression(node) {
+        if (
+          !erased(node) &&
+          node.callee.type === 'Identifier' &&
+          node.callee.name === 'require' &&
+          target(node.arguments[0])
+        )
+          report(node)
+      },
+      'Program:exit'() {
+        for (const variable of variables) {
+          for (const reference of variable.references) {
+            if (reference.isValueReference === false || erased(reference.identifier)) continue
+            const identifier = reference.identifier,
+              parent = identifier.parent
+            if (
+              parent?.type !== 'CallExpression' ||
+              parent.optional ||
+              parent.callee !== identifier
+            )
+              report(identifier)
+          }
+        }
+      },
+    }
+  },
+}
+const deviceWorkerImportRule = {
+  meta: {
+    type: 'problem',
+    schema: [],
+    messages: {
+      DEVICE_WORKER_PRIVATE_IMPORT: 'DEVICE_WORKER_PRIVATE_IMPORT',
+    },
+  },
+  create(context) {
+    const filename = context.filename.replaceAll('\\', '/')
+    const workerBase = `${confidentialRoot}/device.worker`
+    const casHostBase = `${confidentialRoot}/device-cas-host`
+    const nativeBase = `${confidentialRoot}/native`
+    const report = (node) => context.report({ node, messageId: 'DEVICE_WORKER_PRIVATE_IMPORT' })
+    const classify = (node) => {
+      let raw = ''
+      let prefix = false
+      if (node?.type === 'Literal' && typeof node.value === 'string') {
+        raw = node.value
+      } else if (node?.type === 'TemplateLiteral' && node.quasis.length > 0) {
+        raw = node.quasis[0].value.cooked ?? node.quasis[0].value.raw ?? ''
+        prefix = node.expressions.length > 0
+      } else {
+        return null
+      }
+      const clean = raw.split(/[?#]/, 1)[0].replaceAll('\\', '/')
+      if (!clean) return null
+      const resolved = clean.startsWith('@/')
+        ? resolve(srcRoot, clean.slice(2)).replaceAll('\\', '/')
+        : clean.startsWith('/src/')
+          ? resolve(srcRoot, clean.slice(5)).replaceAll('\\', '/')
+          : clean.startsWith('src/')
+            ? resolve(srcRoot, clean.slice(4)).replaceAll('\\', '/')
+            : clean.startsWith('.')
+              ? resolve(dirname(context.filename), clean).replaceAll('\\', '/')
+              : ''
+      if (
+        resolved === workerBase ||
+        resolved.startsWith(`${workerBase}.`) ||
+        (prefix && resolved.startsWith(workerBase)) ||
+        /(?:^|\/)features\/confidential\/device\.worker(?:$|\.)/.test(clean)
+      ) {
+        return 'worker-entry'
+      }
+      if (
+        resolved === nativeBase ||
+        resolved.startsWith(`${nativeBase}/`) ||
+        /(?:^|\/)features\/confidential\/native(?:$|\/)/.test(clean) ||
+        resolved === casHostBase ||
+        resolved.startsWith(`${casHostBase}.`) ||
+        (prefix && resolved.startsWith(casHostBase)) ||
+        /(?:^|\/)features\/confidential\/device-cas-host(?:$|\.)/.test(clean)
+      ) {
+        return 'worker-only'
+      }
+      return null
+    }
+    const check = (sourceNode, reportNode = sourceNode) => {
+      const kind = classify(sourceNode)
+      if (!kind) return
+      if (kind === 'worker-entry' || filename !== deviceWorkerEntry) report(reportNode)
+    }
+    return {
+      ImportDeclaration(node) {
+        check(node.source)
+      },
+      ExportNamedDeclaration(node) {
+        if (node.source) check(node.source)
+      },
+      ExportAllDeclaration(node) {
+        check(node.source)
+      },
+      ImportExpression(node) {
+        check(node.source)
+      },
+      TSImportType(node) {
+        check(node.source ?? node.argument?.literal ?? node.argument, node)
+      },
+      CallExpression(node) {
+        if (
+          node.callee.type === 'Identifier' &&
+          node.callee.name === 'require' &&
+          node.arguments.length > 0
+        ) {
+          check(node.arguments[0], node)
+        }
+      },
+    }
+  },
+}
+const koderaPlugin = {
+  rules: {
+    'owner-claim-native-fetch': ownerClaimNativeRule,
+    'confidential-device-private-import': devicePrivateImportRule,
+    'confidential-device-worker-import': deviceWorkerImportRule,
   },
 }
 
@@ -407,12 +648,22 @@ export default tseslint.config(
     name: 'kodera/owner-claim-native-boundary',
     files: ['src/api/client.ts'],
     linterOptions: { noInlineConfig: true },
-    plugins: { kodera: { rules: { 'owner-claim-native-fetch': ownerClaimNativeRule } } },
+    plugins: { kodera: koderaPlugin },
     rules: {
       // The owner-claim rule decides every native fetch in this file, property reads included.
       'no-restricted-globals': 'off',
       'no-restricted-properties': 'off',
       'kodera/owner-claim-native-fetch': 'error',
+    },
+  },
+  {
+    name: 'kodera/confidential-device-private-import',
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    plugins: { kodera: koderaPlugin },
+    rules: {
+      'kodera/confidential-device-private-import': 'error',
+      'kodera/confidential-device-worker-import': 'error',
     },
   }
 )
