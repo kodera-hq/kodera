@@ -9,7 +9,7 @@ import type { MessageView } from '../espace/matrix/timeline'
 import {
   MENTION_COOLDOWN_MS,
   SYNTH_SAMPLE_RATE,
-   SoundEngine,
+  SoundEngine,
   VOICE_CALL_DUCK_GAIN,
   clearSynthCache,
   measurePeak,
@@ -120,11 +120,7 @@ function GuardedDocsSurface({
     )
   }
   return (
-    <DocsWorkspacePanel
-      tenantSlug={tenantSlug}
-      channelId={channelId}
-      channelName={channelName}
-    />
+    <DocsWorkspacePanel tenantSlug={tenantSlug} channelId={channelId} channelName={channelName} />
   )
 }
 
@@ -162,10 +158,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
 
     // 1. Default pack is givre
     expect(engine.getPreferences().pack).toBe('givre')
-    expect(screen.getByRole('radio', { name: 'Givre' })).toHaveAttribute(
-      'aria-checked',
-      'true'
-    )
+    expect(screen.getByRole('radio', { name: 'Givre' })).toHaveAttribute('aria-checked', 'true')
 
     const givreMention = synthesizeCue('givre', 'msg_mention')
     const givreJoin = synthesizeCue('givre', 'voice_self_join')
@@ -178,17 +171,12 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
 
     // Determinism across repeated synthesis
     const givreMentionRepeat = synthesizeCue('givre', 'msg_mention')
-    expect(waveformSignature(givreMention.mono)).toBe(
-      waveformSignature(givreMentionRepeat.mono)
-    )
+    expect(waveformSignature(givreMention.mono)).toBe(waveformSignature(givreMentionRepeat.mono))
 
     // 2. Switch to Atelier via SoundsScreen radio card
     await user.click(screen.getByRole('radio', { name: 'Atelier' }))
     expect(engine.getPreferences().pack).toBe('atelier')
-    expect(screen.getByRole('radio', { name: 'Atelier' })).toHaveAttribute(
-      'aria-checked',
-      'true'
-    )
+    expect(screen.getByRole('radio', { name: 'Atelier' })).toHaveAttribute('aria-checked', 'true')
 
     const atelierMention = synthesizeCue('atelier', 'msg_mention')
     const atelierJoin = synthesizeCue('atelier', 'voice_self_join')
@@ -196,9 +184,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
     expect(atelierJoin.sampleRate).toBe(48_000)
     expect(measurePeak(atelierMention.mono)).toBeGreaterThan(0.05)
     expect(measurePeak(atelierJoin.mono)).toBeGreaterThan(0.05)
-    expect(waveformSignature(atelierMention.mono)).not.toBe(
-      waveformSignature(givreMention.mono)
-    )
+    expect(waveformSignature(atelierMention.mono)).not.toBe(waveformSignature(givreMention.mono))
 
     // 3. Verify call ducking hierarchy when an active voice call is flagged on SoundEngine:
     // Tier 0 (voice_self_join) and Tier 1 (msg_mention) remain un-ducked, Tier 2 (voice_peer_join) ducks by -6 dB, Tier 3 (msg_channel_unread) is suppressed
@@ -345,11 +331,12 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
         org="acme"
         organisationName="Acme SA"
         workspace={WORKSPACE}
-        channelId={GENERAL_ID}
+        channelId={PROXIMITY_ID}
         store={store}
       />
     )
 
+    expect(screen.getByRole('heading', { level: 1, name: 'proximity' })).toBeVisible()
     expect(playSpy).not.toHaveBeenCalled()
 
     // Deliver two rapid @me mentions and one self-authored mention in the same live timeline batch
@@ -402,6 +389,10 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
 
     expect(MENTION_COOLDOWN_MS).toBe(3000)
     expect(playSpy).toHaveBeenCalledTimes(2)
+    expect(playSpy).toHaveBeenCalledWith(
+      'msg_mention',
+      expect.objectContaining({ roomId: GENERAL_ROOM, channelId: GENERAL_ID })
+    )
 
     const firstDecision = playSpy.mock.results[0]?.value
     const secondDecision = playSpy.mock.results[1]?.value
@@ -470,10 +461,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
     const docsLink = screen.getByRole('link', {
       name: /Ouvrir Notes — Architecture & Sécurité dans Docs/i,
     })
-    expect(docsLink).toHaveAttribute(
-      'href',
-      resolvedFirst.ok ? resolvedFirst.url : ''
-    )
+    expect(docsLink).toHaveAttribute('href', resolvedFirst.ok ? resolvedFirst.url : '')
     expect(screen.queryByRole('alert')).toBeNull()
 
     // Verify postMessage handoff accepts only exact https://docs.acme.kodera.io origin
@@ -578,11 +566,7 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
 
     rerender(
       <div>
-        <GuardedDocsSurface
-          tenantSlug="acme"
-          channelId={PROXIMITY_ID}
-          channelName="proximity"
-        />
+        <GuardedDocsSurface tenantSlug="acme" channelId={PROXIMITY_ID} channelName="proximity" />
         <EspaceLiveView
           org="acme"
           organisationName="Acme SA"
