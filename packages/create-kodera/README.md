@@ -2,9 +2,10 @@
 
 Status: Local pre-release package; not published to a registry
 
-A Node-only configuration generator and explicit Cloud claim client. Requires Node
-22.22.2 or newer. Runtime uses only the Node standard library; no install or build
-step is needed to run the checked-out executable.
+A Node-only configuration generator and explicit Cloud claim client. Its `engines`
+range is `^22.22.2 || ^24.15.0 || >=26.0.0`, so `23.x` and `25.x` are refused. Runtime
+uses only the Node standard library; no install or build step is needed to run the
+checked-out executable.
 
 ```sh
 node packages/create-kodera/bin/create-kodera.mjs --selftest

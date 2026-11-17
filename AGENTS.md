@@ -7,7 +7,7 @@ This file defines repository-wide engineering, security, and contribution rules 
 ## Repository Layout
 
 - `apps/web/` — `@kodera/web` customer & workspace web client (`Apache-2.0`).
-- `apps/desktop/` — `@kodera/desktop` desktop developer preview: Rust backend seams, Tauri configuration and a local self-host preflight; no running shell or provider calls yet (`Apache-2.0`).
+- `apps/desktop/` — `@kodera/desktop` origin-fenced Tauri v2 desktop shell: `kodera://` and `matrix:` deep-links, system tray and opt-in Push-to-Talk, loopback OIDC, notifications, a zeroized process credential vault behind an OS keychain seam, and the automated self-host stack deployment wizard; persistent OS keychain wiring and notarised installers await operator signing (`Apache-2.0`).
 - `apps/ios/` — Native SwiftUI iOS client (`Apache-2.0`).
 - `apps/android/` — Native Kotlin / Jetpack Compose Android client (`Apache-2.0`).
 - `apps/server/` — `kodera-server` Django 6 control plane, room-access, and tenant agent (`AGPL-3.0-or-later`).
@@ -19,7 +19,7 @@ This file defines repository-wide engineering, security, and contribution rules 
 - `packages/synapse-policy/` — Matrix Synapse room-policy module (`AGPL-3.0-or-later`).
 - `extensions/` — Starter and community extensions, each a reference implementation; `extensions/catalog.json` is generated from their manifests (`Apache-2.0`).
 - `deploy/community/` — Single-node self-hosted Docker Compose profile (`Apache-2.0`); it brings no identity provider (`KODERA_AUTH_TRUST`, see its README).
-- `docs/` — RFCs (`docs/rfcs/`) and the index of every ADR (`docs/adr/README.md`). An ADR stays in its package and is cited across packages by its prefixed identifier (`SRV-ADR-0003`).
+- `docs/` — RFCs (`docs/rfcs/`), specifications (`docs/specs/`), implementation reviews (`docs/reviews/`) and the index of every ADR (`docs/adr/README.md`). An ADR stays in its package and is cited across packages by its prefixed identifier (`SRV-ADR-0003`).
 - `ee/` — Commercial Enterprise Edition (`LicenseRef-Kodera-EE`, Copyright Samouraï Coop).
 
 ## Non-Negotiable Engineering Rules

@@ -40,14 +40,24 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[2]
 
 # Documents whose links and wording are checked, as repository-relative paths or directories.
+# A source is a file, a directory, or a path pattern containing `*`, which matches one single
+# path segment (never `/`) so every package's README is checked the day it lands without
+# matching nested fixture files or overlooking a symlinked package directory.
 SOURCES = (
     "README.md",
     "ARCHITECTURE.md",
     "ROADMAP.md",
     "AGENTS.md",
+    "ONBOARDING.md",
+    "CONTRIBUTING.md",
+    "GOVERNANCE.md",
+    "SECURITY.md",
+    "SUPPORT.md",
     "docs",
+    "ee/README.md",
     "ee/billing/README.md",
     "deploy/community",
+    "packages/*/README.md",
     "packages/create-kodera",
     "packages/extension-sdk",
     "extensions",
@@ -178,10 +188,46 @@ def survey(root: Path) -> Tree:
     return tree
 
 
+def _segment_matches(segment: str, pattern: str) -> bool:
+    """Match one single path segment (never across `/`), where `*` is the only wildcard."""
+    if not segment or "/" in segment:
+        return False
+    if "*" not in pattern:
+        return segment == pattern
+    expr = ".*".join(re.escape(part) for part in pattern.split("*"))
+    return re.fullmatch(expr, segment, flags=re.DOTALL) is not None
+
+
+def _source_parts(source: str) -> tuple[str, ...]:
+    return tuple(part for part in source.split("/") if part)
+
+
+def _matches_source(path: str, source: str) -> bool:
+    """True when `path` is `source` itself or lies beneath `source`, matching `*` per segment."""
+    path_parts = tuple(part for part in path.split("/") if part)
+    source_parts = _source_parts(source)
+    return (
+        bool(source_parts)
+        and len(path_parts) >= len(source_parts)
+        and all(_segment_matches(part, pat) for part, pat in zip(path_parts, source_parts))
+    )
+
+
+def _stands_above_source(path: str, source: str) -> bool:
+    """True when `path` is an ancestor directory on the way to `source` (wildcards included)."""
+    path_parts = tuple(part for part in path.split("/") if part)
+    source_parts = _source_parts(source)
+    return (
+        bool(path_parts)
+        and len(path_parts) < len(source_parts)
+        and all(_segment_matches(part, pat) for part, pat in zip(path_parts, source_parts))
+    )
+
+
 def selected(paths: set[str] | dict[str, str], sources: tuple[str, ...]) -> list[str]:
     return sorted(
         path for path in paths
-        if any(path == source or path.startswith(source.rstrip("/") + "/") for source in sources)
+        if any(_matches_source(path, source) for source in sources)
     )
 
 
@@ -189,7 +235,10 @@ def check_readable(tree: Tree, sources: tuple[str, ...] = LINK_SOURCES) -> list[
     """Name every checked path that is not a regular file, and every refused path that stands
     above a checked one: a linked directory hides whatever it leads to. The path is all that is
     reported: where a link points, and what is there, is never read."""
-    above = [path for path in tree.refused if any(source.startswith(path + "/") for source in sources)]
+    above = [
+        path for path in tree.refused
+        if any(_stands_above_source(path, source) for source in sources)
+    ]
     return [
         f"{path}: {tree.refused[path]} refused: the check reads regular files inside the repository only"
         for path in sorted({*selected(tree.refused, sources), *above})
@@ -526,6 +575,7 @@ def selftest() -> None:
             root.mkdir()
             elsewhere = Path(tmp) / "elsewhere"
             build(elsewhere, {
+                "README.md": f"# Elsewhere\n\n{marker} {organisation}\n",
                 "guide.md": f"# Guide\n\n## Getting started\n\n{marker}\n",
                 "adr/0001-console.md": "# ADR-0001: Console\n",
             })
@@ -671,6 +721,18 @@ def selftest() -> None:
         ("stale pre-Wave-3 roadmap capability status",
          {"ROADMAP.md": "# Roadmap\n\n- [ ] Native Docs: a block editor inside the web client\n"},
          "ROADMAP.md:3: stale product status: shipped collaboration capability marked unimplemented"),
+        ("a package directory above a wildcard source that is a symbolic link",
+         {"packages/linked": "LINK-OUTSIDE-DIRECTORY"},
+         "packages/linked: symbolic link refused: the check reads regular files inside the repository only"),
+        ("a package README matched by a wildcard source that is a symbolic link",
+         {"packages/example/README.md": "LINK-OUTSIDE"},
+         "packages/example/README.md: symbolic link refused: the check reads regular files inside the repository only"),
+        ("a broken link in a package README matched by a wildcard source",
+         {"packages/example/README.md": "# Example\n\nSee [missing](./missing.md).\n"},
+         "packages/example/README.md:3: broken link './missing.md': no tracked file or directory 'packages/example/missing.md'"),
+        ("retired wording in a package README matched by a wildcard source",
+         {"packages/example/README.md": "# Example\n\nThe " + "official" + " Kodera connector.\n"},
+         "packages/example/README.md:3: retired wording: an extension presented as official"),
     ])
     for label, changes, expected in cases:
         got = run(changes)
@@ -692,6 +754,13 @@ def selftest() -> None:
     if shipped_summary:
         failures.append(f"a shipped capability in the implemented section must pass (got {shipped_summary})")
 
+    wildcard_package = run({
+        "packages/example/README.md": "# Example\n\nSee [the guide](../../docs/guide.md#getting-started).\n",
+        "packages/example/nested/README.md": "# Nested fixture\n\n[not matched by single-segment wildcard](./untracked.md)\n",
+    })
+    if wildcard_package:
+        failures.append(f"a clean package README must pass while single-segment '*' ignores deeper paths (got {wildcard_package})")
+
     # A checkout whose files git cannot list is a failure, not an empty repository.
     with tempfile.TemporaryDirectory(prefix="docs-truth-selftest-") as tmp:
         build(Path(tmp), base)
@@ -704,7 +773,7 @@ def selftest() -> None:
             failures.append("a checkout git cannot list must be refused")
     if failures:
         sys.exit("check-docs-truth selftest FAILED:\n  " + "\n  ".join(failures))
-    print(f"OK: check-docs-truth selftest, {len(cases) + 1} refusals named and 4 accepted cases")
+    print(f"OK: check-docs-truth selftest, {len(cases) + 1} refusals named and 5 accepted cases")
 
 
 def main() -> None:

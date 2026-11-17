@@ -2,6 +2,8 @@
 
 Canonical OpenAPI specifications shared across `apps/server`, `apps/web`, `apps/desktop`, `apps/ios`, and `apps/android`.
 
+Status: Active. `core-api.openapi.yaml` is at `0.47.0` and `agent-api.openapi.yaml` at `0.6.0`.
+
 - `core-api.openapi.yaml`: Kodera Control Plane & Workspace HTTP API.
 - `agent-api.openapi.yaml`: Kodera Tenant Agent internal reconciliation contract.
 
@@ -9,12 +11,16 @@ Licensed under `Apache-2.0`.
 
 ## Workspace increment 0.43.0
 
-Status: Proposed
+Status: Implemented. `apps/server` routes every operation of this increment — moderation,
+invite links, attachments, URL previews, the notification inbox, empty-body push wakeups,
+workspace documents and collaboration tickets are the Wave 2B and Wave 3 boundaries
+recorded in [`docs/specs/collaboration-status.md`](../../docs/specs/collaboration-status.md).
 
 The additive Core contract declares moderation and reports, reusable invite links,
 checksum-bound attachments, public-target URL previews, a private notification inbox,
 empty-body push wakeups, workspace documents and short-lived collaboration tickets.
-These declarations do not assert that their HTTP handlers or deployment are available.
+OpenAPI declarations and routed handlers are not evidence of a live deployment; server
+and client implementation lanes supply their own runtime proofs.
 There is no chat-to-document promotion operation.
 
 Acceptance requires byte-identical server/web copies, the explicit cursor inventory,
@@ -37,7 +43,13 @@ refusal is audited. Templates are `spec`, `adr`, `meeting_notes` and `runbook`.
 
 ## Collections, quotas, billing artifacts and privacy increment 0.44.0
 
-Status: Proposed
+Status: Partially implemented. `apps/server` routes the collection
+([`apps/server/apps/docs/api/urls.py`](../../apps/server/apps/docs/api/urls.py)), quota,
+and credit-note operations of `0.44.0`, while the GDPR/privacy export and deletion
+storage and worker modules sit in `apps/server/apps/orgs/`
+([`PRIVATE_EXPORT_RUNTIME.md`](../../apps/server/apps/orgs/PRIVATE_EXPORT_RUNTIME.md))
+with their 10 HTTP endpoints still held unrouted; see
+[`docs/specs/collaboration-status.md`](../../docs/specs/collaboration-status.md).
 
 The additive contract defines typed collection properties and values, saved table,
 board and list views, bounded server-validated queries and document-backed rows.
@@ -66,9 +78,9 @@ lawfully required accounting snapshots under the ten-year retention clock; legal
 holds and pending retention remain explicit states. A last owner transfers ownership
 before deleting their account.
 
-These are proposed wire surfaces, not evidence of deployed HTTP handlers, certified
-billing documents, a working VIES service or completed data deletion. Server and
-client implementation lanes supply their own runtime proofs.
+OpenAPI declarations and routed handlers are not evidence of a live deployment,
+certified billing documents, a reachable VIES service or completed data deletion. Server
+and client implementation lanes supply their own runtime proofs.
 
 Offline acceptance uses `apps/server/contracts/check_wave_surfaces.py --selftest`,
 which also runs the 0.44.0 checks and named refusal mutations. Acceptance additionally

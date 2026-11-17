@@ -1,5 +1,8 @@
 # `@kodera/extension-sdk`
 
+Status: Published in tree; the `extensions/` directories built on it are reference
+implementations, not connected integrations.
+
 Zero-dependency TypeScript/ESM SDK for building signed Kodera webhooks, outbound bots, incident bridges, and slash commands (`Apache-2.0`).
 
 ## Capabilities

@@ -35,8 +35,9 @@ motion are acceptance conditions.
   pads, developer Docs and hosting information. Local demonstration rooms remain
   isolated from customer workspaces. community.kodera.io is a target address;
   availability and deployment are unverified.
-- Exactly ten reference connector implementations are catalogued. Linear, Stripe and
-  Sentry are potential SDK integrations, not additional shipped connectors.
+- Twenty-three reference connector implementations are catalogued: twenty-two
+  slash-command starters plus the webhook-only `git-tracker`. Stripe remains a potential
+  custom SDK integration, not a shipped reference connector.
 - Audio synthesis at 48 kHz belongs to the Web implementation. Rust provides bounded
   native metadata/codecs; no native audio hardware or live BLE provider is asserted.
 

@@ -2,7 +2,7 @@
 
 Status: published under AGPL-3.0-or-later. Changes land by pull request.
 
-A Synapse module that keeps a Kodera instance's rooms under its control plane's policy (Core ADR-0018).
+A Synapse module that keeps a Kodera instance's rooms under its control plane's policy (`SRV-ADR-0018`).
 
 **The model.** Kodera's control plane decides who is in which channel room, and the tenant agent's administrative account applies it. Synapse's client API is open to any Matrix client a member signs in with, so this module refuses whatever would route around that:
 

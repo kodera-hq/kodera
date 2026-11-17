@@ -2,8 +2,7 @@
 
 Status: Validated
 
-
-Branch: `fix/lane-77-world-class-ux`
+Reviewed branch (merged): `fix/lane-77-world-class-ux`
 
 Base: `44d01acae5c2db4a211217c9dc2663402ae877e3`
 
@@ -25,10 +24,10 @@ The routed Community workspace is the reference demo entry. It combines the comp
 
 ## Validation evidence
 
-- Web typecheck, lint and documentation generation check pass. The final complete unit suite passes all 5,205 tests across 363 files.
+- Web typecheck, lint and documentation generation check pass. The complete web unit suite was green at the time of this review.
 - Production and staging `npm run build:check`: mock infrastructure, seed data and local workspace registry are excluded.
-- `bash scripts/check-production-bundle.selftest.sh`: mutation controls and explicit mock positive controls pass.
-- Root `npm run test:sdk`: 76 tests pass (33 SDK and 43 extension tests).
+- `bash apps/web/scripts/check-production-bundle.selftest.sh` (run from the repository root): mutation controls and explicit mock positive controls pass.
+- Root `npm run test:sdk`: the SDK and extension suites passed at the time of this review.
 - Attribution scan and required clauses: pass; 11 required clauses across seven files.
 - Browser suite: `npx playwright test --config playwright.community.config.ts` passes all 13 scenarios in three files, with zero skipped, unexpected or flaky results. Three workspace themes have zero detected WCAG A/AA violations. The mobile/session check also passes after the final viewport-unit correction. Preserved evidence lives under `apps/web/playwright-report/lane77-evidence`, with the combined JSON summary at `apps/web/playwright-report/lane77-summary.json`; these are ignored local test artifacts, not production assets.
 - The remaining lint warning is the pre-existing form-library compiler compatibility warning in `ContactsStep.tsx`; lint has no errors.
@@ -46,4 +45,4 @@ Local creation, conversations, documents and audio are demo capabilities. Audio 
 
 The branch starts at the requested base and leaves `main` unchanged. No environment file or protected legacy checkout is modified. No deployment or provider operation is part of this change.
 
-The Genesis script's canonical location is `scripts/cutover/prepare-genesis-commit.sh`. Its final rehearsal must use `--source HEAD --dry-run` after committing the clean feature branch, rather than its default `main` source. The repository has no configured Git remote; publication and a remote pull request are outside this local rehearsal.
+The Genesis script's canonical location is `scripts/cutover/prepare-genesis-commit.sh`. Its final rehearsal must use `--source HEAD --dry-run` after committing the clean feature branch, rather than its default `main` source. This review predates the `kodera-hq/kodera` remote cutover and records a local rehearsal only: at the time it was written the repository had no configured Git remote, so publication and a remote pull request were outside its scope.
