@@ -31,24 +31,7 @@ describe('UserBlock', () => {
     expect(onSignOut).toHaveBeenCalledTimes(1)
   })
 
-  it('opens the security placeholder place from « Sécurité et connexion »', async () => {
-    const user = userEvent.setup()
-    const onOpenPlace = vi.fn()
-    render(
-      <UserBlock
-        user={{ displayName: 'Henri Duflot', role: 'org_admin' }}
-        onSignOut={() => {}}
-        onOpenPlace={onOpenPlace}
-      />
-    )
-
-    await user.click(screen.getByRole('button', { name: /Henri Duflot/ }))
-    await user.click(screen.getByRole('menuitem', { name: 'Sécurité et connexion' }))
-
-    expect(onOpenPlace).toHaveBeenCalledWith('/$org/security')
-  })
-
-  it('opens the Apparence page from « Apparence », right after « Sécurité et connexion »', async () => {
+  it('omits stub security and dead pending language items while opening Apparence', async () => {
     const user = userEvent.setup()
     const onOpenPlace = vi.fn()
     render(
@@ -61,9 +44,7 @@ describe('UserBlock', () => {
 
     await user.click(screen.getByRole('button', { name: /Henri Duflot/ }))
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-      'Sécurité et connexion',
       'Apparence',
-      'Langue',
       'Se déconnecter',
     ])
     await user.click(screen.getByRole('menuitem', { name: 'Apparence' }))

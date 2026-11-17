@@ -674,6 +674,9 @@ function snapshotFixture(
     if (method === 'POST' && path === `/_matrix/client/v3/user/${SNAPSHOT_ME}/filter`) {
       return json(200, { filter_id: 'snapshot-filter' })
     }
+    if (method === 'GET' && path === `/_matrix/client/v3/profile/${SNAPSHOT_ME}`) {
+      return json(200, {})
+    }
     if (
       method === 'GET' &&
       path ===
@@ -2228,6 +2231,269 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
       strictReadOnly.stop()
       announcementsReadOnly.stop()
       exempt.stop()
+    }
+  })
+})
+
+describe('fetchOwnAvatar origin pinning, raster magic-byte guard, and reactive own profile', () => {
+  const SERVER = 'acme-sa.kodera.test'
+  const ME = `@ce239589-a4bd-41db-9cfb-d06e66a77ff3:${SERVER}`
+
+  function validPng(width = 64, height = 64): Uint8Array<ArrayBuffer> {
+    const bytes = new Uint8Array(33)
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+    const view = new DataView(bytes.buffer)
+    view.setUint32(8, 13, false)
+    bytes.set([0x49, 0x48, 0x44, 0x52], 12)
+    view.setUint32(16, width, false)
+    view.setUint32(20, height, false)
+    bytes[24] = 8
+    bytes[25] = 6
+    return bytes
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('rejects empty/malformed mxc:// and cross-origin URLs without calling fetch or leaking the Bearer token', async () => {
+    const globalFetchSpy = vi.spyOn(globalThis, 'fetch')
+    const base = vi.fn<typeof fetch>()
+    const store = createEspaceStore(
+      { baseUrl: HS, userId: ME, deviceId: 'DEV1', accessToken: 'secret-matrix-token' },
+      base,
+      { cache: null }
+    )
+    const client = matrixClientForTests(store)
+
+    // 1. Malformed mxc:// where mxcUrlToHttp returns "" (empty string, not null!)
+    vi.spyOn(client, 'getUser').mockReturnValue({
+      avatarUrl: 'mxc://malformed-no-media-id',
+    } as never)
+    vi.spyOn(client, 'mxcUrlToHttp').mockReturnValueOnce('')
+    expect(await store.fetchOwnAvatar(96)).toBeNull()
+    expect(base).not.toHaveBeenCalled()
+    expect(globalFetchSpy).not.toHaveBeenCalled()
+
+    // 2. Relative URL resolved against console origin must also be refused
+    vi.spyOn(client, 'mxcUrlToHttp').mockReturnValueOnce('/_matrix/media/v3/thumbnail/foo/bar')
+    expect(await store.fetchOwnAvatar(96)).toBeNull()
+    expect(base).not.toHaveBeenCalled()
+    expect(globalFetchSpy).not.toHaveBeenCalled()
+
+    // 3. Cross-origin URL must NEVER receive Authorization: Bearer
+    vi.spyOn(client, 'mxcUrlToHttp').mockReturnValueOnce(
+      'https://attacker.example/_matrix/client/v1/media/thumbnail/evil/pic'
+    )
+    expect(await store.fetchOwnAvatar(96)).toBeNull()
+    expect(base).not.toHaveBeenCalled()
+    expect(globalFetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('blocks image/svg+xml and disguised SVG bytes while allowing renewed same-origin raster PNG with redirect: error', async () => {
+    const globalFetchSpy = vi.spyOn(globalThis, 'fetch')
+    const refresh = vi.fn(async () => ({ accessToken: 'renewed-token' }))
+    let avatarResponse: () => Response = () =>
+      new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', {
+        status: 200,
+        headers: { 'Content-Type': 'image/svg+xml' },
+      })
+    let calls = 0
+
+    const base = vi.fn<typeof fetch>(async (_input, init) => {
+      calls += 1
+      expect(init?.redirect).toBe('error')
+      const auth = new Headers(init?.headers).get('Authorization')
+      if (auth === 'Bearer stale-token') {
+        return new Response(JSON.stringify({ errcode: 'M_UNKNOWN_TOKEN' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      expect(auth).toBe('Bearer renewed-token')
+      return avatarResponse()
+    })
+
+    const store = createEspaceStore(
+      {
+        baseUrl: HS,
+        userId: ME,
+        deviceId: 'DEV1',
+        accessToken: 'stale-token',
+        refreshToken: 'rt-1',
+        refresh,
+      },
+      base,
+      { cache: null }
+    )
+    const client = matrixClientForTests(store)
+    vi.spyOn(client, 'getUser').mockReturnValue({
+      avatarUrl: `mxc://${SERVER}/avatar123`,
+    } as never)
+
+    // 1. Renews expired token via store's #fetch, then rejects image/svg+xml Content-Type
+    expect(await store.fetchOwnAvatar(96)).toBeNull()
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(calls).toBe(2)
+    expect(globalFetchSpy).not.toHaveBeenCalled()
+
+    // 2. Rejects SVG bytes disguised with Content-Type: image/png
+    avatarResponse = () =>
+      new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    expect(await store.fetchOwnAvatar(96)).toBeNull()
+
+    // 3. Accepts verified raster PNG within bounds
+    avatarResponse = () =>
+      new Response(validPng(96, 96), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    const blob = await store.fetchOwnAvatar(96)
+    expect(blob).not.toBeNull()
+    expect(blob?.type).toBe('image/png')
+  })
+
+  it('hydrates own profile on live sync under lazyLoadMembers and bumps snapshot on profile mutations', async () => {
+    let syncs = 0
+    const base = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input))
+      const path = decodeURIComponent(url.pathname)
+      const method = init?.method ?? 'GET'
+      if (path === '/_matrix/client/versions') {
+        return new Response(JSON.stringify({ versions: ['v1.11'] }), { status: 200 })
+      }
+      if (path === '/_matrix/client/v3/capabilities') {
+        return new Response(JSON.stringify({ capabilities: {} }), { status: 200 })
+      }
+      if (path === '/_matrix/client/v3/pushrules/') {
+        return new Response(JSON.stringify({ global: {} }), { status: 200 })
+      }
+      if (method === 'POST' && path === `/_matrix/client/v3/user/${ME}/filter`) {
+        return new Response(JSON.stringify({ filter_id: 'f1' }), { status: 200 })
+      }
+      if (method === 'GET' && path === `/_matrix/client/v3/profile/${ME}`) {
+        return new Response(
+          JSON.stringify({
+            displayname: 'Camille Laurent',
+            avatar_url: `mxc://${SERVER}/initial-avatar`,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (method === 'PUT' && path === `/_matrix/client/v3/profile/${ME}/displayname`) {
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (method === 'PUT' && path === `/_matrix/client/v3/profile/${ME}/avatar_url`) {
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (path === '/_matrix/client/v3/sync') {
+        syncs += 1
+        if (syncs === 1) {
+          return new Response(JSON.stringify({ next_batch: 's1', rooms: { join: {} } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('stopped', 'AbortError'))
+          )
+        })
+      }
+      return new Response('{}', { status: 404 })
+    })
+
+    const store = createEspaceStore(
+      { baseUrl: HS, userId: ME, deviceId: 'DEV1', accessToken: 'tok' },
+      base,
+      { cache: null }
+    )
+    const client = matrixClientForTests(store)
+    vi.spyOn(client, 'uploadContent').mockResolvedValue({
+      content_uri: `mxc://${SERVER}/uploaded-avatar`,
+    })
+
+    let emissions = 0
+    const unsubscribe = store.subscribe(() => {
+      emissions += 1
+    })
+    try {
+      await store.start()
+      await vi.waitFor(() => {
+        expect(store.getOwnProfile()).toEqual({
+          displayName: 'Camille Laurent',
+          avatarUrl: `mxc://${SERVER}/initial-avatar`,
+        })
+      })
+
+      const snapBeforeName = store.getSnapshot()
+      const emitBeforeName = emissions
+      await store.setProfileDisplayName('Camille L.')
+      expect(store.getOwnProfile().displayName).toBe('Camille L.')
+      expect(store.getSnapshot()).not.toBe(snapBeforeName)
+      expect(emissions).toBeGreaterThan(emitBeforeName)
+
+      const snapBeforeAvatar = store.getSnapshot()
+      await store.setProfileAvatar(new Blob([validPng()], { type: 'image/png' }), 'avatar.png')
+      expect(store.getOwnProfile().avatarUrl).toBe(`mxc://${SERVER}/uploaded-avatar`)
+      expect(store.getSnapshot()).not.toBe(snapBeforeAvatar)
+
+      const snapBeforeClear = store.getSnapshot()
+      await store.clearProfileAvatar()
+      expect(store.getOwnProfile().avatarUrl).toBeUndefined()
+      expect(store.getSnapshot()).not.toBe(snapBeforeClear)
+    } finally {
+      unsubscribe()
+      store.stop()
+    }
+  })
+
+  it('strips bidi/invisible overrides and hides default UUID localparts in displayName and getDirects', async () => {
+    const UUID_PEER = '@9f3c2b1a-0d4e-4c55-9a77-1b2c3d4e5f60:matrix.acme.kodera.io'
+    const SPOOF_PEER = '@claire.moreau:matrix.acme.kodera.io'
+    const memberEvent = (user: string, displayname: string): SnapshotEvent => ({
+      ...snapshotMessage(`$member-${user}`, ''),
+      type: 'm.room.member',
+      state_key: user,
+      sender: user,
+      content: { membership: 'join', displayname },
+    })
+    const fixture = snapshotFixture(
+      [
+        snapshotMessage('$ev-uuid', 'Bonjour', { sender: UUID_PEER }),
+        snapshotMessage('$ev-spoof', 'Bonjour', { sender: SPOOF_PEER }),
+      ],
+      {
+        state: [
+          memberEvent(UUID_PEER, '9f3c2b1a-0d4e-4c55-9a77-1b2c3d4e5f60'),
+          memberEvent(SPOOF_PEER, 'Claire\u202E\u061C\u00AD Moreau'),
+        ],
+      }
+    )
+    try {
+      await fixture.start()
+      const timeline = fixture.store.getTimeline(SNAPSHOT_ROOM)
+      expect(timeline[0]).not.toHaveProperty('senderName')
+      // RTL overrides are stripped while matrix-js-sdk's anti-spoofing disambiguation stays intact.
+      expect(timeline[1]?.senderName).toBe('Claire Moreau (clai)')
+
+      const client = matrixClientForTests(fixture.store)
+      vi.spyOn(client, 'getAccountData').mockReturnValue({
+        getContent: () => ({ [UUID_PEER]: [SNAPSHOT_ROOM] }),
+      } as never)
+      expect(fixture.store.getDirects()).toEqual([
+        {
+          roomId: SNAPSHOT_ROOM,
+          userIds: [UUID_PEER],
+          name: '9f3c',
+          unread: 0,
+        },
+      ])
+    } finally {
+      fixture.stop()
     }
   })
 })

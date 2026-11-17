@@ -127,3 +127,64 @@ it('validates Matrix invitations and waits for the room acknowledgement', async 
   await act(async () => resolve())
   await waitFor(() => expect(screen.getByText('Invitation envoyée.')).toBeVisible())
 })
+
+it('sanitizes member display names, isolates MXIDs with bdi, and holds busy until clearAvatar settles', async () => {
+  const user = userEvent.setup()
+  let finishClear: () => void = () => undefined
+  const clearAvatar = vi.fn(
+    () =>
+      new Promise<void>((done) => {
+        finishClear = done
+      })
+  )
+  const createUrlSpy = vi
+    .spyOn(URL, 'createObjectURL')
+    .mockReturnValue('blob:https://console.test/avatar')
+  const revokeUrlSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+  const originalMembers = runtime.members
+  ;(runtime as { members: unknown; profile?: unknown }).members = [
+    { userId: '@member:community.kodera.io', name: 'Member' },
+    {
+      userId: '@ce239589-a4bd-41db-9cfb-d06e66a77ff3:community.kodera.io',
+      name: 'ce239589-a4bd-41db-9cfb-d06e66a77ff3',
+    },
+    { userId: '@spoof:community.kodera.io', name: 'Alice\u202E\u061C Spoof' },
+  ]
+  ;(runtime as { profile?: unknown }).profile = {
+    matrixDisplayName: 'Member',
+    avatarKey: 'mxc://community.kodera.io/pic1',
+    fetchAvatar: vi.fn(async () => new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })),
+    setDisplayName: vi.fn(async () => undefined),
+    setAvatar: vi.fn(async () => undefined),
+    clearAvatar,
+  }
+  try {
+    render(<WorkspaceSettings {...props} />)
+    // Single unified avatar image in Profile summary card
+    await waitFor(() =>
+      expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:https://console.test/avatar')
+    )
+    expect(screen.getAllByRole('img')).toHaveLength(1)
+
+    const removeBtn = screen.getByRole('button', { name: 'Retirer la photo' })
+    await user.click(removeBtn)
+    expect(clearAvatar).toHaveBeenCalledTimes(1)
+    expect(removeBtn).toBeDisabled()
+    await act(async () => finishClear())
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choisir une image' })).toBeEnabled()
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Membres, rôles & invitations' }))
+    expect(screen.getByText('Membre · ce23')).toBeVisible()
+    expect(screen.getByText('Alice Spoof')).toBeVisible()
+    const bdi = screen.getByText('@spoof:community.kodera.io')
+    expect(bdi.tagName.toLowerCase()).toBe('bdi')
+    expect(bdi).toHaveAttribute('dir', 'ltr')
+  } finally {
+    ;(runtime as { members: unknown; profile?: unknown }).members = originalMembers
+    delete (runtime as { profile?: unknown }).profile
+    createUrlSpy.mockRestore()
+    revokeUrlSpy.mockRestore()
+  }
+})

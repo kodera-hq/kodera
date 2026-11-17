@@ -1915,6 +1915,9 @@ function snapshotFixture(
     if (method === 'POST' && path === `/_matrix/client/v3/user/${SNAPSHOT_ME}/filter`) {
       return json(200, { filter_id: 'snapshot-filter' })
     }
+    if (method === 'GET' && path === `/_matrix/client/v3/profile/${SNAPSHOT_ME}`) {
+      return json(200, {})
+    }
     if (
       method === 'GET' &&
       path ===

@@ -184,6 +184,11 @@
      an overscroll — follow the theme `public/theme.js` sets. The tokens declare
      no `color-scheme`, and without one a dark page scrolls on a light
      scrollbar. Light needs nothing: `normal` already draws light. */
+  [data-theme='light'],
+  [data-theme='ciel'] {
+    color-scheme: normal;
+  }
+
   [data-theme='dark'],
   [data-theme='black'],
   [data-theme='ciel-nuit'] {

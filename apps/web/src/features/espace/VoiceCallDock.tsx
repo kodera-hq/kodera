@@ -26,9 +26,9 @@ import type { StagePresentation } from './video/VideoStage'
 import { audioPreviewMessages } from './audio/previewMessages'
 import { AudioSettings, type AudioSettingsCall } from './AudioSettings'
 import {
-  displayNameOf,
   LIVE_CALL,
   noCallSnapshot,
+  safeDisplayName,
   subscribeToNoCall,
   type AudioCallLike,
   type CallChannel,
@@ -158,7 +158,8 @@ function VoiceCallDockView({
   const rejoining = rejoin.phase !== 'idle'
   const callProblem = rejoining ? undefined : callSnapshot.problem
   const callRoom = snapshot.rooms.find((room) => room.roomId === callSnapshot.roomId)
-  const nameOf = (id: string) => callRoom?.names?.[id] ?? displayNameOf(id)
+  const unnamed = t('console.workspace.members.unnamed')
+  const nameOf = (id: string) => safeDisplayName(callRoom?.names?.[id], id, unnamed)
   // Before the media connection is through, who is already in the room, as the sidebar shows it.
   const preJoin = callSnapshot.status === 'connecting'
   const people = preJoin

@@ -7,7 +7,7 @@
 // stays, below the list and clearly secondary, because a federated peer is in no room here and
 // can only be named by id.
 
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Avatar } from '../../ui/Avatar/Avatar'
 import { Button } from '../../ui/Button/Button'
@@ -61,6 +61,19 @@ export function DirectMessageDialog({
   const [manual, setManual] = useState('')
   const [problem, setProblem] = useState('')
   const [busy, setBusy] = useState(false)
+  const cancelled = useRef(!open)
+
+  useEffect(() => {
+    cancelled.current = !open
+    return () => {
+      cancelled.current = true
+    }
+  }, [open])
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) cancelled.current = true
+    onOpenChange(nextOpen)
+  }
 
   // The sync brings only the members it has seen; the whole list is a request per room, made once
   // the dialog is open — never while it is closed, so opening the workspace costs nothing.
@@ -80,8 +93,7 @@ export function DirectMessageDialog({
    * same rule the link cards use) and the row draws the Matrix id underneath, which is what
    * `openDirect` is actually given.
    */
-  const nameOf = (member: WorkspaceMember) =>
-    safeDisplayName(member.name, member.userId, unnamed)
+  const nameOf = (member: WorkspaceMember) => safeDisplayName(member.name, member.userId, unnamed)
   /** This member's own homeserver: anyone else's is another server's account. */
   const homeserver = viewerId.split(':').slice(1).join(':')
 
@@ -102,7 +114,7 @@ export function DirectMessageDialog({
   }
 
   function start() {
-    if (store.openDirect === undefined || people.length === 0 || tooMany) return
+    if (busy || store.openDirect === undefined || people.length === 0 || tooMany) return
     const invalid = manualIds.find((id) => !isMatrixUserId(id))
     if (invalid !== undefined) {
       setProblem(t('console.workspace.directs.problem-id'))
@@ -112,11 +124,13 @@ export function DirectMessageDialog({
     setBusy(true)
     store.openDirect(people).then(
       (roomId) => {
+        if (cancelled.current) return
         setBusy(false)
         onOpenChange(false)
         onOpened(roomId)
       },
       (error: unknown) => {
+        if (cancelled.current) return
         setBusy(false)
         setProblem(
           error instanceof Error && error.message === 'Invalid Matrix user ID'
@@ -130,20 +144,20 @@ export function DirectMessageDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={handleOpenChange}
       title={t('console.workspace.directs.title-new')}
       description={t('console.workspace.directs.help-new')}
       closeLabel={t('console.common.action-close')}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>
+          <Button variant="secondary" onClick={() => handleOpenChange(false)}>
             {t('console.common.action-cancel')}
           </Button>
           <Button
             variant="primary"
             loading={busy}
-            disabled={people.length === 0 || tooMany}
+            disabled={busy || people.length === 0 || tooMany}
             onClick={start}
           >
             {t('console.workspace.directs.action-open')}
@@ -204,7 +218,7 @@ export function DirectMessageDialog({
                       {/* The id, always: it is what the conversation is opened with, and the only
                           thing above it that nobody else can take. */}
                       <span className="truncate font-mono text-xs text-c-ink-3">
-                        {member.userId}
+                        <bdi dir="ltr">{member.userId}</bdi>
                       </span>
                       <span className="truncate text-xs text-c-ink-3">
                         {member.channels.map((channel) => `#${channel}`).join(' · ')}

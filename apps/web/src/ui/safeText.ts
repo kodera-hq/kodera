@@ -5,10 +5,10 @@
 //
 // A leaf with no imports of its own, so any chunk may use it without reaching into another's.
 
-/** Control, zero-width and direction-override characters: never drawn. */
+/** Control, soft-hyphen, combining-grapheme, invisible, tag and direction-override characters: never drawn. */
 const INVISIBLE =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/gu
+  // eslint-disable-next-line no-control-regex, no-misleading-character-class
+  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00AD\u034F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\u{E0000}-\u{E007F}]/gu
 
 /** Text as a screen shows it: one line of plain characters, at most `max` of them. */
 export function cleanText(value: unknown, max: number): string {

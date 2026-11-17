@@ -116,14 +116,15 @@ function AudioRoom({
   // Rings only in the room the member is in: who speaks reaches only the people in the call.
   // The member's own face follows their microphone, frame by frame, so it rings alone too;
   // the others' follow the call's speakers, which go stale while it reconnects.
-  const occupants = occupantsForRoom(room, t('console.workspace.members.unnamed')).map((occupant) =>
-    callSnapshot === null
-      ? occupant
-      : occupant.id === callSnapshot.self
-        ? { ...occupant, speakingRef }
-        : callSnapshot.status === 'connected' && callSnapshot.speakers.includes(occupant.id)
-          ? { ...occupant, speaking: true }
-          : occupant
+  const occupants = occupantsForRoom(room, t('console.workspace.members.unnamed')).map(
+    (occupant) =>
+      callSnapshot === null
+        ? occupant
+        : occupant.id === callSnapshot.self
+          ? { ...occupant, speakingRef }
+          : callSnapshot.status === 'connected' && callSnapshot.speakers.includes(occupant.id)
+            ? { ...occupant, speaking: true }
+            : occupant
   )
   const unavailable = !resolved
     ? t('console.workspace.channel.label-preparing')
@@ -299,7 +300,7 @@ function ChannelSidebarView({
 
     const unreadCount = room?.unread ?? 0
     const mentionCount = room?.mentions ?? 0
-    const isSelected = channel.id === activeChannelId
+    const isSelected = canvasMode === 'chat' && channel.id === activeChannelId
     const isArchived = channel.lifecycle === 'archived'
     const readOnly = isArchived
       ? t('console.workspace.channel.label-archived')

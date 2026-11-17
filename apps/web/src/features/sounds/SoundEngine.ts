@@ -96,6 +96,8 @@ interface ActiveLoopHandle {
   activeSource: AudioBufferSourceNode | null
 }
 
+const GESTURE_UNLOCK_EVENTS = ['pointerdown', 'pointerup', 'click', 'keydown'] as const
+
 export class SoundEngine {
   private preferences: SoundPreferences
   private storageKept = true
@@ -141,31 +143,43 @@ export class SoundEngine {
     }
     if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
-      // A browser starts an `AudioContext` suspended and resumes it only from a user gesture. A
-      // cue fired from a sync (an arriving message) is not one, so the first such cue was silent
-      // and the browser warned about it in the console. The first press or keystroke anywhere on
-      // the page resumes the context, once; nothing is played here.
-      document.addEventListener('pointerdown', this.unlockOnGesture, { capture: true })
-      document.addEventListener('keydown', this.unlockOnGesture, { capture: true })
+      // A browser starts an `AudioContext` suspended and resumes it only from a valid user
+      // activation. A modifier key (`Cmd`, `Escape`) or iOS `pointerdown` leaves the context
+      // suspended: listeners stay attached until `ctx.resume()` reaches `'running'`.
+      for (const eventName of GESTURE_UNLOCK_EVENTS) {
+        document.addEventListener(eventName, this.unlockOnGesture, { capture: true })
+      }
     }
   }
 
-  /** Resumes the audio context from the member's first gesture, then stops listening. */
+  /** Resumes the audio context on a valid user activation, detaching only once `'running'`. */
   private readonly unlockOnGesture = (): void => {
-    this.stopListeningForGesture()
     const ctx = this.ensureAudioContext()
-    if (ctx === null || ctx.state !== 'suspended' || typeof ctx.resume !== 'function') return
-    void ctx.resume().catch(() => {
-      // A context the browser will not resume stays suspended; every cue is then a no-op, which
-      // is what a member who has not interacted with the page would hear anyway.
-    })
+    if (ctx === null) return
+    if (ctx.state === 'running') {
+      this.stopListeningForGesture()
+      return
+    }
+    if (ctx.state !== 'suspended' || typeof ctx.resume !== 'function') return
+    void ctx
+      .resume()
+      .then(() => {
+        if (ctx.state === 'running') {
+          this.stopListeningForGesture()
+        }
+      })
+      .catch(() => {
+        // Non-activation gestures (modifier keys, iOS pointerdown) reject or stay suspended;
+        // keep listening for the next real click, pointerup or keystroke.
+      })
   }
 
   private stopListeningForGesture(): void {
     if (typeof document === 'undefined' || typeof document.removeEventListener !== 'function')
       return
-    document.removeEventListener('pointerdown', this.unlockOnGesture, { capture: true })
-    document.removeEventListener('keydown', this.unlockOnGesture, { capture: true })
+    for (const eventName of GESTURE_UNLOCK_EVENTS) {
+      document.removeEventListener(eventName, this.unlockOnGesture, { capture: true })
+    }
   }
 
   private loadPreferencesFromStorage(): SoundPreferences {
@@ -204,8 +218,14 @@ export class SoundEngine {
         masterMode,
         masterVolume: clampVolume(parsed.masterVolume, defaults.masterVolume),
         categories: {
-          voice: typeof rawCategories.voice === 'boolean' ? rawCategories.voice : defaults.categories.voice,
-          calls: typeof rawCategories.calls === 'boolean' ? rawCategories.calls : defaults.categories.calls,
+          voice:
+            typeof rawCategories.voice === 'boolean'
+              ? rawCategories.voice
+              : defaults.categories.voice,
+          calls:
+            typeof rawCategories.calls === 'boolean'
+              ? rawCategories.calls
+              : defaults.categories.calls,
           messages:
             typeof rawCategories.messages === 'boolean'
               ? rawCategories.messages
@@ -253,9 +273,7 @@ export class SoundEngine {
     }
     this.notifyListeners()
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-      window.dispatchEvent(
-        new CustomEvent(SOUND_CHANGE_EVENT, { detail: this.getPreferences() })
-      )
+      window.dispatchEvent(new CustomEvent(SOUND_CHANGE_EVENT, { detail: this.getPreferences() }))
     }
     return this.storageKept
   }
@@ -554,9 +572,7 @@ export class SoundEngine {
     const senderId = context.senderId
     const currentUserId = context.currentUserId ?? this.currentUserId
     const isMessageTrigger =
-      cue.category === 'messages' ||
-      triggerId.startsWith('msg_') ||
-      cue.slug.startsWith('msg-')
+      cue.category === 'messages' || triggerId.startsWith('msg_') || cue.slug.startsWith('msg-')
     if (isMessageTrigger && senderId && currentUserId && senderId === currentUserId) {
       return {
         allowed: false,
@@ -701,8 +717,7 @@ export class SoundEngine {
     }
 
     // 10. Peer presence discipline: selfActionsOnly, crowd scaling (1..4 0 dB, 5..8 -3 dB, >= 9 silent), and 2500 ms burst coalescing
-    const isPeerPresence =
-      triggerId === 'voice_peer_join' || triggerId === 'voice_peer_leave'
+    const isPeerPresence = triggerId === 'voice_peer_join' || triggerId === 'voice_peer_leave'
     if (isPeerPresence) {
       if (prefs.selfActionsOnly) {
         return {
@@ -827,10 +842,7 @@ export class SoundEngine {
     }
 
     const now = this.now()
-    if (
-      decision.triggerId === 'voice_peer_join' ||
-      decision.triggerId === 'voice_peer_leave'
-    ) {
+    if (decision.triggerId === 'voice_peer_join' || decision.triggerId === 'voice_peer_leave') {
       this.lastPeerBurstByRoom.set(context.roomId ?? 'default', now)
     }
     if (

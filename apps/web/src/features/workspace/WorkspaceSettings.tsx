@@ -20,6 +20,7 @@ import { THEME_COPY, THEME_PREVIEW } from '../../theme/themeChoices'
 import { applyCustomTokensToDocument } from '../appearance/themeOverrides'
 import { AudioSettings, type AudioSettingsCall } from '../espace/AudioSettings'
 import { readDeviceChoice, saveDeviceChoice } from '../espace/audio/devices'
+import { safeDisplayName } from '../espace/liveViewModel'
 import { isMatrixUserId } from '../espace/roomInvitations'
 import { ExtensionsCatalogPanel } from '../extensions/ExtensionsCatalogPanel'
 import { useLocalProfile, type LocalProfile } from '../profile/localProfile'
@@ -50,60 +51,60 @@ export type Section =
   | 'privacy'
   | 'hosting'
 const PERSONAL: Section[] = ['profile', 'appearance', 'audio']
-const WORKSPACE: Section[] = [
-  'members',
-  'moderation',
-  'extensions',
-  'quotas',
-  'privacy',
-  'hosting',
-]
+const WORKSPACE: Section[] = ['members', 'moderation', 'extensions', 'quotas', 'privacy', 'hosting']
 const LINK =
   'rounded-md border border-c-border px-4 py-3 text-sm font-medium text-c-ink hover:bg-c-muted focus-visible:ring focus-visible:outline-hidden'
 
-/**
- * The member's own picture: the one their homeserver holds, drawn from its bytes, and the ways to
- * replace or remove it. A picture chosen here is reduced to a square PNG in this browser before it
- * leaves, and goes to the member's own homeserver — nowhere else.
- */
-function AvatarField({
-  profile,
-  name,
-  identity,
-  onSaved,
-}: {
-  profile: WorkspaceSettingsProfile
-  name: string
-  identity: string
-  onSaved: (state: SaveState) => void
-}) {
-  const { t } = useTranslation()
-  const input = useRef<HTMLInputElement>(null)
-  const [src, setSrc] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  // The bytes the homeserver holds, as an address this page owns. Revoked when it is replaced or
-  // the panel closes, so a long session does not keep every picture it has drawn.
-  const { avatarKey, fetchAvatar } = profile
+function useOwnAvatarSrc(profile: WorkspaceSettingsProfile | undefined): {
+  src: string | null
+  clearSrc: () => void
+} {
+  const [loaded, setLoaded] = useState<{ key: string; url: string } | null>(null)
+  const fetchAvatar = profile?.fetchAvatar
+  const avatarKey = profile?.avatarKey
   useEffect(() => {
+    if (fetchAvatar === undefined || avatarKey === undefined) return
     let url: string | null = null
     let live = true
     void fetchAvatar(96).then(
       (blob) => {
         if (!live || blob === null) return
         url = URL.createObjectURL(blob)
-        setSrc(url)
+        setLoaded({ key: avatarKey, url })
       },
       () => undefined
     )
     return () => {
       live = false
-      setSrc(null)
       if (url !== null) URL.revokeObjectURL(url)
     }
   }, [fetchAvatar, avatarKey])
+  const src = avatarKey !== undefined && loaded?.key === avatarKey ? loaded.url : null
+  return { src, clearSrc: () => setLoaded(null) }
+}
+
+/**
+ * The member's own picture controls: replace or remove the avatar drawn in the summary card.
+ * A picture chosen here is reduced to a square PNG in this browser before it leaves, and goes
+ * to the member's own homeserver — nowhere else.
+ */
+function AvatarActions({
+  profile,
+  hasAvatar,
+  onClearOptimistic,
+  onSaved,
+}: {
+  profile: WorkspaceSettingsProfile
+  hasAvatar: boolean
+  onClearOptimistic: () => void
+  onSaved: (state: SaveState) => void
+}) {
+  const { t } = useTranslation()
+  const input = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
 
   async function choose(file: File | undefined) {
-    if (file === undefined) return
+    if (file === undefined || busy) return
     setBusy(true)
     onSaved('saving')
     try {
@@ -125,50 +126,53 @@ function AvatarField({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-4">
-      <Avatar name={name} identity={identity} size="lg" {...(src === null ? {} : { src })} />
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={input}
-            type="file"
-            accept={AVATAR_TYPES.join(',')}
-            className="sr-only"
-            onChange={(event) => void choose(event.target.files?.[0])}
-          />
+    <div className="flex min-w-0 flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          ref={input}
+          type="file"
+          accept={AVATAR_TYPES.join(',')}
+          className="sr-only"
+          onChange={(event) => void choose(event.target.files?.[0])}
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={busy}
+          onClick={() => input.current?.click()}
+        >
+          {t(
+            !hasAvatar
+              ? 'console.workspace.profile.action-choose-avatar'
+              : 'console.workspace.profile.action-change-avatar'
+          )}
+        </Button>
+        {!hasAvatar ? null : (
           <Button
             variant="secondary"
             size="sm"
             disabled={busy}
-            onClick={() => input.current?.click()}
-          >
-            {t(
-              src === null
-                ? 'console.workspace.profile.action-choose-avatar'
-                : 'console.workspace.profile.action-change-avatar'
-            )}
-          </Button>
-          {src === null ? null : (
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy}
-              onClick={() => {
-                setBusy(true)
-                onSaved('saving')
-                void profile.clearAvatar().then(
-                  () => onSaved('saved'),
+            onClick={() => {
+              if (busy) return
+              setBusy(true)
+              onSaved('saving')
+              void profile
+                .clearAvatar()
+                .then(
+                  () => {
+                    onClearOptimistic()
+                    onSaved('saved')
+                  },
                   () => onSaved('problem')
                 )
-                setBusy(false)
-              }}
-            >
-              {t('console.workspace.profile.action-remove-avatar')}
-            </Button>
-          )}
-        </div>
-        <p className="text-xs text-c-ink-3">{t('console.workspace.profile.hint-avatar')}</p>
+                .finally(() => setBusy(false))
+            }}
+          >
+            {t('console.workspace.profile.action-remove-avatar')}
+          </Button>
+        )}
       </div>
+      <p className="text-xs text-c-ink-3">{t('console.workspace.profile.hint-avatar')}</p>
     </div>
   )
 }
@@ -203,28 +207,36 @@ function Profile({ runtime, name }: { runtime: WorkspaceSettingsRuntime; name: s
   const displayName =
     profile.displayName || runtime.profile?.matrixDisplayName || runtime.displayName || name
   const serverProfile = runtime.profile
+  const { src: avatarSrc, clearSrc } = useOwnAvatarSrc(serverProfile)
   const nameChanged =
     touched && draftName.trim() !== '' && draftName.trim() !== serverProfile?.matrixDisplayName
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-4 rounded-lg border border-c-border bg-c-sunken p-5">
-        <Avatar name={displayName} identity={runtime.userId} />
-        <div className="min-w-0">
-          <p className="truncate text-lg font-semibold">{displayName}</p>
-          <p className="text-sm text-c-ink-2">
-            {copy[profile.presence]}
-            {profile.status ? ` · ${profile.status}` : ''}
-          </p>
+      <div className="flex flex-col gap-4 rounded-lg border border-c-border bg-c-sunken p-5">
+        <div className="flex items-center gap-4">
+          <Avatar
+            name={displayName}
+            identity={runtime.userId}
+            size="lg"
+            {...(avatarSrc === null ? {} : { src: avatarSrc })}
+          />
+          <div className="min-w-0">
+            <p className="truncate text-lg font-semibold">{displayName}</p>
+            <p className="text-sm text-c-ink-2">
+              {copy[profile.presence]}
+              {profile.status ? ` · ${profile.status}` : ''}
+            </p>
+          </div>
         </div>
+        {serverProfile ? (
+          <AvatarActions
+            profile={serverProfile}
+            hasAvatar={avatarSrc !== null}
+            onClearOptimistic={clearSrc}
+            onSaved={setSave}
+          />
+        ) : null}
       </div>
-      {serverProfile ? (
-        <AvatarField
-          profile={serverProfile}
-          name={displayName}
-          identity={runtime.userId}
-          onSaved={setSave}
-        />
-      ) : null}
       <TextField
         label={copy.displayName}
         value={draftName}
@@ -354,8 +366,9 @@ function Members({
   org: string
   role: WorkspaceSettingsProps['role']
 }) {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation()
   const copy = settingsCopy(i18n.resolvedLanguage)
+  const unnamed = t('console.workspace.members.unnamed')
   const [inviteId, setInviteId] = useState('')
   const [pending, setPending] = useState(false)
   const [result, setResult] = useState<'invited' | 'inviteInvalid' | 'inviteError' | null>(null)
@@ -366,6 +379,7 @@ function Members({
       {runtime ? (
         <ul className="divide-y divide-c-border-soft">
           {runtime.members.map((member) => {
+            const memberName = safeDisplayName(member.name, member.userId, unnamed)
             const memberRole = runtime.memberRole(member.userId)
             const external =
               member.userId.split(':').slice(1).join(':') !==
@@ -379,10 +393,12 @@ function Members({
                   : copy.member
             return (
               <li key={member.userId} className="flex items-center gap-3 py-3">
-                <Avatar name={member.name ?? member.userId} />
+                <Avatar name={memberName} identity={member.userId} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">{member.name ?? member.userId}</p>
-                  <p className="truncate text-xs text-c-ink-3">{member.userId}</p>
+                  <p className="truncate text-sm font-semibold">{memberName}</p>
+                  <p className="truncate text-xs text-c-ink-3">
+                    <bdi dir="ltr">{member.userId}</bdi>
+                  </p>
                 </div>
                 <span className="text-xs text-c-ink-2">{label}</span>
               </li>
@@ -477,7 +493,11 @@ export default function WorkspaceSettings({
   const links = [
     { to: '/$org/status', label: copy.statusPage, show: true },
     { to: '/$org/domain', label: copy.domain, show: canManage },
-    { to: '/$org/federation', label: copy.federation, show: canManage && !isStubArea('federation') },
+    {
+      to: '/$org/federation',
+      label: copy.federation,
+      show: canManage && !isStubArea('federation'),
+    },
     { to: '/$org/security', label: copy.security, show: !isStubArea('security') },
     { to: '/$org/invoices', label: copy.billing, show: canBill },
   ]
@@ -690,11 +710,7 @@ export default function WorkspaceSettings({
                     />
                   ) : null}
                   {item === 'privacy' ? (
-                    <WorkspacePrivacyPanel
-                      org={org}
-                      organisationId={organisationId}
-                      role={role}
-                    />
+                    <WorkspacePrivacyPanel org={org} organisationId={organisationId} role={role} />
                   ) : null}
                   {item === 'hosting' ? (
                     <>

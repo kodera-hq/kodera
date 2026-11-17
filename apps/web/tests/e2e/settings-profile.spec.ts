@@ -30,10 +30,10 @@ test('settings exposes every section to members while keeping administration rol
     await settings.getByRole('tab', { name, exact: true }).click()
     await expect(settings.getByRole('heading', { name, exact: true })).toBeVisible()
   }
-  for (const name of ['Domaine', 'Fédération', 'Facturation']) {
+  await expect(settings.getByRole('link', { name: 'Statut', exact: true })).toBeVisible()
+  for (const name of ['Domaine', 'Fédération', 'Sécurité & MFA', 'Facturation']) {
     await expect(settings.getByRole('link', { name, exact: true })).toHaveCount(0)
   }
-  await expect(settings.getByRole('link', { name: 'Sécurité & MFA', exact: true })).toBeVisible()
   await settings.getByRole('tab', { name: 'Membres, rôles & invitations', exact: true }).click()
   await expect(
     settings.getByRole('link', { name: 'Gérer les membres de l’espace', exact: true })
@@ -50,14 +50,24 @@ test('appearance themes remain accessible and nested studio closes before settin
   test.setTimeout(60000)
   const settings = await openSettings(page)
   await settings.getByRole('tab', { name: 'Apparence & thèmes', exact: true }).click()
+  for (const label of ['Automatique', 'Ciel', 'Ciel nuit', 'Clair', 'Sombre', 'Noir']) {
+    await expect(settings.getByRole('button', { name: label, exact: true })).toBeVisible()
+  }
+  await settings.getByRole('button', { name: 'Automatique', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Automatique', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   for (const [name, mode] of [
-    ['Clair · Givre', 'light'],
-    ['Sombre · Ardoise', 'dark'],
-    ['Noir OLED', 'black'],
-  ]) {
-    await settings.getByRole('button', { name: new RegExp(name!) }).click()
-    await expect(page.locator('html')).toHaveAttribute('data-theme', mode!)
-    await expect(settings.getByRole('button', { name: new RegExp(name!) })).toHaveAttribute(
+    ['Ciel', 'ciel'],
+    ['Ciel nuit', 'ciel-nuit'],
+    ['Clair', 'light'],
+    ['Sombre', 'dark'],
+    ['Noir', 'black'],
+  ] as const) {
+    await settings.getByRole('button', { name, exact: true }).click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', mode)
+    await expect(settings.getByRole('button', { name, exact: true })).toHaveAttribute(
       'aria-pressed',
       'true'
     )
@@ -84,6 +94,14 @@ test('extensions signs and verifies locally and rejects a modified body', async 
   const settings = await openSettings(page)
   await settings.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
   await expect(settings.getByText('22 implémentations de référence', { exact: true })).toBeVisible()
+  await expect(
+    settings.getByText('Choisissez un connecteur pour voir sa configuration.', { exact: true })
+  ).toBeVisible()
+  await settings
+    .getByRole('button', { name: /— Connecter$/ })
+    .first()
+    .click()
+  await settings.locator('summary').filter({ hasText: 'Détails techniques & sécurité' }).click()
   await settings.getByRole('button', { name: 'Générer un secret de test', exact: true }).click()
   await settings.getByRole('button', { name: 'Signer l’exemple', exact: true }).click()
   await expect(settings.getByRole('status')).toContainText('Exemple signé')
@@ -95,6 +113,14 @@ test('extensions signs and verifies locally and rejects a modified body', async 
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Réglages', exact: true }).click()
   await page.getByRole('tab', { name: 'Connecteurs & extensions', exact: true }).click()
+  await expect(
+    page.getByText('Choisissez un connecteur pour voir sa configuration.', { exact: true })
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: /— Connecter$/ })
+    .first()
+    .click()
+  await page.locator('summary').filter({ hasText: 'Détails techniques & sécurité' }).click()
   await expect(page.getByLabel('Secret de signature de test', { exact: true })).toHaveValue('')
 })
 

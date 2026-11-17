@@ -193,6 +193,9 @@ function buildCommunityHomeserver(options?: { refusedRooms?: ReadonlySet<string>
     if (method === 'POST' && path === `/_matrix/client/v3/user/${VIEWER}/filter`) {
       return json(200, { filter_id: 'community-filter' })
     }
+    if (method === 'GET' && path === `/_matrix/client/v3/profile/${VIEWER}`) {
+      return json(200, {})
+    }
     if (method === 'GET' && path.startsWith('/_matrix/client/v3/directory/room/')) {
       const alias = path.slice('/_matrix/client/v3/directory/room/'.length)
       const entry = aliasToRoom.get(alias)

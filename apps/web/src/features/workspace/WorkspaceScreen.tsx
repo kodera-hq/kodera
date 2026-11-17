@@ -46,7 +46,8 @@ import {
   writeDemoView,
 } from '../../app/interactiveDemo'
 import type { EspaceStoreLike } from '../espace/EspaceLiveView'
-import type { CanvasMode } from '../espace/liveViewModel'
+import { isNamedProfile, safeDisplayName, type CanvasMode } from '../espace/liveViewModel'
+import { cleanText } from '../../ui/safeText'
 import { useTranslation } from 'react-i18next'
 import { orgRoute } from '../../app/org-route'
 import { useNarrowViewport } from '../../app/useNarrowViewport'
@@ -363,6 +364,17 @@ function LiveWorkspace({
         )
       : undefined
   const userId = session?.userId ?? store?.getUserId() ?? ''
+  const unnamed = t('console.workspace.members.unnamed')
+  const heldRoomName = store
+    ?.getSnapshot()
+    .rooms.flatMap((room) => (room.names?.[userId] === undefined ? [] : [room.names[userId]]))[0]
+  const preferredName = [store?.getOwnProfile?.()?.displayName, heldRoomName, accountName].find(
+    (candidate) => isNamedProfile(cleanText(candidate, 80), userId)
+  )
+  const currentUserName =
+    userId === '' && preferredName === undefined
+      ? 'Member'
+      : safeDisplayName(preferredName ?? accountName, userId, unnamed)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [canvas, setCanvas] = useState<CanvasMode>('chat')
   // « Docs » opens on the collaborative Pages in the live workspace. `team` is the channel pads
@@ -419,16 +431,14 @@ function LiveWorkspace({
         focusedDocs={canvas === 'docs' && (docsView === 'developer' || docsView === 'pages')}
         documents={[
           ...docsWorkspace.docs,
-          ...workspacePages.map(
-            (page): ChannelDoc => ({
-              id: `workspace-page:${page.id}`,
-              channelId: channel?.id ?? '',
-              title: page.title,
-              content: page.markdown,
-              parentId: page.parentId,
-              role: page.role,
-            })
-          ),
+          ...workspacePages.map((page): ChannelDoc => ({
+            id: `workspace-page:${page.id}`,
+            channelId: channel?.id ?? '',
+            title: page.title,
+            content: page.markdown,
+            parentId: page.parentId,
+            role: page.role,
+          })),
         ]}
         onOpenDocument={(doc: ChannelDoc) => {
           if (doc.id.startsWith('workspace-page:')) {
@@ -462,10 +472,15 @@ function LiveWorkspace({
                   }
                 >
                   <LazyWorkspaceCollaborativeDocs
-                    {...(store ? { localDocuments: workspacePages, onLocalDocumentsChange: setWorkspacePages } : { organisationId })}
+                    {...(store
+                      ? {
+                          localDocuments: workspacePages,
+                          onLocalDocumentsChange: setWorkspacePages,
+                        }
+                      : { organisationId })}
                     currentUser={{
                       id: userId || 'member',
-                      name: userId || 'Member',
+                      name: currentUserName,
                     }}
                     activeDocumentId={activeWorkspacePageId}
                     onActiveDocumentChange={setActiveWorkspacePageId}
@@ -489,15 +504,15 @@ function LiveWorkspace({
                     }}
                     author={{
                       userId,
-                      name:
-                        store
-                          .getSnapshot()
-                          .rooms.flatMap((room) => room.names?.[userId] ?? [])[0] ?? userId,
+                      name: currentUserName,
                     }}
                     members={(() => {
                       const room = store.getSnapshot().channels.get(channel.id)
                       return room?.state === 'resolved'
-                        ? (store.getMembers?.(room.roomId) ?? [])
+                        ? (store.getMembers?.(room.roomId) ?? []).map((member) => ({
+                            userId: member.userId,
+                            name: safeDisplayName(member.name, member.userId, unnamed),
+                          }))
                         : []
                     })()}
                     onPublish={async (title, content, documentId) => {

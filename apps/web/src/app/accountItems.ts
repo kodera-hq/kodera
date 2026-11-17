@@ -1,4 +1,5 @@
 import type { MessageKey } from '../i18n'
+import { isStubArea } from './stubAreas'
 import type { UserBlockUser } from './UserBlock'
 
 /**
@@ -46,16 +47,19 @@ export interface AccountSignOut extends AccountItemBase {
 export type AccountItem = AccountPlace | AccountPending | AccountSignOut
 
 export const ACCOUNT_ITEMS: readonly AccountItem[] = [
-  {
-    id: 'security',
-    kind: 'place',
-    labelKey: 'console.shell.account.action-security',
-    to: '/$org/security',
-    wide: true,
-    narrow: 'more',
-  },
-  // The theme choice (docs/specs/10-appearance.md). On a phone it sits in
-  // « Plus » beside « Sécurité et connexion » (owner ruling, 2026-09-24).
+  ...(isStubArea('security')
+    ? []
+    : [
+        {
+          id: 'security',
+          kind: 'place' as const,
+          labelKey: 'console.shell.account.action-security' as const,
+          to: '/$org/security' as const,
+          wide: true,
+          narrow: 'more' as const,
+        },
+      ]),
+  // The theme choice (docs/specs/10-appearance.md). On a phone it sits in « Plus ».
   {
     id: 'appearance',
     kind: 'place',
@@ -63,15 +67,6 @@ export const ACCOUNT_ITEMS: readonly AccountItem[] = [
     to: '/$org/appearance',
     wide: true,
     narrow: 'more',
-  },
-  // Left out of the narrow layout (owner-approved deviation, 2026-09-24)
-  // rather than drawn as a control that does nothing on a phone.
-  {
-    id: 'language',
-    kind: 'pending',
-    labelKey: 'console.shell.account.action-language',
-    wide: true,
-    narrow: 'none',
   },
   {
     id: 'sign-out',
