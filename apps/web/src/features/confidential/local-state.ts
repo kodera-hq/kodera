@@ -367,6 +367,13 @@ export class ConfidentialStateStore {
     } finally { plaintext?.fill(0) }
   }
   async createUniqueDeviceVault(scope: ConfidentialScope, state: OpaqueLocalState): Promise<number> {
+    return this.#insertUniqueDeviceVault(scope, state, 1, false)
+  }
+  /** Explicit archive restore only: never replace a current device or revoked owner. */
+  async restoreUniqueDeviceVault(scope: ConfidentialScope, snapshot: StateSnapshot): Promise<number> {
+    return this.#insertUniqueDeviceVault(scope, snapshot, snapshot.generation, true)
+  }
+  async #insertUniqueDeviceVault(scope: ConfidentialScope, state: OpaqueLocalState, generation: number, restoring: boolean): Promise<number> {
     this.#alive()
     const id = scopeKey(scope, this.#owner.ownerId)
     const captured = storedScope(id, this.#owner.ownerId)
@@ -374,11 +381,14 @@ export class ConfidentialStateStore {
     let ciphertext: ArrayBuffer, iv: Uint8Array<ArrayBuffer>
     const plaintext = encode(state)
     try {
-      if (new DataView(plaintext.buffer).getUint32(8) !== 0) fail('invalid-input')
+      const pendingCount = new DataView(plaintext.buffer).getUint32(8)
+      if (!integer(generation, Number.MAX_SAFE_INTEGER - 1) || generation < 1 ||
+          (!restoring && pendingCount !== 0) ||
+          (restoring && (pendingCount > 1 || (pendingCount === 0) !== (generation === 1)))) fail('invalid-input')
       if (!keyValid(this.#owner.key)) fail('corrupt')
       iv = crypto.getRandomValues(new Uint8Array(12))
       ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv,
-        additionalData: aad(id, this.#owner.incarnation, 1) }, this.#owner.key, plaintext)
+        additionalData: aad(id, this.#owner.incarnation, generation) }, this.#owner.key, plaintext)
       this.#alive()
     } catch (error) { throw safeError(error) }
     finally { plaintext.fill(0) }
@@ -391,10 +401,10 @@ export class ConfidentialStateStore {
       if (!integer(count, LOCAL_STATE_LIMITS.ownerRecords) || !integer(bytes, LOCAL_STATE_LIMITS.ownerBytes) ||
           !integer(allBytes, LOCAL_STATE_LIMITS.databaseBytes)) fail('capacity')
       await request(tx.objectStore('records').add({ id, ownerId: owner.ownerId, incarnation: owner.incarnation,
-        generation: 1, iv: iv.buffer, ciphertext } satisfies EncryptedRecord))
+        generation, iv: iv.buffer, ciphertext } satisfies EncryptedRecord))
       await request(tx.objectStore('owners').put({ ...owner, records: count, bytes }))
       await request(tx.objectStore('metadata').put({ id: 'capacity', bytes: allBytes }))
-      return 1
+      return generation
     }, this.#alive, this.#transactions)
   }
   async read(scope: ConfidentialScope): Promise<StateSnapshot | null> {

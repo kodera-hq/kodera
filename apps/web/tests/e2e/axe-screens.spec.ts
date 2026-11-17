@@ -151,7 +151,25 @@ test('shell/placeholder: the Federation page passes axe for an owner', async ({ 
 
 test('shell/security: the security page passes axe', async ({ page }) => {
   await useScenario(page, [SHELL])
-  await expectPlaceholderClean(page, '/security', 'Sécurité et connexion')
+  await signIn(page, 'acme-sa', '/security')
+  await expect(page.getByRole('heading', { level: 1, name: 'Sécurité et connexion' })).toBeVisible()
+  await page.getByRole('button', { name: 'Ouvrir une session de sécurité locale' }).click()
+  const descriptor = page.getByLabel('Description publique de cette session', { exact: true })
+  await expect(descriptor).toBeVisible()
+  const publicIdentity = JSON.parse(await descriptor.inputValue()) as {
+    id: string
+    pub: string
+    keyId: string
+  }
+  expect(Object.keys(publicIdentity).sort()).toEqual(['id', 'keyId', 'pub'])
+  await expect(page.getByRole('button', { name: 'Créer l’archive chiffrée' })).toBeDisabled()
+  await expect(page.getByLabel('Choisir une archive .kvkb chiffrée')).toBeEnabled()
+  await page
+    .getByLabel('Description publique de l’autre appareil (JSON)', { exact: true })
+    .fill(JSON.stringify(publicIdentity))
+  await page.getByRole('button', { name: 'Calculer les codes de sécurité' }).click()
+  await expect(page.getByText(/L’opération a été refusée/)).toBeVisible()
+  expect(await violations(page)).toEqual([])
 })
 
 // ── Outside the shell ────────────────────────────────────────────────────

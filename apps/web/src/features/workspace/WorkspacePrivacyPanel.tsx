@@ -1,3 +1,4 @@
+import { clearSecuritySessions } from '../security/localSecuritySession'
 // Self-service GDPR Art. 20 data portability & Art. 17 account/workspace erasure panel.
 // Zero inline `[style]` attributes (`style-src-attr 'none'`). Surfaces async checkpoint
 // states (`queued`, `running`, `ready`, `held` / 503 unavailable proof, `expired`,
@@ -388,6 +389,7 @@ export function WorkspacePrivacyPanel({
         ...(workspaceReason.trim() ? { reason: workspaceReason.trim() } : {}),
       })
       purgeTelemetryConsent({ workspace: organisationId })
+      clearSecuritySessions()
       setWorkspaceDeletion(created)
       setWorkspaceConfirmSlug('')
     } catch (error) {
@@ -421,6 +423,7 @@ export function WorkspacePrivacyPanel({
       })
       const owner = personId ?? getTelemetryScope()?.person
       purgeTelemetryConsent(owner ? { person: owner } : { workspace: organisationId })
+      clearSecuritySessions()
       setAccountDeletion(created)
       setAccountConfirmSlug('')
     } catch (error) {

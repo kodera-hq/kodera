@@ -1,4 +1,5 @@
 export interface ConfidentialCollabCipher {
+  readonly senderClientId: number
   readonly epoch: number
   readonly scopeKey: string
   readonly documentId: string
@@ -162,6 +163,7 @@ function portClient(
   }
   const client: ConfidentialCollabCipher = Object.freeze({
     epoch: context.epoch,
+    senderClientId: context.senderClientId,
     scopeKey: context.scopeKey,
     documentId: context.documentId,
     isActive: () => active && ready,

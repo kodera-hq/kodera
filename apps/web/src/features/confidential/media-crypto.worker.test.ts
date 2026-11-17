@@ -32,9 +32,26 @@ describe('worker encoded media encryption', () => {
     sender.close()
     receiver.close()
   })
+  it('authenticates zero-byte Opus silence and rejects reflection and tag tampering', async () => {
+    const sender = peer(),
+      receiver = peer({ participantIdentity: 'participant-two' })
+    const frame = await sender.seal(new Uint8Array(), 'audio')
+    const size = new DataView(frame.buffer).getUint16(4)
+    expect(frame.length - 18 - size).toBe(16)
+    await expect(sender.open(frame, 'audio', context.participantIdentity)).rejects.toThrow()
+    const changed = frame.slice()
+    changed[changed.length - 1]! ^= 1
+    await expect(receiver.open(changed, 'audio', context.participantIdentity)).rejects.toThrow()
+    expect(await receiver.open(frame, 'audio', context.participantIdentity)).toEqual(
+      new Uint8Array()
+    )
+    await expect(receiver.open(frame, 'audio', context.participantIdentity)).rejects.toThrow()
+    sender.close()
+    receiver.close()
+  })
   it('one-way ratchets the epoch and refuses frames across unmatched ratchet states', async () => {
     const sender = peer(),
-      receiver = peer()
+      receiver = peer({ participantIdentity: 'participant-two' })
     const old = await sender.seal(body(), 'audio')
     await sender.ratchetEpochKey(8)
     await expect(sender.open(old, 'audio', context.participantIdentity)).rejects.toThrow()
@@ -58,7 +75,7 @@ describe('worker encoded media encryption', () => {
       await expect(receiver.open(envelope, 'audio', context.participantIdentity)).rejects.toThrow()
       receiver.close()
     }
-    const receiver = peer()
+    const receiver = peer({ participantIdentity: 'participant-two' })
     await expect(receiver.open(envelope, 'video', context.participantIdentity)).rejects.toThrow()
     await expect(receiver.open(envelope, 'audio', 'other-participant')).rejects.toThrow()
     sender.close()
@@ -66,7 +83,7 @@ describe('worker encoded media encryption', () => {
   })
   it('rejects tampering and simultaneous replay without releasing duplicate media', async () => {
     const sender = peer(),
-      receiver = peer(),
+      receiver = peer({ participantIdentity: 'participant-two' }),
       envelope = await sender.seal(body(), 'audio')
     const changed = envelope.slice()
     changed[changed.length - 1] = changed[changed.length - 1]! ^ 1
@@ -81,7 +98,7 @@ describe('worker encoded media encryption', () => {
   })
   it('copies caller views before crypto and refuses release after closure', async () => {
     const sender = peer(),
-      receiver = peer(),
+      receiver = peer({ participantIdentity: 'participant-two' }),
       input = body(),
       sealing = sender.seal(input, 'video')
     input.fill(0)
@@ -138,7 +155,7 @@ describe('worker encoded media encryption', () => {
       },
     })
     await vi.waitFor(() => expect(results).toHaveLength(1))
-    const receiver = peer()
+    const receiver = peer({ participantIdentity: 'participant-two' })
     expect(
       await receiver.open(new Uint8Array(results[0]!), 'audio', context.participantIdentity)
     ).toEqual(body())
@@ -196,16 +213,19 @@ describe('worker encoded media encryption', () => {
       },
     })
     await vi.waitFor(() => expect(encoded).toHaveLength(1))
+    const remote = peer({ participantIdentity: 'remote-peer' })
+    const remoteFrame = await remote.seal(body(), 'video')
+    remote.close()
     host.sdkMessage({
       kind: 'decode',
       data: {
-        participantIdentity: context.participantIdentity,
+        participantIdentity: 'remote-peer',
         trackId: 'remote-video',
         codec: 'vp8',
         encrypted: true,
         readableStream: new ReadableStream({
           start(controller) {
-            controller.enqueue({ data: encoded[0], type: 'key' })
+            controller.enqueue({ data: remoteFrame.buffer, type: 'key' })
             controller.close()
           },
         }),
@@ -274,10 +294,13 @@ describe('worker encoded media encryption', () => {
     await vi.waitFor(() => expect(encoded).toHaveLength(1))
     expect(new Uint8Array(original).every((value) => value === 0)).toBe(true)
     expect(replies).not.toContainEqual({ kind: 'closed' })
+    const remote = peer({ participantIdentity: 'remote-peer' })
+    const remoteFrame = await remote.seal(body(), 'video')
+    remote.close()
     host.sdkMessage({
       kind: 'decode',
       data: {
-        participantIdentity: context.participantIdentity,
+        participantIdentity: 'remote-peer',
         trackId: 'old-remote-video',
         codec: 'vp8',
         encrypted: true,
@@ -293,12 +316,12 @@ describe('worker encoded media encryption', () => {
         }),
       },
     })
-    decoder.enqueue({ data: encoded[0]!, type: 'key' })
+    decoder.enqueue({ data: remoteFrame.buffer, type: 'key' })
     await vi.waitFor(() => expect(decoded).toHaveLength(1))
     expect(new Uint8Array(decoded[0]!)).toEqual(body())
     host.sdkMessage({
       kind: 'removeTransform',
-      data: { participantIdentity: context.participantIdentity, trackId: 'old-remote-video' },
+      data: { participantIdentity: 'remote-peer', trackId: 'old-remote-video' },
     })
     const detached = body().buffer
     decoder.enqueue({ data: detached, type: 'key' })
@@ -340,7 +363,7 @@ describe('worker encoded media encryption', () => {
   })
   it('allows independent video receivers to deliver authenticated counters out of order while refusing duplicates', async () => {
     const sender = peer(),
-      receiver = peer()
+      receiver = peer({ participantIdentity: 'participant-two' })
     const camera = await sender.seal(body(), 'video'),
       screen = await sender.seal(body(), 'video')
     expect(await receiver.open(screen, 'video', context.participantIdentity)).toEqual(body())
@@ -351,7 +374,7 @@ describe('worker encoded media encryption', () => {
   })
   it('refuses counters older than the bounded authenticated reorder window', async () => {
     const sender = peer(),
-      receiver = peer(),
+      receiver = peer({ participantIdentity: 'participant-two' }),
       oldest = await sender.seal(body(), 'video')
     let newest = oldest
     for (let index = 0; index < 1024; index++) newest = await sender.seal(body(), 'video')

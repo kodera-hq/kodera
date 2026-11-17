@@ -31,7 +31,7 @@ describe('UserBlock', () => {
     expect(onSignOut).toHaveBeenCalledTimes(1)
   })
 
-  it('omits stub security and dead pending language items while opening Apparence', async () => {
+  it('offers security settings and appearance without dead pending language items', async () => {
     const user = userEvent.setup()
     const onOpenPlace = vi.fn()
     render(
@@ -44,6 +44,7 @@ describe('UserBlock', () => {
 
     await user.click(screen.getByRole('button', { name: /Henri Duflot/ }))
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Sécurité et connexion',
       'Apparence',
       'Se déconnecter',
     ])

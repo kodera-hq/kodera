@@ -1020,3 +1020,22 @@ check('unique creation refuses weaker durability, malformed inputs and database 
   assert.deepEqual(result.oversized, { ok: false, code: 'capacity' })
   assert.deepEqual(result.capacity, { ok: false, code: 'capacity' }); assert.equal(result.empty, null)
 })
+
+test('restores an archive generation only into an absent unique device without overwriting or reviving tombstones', async ({ context }) => {
+  const page = await pageFor(context)
+  const result = await page.evaluate(async () => {
+    const m = window.stateModule, s = window.scope('device-vault'), store = await m.initializeConfidentialState(window.ownerA)
+    const snapshot = { ...window.payload(9), generation: 12 }
+    const generation = await store.restoreUniqueDeviceVault(s, snapshot)
+    const read = await store.readUniqueDeviceVault(window.deviceContext())
+    const conflict = await window.captured(() => store.restoreUniqueDeviceVault(s, snapshot))
+    const otherKey = await window.captured(() => store.restoreUniqueDeviceVault({ ...s, devicePublicKey: '42'.repeat(32) }, snapshot))
+    store.close()
+    await m.deleteConfidentialOwner(window.ownerA)
+    const revoked = await window.captured(() => m.initializeConfidentialState(window.ownerA))
+    return { generation, readGeneration: read.generation, checkpoint: Array.from(read.state.checkpoint), pending: read.state.pendingSends.length, conflict, otherKey, revoked }
+  })
+  assert.equal(result.generation, 12); assert.equal(result.readGeneration, 12)
+  assert.deepEqual(result.checkpoint, [9, 92, 177]); assert.equal(result.pending, 1)
+  assert.equal(result.conflict.ok, false); assert.equal(result.otherKey.ok, false); assert.equal(result.revoked.ok, false)
+})

@@ -31,7 +31,11 @@ test('settings exposes every section to members while keeping administration rol
     await expect(settings.getByRole('heading', { name, exact: true })).toBeVisible()
   }
   await expect(settings.getByRole('link', { name: 'Statut', exact: true })).toBeVisible()
-  for (const name of ['Domaine', 'Fédération', 'Sécurité & MFA', 'Facturation']) {
+  await expect(settings.getByRole('link', { name: 'Sécurité & MFA', exact: true })).toHaveAttribute(
+    'href',
+    '/community/security'
+  )
+  for (const name of ['Domaine', 'Fédération', 'Facturation']) {
     await expect(settings.getByRole('link', { name, exact: true })).toHaveCount(0)
   }
   await settings.getByRole('tab', { name: 'Membres, rôles & invitations', exact: true }).click()

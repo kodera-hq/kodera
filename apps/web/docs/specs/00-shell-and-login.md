@@ -260,7 +260,7 @@ top bar and tab bar; only the shell and the touch targets change.
   identité » (managers only, as in the sidebar), « Sécurité et connexion » and « Apparence »
   (, owner ruling). « Plus » is drawn
   as current while one of those places is open.
-- « Sécurité et connexion » opens the `/{org}/security` placeholder from both layouts
+- « Sécurité et connexion » opens the lazy-loaded `/{org}/security` local verification and encrypted archive settings from both layouts
   until its screen exists (, owner ruling). People has its own implemented area.
   It never sends an enrolled person to the second-factor enrolment guide.
 - The account menu's entries are one list for both layouts (`src/app/accountItems.ts`): the wide

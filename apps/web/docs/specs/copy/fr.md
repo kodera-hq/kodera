@@ -2160,3 +2160,46 @@ Source: `src/features/espace/EspaceLiveView.tsx`, the call dock and the audio ro
 | `console.shell.passport.role-member` | Membre |
 | `console.shell.passport.problem-forbidden` | Vous n’êtes plus membre actif de cet espace. |
 | `console.shell.passport.problem-switch` | Le changement d’espace n’a pas abouti. Réessayez. |
+
+## Local security settings
+
+| Key | Text |
+| --- | --- |
+| `console.security.settings.title` | Sécurité et connexion |
+| `console.security.settings.status` | État : vérification locale et archives chiffrées conservées par vos soins. Le stockage serveur des sauvegardes de clés et la signature croisée durable du compte ne sont pas disponibles. |
+| `console.security.settings.error` | L’opération a été refusée. Vérifiez les informations de l’autre appareil, le mode de récupération et le fichier, puis ouvrez une nouvelle session locale si nécessaire. |
+| `console.security.settings.restored` | Archive restaurée localement. Une autorisation serveur actuelle et la validation de l’appareil restent nécessaires avant utilisation. |
+| `console.security.settings.start` | Ouvrir une session de sécurité locale |
+| `console.security.settings.verification` | Comparer les appareils |
+| `console.security.settings.verification-help` | Cette session possède une clé de vérification temporaire, distincte d’une identité de messagerie admise. Échangez les descriptions publiques et le même identifiant de comparaison par un canal indépendant de confiance. Comparez les huit groupes de quatre chiffres. Le raccourci de sept mots offre une comparaison plus courte et moins robuste. |
+| `console.security.settings.local-identity` | Description publique de cette session |
+| `console.security.settings.peer` | Description publique de l’autre appareil (JSON) |
+| `console.security.settings.nonce` | Identifiant de comparaison partagé (base64) |
+| `console.security.settings.compare` | Calculer les codes de sécurité |
+| `console.security.settings.codes` | Huit groupes du code de sécurité |
+| `console.security.settings.peer-codes` | Saisissez les huit groupes de l’autre appareil, séparés par des espaces |
+| `console.security.settings.endorse` | Les codes correspondent — signer l’attestation locale |
+| `console.security.settings.endorsement` | Attestation publique à partager (JSON) |
+| `console.security.settings.peer-endorsement` | Attestation de cette session par l’autre appareil (JSON) |
+| `console.security.settings.verify` | Vérifier l’attestation reçue |
+| `console.security.settings.verified` | Signature reçue vérifiée pour cette session. Cela ne publie aucune confiance au niveau du compte. |
+| `console.security.settings.backup` | Archive locale chiffrée des clés |
+| `console.security.settings.backup-help` | Exportez un coffre d’appareil local existant dans un fichier .kvkb que vous conservez. Gardez le fichier et le secret de récupération séparément. Aucune clé n’est téléversée. Restaurez uniquement dans un emplacement local vide pour le même compte et le même espace ; cette archive ne prouve pas l’actualité des données auprès du serveur. La version 1 de l’archive utilise l’époque de sauvegarde 1. |
+| `console.security.settings.vault-present` | Un coffre d’appareil local existant peut être exporté. L’importation est désactivée pour le protéger. |
+| `console.security.settings.vault-absent` | Aucun coffre d’appareil local n’est disponible pour l’exportation. Vous pouvez importer une archive ; aucun appareil de remplacement n’est créé. |
+| `console.security.settings.mode` | Mode de récupération |
+| `console.security.settings.recovery-mode` | Clé de récupération aléatoire de 256 bits |
+| `console.security.settings.passphrase-mode` | Phrase secrète personnelle de récupération |
+| `console.security.settings.passphrase` | Phrase secrète de récupération |
+| `console.security.settings.passphrase-help` | Utilisez au moins 12 caractères et une phrase longue et unique. La dérivation utilise 600 000 itérations ; une phrase oubliée ne peut pas être réinitialisée. |
+| `console.security.settings.seal` | Créer l’archive chiffrée |
+| `console.security.settings.recovery-key` | Clé de récupération affichée une seule fois |
+| `console.security.settings.recovery-help` | Conservez les 17 groupes, y compris le dernier groupe de contrôle. Cette clé apparaît uniquement dans ce parcours et disparaît à sa fermeture ou à la fin de la session. |
+| `console.security.settings.copy` | Copier la clé de récupération |
+| `console.security.settings.saved` | J’ai conservé la clé de récupération séparément |
+| `console.security.settings.dismiss` | Masquer la clé de récupération |
+| `console.security.settings.download` | Télécharger l’archive .kvkb chiffrée |
+| `console.security.settings.import` | Choisir une archive .kvkb chiffrée |
+| `console.security.settings.restore-key` | Clé de récupération de l’archive, groupe de contrôle inclus |
+| `console.security.settings.restore` | Restaurer l’archive localement |
+| `console.security.settings.loading` | Chargement des réglages de sécurité… |

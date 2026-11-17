@@ -4,20 +4,17 @@
 // renders the guide once the person is already here.
 
 import { createRoute, useRouter } from '@tanstack/react-router'
-import { AreaStub } from '../../app/AreaStub'
+import { lazy, Suspense } from 'react'
+import { useTranslation } from 'react-i18next'
 import { orgRoute } from '../../app/org-route'
 import { MfaEnrolScreen } from './MfaEnrolScreen'
 
-// `/{org}/security` — « Sécurité et connexion », the account menu's place in
-// both layouts (`src/app/accountItems.ts`). The same placeholder as People and
-// Domain until the screen exists: no link sends an enrolled person back into
-// the enrolment guide, which in a real build only says enrolment is not
-// available yet (owner ruling, 2026-09-24). Every role has an account, so no
-// role gate.
+const SecuritySettings = lazy(() => import('./SecuritySettings'))
+
 export const securityRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'security',
-  component: () => <AreaStub titleKey="console.shell.account.action-security" />,
+  component: SecuritySettingsRoute,
 })
 
 export const securityMfaRoute = createRoute({
@@ -35,5 +32,19 @@ function SecurityMfaRoute() {
       accountEmail={me.email}
       onEnrolled={() => void router.navigate({ to: '/$org/home', params: { org } })}
     />
+  )
+}
+
+function SecuritySettingsRoute() {
+  const { me, membership } = orgRoute.useLoaderData()
+  const { t } = useTranslation()
+  return (
+    <Suspense fallback={<p role="status">{t('console.security.settings.loading')}</p>}>
+      <SecuritySettings
+        accountId={me.id}
+        organisationId={membership.organisation.id}
+        membershipId={membership.membership_id}
+      />
+    </Suspense>
   )
 }

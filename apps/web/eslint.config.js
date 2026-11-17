@@ -376,12 +376,10 @@ const deviceWorkerImportRule = {
     const filename = context.filename.replaceAll('\\', '/')
     const workerBase = `${confidentialRoot}/device.worker`
     const casHostBase = `${confidentialRoot}/device-cas-host`
-    const envelopeBases = ['attachment-crypto', 'collab-crypto', 'media-crypto'].map(
-      (name) => `${confidentialRoot}/${name}.worker`
-    )
-    const workerCaller = [deviceWorkerEntry, ...envelopeBases.map((base) => `${base}.ts`)].includes(
-      filename
-    )
+    const workerCaller =
+      filename.startsWith(`${confidentialRoot}/`) &&
+      !filename.slice(confidentialRoot.length + 1).includes('/') &&
+      filename.endsWith('.worker.ts')
     const coreBase = `${confidentialRoot}/crypto-session.worker-core`
     const nativeBase = `${confidentialRoot}/native`
     const report = (node) => context.report({ node, messageId: 'DEVICE_WORKER_PRIVATE_IMPORT' })
@@ -416,35 +414,36 @@ const deviceWorkerImportRule = {
         return 'worker-entry'
       }
       if (
-        resolved === coreBase ||
-        resolved.startsWith(`${coreBase}.`) ||
-        (prefix && resolved.startsWith(coreBase)) ||
-        /(?:^|\/)features\/confidential\/crypto-session\.worker-core(?:$|\.)/.test(clean) ||
-        envelopeBases.some(
-          (base) =>
-            resolved === base ||
-            resolved.startsWith(`${base}.`) ||
-            (prefix && resolved.startsWith(base))
-        ) ||
-        /(?:^|\/)features\/confidential\/(?:attachment|collab|media)-crypto\.worker(?:$|\.)/.test(
-          clean
-        ) ||
         resolved === nativeBase ||
         resolved.startsWith(`${nativeBase}/`) ||
         /(?:^|\/)features\/confidential\/native(?:$|\/)/.test(clean) ||
         resolved === casHostBase ||
-        resolved.startsWith(`${casHostBase}.`) ||
+        resolved.startsWith(casHostBase) ||
         (prefix && resolved.startsWith(casHostBase)) ||
         /(?:^|\/)features\/confidential\/device-cas-host(?:$|\.)/.test(clean)
       ) {
-        return 'worker-only'
+        return 'device-only'
+      }
+      if (
+        resolved === coreBase ||
+        resolved.startsWith(`${coreBase}.`) ||
+        (prefix && resolved.startsWith(coreBase)) ||
+        /(?:^|\/)features\/confidential\/crypto-session\.worker-core(?:$|\.)/.test(clean) ||
+        /(?:^|\/)[^/]+\.worker(?:$|[.?#-])/.test(resolved || clean) ||
+        /(?:^|\/)worker-core[^/]*$/.test(resolved || clean)
+      ) {
+        return 'worker-shared'
       }
       return null
     }
     const check = (sourceNode, reportNode = sourceNode) => {
       const kind = classify(sourceNode)
       if (!kind) return
-      if (kind === 'worker-entry' || !workerCaller) report(reportNode)
+      if (
+        kind === 'worker-entry' ||
+        (kind === 'device-only' ? filename !== deviceWorkerEntry : !workerCaller)
+      )
+        report(reportNode)
     }
     return {
       ImportDeclaration(node) {

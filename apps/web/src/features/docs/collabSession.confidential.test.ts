@@ -45,6 +45,7 @@ const context = { scopeKey: 'workspace-a', documentId: 'page-a', epoch: 7 }
 function fakeCipher(overrides: Partial<ConfidentialCollabCipher> = {}): ConfidentialCollabCipher {
   return {
     ...context,
+    senderClientId: 303,
     isActive: () => true,
     seal: async () => new Uint8Array([75, 68, 69, 49, 1]),
     open: async () => {
@@ -54,14 +55,17 @@ function fakeCipher(overrides: Partial<ConfidentialCollabCipher> = {}): Confiden
     ...overrides,
   }
 }
-function create(cipher: ConfidentialCollabCipher | null, socket = new Socket(), epoch = 7) {
+function create(cipher: ConfidentialCollabCipher | null, socket = new Socket(), epoch = 7, senderClientId = cipher?.senderClientId ?? 303) {
   const fetchSession = vi.fn(async () => ({
     wsUrl: 'wss://relay.invalid/page',
     token: 'short-ticket',
     expiresAt: '',
     role: 'editor' as const,
   }))
+  const ydoc = new Y.Doc()
+  ydoc.clientID = senderClientId
   const session = new CollabSessionController({
+    ydoc,
     ...context,
     user: { id: 'member-a', name: 'Member A' },
     confidential: { required: true, epoch, cipher },
@@ -99,6 +103,19 @@ describe('confidential collaboration transport', () => {
     expect(fetchSession).not.toHaveBeenCalled()
     expect(session.getSnapshot().status).toBe('forbidden')
     expect(socket.frames).toHaveLength(0)
+  })
+  it('rejects an initial sender mismatch before requesting a collaboration ticket', async () => {
+    const { session, fetchSession } = create(fakeCipher(), new Socket(), 7, 404)
+    await session.connect()
+    expect(fetchSession).not.toHaveBeenCalled()
+    expect(session.getSnapshot().status).toBe('forbidden')
+  })
+  it('rejects a cipher reused for a different tab sender before fetching a ticket', async () => {
+    const { session, fetchSession } = create(fakeCipher())
+    session.ydoc.clientID = 404
+    await session.connect()
+    expect(fetchSession).not.toHaveBeenCalled()
+    expect(session.getSnapshot().status).toBe('forbidden')
   })
   it.each([0, 1])('quarantines an incoming plaintext frame type %i immediately', async (kind) => {
     const { session, socket } = create(fakeCipher())

@@ -94,6 +94,7 @@ test('shell/narrow: reaches every area from the tab bar and the Plus sheet with 
   const places: ReadonlyArray<[string, RegExp, string]> = [
     ['Personnes', /\/people$/, 'Personnes'],
     ['Domaine & identité', /\/domain$/, 'Domaine & identité'],
+    ['Sécurité et connexion', /\/security$/, 'Sécurité et connexion'],
     ['Apparence', /\/appearance$/, 'Apparence'],
   ]
   const more = tabBar(page).getByRole('button', { name: 'Plus' })
@@ -159,30 +160,35 @@ test('shell/narrow: reaches every area by tap and keeps the session in the top m
 
   await tabBar(page).getByRole('button', { name: 'Plus' }).tap()
   const sheet = page.getByRole('dialog', { name: 'Plus' })
-  await expect(sheet.getByRole('link')).toHaveText(['Personnes', 'Domaine & identité', 'Apparence'])
+  await expect(sheet.getByRole('link')).toHaveText([
+    'Personnes',
+    'Domaine & identité',
+    'Sécurité et connexion',
+    'Apparence',
+  ])
   await expect(sheet.getByRole('button', { name: 'Se déconnecter' })).toHaveCount(0)
   await expect(sheet.getByRole('combobox')).toHaveCount(0)
 })
 
-test('shell/narrow: omits the stub security link from menus while keeping direct /security inside the shell', async ({
-  page,
-}) => {
+test('shell/narrow: opens local security settings from both account menus', async ({ page }) => {
   await useScenario(page, ['shell.single-organisation', 'home.default'])
   await signIn(page, ORG, '/security')
   await expect(page).toHaveURL(new RegExp(`/${ORG}/security$`))
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sécurité et connexion')
-  await expect(page.getByText("Cette page n'est pas encore disponible.")).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Ouvrir une session de sécurité locale' })
+  ).toBeVisible()
   // Inside the shell, with its bars: this is a place, not the enrolment guide.
   await expect(tabBar(page)).toBeVisible()
-  await expect(page.getByText(/authentification|appareil/i)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Comparer les appareils' })).toBeVisible()
 
   await tabBar(page).getByRole('button', { name: 'Plus' }).tap()
   await expect(
     page.getByRole('dialog', { name: 'Plus' }).getByRole('link', { name: 'Sécurité et connexion' })
-  ).toHaveCount(0)
+  ).toBeVisible()
   await page.keyboard.press('Escape')
 
-  // The wide layout's account menu also omits the stub place.
+  // The same security page is reachable in the wide account menu.
   await page.setViewportSize({ width: 1280, height: 800 })
   await tabBar(page).waitFor({ state: 'detached' })
   await page.getByRole('link', { name: 'Accueil' }).first().click()
@@ -191,7 +197,9 @@ test('shell/narrow: omits the stub security link from menus while keeping direct
     .getByRole('navigation', { name: 'Navigation principale' })
     .getByRole('button', { name: /Julie Marchand/ })
     .click()
-  await expect(page.getByRole('menuitem', { name: 'Sécurité et connexion' })).toHaveCount(0)
+  await page.getByRole('menuitem', { name: 'Sécurité et connexion' }).click()
+  await expect(page).toHaveURL(/\/security$/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Sécurité et connexion')
 })
 
 test('shell/narrow: a member gets four tabs and no management place', async ({ page }) => {
@@ -202,6 +210,7 @@ test('shell/narrow: a member gets four tabs and no management place', async ({ p
   await expect(tabBar(page).getByRole('link', { name: 'Facturation' })).toHaveCount(0)
   await tabBar(page).getByRole('button', { name: 'Plus' }).tap()
   await expect(page.getByRole('dialog', { name: 'Plus' }).getByRole('link')).toHaveText([
+    'Sécurité et connexion',
     'Apparence',
   ])
 })
