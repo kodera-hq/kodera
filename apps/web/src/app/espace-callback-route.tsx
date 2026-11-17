@@ -15,6 +15,7 @@ import {
   type MatrixSignInProblem,
 } from '../auth/matrix'
 import { authAdapter } from '../auth/oidc'
+import { LinkButton } from '../ui/LinkButton/LinkButton'
 import { rootRoute } from './root-route'
 
 function safeReturnTo(returnTo: string): string {
@@ -98,9 +99,9 @@ function EspaceCallback() {
               : t('console.shell._.error-load-failed')}
       </p>
       {failed === 'rate-limited' ? (
-        <a className="text-c-accent-ink underline" href="/">
+        <LinkButton variant="secondary" href="/">
           {t('console.shell.session.action-sign-in-again')}
-        </a>
+        </LinkButton>
       ) : null}
     </main>
   )
