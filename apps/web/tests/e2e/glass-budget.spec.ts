@@ -63,6 +63,10 @@ test('glass budget: Espace, its settings and Docs show at most three blurred sur
 
   await page.getByRole('button', { name: 'Réglages', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Réglages', exact: true })).toBeVisible()
+  await expect(page.locator('body[data-scroll-locked] #root .material-panel').first()).toHaveCSS(
+    'backdrop-filter',
+    'none'
+  )
   expect((await blurredSurfaces(page)).length).toBeLessThanOrEqual(GLASS_BUDGET)
   await page.keyboard.press('Escape')
 

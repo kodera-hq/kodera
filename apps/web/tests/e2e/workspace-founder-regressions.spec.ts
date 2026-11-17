@@ -123,12 +123,12 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
     mimeType: 'image/png',
     buffer: Buffer.from(png, 'base64'),
   })
-  await expect(page.getByText('founder-preview.png', { exact: true })).toHaveCount(1)
+  await expect(page.getByText(/^founder-preview\.png \(\d+ KB\)$/)).toHaveCount(1)
   await expect
     .poll(() =>
       page.locator('form canvas').evaluate((canvas) => (canvas as HTMLCanvasElement).width)
     )
     .toBe(256)
   await page.getByRole('button', { name: 'Retirer founder-preview.png', exact: true }).click()
-  await expect(page.getByText('founder-preview.png', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/^founder-preview\.png \(\d+ KB\)$/)).toHaveCount(0)
 })

@@ -288,6 +288,19 @@
     caret-color: transparent;
   }
 
+  /* Modal scroll lock withdraws the app behind its body portal. Live regions can
+     keep ancestors out of aria-hidden, so use the actual lock too. Nested panels
+     already share their dialog's filtered backdrop and need no second sampling. */
+  body[data-scroll-locked]
+    #root
+    :is(.material-bar, .material-panel, .material-popover, .material-dialog),
+  .material-dialog :is(.material-bar, .material-panel),
+  [aria-hidden='true'] :is(.material-bar, .material-panel, .material-popover, .material-dialog),
+  :is(.material-bar, .material-panel, .material-popover, .material-dialog)[aria-hidden='true'] {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
   /* The ground a focus ring's offset gap is painted in: the surface a control
      usually sits on. `focus-ground-*` below changes it for a subtree. */
   :root,
