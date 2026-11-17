@@ -107,3 +107,13 @@ def test_read_staff_community_projects_mfa_enrolled_only_for_valid_staff_factor(
         assert payload["identities"][0]["mfa_enrolled"] is True
     else:
         assert "mfa_enrolled" not in payload["identities"][0]
+
+
+def test_privacy_lifecycle_grants_are_select_only() -> None:
+    tables = ("orgs_privacyexport", "orgs_privacyerasure", "orgs_accounterasure")
+    for table in tables:
+        assert table in api_writer_role.SELECT
+        assert table not in api_writer_role.INSERT
+        assert table not in api_writer_role.DELETE
+        assert not any(name == table for name, _ in api_writer_role.UPDATE_COLUMNS)
+    assert not any("privacy" in signature for signature in api_writer_role.EXECUTE_FUNCTIONS)

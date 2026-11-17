@@ -80,6 +80,10 @@ SELECT = (
     "orgs_membership",
     "orgs_slugreservation",
     "orgs_organisationintake",
+    # Customer privacy lifecycle reads only; HTTP admission and delivery remain held.
+    "orgs_privacyexport",
+    "orgs_privacyerasure",
+    "orgs_accounterasure",
     "jobs_job",
     "jobs_jobstep",
     "audit_auditevent",

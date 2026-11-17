@@ -10,6 +10,8 @@
   "console.shell.account.action-language": "Language",
   "console.shell.account.action-security": "Security and sign-in",
   "console.shell.account.action-sign-out": "Sign out",
+  "console.shell.account.language-en": "English",
+  "console.shell.account.language-fr": "Français",
   "console.shell.account.status-role-admin": "Administrator",
   "console.shell.account.status-role-billing": "Billing",
   "console.shell.account.status-role-member": "Member",

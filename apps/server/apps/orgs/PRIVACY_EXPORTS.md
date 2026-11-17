@@ -40,8 +40,13 @@ The builder bounds pages to 100 entries, individual entries to 2 MiB, total unco
 to 64 MiB and entry/checkpoint counts to 10,000. These are initial bounded pipeline limits,
 not claims of unlimited tenant export capacity. Larger exports need an independently reviewed
 streaming/partitioning design. Private-object TTL enforcement and expired-checkpoint cleanup
-must be implemented and proved by the storage/worker integration before deployment. No
-production endpoint or external provider is activated by these source modules.
+must be implemented and proved by the storage/worker integration before deployment.
+
+Customer HTTP routes authenticate and authorize all account and workspace privacy operations.
+Scoped lifecycle reads expose durable journal rows. Mutations remain held with HTTP 503 and
+`Retry-After: 60` after contract validation and the account last-owner check; they create no
+rows. Downloads require a scoped, ready, unexpired request, then remain held without a signed
+URL adapter. No external provider is activated by these routes or source modules.
 
 Deletion is explicitly held by `deletion_hold`: no cutoff proof, external-store erasure proof
 or statutory accounting-retention provider is currently configured. It neither deletes data

@@ -152,6 +152,10 @@ exact, refuses the test profile in the image, and starts the profiles from those
 
 ### The database role
 
+Customer privacy lifecycle reads additionally need `SELECT` on `orgs_privacyexport`,
+`orgs_privacyerasure` and `orgs_accounterasure`. These grants allow scoped status reads only;
+no privacy journal writes, archive credentials or erasure functions are granted.
+
 The API role needs these grants to record an intake, on top of the customer reads' `SELECT`s
 (`dev/accept_customer_http.py` `provision_reader`). `dev/api_writer_role.py` is the one list;
 `tests/test_intake_writer_role.py` creates a role holding exactly it, records, replays, refuses and

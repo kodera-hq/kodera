@@ -3,16 +3,23 @@ import { join } from 'node:path'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import i18next from 'i18next'
 import '@/i18n'
 import { THEME_CHANGE_EVENT, THEME_STORAGE_KEY, saveThemePreference } from '../../theme/theme'
 import { AppearanceScreen } from './AppearanceScreen'
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks()
   // A stored choice forgets a refused one kept for the page (`src/theme/theme.ts`), so each case
   // starts from storage alone.
   saveThemePreference('system')
   localStorage.clear()
+  sessionStorage.clear()
+  if (i18next.language !== 'fr') {
+    await act(async () => {
+      await i18next.changeLanguage('fr')
+    })
+  }
 })
 
 function cards() {
@@ -80,6 +87,10 @@ describe('AppearanceScreen', () => {
     localStorage.setItem(THEME_STORAGE_KEY, 'light')
     render(<AppearanceScreen />)
 
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'Français' })).toHaveFocus()
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'English' })).toHaveFocus()
     await user.tab()
     expect(screen.getByRole('radio', { name: 'Clair' })).toHaveFocus()
     // Held until Radix's roving move lands: it chooses only while the key is down
@@ -243,4 +254,20 @@ describe('AppearanceScreen with the boot script', () => {
     expect(screen.getByRole('radio', { name: 'Noir' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('status')).toHaveTextContent(/n’a pas enregistré votre choix/)
   })
+})
+
+it('switches the live appearance view between French and English and persists the preference', async () => {
+  const user = userEvent.setup()
+  render(<AppearanceScreen />)
+  expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: 'English' }))
+  expect(sessionStorage.getItem('console:language')).toBe('en')
+  expect(screen.getByRole('heading', { name: 'Appearance' })).toBeVisible()
+  expect(screen.getByRole('group', { name: 'Language' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'false')
+  await user.click(screen.getByRole('button', { name: 'Français' }))
+  expect(sessionStorage.getItem('console:language')).toBe('fr')
+  expect(screen.getByRole('heading', { name: 'Apparence' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'true')
 })
