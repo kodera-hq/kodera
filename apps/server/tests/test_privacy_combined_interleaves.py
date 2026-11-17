@@ -110,7 +110,7 @@ def test_actual_cutoff_waits_for_held_relay_then_refuses_ee_and_proximity(
             operation(relay, "send_application", 2, {"epoch": 1, "ciphertext": b64(os.urandom(32))})
         with pytest.raises(ProximityRefusalError):
             views._operation(relay[3][2], relay[1].id, "bootstrap")
-        with pytest.raises(IntegrityError), transaction.atomic():
+        with pytest.raises(IntegrityError, match="cutoff refuses write"), transaction.atomic():
             seed_ee_person(relay[0], relay[2][2].user)
         assert ee_exists(ee), "cutoff is not falsely treated as already purged"
         assert gateway.inspect_account(identity_ids=[str(identity.id)])["remaining_records"] == 1
