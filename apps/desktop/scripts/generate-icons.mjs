@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { deflateSync } from 'node:zlib';
 
 const root = resolve(import.meta.dirname, '../../..');
 const iconsDir = join(root, 'apps/desktop/src-tauri/icons');
@@ -21,6 +20,61 @@ function chunk(type, data) {
   body.copy(out, 4);
   out.writeUInt32BE((crc ^ 0xffffffff) >>> 0, out.length - 4);
   return out;
+}
+
+// RFC 1950/1951 encoder with one fixed-Huffman block. Native zlib releases choose
+// different matches, so using their output would make checked-in icon bytes drift by host.
+function deterministicDeflate(raw) {
+  const bytes = [];
+  let pending = 0, count = 0;
+  function bits(value, length) {
+    pending |= value << count; count += length;
+    while (count >= 8) { bytes.push(pending & 255); pending >>>= 8; count -= 8; }
+  }
+  function reversed(value, length) {
+    let result = 0;
+    for (let i = 0; i < length; i++) { result = (result << 1) | (value & 1); value >>>= 1; }
+    return result;
+  }
+  function symbol(value) {
+    const [code, width] = value <= 143 ? [48 + value, 8] : value <= 255 ? [400 + value - 144, 9] : value <= 279 ? [value - 256, 7] : [192 + value - 280, 8];
+    bits(reversed(code, width), width);
+  }
+  const lengths = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+  const lengthExtra = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  const distances = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+  const distanceExtra = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+  const previous = new Map();
+  const keyAt = at => (raw[at] << 16) | (raw[at + 1] << 8) | raw[at + 2];
+  bits(3, 3); // final block, fixed Huffman alphabet
+  let at = 0;
+  while (at < raw.length) {
+    let length = 0, distance = 0;
+    if (at + 2 < raw.length) {
+      const before = previous.get(keyAt(at));
+      if (before !== undefined && at - before <= 32768) {
+        const max = Math.min(258, raw.length - at);
+        while (length < max && raw[before + length] === raw[at + length]) length++;
+        distance = at - before;
+      }
+    }
+    const consumed = length >= 3 ? length : 1;
+    if (length >= 3) {
+      let l = lengths.length - 1, d = distances.length - 1;
+      while (lengths[l] > length) l--;
+      while (distances[d] > distance) d--;
+      symbol(257 + l); bits(length - lengths[l], lengthExtra[l]);
+      bits(reversed(d, 5), 5); bits(distance - distances[d], distanceExtra[d]);
+    } else symbol(raw[at]);
+    for (let i = 0; i < consumed && at + i + 2 < raw.length; i++) previous.set(keyAt(at + i), at + i);
+    at += consumed;
+  }
+  symbol(256);
+  if (count) bytes.push(pending & 255);
+  let a = 1, b = 0;
+  for (const byte of raw) { a = (a + byte) % 65521; b = (b + a) % 65521; }
+  const checksum = Buffer.alloc(4); checksum.writeUInt32BE(((b << 16) | a) >>> 0);
+  return Buffer.concat([Buffer.from([0x78, 0x01]), Buffer.from(bytes), checksum]);
 }
 
 // The seven official monogram paths are shared with the web mark. No fonts, resampling of
@@ -86,7 +140,7 @@ function renderPng(size, spec) {
   }
   const header = Buffer.alloc(13);
   header.writeUInt32BE(size, 0); header.writeUInt32BE(size, 4); header[8] = 8; header[9] = 6;
-  return Buffer.concat([signature, chunk('IHDR', header), chunk('IDAT', deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
+  return Buffer.concat([signature, chunk('IHDR', header), chunk('IDAT', deterministicDeflate(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
 export function buildDeterministicIcns(png32, png128, png256, extras = {}) {

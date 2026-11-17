@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { inflateSync } from 'node:zlib';
 import { buildIconFiles } from '../scripts/generate-icons.mjs';
 
 const script = readFileSync(new URL('../src-tauri/assets/updater.js', import.meta.url), 'utf8');
@@ -64,11 +65,15 @@ test('native icon containers include independent official raster frames at every
   assert.equal(files.ico.readUInt16LE(4), 6);
   for (const size of [16, 32, 48, 64, 128, 256, 512, 1024]) {
     const png = files[`${size}x${size}.png`]; assert.equal(png.readUInt32BE(16), size); assert.equal(png.readUInt32BE(20), size);
+    const pixels = inflateSync(png.subarray(41, 41 + png.readUInt32BE(33)));
+    assert.equal(pixels.length, size * (size * 4 + 1));
+    assert.deepEqual([...pixels.subarray(1, 5)], [43, 75, 219, 255]);
+    assert.ok(pixels.includes(238), 'official Givre foreground must be present');
     assert.ok(readFileSync(new URL(`../src-tauri/icons/${size}x${size}.png`, import.meta.url)).equals(png));
   }
 });
 
-test('restart helper replaces atomically and rolls back failed replacement with hostile path text', async () => {
+test('restart helper replaces and rolls back failed replacement with hostile path text', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
