@@ -1,3 +1,4 @@
+import type { ConfidentialMediaSession } from '../../confidential/media-crypto-client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConnectionState, DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import {
@@ -5,6 +6,7 @@ import {
   matrixUserOf,
   ROOM_OPTIONS,
   type CallRoom,
+  type CallControllerOptions,
   type CallSoundPort,
 } from './call'
 import { CROWD_ATTENUATED_GAIN, SoundEngine, type SoundDecision } from '../../sounds'
@@ -199,6 +201,10 @@ function setup(
     createMeter?: () => MicMeter
     deviceChoice?: { read: () => AudioDeviceChoice; save: (choice: AudioDeviceChoice) => boolean }
     sounds?: CallSoundPort
+    protection?: Pick<
+      CallControllerOptions,
+      'roomBoundary' | 'mediaEncryption' | 'subscribeRoomBoundary'
+    >
   } = {}
 ) {
   const rooms: FakeRoom[] = []
@@ -209,6 +215,7 @@ function setup(
   const mount = document.createElement('div')
   document.body.append(mount)
   const call = createCallController({
+    ...options.protection,
     homeserver: HS,
     serverName: 'acme-sa.kodera.test',
     tokens: { current: () => 'syt_member', renew: vi.fn(async () => 'syt_next') },
@@ -2614,4 +2621,323 @@ describe('CallController: Sonic Identity cues in live voice calls', () => {
     expect(decisions[4]!.gain).toBeCloseTo(fullPeerGain, 5)
     engine.destroy()
   })
+})
+
+function mediaCapability() {
+  let active = true
+  const listeners = new Set<() => void>()
+  const capability: ConfidentialMediaSession = {
+    roomId: STANDUP,
+    epoch: 7,
+    worker: {} as Worker,
+    isActive: () => active,
+    subscribeRevocation: (listener) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    attach: vi.fn(async () => {}),
+    close: vi.fn(() => {
+      if (!active) return
+      active = false
+      for (const listener of [...listeners]) listener()
+    }),
+  }
+  return capability
+}
+function supportTransforms() {
+  vi.stubGlobal('Worker', class {})
+  vi.stubGlobal('TransformStream', class {})
+  vi.stubGlobal('RTCRtpScriptTransform', class {})
+}
+describe('protected call admission and retirement', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it.each(['unknown', 'confidential-unavailable', 'invalid'] as const)(
+    'refuses %s without a media capability before token, SDK room or capture',
+    async (boundary) => {
+      const { call, fetchImpl, rooms } = setup({ protection: { roomBoundary: () => boundary } })
+      await call.join(STANDUP)
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(rooms).toHaveLength(0)
+      expect(call.getSnapshot()).toMatchObject({
+        status: 'failed',
+        problem: 'media-encryption-unavailable',
+      })
+    }
+  )
+  it('refuses missing encoded transforms before token or capture', async () => {
+    vi.stubGlobal('RTCRtpScriptTransform', undefined)
+    vi.stubGlobal('RTCRtpSender', undefined)
+    vi.stubGlobal('RTCRtpReceiver', undefined)
+    const media = mediaCapability()
+    const { call, fetchImpl, rooms } = setup({
+      protection: {
+        roomBoundary: () => 'confidential-unavailable',
+        mediaEncryption: () => media,
+      },
+    })
+    await call.join(STANDUP)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(rooms).toHaveLength(0)
+    expect(call.getSnapshot().problem).toBe('media-transforms-unavailable')
+    expect(media.close).toHaveBeenCalled()
+  })
+  it('attaches media protection before token, connection and microphone, then wipes on leave', async () => {
+    supportTransforms()
+    const media = mediaCapability()
+    const { call, fetchImpl, room } = setup({
+      protection: {
+        roomBoundary: () => 'confidential-unavailable',
+        mediaEncryption: () => media,
+      },
+    })
+    await call.join(STANDUP)
+    expect(media.attach).toHaveBeenCalledWith(room())
+    expect(vi.mocked(media.attach).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(fetchImpl).mock.invocationCallOrder[0]!
+    )
+    expect(vi.mocked(fetchImpl).mock.invocationCallOrder[0]).toBeLessThan(
+      room().connect.mock.invocationCallOrder[0]!
+    )
+    expect(room().connect.mock.invocationCallOrder[0]).toBeLessThan(
+      room().localParticipant.setMicrophoneEnabled.mock.invocationCallOrder[0]!
+    )
+    await call.leave()
+    expect(media.close).toHaveBeenCalled()
+    expect(room().disconnect).toHaveBeenCalled()
+    expect(call.getSnapshot().status).toBe('idle')
+  })
+  it('revokes during token fetch without connecting or capturing', async () => {
+    supportTransforms()
+    const media = mediaCapability()
+    let release!: (value: Response) => void
+    const { call, room, fetchImpl } = setup({
+      answers: [
+        () =>
+          new Promise((resolve) => {
+            release = resolve
+          }),
+      ],
+      protection: { roomBoundary: () => 'confidential-unavailable', mediaEncryption: () => media },
+    })
+    const joining = call.join(STANDUP)
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1))
+    media.close()
+    release(grant())
+    await joining
+    expect(room().connect).not.toHaveBeenCalled()
+    expect(room().localParticipant.setMicrophoneEnabled).not.toHaveBeenCalled()
+    expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+  })
+  it('stops live capture immediately when room classification downgrades', async () => {
+    supportTransforms()
+    const media = mediaCapability()
+    let boundary: 'ordinary' | 'confidential-unavailable' = 'confidential-unavailable'
+    let notify!: () => void
+    const { call, room } = setup({
+      protection: {
+        roomBoundary: () => boundary,
+        mediaEncryption: () => media,
+        subscribeRoomBoundary: (listener) => {
+          notify = listener
+          return () => {}
+        },
+      },
+    })
+    await call.join(STANDUP)
+    boundary = 'ordinary'
+    notify()
+    expect(media.close).toHaveBeenCalled()
+    expect(room().disconnect).toHaveBeenCalled()
+    expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+    await call.leave()
+  })
+  it('retires protection on an SDK encryption downgrade', async () => {
+    supportTransforms()
+    const media = mediaCapability()
+    const { call, room } = setup({
+      protection: {
+        roomBoundary: () => 'confidential-unavailable',
+        mediaEncryption: () => media,
+      },
+    })
+    await call.join(STANDUP)
+    room().emit(RoomEvent.ParticipantEncryptionStatusChanged, false, {})
+    expect(media.close).toHaveBeenCalled()
+    expect(room().disconnect).toHaveBeenCalled()
+    expect(call.getSnapshot().status).toBe('failed')
+    await call.leave()
+  })
+})
+
+describe('live media authority changes', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('refuses an ordinary call upgraded to protected during the token request', async () => {
+    let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+    let release!: (value: Response) => void
+    const { call, room, fetchImpl } = setup({
+      answers: [
+        () =>
+          new Promise((resolve) => {
+            release = resolve
+          }),
+      ],
+      protection: { roomBoundary: () => boundary },
+    })
+    const joining = call.join(STANDUP)
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled())
+    boundary = 'confidential-unavailable'
+    release(grant())
+    await joining
+    expect(room().connect).not.toHaveBeenCalled()
+    expect(room().localParticipant.setMicrophoneEnabled).not.toHaveBeenCalled()
+    expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+  })
+  it('stops an ordinary call immediately when protection state is added', async () => {
+    let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+    let notify!: () => void
+    const { call, room } = setup({
+      protection: {
+        roomBoundary: () => boundary,
+        subscribeRoomBoundary: (listener) => {
+          notify = listener
+          return () => {}
+        },
+      },
+    })
+    await call.join(STANDUP)
+    boundary = 'confidential-unavailable'
+    notify()
+    expect(room().disconnect).toHaveBeenCalled()
+    expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+    await call.leave()
+  })
+  it('retires a replaced epoch capability even while its old object remains active', async () => {
+    supportTransforms()
+    const old = mediaCapability()
+    let current = old
+    let notify!: () => void
+    const { call, room } = setup({
+      protection: {
+        roomBoundary: () => 'confidential-unavailable',
+        mediaEncryption: () => current,
+        subscribeRoomBoundary: (listener) => {
+          notify = listener
+          return () => {}
+        },
+      },
+    })
+    await call.join(STANDUP)
+    current = mediaCapability()
+    notify()
+    expect(old.close).toHaveBeenCalled()
+    expect(room().disconnect).toHaveBeenCalled()
+    expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+    current.close()
+    await call.leave()
+  })
+})
+
+it('does not retry a token request after protection authority changes during renewal', async () => {
+  let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+  const { call, fetchImpl, room } = setup({
+    answers: [
+      () => {
+        boundary = 'confidential-unavailable'
+        return new Response('{}', { status: 401 })
+      },
+    ],
+    protection: { roomBoundary: () => boundary },
+  })
+  await call.join(STANDUP)
+  expect(fetchImpl).toHaveBeenCalledTimes(1)
+  expect(room().connect).not.toHaveBeenCalled()
+  expect(room().localParticipant.setMicrophoneEnabled).not.toHaveBeenCalled()
+  expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+})
+
+it('stops a protected microphone that finishes capture after epoch revocation', async () => {
+  supportTransforms()
+  const media = mediaCapability()
+  let grantReady!: (value: Response) => void
+  let captureReady!: () => void
+  let late: FakeMicrophone | undefined
+  const { call, room, fetchImpl } = setup({
+    answers: [
+      () =>
+        new Promise((resolve) => {
+          grantReady = resolve
+        }),
+    ],
+    protection: { roomBoundary: () => 'confidential-unavailable', mediaEncryption: () => media },
+  })
+  try {
+    const joining = call.join(STANDUP)
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled())
+    room().localParticipant.setMicrophoneEnabled.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          captureReady = () => {
+            late = room().publishMicrophone(false)
+            resolve(undefined)
+          }
+        })
+    )
+    grantReady(grant())
+    await vi.waitFor(() => expect(room().localParticipant.setMicrophoneEnabled).toHaveBeenCalled())
+    media.close()
+    captureReady()
+    await joining
+    expect(late?.stopped).toBe(true)
+    expect(room().liveMicrophone()).toBe(false)
+    expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+    await call.leave()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('stops a late ordinary microphone after its room becomes protected', async () => {
+  let boundary: 'ordinary' | 'confidential-unavailable' = 'ordinary'
+  let notify!: () => void
+  let grantReady!: (value: Response) => void
+  let captureReady!: () => void
+  let late: FakeMicrophone | undefined
+  const { call, room, fetchImpl } = setup({
+    answers: [
+      () =>
+        new Promise((resolve) => {
+          grantReady = resolve
+        }),
+    ],
+    protection: {
+      roomBoundary: () => boundary,
+      subscribeRoomBoundary: (listener) => {
+        notify = listener
+        return () => {}
+      },
+    },
+  })
+  const joining = call.join(STANDUP)
+  await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalled())
+  room().localParticipant.setMicrophoneEnabled.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        captureReady = () => {
+          late = room().publishMicrophone(false)
+          resolve(undefined)
+        }
+      })
+  )
+  grantReady(grant())
+  await vi.waitFor(() => expect(room().localParticipant.setMicrophoneEnabled).toHaveBeenCalled())
+  boundary = 'confidential-unavailable'
+  notify()
+  captureReady()
+  await joining
+  expect(late?.stopped).toBe(true)
+  expect(room().liveMicrophone()).toBe(false)
+  expect(call.getSnapshot().problem).toBe('media-encryption-revoked')
+  await call.leave()
 })

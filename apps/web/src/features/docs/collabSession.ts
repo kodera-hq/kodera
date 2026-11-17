@@ -1,3 +1,4 @@
+import type { ConfidentialCollabCipher } from '../confidential/collab-crypto-client'
 import * as decoding from 'lib0/decoding'
 import * as encoding from 'lib0/encoding'
 import { IndexeddbPersistence } from 'y-indexeddb'
@@ -45,13 +46,7 @@ export interface CollaboratorPeer {
 }
 
 export type CollabConnectionStatus =
-  | 'local'
-  | 'connecting'
-  | 'synced'
-  | 'offline-buffered'
-  | 'reconnecting'
-  | 'forbidden'
-  | 'closed'
+  'local' | 'connecting' | 'synced' | 'offline-buffered' | 'reconnecting' | 'forbidden' | 'closed'
 
 export interface CollabTicketGrant {
   readonly wsUrl: string
@@ -71,7 +66,15 @@ export interface WebSocketLike {
   close(code?: number, reason?: string): void
 }
 
+export interface ConfidentialCollabPolicy {
+  readonly required: true
+  readonly epoch: number
+  readonly cipher: ConfidentialCollabCipher | null
+}
+
 export interface CollabSessionOptions {
+  readonly confidential?: ConfidentialCollabPolicy
+
   readonly scopeKey: string
   readonly documentId: string
   readonly initialRole?: DocumentAccessRole | undefined
@@ -109,17 +112,24 @@ export function cursorSlotForClient(clientId: number, userId: string): CursorPal
  * that the merge keeps, so every open would duplicate the page. Only a local document, or a
  * server that declined collaboration (`local` after a 404/501), seeds.
  */
-export function maySeedFromMarkdown(remote: boolean, status: CollabConnectionStatus): boolean {
-  return !remote || status === 'local'
+export function maySeedFromMarkdown(
+  remote: boolean,
+  status: CollabConnectionStatus,
+  confidential?: ConfidentialCollabPolicy
+): boolean {
+  return confidential?.required !== true && (!remote || status === 'local')
 }
 
-export function validateCollabWebSocketUrl(rawUrl: string): {
-  readonly ok: true
-  readonly normalizedUrl: string
-} | {
-  readonly ok: false
-  readonly reason: 'invalid_url' | 'disallowed_protocol' | 'credentials_forbidden' | 'token_in_query_forbidden'
-} {
+export function validateCollabWebSocketUrl(rawUrl: string):
+  | {
+      readonly ok: true
+      readonly normalizedUrl: string
+    }
+  | {
+      readonly ok: false
+      readonly reason:
+        'invalid_url' | 'disallowed_protocol' | 'credentials_forbidden' | 'token_in_query_forbidden'
+    } {
   let parsed: URL
   try {
     parsed = new URL(rawUrl)
@@ -215,6 +225,10 @@ export class CollabSessionController {
   private reconnectAttempt = 0
   private refreshedAfter4401 = false
   private destroyed = false
+  private readonly confidential: ConfidentialCollabPolicy | undefined
+  private connectionGeneration = 0
+  private outgoing = Promise.resolve()
+  private incoming = Promise.resolve()
   private ws: WebSocketLike | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private persistence: IndexeddbPersistence | null = null
@@ -231,6 +245,7 @@ export class CollabSessionController {
   private readonly baseBackoffMs: number
 
   constructor(options: CollabSessionOptions) {
+    this.confidential = options.confidential
     this.scopeKey = options.scopeKey
     this.documentId = options.documentId
     this.role = options.initialRole ?? 'editor'
@@ -246,6 +261,7 @@ export class CollabSessionController {
     // A server-backed session is not local even before `connect()`: an editor that saw `local`
     // would seed the document from Markdown and duplicate it once the server state arrives.
     if (this.fetchSession) this.status = 'connecting'
+    if (this.confidential && !this.hasCipherAuthority()) this.status = 'forbidden'
     this.publishLocalAwareness(null)
     this.cachedSnapshot = this.buildSnapshot()
 
@@ -254,6 +270,7 @@ export class CollabSessionController {
     this.awareness.on('update', this.handleAwarenessBroadcast)
 
     const shouldEnableIdb =
+      this.confidential === undefined &&
       options.enableOfflineBuffer !== false &&
       this.role !== 'viewer' &&
       typeof globalThis.indexedDB !== 'undefined' &&
@@ -329,7 +346,8 @@ export class CollabSessionController {
       if (!userObj || typeof userObj !== 'object') continue
       const rawUser = userObj as Record<string, unknown>
       const userId = typeof rawUser['id'] === 'string' ? rawUser['id'] : String(clientId)
-      const name = typeof rawUser['name'] === 'string' && rawUser['name'].trim() ? rawUser['name'] : userId
+      const name =
+        typeof rawUser['name'] === 'string' && rawUser['name'].trim() ? rawUser['name'] : userId
       const peerRole: DocumentAccessRole = rawUser['role'] === 'viewer' ? 'viewer' : 'editor'
       const rawSlot = rawUser['cursorSlot']
       const cursorSlot: CursorPaletteSlot =
@@ -384,7 +402,7 @@ export class CollabSessionController {
         syncProtocol.writeUpdate(encoder, update)
       })
       try {
-        this.ws.send(frame)
+        this.sendFrame(frame, this.ws)
       } catch {
         this.transitionStatus('offline-buffered')
       }
@@ -425,7 +443,7 @@ export class CollabSessionController {
     const changed = [...added, ...updated, ...removed].filter((clientId) => clientId === ownId)
     if (changed.length === 0) return
     try {
-      this.ws.send(encodeAwarenessFrame(this.awareness, changed))
+      this.sendFrame(encodeAwarenessFrame(this.awareness, changed), this.ws)
     } catch {
       // Ignore transient socket error; reconnect handles state resync.
     }
@@ -437,8 +455,113 @@ export class CollabSessionController {
     this.emit()
   }
 
+  private hasCipherAuthority(): boolean {
+    const policy = this.confidential
+    if (!policy) return true
+    const cipher = policy.cipher
+    return (
+      cipher !== null &&
+      cipher.epoch === policy.epoch &&
+      cipher.scopeKey === this.scopeKey &&
+      cipher.documentId === this.documentId &&
+      cipher.isActive()
+    )
+  }
+
+  private currentSocket(socket: WebSocketLike): boolean {
+    return (
+      !this.destroyed &&
+      this.ws === socket &&
+      this.status !== 'forbidden' &&
+      socket.readyState === 1 &&
+      this.hasCipherAuthority()
+    )
+  }
+
+  private quarantine(): void {
+    const socket = this.ws
+    this.ws = null
+    ++this.connectionGeneration
+    this.clearReconnectTimer()
+    this.transitionStatus('forbidden')
+    this.confidential?.cipher?.close()
+    socket?.close(4403, 'protected collaboration refused')
+  }
+
+  private sendFrame(frame: Uint8Array, socket: WebSocketLike): void {
+    if (!this.confidential) {
+      socket.send(frame)
+      return
+    }
+    const cipher = this.confidential.cipher
+    // Queue ownership preserves sender sequence order across asynchronous worker calls.
+    const owned = frame.slice()
+    this.outgoing = this.outgoing.then(async () => {
+      try {
+        if (!this.currentSocket(socket) || cipher === null) {
+          if (this.ws === socket) this.quarantine()
+          return
+        }
+        const sealed = await cipher.seal(owned)
+        if (!this.currentSocket(socket)) {
+          if (this.ws === socket) this.quarantine()
+          return
+        }
+        if (sealed[0] !== 75 || sealed[1] !== 68 || sealed[2] !== 69 || sealed[3] !== 49) {
+          throw new Error('invalid protected envelope')
+        }
+        socket.send(sealed)
+      } catch {
+        if (this.ws === socket) this.quarantine()
+      } finally {
+        owned.fill(0)
+      }
+    })
+  }
+
+  private receiveFrame(bytes: Uint8Array, socket: WebSocketLike): void {
+    if (!this.confidential) {
+      this.handleBinaryFrame(bytes, socket)
+      return
+    }
+    if (bytes[0] !== 75 || bytes[1] !== 68 || bytes[2] !== 69 || bytes[3] !== 49) {
+      this.quarantine()
+      return
+    }
+    const cipher = this.confidential.cipher
+    const owned = bytes.slice()
+    this.incoming = this.incoming.then(async () => {
+      let plaintext: Uint8Array | undefined
+      try {
+        if (!this.currentSocket(socket) || cipher === null) {
+          if (this.ws === socket) this.quarantine()
+          return
+        }
+        plaintext = await cipher.open(owned)
+        if (!this.currentSocket(socket)) {
+          if (this.ws === socket) this.quarantine()
+          return
+        }
+        if (plaintext[0] !== MSG_SYNC && plaintext[0] !== MSG_AWARENESS) {
+          throw new Error('invalid protected frame')
+        }
+        this.handleBinaryFrame(plaintext, socket)
+      } catch {
+        if (this.ws === socket) this.quarantine()
+      } finally {
+        plaintext?.fill(0)
+        owned.fill(0)
+      }
+    })
+  }
+
   async connect(): Promise<void> {
-    if (this.destroyed || !this.fetchSession) return
+    if (this.destroyed || !this.fetchSession || this.status === 'forbidden') return
+    if (!this.hasCipherAuthority()) {
+      this.quarantine()
+      return
+    }
+    const generation = ++this.connectionGeneration
     this.clearReconnectTimer()
     this.transitionStatus(this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting')
 
@@ -446,7 +569,11 @@ export class CollabSessionController {
     try {
       grant = await this.fetchSession()
     } catch (error) {
-      if (this.destroyed) return
+      if (this.destroyed || generation !== this.connectionGeneration) return
+      if (this.confidential) {
+        this.quarantine()
+        return
+      }
       if (error instanceof ApiProblem && error.status === 403) {
         this.role = 'viewer'
         this.publishLocalAwareness(null)
@@ -460,7 +587,11 @@ export class CollabSessionController {
       this.scheduleReconnect()
       return
     }
-    if (this.destroyed) return
+    if (this.destroyed || generation !== this.connectionGeneration) return
+    if (!this.hasCipherAuthority()) {
+      this.quarantine()
+      return
+    }
 
     this.role = grant.role
     this.publishLocalAwareness(null)
@@ -484,18 +615,23 @@ export class CollabSessionController {
 
     socket.onopen = () => {
       if (this.destroyed || this.ws !== socket) return
+      if (!this.hasCipherAuthority()) {
+        this.quarantine()
+        return
+      }
       this.reconnectAttempt = 0
       this.refreshedAfter4401 = false
       try {
         // First frame carries the short-lived session ticket — never in URL query or logs.
         socket.send(JSON.stringify({ type: 'auth', token: grant.token }))
         // Initiate Yjs SyncStep1 handshake.
-        socket.send(
+        this.sendFrame(
           encodeSyncFrame((encoder) => {
             syncProtocol.writeSyncStep1(encoder, this.ydoc)
-          })
+          }),
+          socket
         )
-        socket.send(encodeAwarenessFrame(this.awareness, [this.ydoc.clientID]))
+        this.sendFrame(encodeAwarenessFrame(this.awareness, [this.ydoc.clientID]), socket)
         // `synced` waits for the server's state (sync step 2): an open socket has delivered nothing.
       } catch {
         socket.close()
@@ -506,7 +642,7 @@ export class CollabSessionController {
       if (this.destroyed || this.ws !== socket) return
       const bytes = toUint8Array(event.data)
       if (!bytes || bytes.byteLength === 0) return
-      this.handleBinaryFrame(bytes, socket)
+      this.receiveFrame(bytes, socket)
     }
 
     socket.onerror = () => {
@@ -549,7 +685,7 @@ export class CollabSessionController {
               syncProtocol.readSyncStep1(decoder, encoder, this.ydoc)
             })
             if (reply.byteLength > 1 && socket.readyState === 1) {
-              socket.send(reply)
+              this.sendFrame(reply, socket)
             }
           }
         } else if (syncKind === syncProtocol.messageYjsSyncStep2) {
@@ -568,7 +704,11 @@ export class CollabSessionController {
   }
 
   private scheduleReconnect(): void {
-    if (this.destroyed || !this.fetchSession) return
+    if (this.destroyed || !this.fetchSession || this.status === 'forbidden') return
+    if (!this.hasCipherAuthority()) {
+      this.quarantine()
+      return
+    }
     if (this.reconnectAttempt >= this.maxReconnectAttempts) {
       this.transitionStatus('offline-buffered')
       return
@@ -594,6 +734,8 @@ export class CollabSessionController {
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
+    ++this.connectionGeneration
+    this.confidential?.cipher?.close()
     this.clearReconnectTimer()
     this.ydoc.off('update', this.handleDocUpdate)
     this.awareness.off('change', this.handleAwarenessChange)

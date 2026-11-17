@@ -424,3 +424,20 @@ describe('configured worker-only module import boundary', () => {
     refused(await one(lint, sample, other), workerImportRule)
   })
 })
+
+describe('collaboration and media worker isolation', () => {
+  it.each(['collab-crypto', 'media-crypto'])(
+    'refuses %s worker imports on the main thread',
+    async (name) => {
+      for (const source of [
+        `import * as worker from './${name}.worker'; void worker`,
+        `export * from './${name}.worker'`,
+        `void import('./${name}.worker')`,
+        `void import('@/features/confidential/${name}.worker.ts')`,
+        `void import('/src/features/confidential/${name}.worker.ts')`,
+        `void require('./${name}.worker')`,
+      ])
+        refused(await one(lint, source, other), workerImportRule)
+    }
+  )
+})

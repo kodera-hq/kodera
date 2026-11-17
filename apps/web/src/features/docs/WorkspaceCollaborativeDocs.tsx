@@ -3,6 +3,7 @@ import {
   Suspense,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -22,6 +23,7 @@ import {
   CollabSessionController,
   maySeedFromMarkdown,
   type CollabSessionSnapshot,
+  type ConfidentialCollabPolicy,
   type WebSocketLike,
 } from './collabSession'
 import {
@@ -83,6 +85,7 @@ export interface WorkspaceCollaborativeDocsProps {
   readonly onDocumentsLoaded?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
   readonly localDocuments?: readonly WorkspacePageRecord[] | undefined
   readonly onLocalDocumentsChange?: ((docs: readonly WorkspacePageRecord[]) => void) | undefined
+  readonly confidential?: ConfidentialCollabPolicy | undefined
   readonly webSocketFactory?: ((url: string) => WebSocketLike) | undefined
 }
 
@@ -171,6 +174,7 @@ export function WorkspaceCollaborativeDocs({
   localDocuments,
   onLocalDocumentsChange,
   webSocketFactory,
+  confidential,
 }: WorkspaceCollaborativeDocsProps) {
   const { t, i18n } = useTranslation()
   const collectionCopy = getCollectionCopy(i18n.resolvedLanguage)
@@ -209,6 +213,14 @@ export function WorkspaceCollaborativeDocs({
   const etagsRef = useRef<Map<string, string>>(new Map())
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onDocumentsLoadedRef = useRef(onDocumentsLoaded)
+  const protectionRef = useRef(confidential)
+  useLayoutEffect(() => {
+    protectionRef.current = confidential
+    if (confidential?.required && saveTimerRef.current !== null) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+  }, [confidential])
 
   useEffect(() => {
     onDocumentsLoadedRef.current = onDocumentsLoaded
@@ -323,6 +335,7 @@ export function WorkspaceCollaborativeDocs({
     const scopeKey = organisationId ?? 'local-workspace'
     const ctrl = new CollabSessionController({
       scopeKey,
+      ...(confidential ? { confidential } : {}),
       documentId: activeDocId,
       initialRole: activeDocRole,
       user: {
@@ -348,6 +361,7 @@ export function WorkspaceCollaborativeDocs({
     activeDocId,
     activeDocRole,
     controllerBridge,
+    confidential,
     currentUser.id,
     currentUser.name,
     isRemoteMode,
@@ -511,6 +525,7 @@ export function WorkspaceCollaborativeDocs({
     if (!isRemoteMode || !organisationId) return
     if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
+      if (protectionRef.current?.required && patch.markdown !== undefined) return
       const etag = etagsRef.current.get(docId)
       if (!etag) return
       const { markdown, ...metadata } = patch
@@ -532,9 +547,7 @@ export function WorkspaceCollaborativeDocs({
     if (!currentDoc || effectiveRole === 'viewer') return
     if (nextTitle.length > 120) return
     setTreeError(null)
-    commitDocs((prev) =>
-      prev.map((d) => (d.id === currentDoc.id ? { ...d, title: nextTitle } : d))
-    )
+    commitDocs((prev) => prev.map((d) => (d.id === currentDoc.id ? { ...d, title: nextTitle } : d)))
     if (nextTitle.trim().length > 0) {
       scheduleRemotePatch(currentDoc.id, { title: nextTitle })
     }
@@ -553,7 +566,7 @@ export function WorkspaceCollaborativeDocs({
     // the server state arrives (connecting, reconnecting, offline) the editor is not seeded, so
     // the body it serializes is a fragment of the page and a REST write would replace the page
     // with it. Markdown goes over REST only when it is the document: the same rule as seeding.
-    if (!maySeedFromMarkdown(isRemoteMode, collabSnapshot.status)) return
+    if (!maySeedFromMarkdown(isRemoteMode, collabSnapshot.status, confidential)) return
     scheduleRemotePatch(currentDoc.id, { markdown: nextMarkdown })
   }
 
@@ -657,9 +670,7 @@ export function WorkspaceCollaborativeDocs({
     if (!sessionController) return undefined
     if (effectiveRole === 'viewer') {
       const hasContent = sessionController.ydoc.getXmlFragment('content').length > 0
-      return hasContent || collabSnapshot.status === 'synced'
-        ? sessionController.ydoc
-        : undefined
+      return hasContent || collabSnapshot.status === 'synced' ? sessionController.ydoc : undefined
     }
     return sessionController.ydoc
   }, [collabSnapshot.status, effectiveRole, sessionController])
@@ -698,11 +709,7 @@ export function WorkspaceCollaborativeDocs({
           </select>
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void handleCreatePage(null)}
-            >
+            <Button size="sm" variant="secondary" onClick={() => void handleCreatePage(null)}>
               {t('console.docs.collab.action-new-page')}
             </Button>
             {currentDoc && effectiveRole === 'editor' ? (
@@ -738,7 +745,7 @@ export function WorkspaceCollaborativeDocs({
                         }
                       }}
                       className={cx(
-                        'flex min-h-8 w-full items-center justify-between gap-2 rounded-md pr-2 py-1 text-left text-xs focus-visible:ring focus-visible:outline-hidden',
+                        'flex min-h-8 w-full items-center justify-between gap-2 rounded-md py-1 pr-2 text-left text-xs focus-visible:ring focus-visible:outline-hidden',
                         TOUCH_TARGET,
                         treeIndentClass(node.depth),
                         isSelected
@@ -817,7 +824,7 @@ export function WorkspaceCollaborativeDocs({
                     readOnly={effectiveRole === 'viewer'}
                     value={currentDoc.title}
                     onChange={(event) => handleTitleChange(event.target.value)}
-                    className="h-10 w-full rounded-md border border-c-border-input bg-c-surface px-3 text-md font-semibold text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden read-only:bg-c-sunken read-only:text-c-ink-2"
+                    className="h-10 w-full rounded-md border border-c-border-input bg-c-surface px-3 text-md font-semibold text-c-ink read-only:bg-c-sunken read-only:text-c-ink-2 focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
                   />
                 </div>
 
@@ -831,9 +838,7 @@ export function WorkspaceCollaborativeDocs({
                         id={parentSelectId}
                         data-testid="docs-parent-select"
                         value={currentDoc.parentId ?? ''}
-                        onChange={(event) =>
-                          void handleReparent(event.target.value || null)
-                        }
+                        onChange={(event) => void handleReparent(event.target.value || null)}
                         className="h-8 max-w-[176px] rounded-md border border-c-border-input bg-c-surface px-2 text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
                       >
                         <option value="">{t('console.docs.collab.option-root-page')}</option>
@@ -912,7 +917,11 @@ export function WorkspaceCollaborativeDocs({
                 onMarkdownChange={handleMarkdownChange}
                 role={effectiveRole}
                 ydoc={ydocForEditor}
-                seedMarkdown={maySeedFromMarkdown(isRemoteMode, collabSnapshot.status)}
+                seedMarkdown={maySeedFromMarkdown(
+                  isRemoteMode,
+                  collabSnapshot.status,
+                  confidential
+                )}
                 peers={collabSnapshot.peers}
                 onSelectionChange={(sel) => sessionController?.updateSelection(sel)}
                 availablePages={docs.map((d) => ({
@@ -932,7 +941,7 @@ export function WorkspaceCollaborativeDocs({
                 value={currentDoc.markdown}
                 onChange={(event) => handleMarkdownChange(event.target.value)}
                 rows={12}
-                className="w-full rounded-md border border-c-border-input bg-c-surface p-3 font-mono text-xs text-c-ink focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden read-only:bg-c-sunken"
+                className="w-full rounded-md border border-c-border-input bg-c-surface p-3 font-mono text-xs text-c-ink read-only:bg-c-sunken focus-visible:border-c-accent-ink focus-visible:ring focus-visible:outline-hidden"
               />
             )}
 

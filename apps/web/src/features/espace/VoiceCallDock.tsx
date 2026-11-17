@@ -1,3 +1,4 @@
+import { confidentialMessages } from './confidentialMessages'
 // The call under the workspace: what went wrong with it, the click a browser asks for before it
 // plays sound, and the dock with the people in the room, camera, screen, mute, deafen and leave.
 // It reads the call itself, so who is speaking draws the dock and nothing else of the view.
@@ -50,6 +51,9 @@ const CALL_PROBLEM: Record<CallProblem, MessageKey> = {
   'microphone-missing': 'console.workspace.audio.problem-microphone-missing',
   'microphone-in-use': 'console.workspace.audio.problem-microphone-in-use',
   'microphone-stuck': 'console.workspace.audio.problem-microphone-stuck',
+  'media-encryption-unavailable': 'console.workspace.audio.problem-unavailable',
+  'media-transforms-unavailable': 'console.workspace.audio.problem-unavailable',
+  'media-encryption-revoked': 'console.workspace.audio.problem-unavailable',
 }
 
 const VIDEO_PROBLEM: Record<VideoProblem, MessageKey> = {
@@ -262,7 +266,11 @@ function VoiceCallDockView({
         {callProblem === undefined ? null : (
           <div className="flex flex-col gap-2 px-2">
             <InlineAlert kind="warning" inLiveRegion>
-              {t(CALL_PROBLEM[callProblem])}
+              {callProblem === 'media-encryption-unavailable' ||
+              callProblem === 'media-transforms-unavailable' ||
+              callProblem === 'media-encryption-revoked'
+                ? confidentialMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr'][callProblem]
+                : t(CALL_PROBLEM[callProblem])}
             </InlineAlert>
             {callOver ? (
               <div className="flex flex-wrap gap-2">

@@ -1,3 +1,4 @@
+import type { ConfidentialMediaSession } from '../confidential/media-crypto-client'
 // What the live view's parts share: the store and the call as they read them, and the pure rules
 // that turn a workspace, a snapshot and a message into what is drawn. No component lives here, so
 // each part (`MessageTimeline`, `MessageComposer`, `ChannelSidebar`, `VoiceCallDock`) imports the
@@ -122,6 +123,7 @@ export interface EspaceStoreLike {
   ensureJoined?: (roomIds: readonly string[]) => void
   getJoinState?: (roomId: string) => RoomJoinState | undefined
   getRoomBoundary?: (roomId: string) => RoomBoundary
+  getConfidentialMediaSession?: (roomId: string) => ConfidentialMediaSession | null
   canSendMessage?: (roomId: string) => boolean
   canReact?: (roomId: string) => boolean
   markRead?: (roomId: string) => Promise<void>
@@ -169,6 +171,7 @@ export interface AudioCallLike {
   readonly mode?: 'local-preview'
   subscribe: (listener: () => void) => () => void
   getSnapshot: () => CallSnapshot
+  canJoinProtectedRoom?: (roomId: string) => boolean
   join: (roomId: string) => Promise<void>
   leave: () => Promise<void>
   setMuted: (muted: boolean) => Promise<void>
