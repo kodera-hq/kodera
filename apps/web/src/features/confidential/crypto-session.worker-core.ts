@@ -149,7 +149,7 @@ export class WorkerFrameCryptor {
       secret.fill(0)
     }
   }
-  #aad(meta: FrameMetadata): Uint8Array<ArrayBuffer> {
+  #authenticatedData(meta: FrameMetadata): Uint8Array<ArrayBuffer> {
     // Collaboration scope is [scopeKey, documentId]; all wire metadata is authenticated.
     return encoder.encode(
       JSON.stringify([
@@ -178,7 +178,7 @@ export class WorkerFrameCryptor {
         const key = await this.#key(epoch, ratchet, this.sender, kind)
         const ciphertext = new Uint8Array(
           await crypto.subtle.encrypt(
-            { name: 'AES-GCM', iv, additionalData: this.#aad(meta), tagLength: 128 },
+            { name: 'AES-GCM', iv, additionalData: this.#authenticatedData(meta), tagLength: 128 },
             key,
             plaintext
           )
@@ -259,7 +259,7 @@ export class WorkerFrameCryptor {
             {
               name: 'AES-GCM',
               iv: envelope.subarray(6 + size, 18 + size),
-              additionalData: this.#aad(meta),
+              additionalData: this.#authenticatedData(meta),
               tagLength: 128,
             },
             key,
