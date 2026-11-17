@@ -9,23 +9,14 @@ import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { PAGE_TITLE } from '../../ui/pageTitle'
 import { RadioGroup } from '../../ui/RadioGroup/RadioGroup'
 import { Switch } from '../../ui/Switch/Switch'
-import {
-  MENTION_VARIANT_IDS,
-  SOUND_PACKS,
-  SOUND_PACK_IDS,
-  translateSoundCopy,
-} from './manifest'
+import { MENTION_VARIANT_IDS, SOUND_PACKS, SOUND_PACK_IDS, translateSoundCopy } from './manifest'
 import { soundEngine } from './SoundEngine'
 import type { SoundEngine } from './SoundEngine'
-import type {
-  MasterSoundMode,
-  SoundCategory,
-  SoundPackId,
-  SoundPreferences,
-} from './types'
+import type { MasterSoundMode, SoundCategory, SoundPackId, SoundPreferences } from './types'
 
 export interface SoundsScreenProps {
   engine?: SoundEngine
+  embedded?: boolean
 }
 
 const MASTER_MODES: readonly MasterSoundMode[] = ['on', 'essential', 'off'] as const
@@ -43,7 +34,7 @@ const CARD_CHOSEN = 'border-2 border-c-accent-ink'
 const RADIO_TRIGGER =
   'flex flex-1 cursor-pointer flex-col gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring focus-offset focus-visible:ring-offset-2'
 
-export function SoundsScreen({ engine = soundEngine }: SoundsScreenProps) {
+export function SoundsScreen({ engine = soundEngine, embedded = false }: SoundsScreenProps) {
   const { i18n } = useTranslation()
   const id = useId()
   const locale: 'fr' | 'en' = i18n.language.startsWith('en') ? 'en' : 'fr'
@@ -122,19 +113,26 @@ export function SoundsScreen({ engine = soundEngine }: SoundsScreenProps) {
 
   const volumePercent = Math.round(preferences.masterVolume * 100)
   const volumeInputId = `${id}-master-volume`
+  const SectionHeading = embedded ? 'h4' : 'h2'
 
   return (
-    <div className="flex flex-1 flex-col gap-6">
+    <div
+      className={cx('flex flex-1 flex-col gap-6', embedded && 'border-t border-c-border-soft pt-6')}
+    >
       <div className="flex flex-col gap-1">
-        <h1 className={PAGE_TITLE}>{tr('console.shell.sounds.title')}</h1>
+        {embedded ? (
+          <h3 className="text-lg font-semibold text-c-ink">{tr('console.shell.sounds.title')}</h3>
+        ) : (
+          <h1 className={PAGE_TITLE}>{tr('console.shell.sounds.title')}</h1>
+        )}
         <p className="text-sm text-c-ink-2">{tr('console.shell.sounds.subtitle')}</p>
       </div>
 
       {/* Pack selector radio cards with sibling Apercu button (never nested button inside button) */}
       <section className="flex flex-col gap-3" aria-labelledby={`${id}-packs-heading`}>
-        <h2 id={`${id}-packs-heading`} className="text-sm font-semibold text-c-ink">
+        <SectionHeading id={`${id}-packs-heading`} className="text-sm font-semibold text-c-ink">
           {tr('console.shell.sounds.label-pack-group')}
-        </h2>
+        </SectionHeading>
 
         <RadioGroupPrimitive.Root
           value={preferences.pack}
@@ -149,10 +147,7 @@ export function SoundsScreen({ engine = soundEngine }: SoundsScreenProps) {
             const hintId = `${id}-pack-${pack.id}-hint`
 
             return (
-              <div
-                key={pack.id}
-                className={cx(CARD_BASE, chosen ? CARD_CHOSEN : CARD_IDLE)}
-              >
+              <div key={pack.id} className={cx(CARD_BASE, chosen ? CARD_CHOSEN : CARD_IDLE)}>
                 <RadioGroupPrimitive.Item
                   value={pack.id}
                   aria-labelledby={labelId}
@@ -228,7 +223,7 @@ export function SoundsScreen({ engine = soundEngine }: SoundsScreenProps) {
             step={5}
             value={volumePercent}
             onChange={handleVolumeChange}
-            className="h-2 w-full cursor-pointer rounded-full bg-c-muted focus-visible:outline-hidden focus-visible:ring focus-offset focus-visible:ring-offset-2"
+            className="focus-offset h-2 w-full cursor-pointer rounded-full bg-c-muted focus-visible:ring focus-visible:ring-offset-2 focus-visible:outline-hidden"
           />
         </div>
       </section>
@@ -238,9 +233,12 @@ export function SoundsScreen({ engine = soundEngine }: SoundsScreenProps) {
         className="flex flex-col gap-3 rounded-lg border border-c-border bg-c-surface p-4"
         aria-labelledby={`${id}-categories-heading`}
       >
-        <h2 id={`${id}-categories-heading`} className="text-sm font-semibold text-c-ink">
+        <SectionHeading
+          id={`${id}-categories-heading`}
+          className="text-sm font-semibold text-c-ink"
+        >
           {tr('console.shell.sounds.label-categories')}
-        </h2>
+        </SectionHeading>
         <div className="flex flex-col gap-3">
           {SOUND_CATEGORIES.map((category) => (
             <Switch
@@ -299,9 +297,7 @@ export function SoundsScreen({ engine = soundEngine }: SoundsScreenProps) {
 
       {/* Pre-mounted polite live region for preview status and storage refusal warning */}
       <div role="status" aria-live="polite" className="flex flex-col gap-2">
-        {statusMessage ? (
-          <span className="text-xs text-c-ink-2">{statusMessage}</span>
-        ) : null}
+        {statusMessage ? <span className="text-xs text-c-ink-2">{statusMessage}</span> : null}
         {notKept ? (
           <InlineAlert kind="warning" inLiveRegion>
             {tr('console.shell.sounds.warning-not-kept')}

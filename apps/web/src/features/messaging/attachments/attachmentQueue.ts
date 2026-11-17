@@ -7,6 +7,7 @@
 // finishing never sets React state from inside an effect.
 
 import {
+  cleanFilename,
   headOf,
   MAX_PENDING_ATTACHMENTS,
   preflight,
@@ -62,7 +63,7 @@ export class AttachmentQueue {
     await Promise.all(
       incoming.map(async (file) => {
         const key = `f${++this.#serial}`
-        const base = { key, filename: file.name, sizeBytes: file.size }
+        const base = { key, filename: cleanFilename(file.name), sizeBytes: file.size }
         if (this.files(room).length >= MAX_PENDING_ATTACHMENTS) {
           this.#put(room, { ...base, status: 'refused', reason: 'too-many' })
           return

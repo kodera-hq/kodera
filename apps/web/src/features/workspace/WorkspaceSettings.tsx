@@ -707,7 +707,7 @@ export default function WorkspaceSettings({
                       <p className="text-sm text-c-ink-2">{copy.audioHint}</p>
                       <Voice runtime={runtime} />
                       <Suspense fallback={null}>
-                        <LazySoundsScreen />
+                        <LazySoundsScreen embedded />
                       </Suspense>
                     </>
                   ) : null}

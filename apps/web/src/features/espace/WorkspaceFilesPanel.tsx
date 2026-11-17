@@ -92,9 +92,11 @@ export function WorkspaceFilesPanel({
   const senderOf = (entry: WorkspaceFileEntry) => {
     if (entry.senderId === undefined) return ''
     const resolved = snapshot.channels.get(entry.channel.id)
+    const roomId =
+      entry.directRoomId ?? (resolved?.state === 'resolved' ? resolved.roomId : undefined)
     const held =
-      resolved?.state === 'resolved'
-        ? snapshot.rooms.find((room) => room.roomId === resolved.roomId)?.names?.[entry.senderId]
+      roomId !== undefined
+        ? snapshot.rooms.find((room) => room.roomId === roomId)?.names?.[entry.senderId]
         : undefined
     return safeDisplayName(held, entry.senderId, unnamed)
   }

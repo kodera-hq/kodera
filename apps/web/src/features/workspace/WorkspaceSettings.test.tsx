@@ -94,6 +94,10 @@ it('keeps appearance and audio available to a member while filtering admin desti
   await user.click(screen.getByRole('tab', { name: 'Voix & audio' }))
   expect(await screen.findByRole('button', { name: 'Tester le son' })).toBeVisible()
   expect(await screen.findByRole('slider', { name: 'Volume principal' })).toBeVisible()
+  expect(screen.queryByRole('heading', { level: 1 })).toBeNull()
+  expect(screen.getByRole('heading', { level: 3, name: 'Ambiance sonore' })).toBeVisible()
+  expect(screen.getAllByRole('radiogroup', { name: 'Signature sonore' })).toHaveLength(1)
+  expect(screen.getAllByRole('radiogroup', { name: 'Mode sonore' })).toHaveLength(1)
   expect(screen.getByRole('switch', { name: 'Mentions et messages' })).toBeVisible()
   expect(
     screen.getByRole('radiogroup', { name: 'Signal de mention et message direct' })

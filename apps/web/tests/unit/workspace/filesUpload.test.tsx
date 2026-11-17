@@ -3,9 +3,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
 import '../../../src/i18n'
 import { FilesUpload } from '../../../src/features/espace/FilesUpload'
+import { WorkspaceFilesPanel } from '../../../src/features/espace/WorkspaceFilesPanel'
 import { MessagingOrganisation } from '../../../src/features/messaging/organisationContext'
 import type { EspaceStoreLike } from '../../../src/features/espace/liveViewModel'
 import type { EspaceSnapshot } from '../../../src/features/espace/matrix/store'
+import type { MessageView } from '../../../src/features/espace/matrix/timeline'
 
 const state = vi.hoisted(() => ({
   mediaBytes: 0,
@@ -80,11 +82,88 @@ it('stages a file dropped into an explicit writable channel and waits for Send',
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Envoyer les fichiers' })).toBeEnabled()
   )
+  expect(screen.getByRole('button', { name: 'Retirer photo.png' })).toBeEnabled()
   expect(send).not.toHaveBeenCalled()
   await userEvent.click(screen.getByRole('button', { name: 'Envoyer les fichiers' }))
   expect(send).toHaveBeenCalledExactlyOnceWith('!general:example.org', '', {
     attachments: [expect.objectContaining({ id: 'stored-file', filename: 'photo.png' })],
   })
+})
+
+it('ignores an empty drop and resolves direct-message sender display names in WorkspaceFilesPanel', async () => {
+  state.limit = 0
+  mount()
+  await userEvent.selectOptions(screen.getByRole('combobox'), 'general')
+  fireEvent.drop(
+    screen.getByLabelText('Choisissez des fichiers ou déposez-les ici').parentElement!,
+    { dataTransfer: { files: [] } }
+  )
+  expect(screen.queryByRole('alert')).toBeNull()
+
+  const dmSnapshot: EspaceSnapshot = {
+    status: 'live',
+    channels: new Map(),
+    rooms: [
+      {
+        roomId: '!dm:example.org',
+        name: 'Claire Moreau',
+        alias: null,
+        kind: 'text',
+        unread: 0,
+        mentions: 0,
+        occupancy: null,
+        names: { '@peer:example.org': 'Claire\u202E Moreau' },
+      },
+    ],
+    invites: [],
+  }
+  const dmStore = {
+    getTimeline: (id: string) =>
+      id === '!dm:example.org'
+        ? ([
+            {
+              key: '$dm1',
+              eventId: '$dm1',
+              sender: '@peer:example.org',
+              body: '',
+              ts: 200,
+              redacted: false,
+              attachments: [
+                {
+                  id: 'att-dm',
+                  filename: 'contrat.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: 2048,
+                },
+              ],
+            },
+          ] as unknown as readonly MessageView[])
+        : [],
+    getDirects: () => [
+      {
+        roomId: '!dm:example.org',
+        name: 'Claire Moreau',
+        userIds: ['@peer:example.org'],
+        unread: 0,
+      },
+    ],
+    canSendMessage: () => true,
+    send: vi.fn(async () => undefined),
+  } as unknown as EspaceStoreLike
+
+  render(
+    <MessagingOrganisation.Provider value="org">
+      <WorkspaceFilesPanel
+        store={dmStore}
+        snapshot={dmSnapshot}
+        searchEntries={[]}
+        documents={[]}
+        onOpenChannel={vi.fn()}
+      />
+    </MessagingOrganisation.Provider>
+  )
+  expect(screen.getByText(/Claire Moreau · Claire Moreau/)).toBeVisible()
+  expect(screen.queryByText(/Membre · peer/)).toBeNull()
 })
 
 it('refuses a quota overflow before starting an upload', async () => {

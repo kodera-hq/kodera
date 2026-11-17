@@ -23,6 +23,14 @@ test('founder surfaces: profile, audio controls, connector target and settings E
   await expect(
     settings.getByRole('slider', { name: 'Volume principal', exact: true })
   ).toBeVisible()
+  await expect(settings.getByRole('heading', { level: 1 })).toHaveCount(0)
+  await expect(
+    settings.getByRole('heading', { level: 3, name: 'Ambiance sonore', exact: true })
+  ).toBeVisible()
+  await expect(
+    settings.getByRole('radiogroup', { name: 'Signature sonore', exact: true })
+  ).toBeVisible()
+  await expect(settings.getByRole('radiogroup', { name: 'Mode sonore', exact: true })).toBeVisible()
   await expect(
     settings.getByRole('switch', { name: 'Mentions et messages', exact: true })
   ).toBeVisible()

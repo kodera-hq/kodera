@@ -421,6 +421,196 @@ describe('DocsSonicIntegration — Sonic Identity DSP + Call Ducking + Docs + Es
     })
   })
 
+  it('plays unread and mention cues for the active channel while viewing Docs or Files without replaying history on mode switch', () => {
+    const playSpy = vi.spyOn(soundEngine, 'play')
+    soundEngine.setPack('givre')
+    soundEngine.setMasterVolume(1)
+
+    const listeners = new Set<() => void>()
+    let currentTimeline: readonly MessageView[] = [
+      {
+        key: '$seed-1',
+        eventId: '$seed-1',
+        sender: ALICE,
+        body: 'Message déjà présent dans le salon',
+        ts: 1_762_520_100_000,
+        edited: false,
+        redacted: false,
+        delivery: 'sent',
+        replyTo: null,
+        reactions: [],
+        mentionsMe: true,
+      },
+    ]
+    let snapshot: EspaceSnapshot = {
+      status: 'live',
+      channels: new Map<string, ChannelRoom>([
+        [GENERAL_ID, { state: 'resolved', roomId: GENERAL_ROOM }],
+      ]),
+      rooms: [
+        {
+          roomId: GENERAL_ROOM,
+          name: 'general',
+          alias: null,
+          kind: 'text',
+          unread: 0,
+          mentions: 0,
+          occupancy: null,
+        },
+      ],
+      invites: [],
+    }
+    const store: EspaceStoreLike = {
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      getSnapshot: () => snapshot,
+      getUserId: () => ME,
+      getTimeline: (roomId) => (roomId === GENERAL_ROOM ? currentTimeline : []),
+      getThread: () => [],
+      getMembers: () => [{ userId: ALICE, name: 'Henri Duflot' }],
+      loadMembers: vi.fn(),
+      send: vi.fn(async () => undefined),
+      edit: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+      toggleReaction: vi.fn(async () => undefined),
+    }
+
+    const { rerender } = render(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme SA"
+        workspace={WORKSPACE}
+        channelId={GENERAL_ID}
+        activeCanvasMode="chat"
+        store={store}
+      />
+    )
+    expect(playSpy).not.toHaveBeenCalled()
+
+    // Switching from chat to docs must not replay seeded room history
+    rerender(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme SA"
+        workspace={WORKSPACE}
+        channelId={GENERAL_ID}
+        activeCanvasMode="docs"
+        store={store}
+      />
+    )
+    expect(playSpy).not.toHaveBeenCalled()
+
+    // Live unread and mention arriving in the active channel while viewing Docs emit cues
+    act(() => {
+      currentTimeline = [
+        ...currentTimeline,
+        {
+          key: '$docs-unread',
+          eventId: '$docs-unread',
+          sender: ALICE,
+          body: 'Nouvelle note pendant l’édition du pad',
+          ts: 1_762_520_105_000,
+          edited: false,
+          redacted: false,
+          delivery: 'sent',
+          replyTo: null,
+          reactions: [],
+        },
+        {
+          key: '$docs-mention',
+          eventId: '$docs-mention',
+          sender: ALICE,
+          body: 'Coucou @me sur le pad',
+          ts: 1_762_520_105_100,
+          edited: false,
+          redacted: false,
+          delivery: 'sent',
+          replyTo: null,
+          reactions: [],
+          mentionsMe: true,
+        },
+      ]
+      snapshot = { ...snapshot, rooms: [...snapshot.rooms] }
+      for (const listener of listeners) listener()
+    })
+    expect(playSpy.mock.calls.map(([cue]) => cue)).toEqual(['msg_channel_unread', 'msg_mention'])
+    playSpy.mockClear()
+
+    // Switching to Files does not replay, and a live message while on Files emits unread cue
+    rerender(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme SA"
+        workspace={WORKSPACE}
+        channelId={GENERAL_ID}
+        activeCanvasMode="files"
+        store={store}
+      />
+    )
+    expect(playSpy).not.toHaveBeenCalled()
+
+    soundEngine.resetCooldowns()
+    act(() => {
+      currentTimeline = [
+        ...currentTimeline,
+        {
+          key: '$files-unread',
+          eventId: '$files-unread',
+          sender: ALICE,
+          body: 'Fichier partagé pendant la consultation',
+          ts: 1_762_520_110_000,
+          edited: false,
+          redacted: false,
+          delivery: 'sent',
+          replyTo: null,
+          reactions: [],
+        },
+      ]
+      snapshot = { ...snapshot, rooms: [...snapshot.rooms] }
+      for (const listener of listeners) listener()
+    })
+    expect(playSpy).toHaveBeenCalledExactlyOnceWith(
+      'msg_channel_unread',
+      expect.objectContaining({ roomId: GENERAL_ROOM, channelId: GENERAL_ID })
+    )
+    playSpy.mockClear()
+
+    // Returning to chat neither replays nor emits cues for messages read in chat
+    rerender(
+      <EspaceLiveView
+        org="acme"
+        organisationName="Acme SA"
+        workspace={WORKSPACE}
+        channelId={GENERAL_ID}
+        activeCanvasMode="chat"
+        store={store}
+      />
+    )
+    act(() => {
+      currentTimeline = [
+        ...currentTimeline,
+        {
+          key: '$chat-visible',
+          eventId: '$chat-visible',
+          sender: ALICE,
+          body: 'Message lu en direct',
+          ts: 1_762_520_115_000,
+          edited: false,
+          redacted: false,
+          delivery: 'sent',
+          replyTo: null,
+          reactions: [],
+          mentionsMe: true,
+        },
+      ]
+      snapshot = { ...snapshot, rooms: [...snapshot.rooms] }
+      for (const listener of listeners) listener()
+    })
+    expect(playSpy).not.toHaveBeenCalled()
+  })
+
   it('renders the sovereign Docs collaboration surface for https://docs.acme.kodera.io, builds deterministic channel-bound URLs, and fails closed (role="alert") on http://, credentialed, or localhost URLs alongside #proximity', async () => {
     const user = userEvent.setup()
     const docsOrigin = buildTenantDocsOrigin('acme')

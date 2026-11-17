@@ -1075,9 +1075,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       (cue, context) => {
         soundEngine.play(cue, context)
       },
-      activeRoomId
+      activeCanvasMode === 'chat' ? activeRoomId : null
     )
-  }, [activeStore, snapshot, timeline, activeRoomId])
+  }, [activeStore, snapshot, timeline, activeRoomId, activeCanvasMode])
 
   /** `keepFocus`: the new address leaves the focus where it is (`RouteFocus`), as a click does not. */
   const selectTextChannel = useStableHandler((nextChannelId: string, keepFocus = false) => {
@@ -1525,7 +1525,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
               <span key={announcement.count}>{announcement.text}</span>
             )}
           </p>
-          <header className="material-bar flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap">
+          <header className="flex items-center gap-3 border-b border-c-border-soft pb-4 narrow:flex-wrap">
             <div className="flex min-w-0 flex-1 flex-col gap-1 narrow:basis-full">
               {activeChannel === null || activeChannel === undefined ? (
                 <h1

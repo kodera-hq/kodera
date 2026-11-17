@@ -22,12 +22,18 @@ describe('the files waiting in a composer', () => {
     expect(queue.files('other')).toEqual([])
   })
 
-  it('never sends a refused file, and keeps it listed with its reason', async () => {
+  it('never sends a refused file, and keeps it listed with its sanitized name and reason', async () => {
     const upload = storing()
     const queue = new AttachmentQueue('org', upload)
-    await queue.add('room', [new File(['<html>'], 'page.html', { type: 'text/html' })])
+    await queue.add('room', [
+      new File(['<html>'], '../../facture\u202Efdp.html', { type: 'text/html' }),
+    ])
     expect(upload).not.toHaveBeenCalled()
-    expect(queue.files('room')[0]).toMatchObject({ status: 'refused', reason: 'active-content' })
+    expect(queue.files('room')[0]).toMatchObject({
+      status: 'refused',
+      filename: 'facturefdp.html',
+      reason: 'active-content',
+    })
     // A message cannot leave with a refused file still listed.
     expect(queue.readyRefs('room')).toBeNull()
   })

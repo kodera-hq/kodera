@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
+import { cleanText } from '../../ui/safeText'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
 import { AttachmentQueue } from '../messaging/attachments/attachmentQueue'
 import { useWorkspaceQuotasQuery } from '../workspace/quotasApi'
@@ -62,7 +63,7 @@ function LiveFilesUpload({
   const chosenBytes = queued.reduce((total, file) => total + file.sizeBytes, 0)
 
   function add(files: readonly File[]) {
-    if (roomId === '' || sending) return
+    if (files.length === 0 || roomId === '' || sending) return
     if (files.reduce((sum, file) => sum + file.size, chosenBytes) > remaining) {
       setProblem(copy.limit)
       return
@@ -168,6 +169,7 @@ function LiveFilesUpload({
               size="sm"
               variant="secondary"
               disabled={sending}
+              aria-label={`${copy.remove} ${cleanText(file.filename, 120)}`}
               onClick={() => queue.remove(roomId, file.key)}
             >
               {copy.remove}

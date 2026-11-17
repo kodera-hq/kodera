@@ -295,68 +295,70 @@ export function AudioSettings({
           {tone === 'failed' ? t('console.workspace.audio.problem-test-sound') : null}
         </p>
       </div>
-      <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">
-        <div className="flex flex-col gap-2">
-          <span id={`${id}-packs-label`} className="text-sm font-medium text-c-ink">
-            {tr('console.shell.sounds.label-pack-group')}
-          </span>
-          <RadioGroupPrimitive.Root
-            value={soundPrefs.pack}
-            onValueChange={handlePackChange}
-            aria-labelledby={`${id}-packs-label`}
-            className="flex flex-col gap-1"
-          >
-            {SOUND_PACKS.map((pack) => {
-              const chosen = pack.id === soundPrefs.pack
-              const packLabel = tr(pack.labelKey)
-              const packLabelId = `${id}-pack-${pack.id}-label`
-              return (
-                <div
-                  key={pack.id}
-                  className={cx(PACK_CARD_BASE, chosen ? PACK_CARD_CHOSEN : PACK_CARD_IDLE)}
-                >
-                  <RadioGroupPrimitive.Item
-                    value={pack.id}
-                    aria-labelledby={packLabelId}
-                    className={PACK_RADIO_TRIGGER}
+      {embedded ? null : (
+        <div className="flex flex-col gap-3 border-t border-c-border-soft pt-3">
+          <div className="flex flex-col gap-2">
+            <span id={`${id}-packs-label`} className="text-sm font-medium text-c-ink">
+              {tr('console.shell.sounds.label-pack-group')}
+            </span>
+            <RadioGroupPrimitive.Root
+              value={soundPrefs.pack}
+              onValueChange={handlePackChange}
+              aria-labelledby={`${id}-packs-label`}
+              className="flex flex-col gap-1"
+            >
+              {SOUND_PACKS.map((pack) => {
+                const chosen = pack.id === soundPrefs.pack
+                const packLabel = tr(pack.labelKey)
+                const packLabelId = `${id}-pack-${pack.id}-label`
+                return (
+                  <div
+                    key={pack.id}
+                    className={cx(PACK_CARD_BASE, chosen ? PACK_CARD_CHOSEN : PACK_CARD_IDLE)}
                   >
-                    <span
-                      id={packLabelId}
-                      className={cx(
-                        'text-xs font-semibold',
-                        chosen ? 'text-c-accent-ink' : 'text-c-ink'
-                      )}
+                    <RadioGroupPrimitive.Item
+                      value={pack.id}
+                      aria-labelledby={packLabelId}
+                      className={PACK_RADIO_TRIGGER}
                     >
-                      {packLabel}
-                    </span>
-                  </RadioGroupPrimitive.Item>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    type="button"
-                    aria-label={tr('console.shell.sounds.action-preview-pack', {
-                      pack: packLabel,
-                    })}
-                    onClick={() => handlePreviewPack(pack.id)}
-                    className="shrink-0"
-                  >
-                    {tr('console.shell.sounds.action-preview')}
-                  </Button>
-                </div>
-              )
-            })}
-          </RadioGroupPrimitive.Root>
+                      <span
+                        id={packLabelId}
+                        className={cx(
+                          'text-xs font-semibold',
+                          chosen ? 'text-c-accent-ink' : 'text-c-ink'
+                        )}
+                      >
+                        {packLabel}
+                      </span>
+                    </RadioGroupPrimitive.Item>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      type="button"
+                      aria-label={tr('console.shell.sounds.action-preview-pack', {
+                        pack: packLabel,
+                      })}
+                      onClick={() => handlePreviewPack(pack.id)}
+                      className="shrink-0"
+                    >
+                      {tr('console.shell.sounds.action-preview')}
+                    </Button>
+                  </div>
+                )
+              })}
+            </RadioGroupPrimitive.Root>
+          </div>
+          <RadioGroup
+            label={tr('console.shell.sounds.label-master-mode')}
+            value={soundPrefs.masterMode}
+            onValueChange={handleMasterModeChange}
+            options={MASTER_MODES.map((mode) => ({
+              value: mode,
+              label: tr(`console.shell.sounds.mode-${mode}`),
+            }))}
+          />
         </div>
-        <RadioGroup
-          label={tr('console.shell.sounds.label-master-mode')}
-          value={soundPrefs.masterMode}
-          onValueChange={handleMasterModeChange}
-          options={MASTER_MODES.map((mode) => ({
-            value: mode,
-            label: tr(`console.shell.sounds.mode-${mode}`),
-          }))}
-        />
-      </div>
+      )}
     </div>
   )
   if (embedded) return content
