@@ -80,7 +80,7 @@ describe('worker attachment authenticated encryption', () => {
       rewrite(encrypted.secretDescriptor, { version: 2 }),
       rewrite(encrypted.secretDescriptor, { unexpected: true }),
       encrypted.secretDescriptor + '\n',
-      encrypted.secretDescriptor.replace('{', '{"version":1,'),
+      '{"version":1,' + encrypted.secretDescriptor.slice(1),
       ' '.repeat(1025),
     ]) await expect(decryptConfidentialAttachment({ context, ciphertext: encrypted.ciphertext, secretDescriptor: descriptor }))
       .rejects.toBeInstanceOf(ConfidentialAttachmentCryptoError)
