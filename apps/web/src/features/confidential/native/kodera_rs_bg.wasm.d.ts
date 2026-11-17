@@ -1,0 +1,31 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_browsermlsdevice_free: (a: number, b: number) => void;
+export const __wbg_browsermlshttpdevice_free: (a: number, b: number) => void;
+export const browsermlsdevice_close: (a: number) => void;
+export const browsermlsdevice_createDevice: (a: number, b: any, c: any, d: any) => [number, number, number];
+export const browsermlsdevice_new: (a: any, b: any, c: any, d: any) => [number, number, number];
+export const browsermlsdevice_openDevice: (a: number, b: any, c: any, d: any, e: any) => [number, number, number];
+export const browsermlsdevice_publicKey: (a: number) => [number, number, number];
+export const browsermlsdevice_registrationRequest: (a: number) => [number, number, number];
+export const browsermlshttpdevice_attemptHttp: (a: number) => [number, number, number];
+export const browsermlshttpdevice_close: (a: number) => void;
+export const browsermlshttpdevice_createHttpDevice: (a: number, b: any, c: any, d: any) => [number, number, number];
+export const browsermlshttpdevice_new: (a: any, b: any, c: any, d: any) => [number, number, number];
+export const browsermlshttpdevice_openHttpDevice: (a: number, b: any, c: any, d: any, e: any, f: any, g: any) => [number, number, number];
+export const browsermlshttpdevice_preparePublication: (a: number, b: any) => [number, number, number];
+export const browsermlshttpdevice_prepareRegistration: (a: number, b: any, c: any) => [number, number, number];
+export const browsermlshttpdevice_publicKey: (a: number) => [number, number, number];
+export const wasm_bindgen_b7210f85fb83d23e___convert__closures_____invoke___js_sys_61bb9bc6e98b1830___Function_fn_wasm_bindgen_b7210f85fb83d23e___JsValue_____wasm_bindgen_b7210f85fb83d23e___sys__Undefined___js_sys_61bb9bc6e98b1830___Function_fn_wasm_bindgen_b7210f85fb83d23e___JsValue_____wasm_bindgen_b7210f85fb83d23e___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+export const wasm_bindgen_b7210f85fb83d23e___convert__closures_____invoke___wasm_bindgen_b7210f85fb83d23e___JsValue__core_d941ad8722425d2e___result__Result_____wasm_bindgen_b7210f85fb83d23e___JsError___true_: (a: number, b: number, c: any) => [number, number];
+export const wasm_bindgen_b7210f85fb83d23e___convert__closures_____invoke___bool__true_: (a: number, b: number) => number;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_destroy_closure: (a: number, b: number) => void;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_start: () => void;

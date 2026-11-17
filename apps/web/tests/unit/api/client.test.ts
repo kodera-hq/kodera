@@ -399,10 +399,17 @@ const NATIVE_BODY: NativeBody = { token: 'NO_LOG' }
 const NATIVE_SUFFIX = '/owner-claims/actions/consume'
 const NATIVE_GUARD =
   /if\s*\(\s*!isCurrent\(\)\s*\|\|\s*cell\.retired\s*\|\|\s*cell\.expectedAccessToken\s*!==\s*observedToken\s*\)\s*return\s+undefined\b/
-const nativeClientSource = readNativeSource(
+const nativeWholeClientSource = readNativeSource(
   nativeJoin(import.meta.dirname, '..', '..', '..', 'src', 'api', 'client.ts'),
   'utf8'
 )
+// The bounded source-mutation loader owns the owner-claim module prefix. The
+// independently tested private device dispatcher starts at its own import seam;
+// do not relax the owner's size, syntax, import or mutation guards for it.
+const nativeOwnerSeam = "import { parseDevicePrincipal } from '../features/confidential/device-principal'"
+if (nativeWholeClientSource.split(nativeOwnerSeam).length !== 2) throw Error('A_LOADER_SEAM')
+const nativeClientSource = nativeWholeClientSource.slice(0, nativeWholeClientSource.indexOf(nativeOwnerSeam))
+
 
 function nativeDeferred<Value>() {
   let resolve!: (value: Value) => void

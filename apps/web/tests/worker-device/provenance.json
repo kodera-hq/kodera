@@ -1,0 +1,27 @@
+{
+  "schema": "historical-device-worker-bootstrap-v1",
+  "freshCombinedNativeBuild": false,
+  "scope": "Captured historical generated bootstrap only; not a fresh native build or Core HTTP qualification",
+  "files": [
+    {
+      "path": "kodera_rs.d.ts",
+      "sha256": "05b1c3a0f99799b6025b44c38df55159726b2913bf89e67dc94f705f2bf7de6a"
+    },
+    {
+      "path": "kodera_rs.js",
+      "sha256": "d50ef2cb68ccba44ec34f5c1a1c0dfadb2ecdee4916ddae5d3cd001b485d4333"
+    },
+    {
+      "path": "kodera_rs_bg.wasm",
+      "sha256": "8c2c0b02a5deb14f890ffd5690fd1c53478e8f211e08ca86f98cdd438229ad04"
+    },
+    {
+      "path": "kodera_rs_bg.wasm.d.ts",
+      "sha256": "1b99e8118927c3bde7742beef0694f975a36a31bb82e135bc02c89d7241d0ddc"
+    },
+    {
+      "path": "snippets/kodera-rs-92bfef2d940a5471/inline0.js",
+      "sha256": "eff57309462f227afc1d862462ab516079e01c0e25a296799b31a5a840ea5729"
+    }
+  ]
+}

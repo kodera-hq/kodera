@@ -1,6 +1,6 @@
 # ADR-0014: Durable confidential-device requests have one closed native dispatcher
 
-Status: Proposed; effective only after configured enforcement and source-bound acceptance.
+Status: Accepted design; implementation and runtime qualification in progress. Effective only after configured enforcement and source-bound acceptance.
 Deciders: Lead/CTO under the existing delegated client implementation scope.
 
 ## Context
@@ -16,7 +16,7 @@ proof that Core accepted a device. The specification is
 
 ## Decision
 
-If accepted, narrowly extend the raw-fetch exception of ADR-0005/0010 for exactly one additional
+Narrowly extend the raw-fetch exception of ADR-0005/0010 for exactly one additional
 private synchronous nongenerator top-level FunctionDeclaration in src/api/client.ts, provisionally
 named invokeConfidentialDeviceNative. The existing invokeOwnerClaimNative boundary and every
 accepted refusal/health control remain unchanged. Actual configured enforcement admits exactly
@@ -55,7 +55,8 @@ This partially supersedes only the ordinary cached-read/mutation transport claus
 closed paths and the old statement that consumeOwnerClaim is the sole native exception. All other
 reads, mutations, routing, query state, owner-claim semantics and ADR-0003/0007 token/backend boundaries
 remain in force. Accepted ADR-0013's shared-community rules remain unchanged. Existing ADR files
-are not otherwise rewritten. While this record is Proposed, no production exception is effective.
+are not otherwise rewritten. This design decision precedes implementation; the production exception
+becomes effective only with the configured enforcement and source-bound acceptance below.
 
 ## Effective gates
 
