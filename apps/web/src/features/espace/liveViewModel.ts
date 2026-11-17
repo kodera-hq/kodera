@@ -3,6 +3,7 @@
 // each part (`MessageTimeline`, `MessageComposer`, `ChannelSidebar`, `VoiceCallDock`) imports the
 // rules without importing another part.
 
+import type { RoomBoundary } from '../confidential/room-boundary'
 import type { DirectSummary } from './matrix/directs'
 import { displayNameOf, isNamedProfile, isOpaqueLocalpart, safeDisplayName } from './memberName'
 
@@ -120,6 +121,7 @@ export interface EspaceStoreLike {
   join?: (roomId: string) => Promise<void>
   ensureJoined?: (roomIds: readonly string[]) => void
   getJoinState?: (roomId: string) => RoomJoinState | undefined
+  getRoomBoundary?: (roomId: string) => RoomBoundary
   canSendMessage?: (roomId: string) => boolean
   canReact?: (roomId: string) => boolean
   markRead?: (roomId: string) => Promise<void>

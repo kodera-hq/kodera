@@ -13,6 +13,7 @@ import { cx } from '../../ui/cx'
 import { MentionIcon, SendIcon } from '../../ui/icons/Composer'
 import { Tooltip } from '../../ui/Tooltip/Tooltip'
 import { TOUCH_TARGET, TOUCH_TARGET_HEIGHT } from '../../ui/touchTarget'
+import { permitsPlaintext } from '../confidential/room-boundary'
 import { AttachmentQueue, type QueuedFile } from '../messaging/attachments/attachmentQueue'
 import { transformOutsideCode } from '../messaging/formatting'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
@@ -44,19 +45,31 @@ const noSubscription = () => () => {}
  * The composer's uploads, for as long as it is mounted in a live workspace: none in the demo, where
  * there is no organisation to store a file in, and the files are only shown on the device.
  */
-function useAttachmentQueue(): AttachmentQueue | null {
+function useAttachmentQueue(store: EspaceStoreLike): AttachmentQueue | null {
+  const permitted = (room: string) => {
+    const boundary = store.getRoomBoundary?.(room)
+    return (
+      (boundary === undefined || permitsPlaintext(boundary)) &&
+      store.canSendMessage?.(room) !== false
+    )
+  }
   const organisationId = useMessagingOrganisation()
   const [queue, setQueue] = useState<{
     organisationId: string | null
+    store: EspaceStoreLike
     queue: AttachmentQueue | null
   }>(() => ({
     organisationId,
-    queue: organisationId === null ? null : new AttachmentQueue(organisationId),
+    store,
+    queue:
+      organisationId === null ? null : new AttachmentQueue(organisationId, undefined, permitted),
   }))
-  if (queue.organisationId !== organisationId) {
+  if (queue.organisationId !== organisationId || queue.store !== store) {
     setQueue({
       organisationId,
-      queue: organisationId === null ? null : new AttachmentQueue(organisationId),
+      store,
+      queue:
+        organisationId === null ? null : new AttachmentQueue(organisationId, undefined, permitted),
     })
   }
   const current = queue.queue
@@ -186,7 +199,7 @@ function MessageComposerView({
     [store, roomId, replyToEventId]
   )
   const replyBannerTarget = useStoreSlice(store.subscribe, store.getSnapshot, replyTargetIn)
-  const uploads = useAttachmentQueue()
+  const uploads = useAttachmentQueue(store)
   const queued = useSyncExternalStore(
     uploads?.subscribe ?? noSubscription,
     () => uploads?.files(roomId) ?? NO_FILES
@@ -196,6 +209,7 @@ function MessageComposerView({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (store.canSendMessage?.(roomId) === false) return
     // A « :nom: » still in the text, pasted for instance, goes as its emoji. The mentions are read
     // from the text as typed, so a member whose name holds a code is still named.
     const typed = composerText.trim()
@@ -438,6 +452,7 @@ export const ThreadComposer = memo(function ThreadComposer({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (store.canSendMessage?.(roomId) === false) return
     const typed = threadText.trim()
     const trimmed = transformOutsideCode(typed, replaceShortcodes)
     if (trimmed === '') return

@@ -157,3 +157,28 @@ it('does not create a ticket after cancellation while hashing, and forwards the 
   expect(mutate).toHaveBeenCalledOnce()
   expect(put).not.toHaveBeenCalled()
 })
+
+describe('upload authorization at network boundaries', () => {
+  it('sends no ticket metadata or bytes for an unavailable confidential room', async () => {
+    const put = vi.fn()
+    await expect(
+      uploadAttachment({ organisationId: ORG, file: bytes, checked, put, mayUpload: () => false })
+    ).rejects.toBeInstanceOf(UploadRefused)
+    expect(mutate).not.toHaveBeenCalled()
+    expect(put).not.toHaveBeenCalled()
+  })
+
+  it('does not upload plaintext if authorization changes while requesting a ticket', async () => {
+    let allowed = true
+    mutate.mockImplementationOnce(async () => {
+      allowed = false
+      return ticket()
+    })
+    const put = vi.fn()
+    await expect(
+      uploadAttachment({ organisationId: ORG, file: bytes, checked, put, mayUpload: () => allowed })
+    ).rejects.toBeInstanceOf(UploadRefused)
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(put).not.toHaveBeenCalled()
+  })
+})

@@ -79,3 +79,24 @@ describe('the files waiting in a composer', () => {
     expect(slow.files('room')).toEqual([])
   })
 })
+
+describe('attachment upload room authorization', () => {
+  it('refuses staging before preflight or transport when the room has no permitted session', async () => {
+    const upload = storing()
+    const queue = new AttachmentQueue('org', upload, () => false)
+    await queue.add('confidential', [png()])
+    expect(upload).not.toHaveBeenCalled()
+    expect(queue.files('confidential')).toEqual([])
+  })
+
+  it('rechecks room authorization after asynchronous preflight', async () => {
+    const upload = storing()
+    let allowed = true
+    const queue = new AttachmentQueue('org', upload, () => allowed)
+    const adding = queue.add('room', [png()])
+    allowed = false
+    await adding
+    expect(upload).not.toHaveBeenCalled()
+    expect(queue.files('room')[0]?.status).toBe('failed')
+  })
+})

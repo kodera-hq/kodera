@@ -7,6 +7,8 @@ import { MessageCueTracker } from './messageCues'
 // reads: `ChannelSidebar`, `MessageTimeline` and its `MessageRow`s, `MessageComposer`,
 // `VoiceCallDock`. What they share lives in `liveViewModel.ts`.
 
+import { confidentialMessages } from './confidentialMessages'
+import { permitsPlaintext } from '../confidential/room-boundary'
 import { MessagingOrganisation } from '../messaging/organisationContext'
 import { cleanText } from '../../ui/safeText'
 import { demoMessages } from '../../app/demoMessages'
@@ -376,6 +378,7 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const memory = useEspaceDraftMemory()
   const { t, i18n } = useTranslation()
   const demoCopy = demoMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
+  const protectionCopy = confidentialMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const simulation = injectedStore?.simulation === true
   const demoGuidanceId = useId()
   const composerInputId = useId()
@@ -571,6 +574,9 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   })
   // No room, no messages and nowhere to send them: never a channel id taken for a room id.
   const activeRoomId = activeRoom?.roomId ?? null
+  const roomBoundary =
+    activeRoomId === null ? undefined : activeStore.getRoomBoundary?.(activeRoomId)
+  const protectionUnavailable = roomBoundary !== undefined && !permitsPlaintext(roomBoundary)
   const joinTargets = useMemo(
     () => activeJoinTargetIds(workspace, snapshot.channels, activeChannel),
     [workspace, snapshot.channels, activeChannel]
@@ -1102,6 +1108,12 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     void Promise.resolve(onNavigateChannel(nextChannelId)).then(settled, settled)
   })
 
+  // Polite announcements cover keyboard actions and refused protection-sensitive actions.
+  const [announcement, setAnnouncementState] = useState({ count: 0, text: '' })
+  const setAnnouncement = useCallback(
+    (text: string) => setAnnouncementState((current) => ({ count: current.count + 1, text })),
+    []
+  )
   const joinAudioRoom = useStableHandler(
     (
       channel: WorkspaceChannel,
@@ -1109,6 +1121,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       categoryName: string | undefined
     ) => {
       if (activeCall === null || room === undefined) return
+      const boundary = activeStore.getRoomBoundary?.(room.roomId)
+      if (boundary !== undefined && !permitsPlaintext(boundary)) {
+        setAnnouncement(protectionCopy.unavailable)
+        return
+      }
       closeChannelChooser()
       onChangeCanvasMode?.('chat')
       setCallChannel({
@@ -1228,23 +1245,30 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       (fallbackRefused.store === activeStore && fallbackRefused.rooms.has(resolvedActiveRoomId)))
   const canSendInRoom =
     activeRoomId !== null && (activeStore.canSendMessage?.(activeRoomId) ?? true)
-  const canWrite = !isArchivedChannel && canSendInRoom
+  const canWrite = !isArchivedChannel && !protectionUnavailable && canSendInRoom
   const canReact =
-    !isArchivedChannel && activeRoomId !== null && (activeStore.canReact?.(activeRoomId) ?? true)
+    !isArchivedChannel &&
+    !protectionUnavailable &&
+    activeRoomId !== null &&
+    (activeStore.canReact?.(activeRoomId) ?? true)
   // In place of the composer, why the member cannot write here; nothing while the sync starts.
-  const paneNotice = isArchivedChannel
-    ? t('console.workspace.channel.label-archived')
-    : canWrite || activeChannel === null || activeChannel === undefined
-      ? undefined
-      : activeRoomId !== null
-        ? t('console.workspace.channel.label-read-only')
-        : !roomResolved(activeChannel, snapshot.channels)
-          ? t('console.workspace.channel.label-preparing')
-          : joinRefused
-            ? t('console.workspace.channel.label-join-refused')
-            : snapshot.status === 'live'
-              ? t('console.workspace.channel.label-arriving')
-              : undefined
+  const paneNotice = protectionUnavailable
+    ? roomBoundary === 'unknown'
+      ? protectionCopy.checking
+      : protectionCopy.unavailable
+    : isArchivedChannel
+      ? t('console.workspace.channel.label-archived')
+      : canWrite || activeChannel === null || activeChannel === undefined
+        ? undefined
+        : activeRoomId !== null
+          ? t('console.workspace.channel.label-read-only')
+          : !roomResolved(activeChannel, snapshot.channels)
+            ? t('console.workspace.channel.label-preparing')
+            : joinRefused
+              ? t('console.workspace.channel.label-join-refused')
+              : snapshot.status === 'live'
+                ? t('console.workspace.channel.label-arriving')
+                : undefined
 
   // What a message's controls do. Each keeps its identity, and acts on the room shown when it is
   // used: a message is not drawn again because the view was.
@@ -1312,13 +1336,6 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
     openThreadRootId !== null && activeRoomId !== null
       ? activeStore.getThread(activeRoomId, openThreadRootId)
       : []
-  // Keyboard shortcuts (spec « Keyboard shortcuts »). What a shortcut did is said here, politely:
-  // the focus stays where the member had it. Counted, so the same words twice are said twice.
-  const [announcement, setAnnouncementState] = useState({ count: 0, text: '' })
-  const setAnnouncement = useCallback(
-    (text: string) => setAnnouncementState((current) => ({ count: current.count + 1, text })),
-    []
-  )
   const channelColumn = useRef<HTMLElement>(null)
   // A key moved the channel. The focus stays where it was, but a channel with no composer (archived,
   // still being prepared) takes the composer away: the focus would fall to the page, with
@@ -1552,6 +1569,11 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
                   </span>
                   <span className="min-w-0 truncate">{activeChannelName}</span>
                 </h1>
+              )}
+              {roomBoundary === undefined ? null : (
+                <p role="status" className="text-xs text-c-ink-3">
+                  {protectionCopy[roomBoundary]}
+                </p>
               )}
               {headerLine.length > 0 ? (
                 <div className="flex min-w-0 items-center gap-2">

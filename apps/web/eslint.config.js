@@ -645,6 +645,12 @@ export default tseslint.config(
     rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
   },
   {
+    name: 'kodera/attachment-dispatch-guard',
+    files: ['src/api/dispatchGuard.ts'],
+    linterOptions: { noInlineConfig: true },
+    rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
+  },
+  {
     name: 'kodera/owner-claim-native-boundary',
     files: ['src/api/client.ts'],
     linterOptions: { noInlineConfig: true },

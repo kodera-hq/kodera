@@ -116,20 +116,16 @@ const changed = (_store: EspaceStore, test: () => boolean) =>
   vi.waitFor(() => expect(test()).toBe(true), { timeout: 4000 })
 
 describe("the store and the device's timeline cache", () => {
-  it('shows what the device kept before the first sync, then the live room in its place', async () => {
+  it('withholds cached plaintext until immutable room protection state is synced', async () => {
     const backend = memoryBackend()
     const before = new TimelineCache(backend, ME)
     before.save(ROOM, [kept('$kept-1'), kept('$kept-2')])
     await before.close()
     const { base, answer } = homeserver()
     const store = open(new TimelineCache(backend, ME, { delayMs: 0 }), base)
-    const seen: unknown[] = []
-    store.subscribe(() => seen.push(store.getSnapshot()))
     void store.start()
-    await changed(store, () => store.getTimeline(ROOM).length === 2)
-    expect(store.getTimeline(ROOM).map((m) => m.body)).toEqual(['kept $kept-1', 'kept $kept-2'])
-    // A new snapshot: the screens read the timeline again.
-    expect(seen.length).toBeGreaterThan(0)
+    await vi.waitFor(() => expect(base).toHaveBeenCalled())
+    expect(store.getTimeline(ROOM)).toEqual([])
     answer()
     await changed(store, () => store.getTimeline(ROOM)[0]?.eventId === '$live-1')
     expect(store.getTimeline(ROOM).map((m) => m.eventId)).toEqual(['$live-1', '$live-2'])
@@ -150,7 +146,8 @@ describe("the store and the device's timeline cache", () => {
     const { base } = homeserver()
     const store = open(new TimelineCache(backend, ME), base)
     void store.start()
-    await changed(store, () => store.getTimeline(ROOM).length === 1)
+    await vi.waitFor(() => expect(base).toHaveBeenCalled())
+    expect(store.getTimeline(ROOM)).toEqual([])
     store.stop('signed-out')
     expect(store.getTimeline(ROOM)).toHaveLength(0)
     await vi.waitFor(() => expect(backend.records.size).toBe(0))
