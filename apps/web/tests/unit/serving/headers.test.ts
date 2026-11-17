@@ -996,7 +996,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '0738766d5e1f187eee5e91a49a41dbccffa6123b8d18374364a73af3203fbcd3'
+const PRISTINE_SHA = '5e7c364f7efe2ca9caa70c2e231f02e17e092ea112514d0ebd5f793200f391ed'
 type Scenario =
   | 'referrer'
   | 'directive'
