@@ -457,7 +457,7 @@ export const CANONICAL_CUES: readonly CueSynthSpec[] = [
     slug: 'compliance-rec-start',
     semantic: 'semantic.sound.compliance.rec-start',
     description:
-      'Non-mutable legal notice seal played to all participants when room recording or transcription starts.',
+      'Reserved recording-start notice; recording and transcription lifecycle playback is not wired.',
     tier: 0,
     category: 'voice',
     blueprintCategory: 'compliance',
@@ -475,7 +475,7 @@ export const CANONICAL_CUES: readonly CueSynthSpec[] = [
     slug: 'compliance-rec-stop',
     semantic: 'semantic.sound.compliance.rec-stop',
     description:
-      'Non-mutable legal notice seal played to all participants when room recording or transcription stops.',
+      'Reserved recording-stop notice; recording and transcription lifecycle playback is not wired.',
     tier: 0,
     category: 'voice',
     blueprintCategory: 'compliance',
@@ -1164,7 +1164,12 @@ export function resolveSoundTrigger(
   mentionVariant: MentionVariantId = 'eclat',
   vip = false
 ): { triggerId: SemanticTriggerId; cue: CueSynthSpec } | null {
-  const normalized = input === 'ptt_engage' ? 'voice_ptt_engage' : input === 'ptt_release' ? 'voice_ptt_release' : input
+  const normalized =
+    input === 'ptt_engage'
+      ? 'voice_ptt_engage'
+      : input === 'ptt_release'
+        ? 'voice_ptt_release'
+        : input
 
   if (normalized in TRIGGER_BINDINGS) {
     const binding = TRIGGER_BINDINGS[normalized as SemanticTriggerId]
@@ -1245,8 +1250,7 @@ export const SOUNDS_COPY_FR: Record<string, string> = {
   'console.shell.sounds.hint-luciole':
     'Gouttes d’eau physiques, cordes de kora sur calebasse et bambou vivant.',
   'console.shell.sounds.label-silencieux': 'Silencieux',
-  'console.shell.sounds.hint-silencieux':
-    'Désactive les sons d’interface hors signaux d’enregistrement, de sécurité et d’appels entrants.',
+  'console.shell.sounds.hint-silencieux': 'Désactive les sons automatiques de l’interface.',
   'console.shell.sounds.action-preview': 'Aperçu',
   'console.shell.sounds.action-preview-pack': 'Écouter un aperçu de {pack}',
   'console.shell.sounds.status-preview-playing': 'Aperçu sonore en cours : {pack}.',
@@ -1270,7 +1274,7 @@ export const SOUNDS_COPY_FR: Record<string, string> = {
   'console.shell.sounds.label-softened': 'Sons adoucis (hautes fréquences atténuées)',
   'console.shell.sounds.action-speaker-test': 'Tester Gauche / Droite',
   'console.shell.sounds.note-compliance':
-    'Les signaux d’enregistrement et de sécurité restent actifs dans Kodera même en mode Silencieux, sous réserve du volume et des réglages de votre appareil.',
+    'Le volume et la sortie audio de votre appareil peuvent limiter les sons entendus.',
   'console.shell.sounds.warning-not-kept':
     'Ce navigateur ne conserve pas ce réglage : il s’applique jusqu’à la fermeture de l’onglet.',
 }
@@ -1297,8 +1301,7 @@ export const SOUNDS_COPY_EN: Record<string, string> = {
   'console.shell.sounds.hint-luciole':
     'Physical water droplets, calabash kora strings, and living bamboo.',
   'console.shell.sounds.label-silencieux': 'Silent',
-  'console.shell.sounds.hint-silencieux':
-    'Turns off interface sounds except recording, safety, and incoming call signals.',
+  'console.shell.sounds.hint-silencieux': 'Turns off automatic interface sounds.',
   'console.shell.sounds.action-preview': 'Preview',
   'console.shell.sounds.action-preview-pack': 'Preview {pack}',
   'console.shell.sounds.status-preview-playing': 'Playing sound preview: {pack}.',
@@ -1322,7 +1325,7 @@ export const SOUNDS_COPY_EN: Record<string, string> = {
   'console.shell.sounds.label-softened': 'Softened sounds (attenuated high frequencies)',
   'console.shell.sounds.action-speaker-test': 'Test Left / Right',
   'console.shell.sounds.note-compliance':
-    'Recording and safety signals remain active in Kodera even in Silent mode, subject to your device volume and system settings.',
+    'Your device volume and audio output settings can limit the sounds you hear.',
   'console.shell.sounds.warning-not-kept':
     'This browser does not save this setting: it applies until the tab closes.',
 }

@@ -1,3 +1,5 @@
+import { SOUNDS_COPY_FR, SOUNDS_COPY_EN } from '../../../src/features/sounds/manifest'
+import { SoundEngine } from '../../../src/features/sounds/SoundEngine'
 import { describe, expect, it, vi } from 'vitest'
 import { MessageCueTracker } from '../../../src/features/espace/messageCues'
 import { workspaceFilesOf } from '../../../src/features/espace/workspaceFiles'
@@ -181,4 +183,18 @@ it('includes direct attachments once, strips spoofing controls, and omits redact
     directRoomId: '!dm:example.org',
     sizeBytes: 42,
   })
+})
+
+it('makes no recording-notice guarantee while lifecycle cues remain unwired and Silent suppresses them', () => {
+  for (const copy of [SOUNDS_COPY_FR, SOUNDS_COPY_EN]) {
+    expect(copy['console.shell.sounds.note-compliance']).not.toMatch(
+      /enregistrement|recording|remain active|restent actifs/i
+    )
+    expect(copy['console.shell.sounds.hint-silencieux']).not.toMatch(/except|hors signaux/i)
+  }
+  const engine = new SoundEngine({ audioContextFactory: () => null })
+  engine.setPack('silencieux')
+  expect(engine.evaluate('compliance_rec_start').allowed).toBe(false)
+  expect(engine.evaluate('compliance_rec_stop').allowed).toBe(false)
+  engine.destroy()
 })
