@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../../ui/Button/Button'
 import { cleanText } from '../../ui/safeText'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
+import { permitsPlaintext } from '../confidential/room-boundary'
 import { AttachmentQueue } from '../messaging/attachments/attachmentQueue'
 import { useWorkspaceQuotasQuery } from '../workspace/quotasApi'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
@@ -33,7 +34,17 @@ function LiveFilesUpload({
   const copy = filesMessages[i18n.resolvedLanguage === 'en' ? 'en' : 'fr']
   const id = useId()
   const quota = useWorkspaceQuotasQuery(organisationId)
-  const queue = useMemo(() => new AttachmentQueue(organisationId), [organisationId])
+  const queue = useMemo(
+    () =>
+      new AttachmentQueue(organisationId, undefined, (room) => {
+        const boundary = store.getRoomBoundary?.(room)
+        return (
+          (boundary === undefined || permitsPlaintext(boundary)) &&
+          store.canSendMessage?.(room) !== false
+        )
+      }),
+    [organisationId, store]
+  )
   const [target, setTarget] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
   const [sending, setSending] = useState(false)

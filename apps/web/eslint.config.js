@@ -376,6 +376,7 @@ const deviceWorkerImportRule = {
     const filename = context.filename.replaceAll('\\', '/')
     const workerBase = `${confidentialRoot}/device.worker`
     const casHostBase = `${confidentialRoot}/device-cas-host`
+    const attachmentBase = `${confidentialRoot}/attachment-crypto.worker`
     const nativeBase = `${confidentialRoot}/native`
     const report = (node) => context.report({ node, messageId: 'DEVICE_WORKER_PRIVATE_IMPORT' })
     const classify = (node) => {
@@ -409,6 +410,10 @@ const deviceWorkerImportRule = {
         return 'worker-entry'
       }
       if (
+        resolved === attachmentBase ||
+        resolved.startsWith(`${attachmentBase}.`) ||
+        (prefix && resolved.startsWith(attachmentBase)) ||
+        /(?:^|\/)features\/confidential\/attachment-crypto\.worker(?:$|\.)/.test(clean) ||
         resolved === nativeBase ||
         resolved.startsWith(`${nativeBase}/`) ||
         /(?:^|\/)features\/confidential\/native(?:$|\/)/.test(clean) ||

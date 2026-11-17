@@ -1,6 +1,7 @@
-import { Room } from 'matrix-js-sdk'
+import { MatrixEvent, Room } from 'matrix-js-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backoff, createEspaceStore, matrixClientForTests } from './store'
+import { onTrack } from '../../../analytics/track'
 import { NotRenewable } from './refresh'
 import type { RawEvent } from './timeline'
 
@@ -600,6 +601,7 @@ function snapshotFixture(
     summary?: Record<string, unknown>
     /** Who the first sync says is typing (`m.typing`). */
     typing?: string[]
+    refresh?: (refreshToken: string) => Promise<{ accessToken: string; refreshToken?: string }>
   } = {}
 ) {
   const json = (status: number, body: unknown) =>
@@ -746,6 +748,9 @@ function snapshotFixture(
       userId: SNAPSHOT_ME,
       deviceId: 'SNAPSHOT-TEST',
       accessToken: 'synthetic-test-token',
+      ...(room.refresh === undefined
+        ? {}
+        : { refresh: room.refresh, refreshToken: 'synthetic-refresh' }),
     },
     base
   )
@@ -807,6 +812,8 @@ function snapshotFixture(
         sendAnswer!(json(200, { event_id: '$cleanup' }))
       }
     },
+    publishState: (events: SnapshotEvent[]) =>
+      settleSync({ join: { [SNAPSHOT_ROOM]: roomData([], events) } }),
     publish: (events: SnapshotEvent[]) =>
       settleSync({ join: { [SNAPSHOT_ROOM]: roomData(events) } }),
     idle: () => settleSync({}),
@@ -1254,7 +1261,7 @@ describe("a member's name, from the room's member events (M1)", () => {
       // A stretch after « no longer » starts over at once.
       fixture.store.setTyping(SNAPSHOT_ROOM, true, 9_700)
       await vi.waitFor(() => expect(notices()).toHaveLength(4))
-      // The view going stops the store: the standing « typing » ends with it, once.
+      // Ordinary teardown may end its existing notice once; new work remains retired.
       fixture.store.stop()
       fixture.store.setTyping(SNAPSHOT_ROOM, true, 30_000)
       await vi.waitFor(() => expect(notices()).toHaveLength(5))
@@ -1804,6 +1811,10 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
       [`#kodera-ch-${ANNOUNCES}:${SERVER}`]: `!announces:${SERVER}`,
       [`#kodera-ch-${OFFICE}:${SERVER}`]: `!office:${SERVER}`,
     }
+    const joinEvents: unknown[] = []
+    const offTrack = onTrack((event) => {
+      if (event.name === 'channel_joined') joinEvents.push(event)
+    })
     const joinedOrder: string[] = []
     let activeJoinRequests = 0
     let maxConcurrentJoins = 0
@@ -1887,6 +1898,14 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
                 state: {
                   events: [
                     {
+                      event_id: '$create_gen',
+                      type: 'm.room.create',
+                      sender: `@kodera-agent:${SERVER}`,
+                      origin_server_ts: 0,
+                      state_key: '',
+                      content: { room_version: '10' },
+                    },
+                    {
                       event_id: '$member_gen',
                       type: 'm.room.member',
                       sender: ME,
@@ -1910,6 +1929,14 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
               [`!announces:${SERVER}`]: {
                 state: {
                   events: [
+                    {
+                      event_id: '$create_ann',
+                      type: 'm.room.create',
+                      sender: `@kodera-agent:${SERVER}`,
+                      origin_server_ts: 0,
+                      state_key: '',
+                      content: { room_version: '10' },
+                    },
                     {
                       event_id: '$member_ann',
                       type: 'm.room.member',
@@ -1938,6 +1965,22 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
               [`!office:${SERVER}`]: {
                 state: {
                   events: [
+                    {
+                      event_id: '$create_off',
+                      type: 'm.room.create',
+                      sender: `@kodera-agent:${SERVER}`,
+                      origin_server_ts: 0,
+                      state_key: '',
+                      content: { room_version: '10' },
+                    },
+                    {
+                      event_id: '$policy_off',
+                      type: 'io.kodera.room.policy',
+                      sender: `@kodera-agent:${SERVER}`,
+                      origin_server_ts: 0,
+                      state_key: '',
+                      content: { kind: 'audio' },
+                    },
                     {
                       event_id: '$member_off',
                       type: 'm.room.member',
@@ -1968,7 +2011,16 @@ describe('one-shot native public room joins, rate limits, refusals and power lev
       expect(store.canReact(`!announces:${SERVER}`)).toBe(true)
       expect(store.canSendMessage(`!general:${SERVER}`)).toBe(true)
       expect(directoryCalls).toBe(3)
+      expect(joinEvents).toEqual(
+        ['chat', 'chat', 'voice'].map((kind) => ({
+          name: 'channel_joined',
+          properties: { kind },
+        }))
+      )
+      await store.join(`!general:${SERVER}`)
+      expect(joinEvents).toHaveLength(3)
     } finally {
+      offTrack()
       store.stop()
     }
   })
@@ -2517,4 +2569,477 @@ it('does not publish an avatar whose upload settles after its Matrix session sto
   finish({ content_uri: 'mxc://example.org/uploaded' })
   await expect(uploading).rejects.toThrow('stopped')
   expect(publish).not.toHaveBeenCalled()
+})
+
+describe('confidential room plaintext quarantine', () => {
+  const AGENT = '@kodera-agent:matrix.acme.kodera.io'
+  function protectedState(algorithm: string) {
+    return [
+      {
+        ...snapshotMessage('$confidential-create', ''),
+        type: 'm.room.create',
+        state_key: '',
+        sender: AGENT,
+        content: { room_version: '10', 'io.kodera.room.confidential': algorithm },
+      },
+      {
+        ...snapshotMessage('$encryption', ''),
+        type: 'm.room.encryption',
+        state_key: '',
+        sender: AGENT,
+        content: { algorithm },
+      },
+    ]
+  }
+
+  it.each(['io.kodera.mls.v1', 'm.megolm.v1.aes-sha2'])(
+    'never displays unauthenticated events or sends a plaintext fallback for %s',
+    async (algorithm) => {
+      const fixture = snapshotFixture(
+        [
+          snapshotMessage('$leaked', 'must never display'),
+          snapshotMessage('$thread', 'private thread', {
+            content: {
+              body: 'private thread',
+              'm.relates_to': { rel_type: 'm.thread', event_id: '$leaked' },
+            },
+          }),
+        ],
+        { state: protectedState(algorithm) }
+      )
+      try {
+        await fixture.start()
+        const store = fixture.store
+        expect(store.getSnapshot().rooms[0]?.confidentiality).toBe('confidential-unavailable')
+        expect(store.getTimeline(SNAPSHOT_ROOM)).toEqual([])
+        expect(store.getThread(SNAPSHOT_ROOM, '$leaked')).toEqual([])
+        expect(store.getPinned(SNAPSHOT_ROOM)).toEqual([])
+        expect(store.getHistory(SNAPSHOT_ROOM)).toBe('start')
+        expect(store.getReadMarker(SNAPSHOT_ROOM)).toBeNull()
+        expect(store.canSendMessage(SNAPSHOT_ROOM)).toBe(false)
+        expect(store.canReact(SNAPSHOT_ROOM)).toBe(false)
+        expect(store.canPin(SNAPSHOT_ROOM)).toBe(false)
+        const refused = [
+          () => store.send(SNAPSHOT_ROOM, 'private'),
+          () => store.send(SNAPSHOT_ROOM, 'private reply', { threadRootId: '$leaked' }),
+          () =>
+            store.send(SNAPSHOT_ROOM, '', {
+              attachments: [
+                {
+                  id: crypto.randomUUID(),
+                  filename: 'secret.pdf',
+                  contentType: 'application/pdf',
+                  sizeBytes: 100,
+                },
+              ],
+            }),
+          () => store.edit(SNAPSHOT_ROOM, '$leaked', 'private edit'),
+          () => store.remove(SNAPSHOT_ROOM, '$leaked'),
+          () => store.react(SNAPSHOT_ROOM, '$leaked', 'private reaction'),
+          () => store.unreact(SNAPSHOT_ROOM, '$leaked', 'private reaction'),
+          () => store.resend(SNAPSHOT_ROOM, '$leaked'),
+          () => store.setPinned(SNAPSHOT_ROOM, '$leaked', true),
+          () => store.setPinned(SNAPSHOT_ROOM, '$leaked', false),
+        ]
+        for (const attempt of refused)
+          await expect(attempt()).rejects.toThrow('No content was sent')
+        await store.markRead(SNAPSHOT_ROOM)
+        await store.loadOlder(SNAPSHOT_ROOM)
+        store.setTyping(SNAPSHOT_ROOM, true)
+        expect(fixture.requests).toEqual([])
+        expect(fixture.typingNotices).toEqual([])
+      } finally {
+        fixture.stop()
+      }
+    }
+  )
+
+  it('updates its quarantine on state-only sync and never downgrades after marker removal', async () => {
+    const fixture = snapshotFixture()
+    try {
+      await fixture.start()
+      expect(fixture.store.getTimeline(SNAPSHOT_ROOM)).toHaveLength(1)
+      await fixture.publishState(protectedState('io.kodera.mls.v1'))
+      expect(fixture.store.getTimeline(SNAPSHOT_ROOM)).toEqual([])
+      expect(fixture.store.getSnapshot().rooms[0]?.confidentiality).toBe('confidential-unavailable')
+      await fixture.publishState([
+        {
+          ...snapshotMessage('$removed-marker', ''),
+          type: 'm.room.create',
+          state_key: '',
+          sender: AGENT,
+          content: { room_version: '10' },
+        },
+      ])
+      expect(fixture.store.getRoomBoundary(SNAPSHOT_ROOM)).toBe('invalid')
+      await expect(fixture.store.send(SNAPSHOT_ROOM, 'private')).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(fixture.requests).toEqual([])
+    } finally {
+      fixture.stop()
+    }
+  })
+
+  it('fences the real transport after a queued SDK send outlives room protection', async () => {
+    const fixture = snapshotFixture()
+    let release: (() => void) | undefined
+    try {
+      await fixture.start()
+      const client = matrixClientForTests(fixture.store)
+      const sdk = client as unknown as { encryptEventIfNeeded: () => Promise<void> }
+      const gate = vi.spyOn(sdk, 'encryptEventIfNeeded').mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve
+          })
+      )
+      const sending = fixture.store.send(SNAPSHOT_ROOM, 'must not reach transport')
+      // Attach refusal handling before releasing the asynchronous SDK operation.
+      const refusal = expect(sending).rejects.toThrow()
+      await vi.waitFor(() => expect(gate).toHaveBeenCalled())
+      await fixture.publishState(protectedState('io.kodera.mls.v1'))
+      release!()
+      await refusal
+      expect(fixture.requests).toEqual([])
+      gate.mockRestore()
+    } finally {
+      release?.()
+      fixture.stop()
+    }
+  })
+
+  it('rechecks protection at the actual access-token refresh retry dispatch', async () => {
+    let releaseRefresh: ((value: { accessToken: string }) => void) | undefined
+    const refresh = vi.fn(
+      () =>
+        new Promise<{ accessToken: string }>((resolve) => {
+          releaseRefresh = resolve
+        })
+    )
+    const fixture = snapshotFixture(undefined, { refresh })
+    try {
+      await fixture.start()
+      fixture.holdNextSend()
+      const sending = fixture.store.send(SNAPSHOT_ROOM, 'ordinary message before expiry')
+      const refused = expect(sending).rejects.toThrow()
+      await fixture.finishSend(401, { errcode: 'M_UNKNOWN_TOKEN' })
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+      await fixture.publishState(protectedState('io.kodera.mls.v1'))
+      releaseRefresh!({ accessToken: 'synthetic-new-token' })
+      await refused
+      expect(fixture.requests).toHaveLength(1)
+    } finally {
+      releaseRefresh?.({ accessToken: 'synthetic-cleanup-token' })
+      fixture.stop()
+    }
+  })
+
+  async function holdTypingCleanup() {
+    const fixture = snapshotFixture()
+    await fixture.start()
+    fixture.store.setTyping(SNAPSHOT_ROOM, true, 1_000)
+    await vi.waitFor(() => expect(fixture.typingNotices).toHaveLength(1))
+    const client = matrixClientForTests(fixture.store)
+    let finish = () => {}
+    const pending = vi.spyOn(client, 'sendTyping').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({})
+        })
+    )
+    fixture.store.stop()
+    const transport = client.http.opts.fetchFn!
+    const url = `https://matrix.acme.kodera.io/_matrix/client/v3/rooms/${encodeURIComponent(SNAPSHOT_ROOM)}/typing/${encodeURIComponent(SNAPSHOT_ME)}`
+    return {
+      fixture,
+      client,
+      transport,
+      url,
+      release() {
+        finish()
+        pending.mockRestore()
+        fixture.stop()
+      },
+    }
+  }
+
+  it('admits one exact content-free ordinary typing cleanup and refuses replay after retirement', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      await held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+      expect(held.fixture.typingNotices).toEqual([
+        { typing: true, timeout: 10_000 },
+        { typing: false },
+      ])
+      await expect(
+        Promise.resolve().then(() =>
+          held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+        )
+      ).rejects.toThrow('No content was sent')
+      expect(held.fixture.typingNotices).toHaveLength(2)
+    } finally {
+      held.release()
+    }
+  })
+
+  it.each([
+    { label: 'active typing', init: { method: 'PUT', body: '{"typing":true}' } },
+    {
+      label: 'extra plaintext field',
+      init: { method: 'PUT', body: '{"typing":false,"body":"private"}' },
+    },
+    { label: 'noncanonical body', init: { method: 'PUT', body: '{ "typing": false }' } },
+    {
+      label: 'binary body',
+      init: { method: 'PUT', body: new TextEncoder().encode('{"typing":false}') },
+    },
+    { label: 'wrong method', init: { method: 'POST', body: '{"typing":false}' } },
+  ])(
+    'refuses $label at a stopped typing transport and consumes its cleanup capability',
+    async ({ init }) => {
+      const held = await holdTypingCleanup()
+      try {
+        await expect(Promise.resolve().then(() => held.transport(held.url, init))).rejects.toThrow(
+          'No content was sent'
+        )
+        await expect(
+          Promise.resolve().then(() =>
+            held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+          )
+        ).rejects.toThrow('No content was sent')
+        expect(held.fixture.typingNotices).toHaveLength(1)
+      } finally {
+        held.release()
+      }
+    }
+  )
+
+  it('refuses an already granted cleanup after the room becomes protected', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      const init = { method: 'PUT', body: '{"typing":false}' }
+      const room = held.client.getRoom(SNAPSHOT_ROOM)!
+      room.currentState.setStateEvents(
+        protectedState('io.kodera.mls.v1').map(
+          ({ event_id, type, sender, origin_server_ts, state_key, content }) =>
+            new MatrixEvent({
+              room_id: SNAPSHOT_ROOM,
+              event_id,
+              type,
+              sender,
+              origin_server_ts,
+              state_key,
+              content,
+            })
+        )
+      )
+      expect(held.fixture.store.getRoomBoundary(SNAPSHOT_ROOM)).toBe('confidential-unavailable')
+      await expect(Promise.resolve().then(() => held.transport(held.url, init))).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(held.fixture.typingNotices).toHaveLength(1)
+      expect(held.fixture.requests).toEqual([])
+    } finally {
+      held.release()
+    }
+  })
+
+  it.each(['foreign member', 'unknown room', 'extra path', 'message endpoint', 'foreign origin'])(
+    'does not spend ordinary typing cleanup on a %s',
+    async (target) => {
+      const held = await holdTypingCleanup()
+      try {
+        const url =
+          target === 'foreign member'
+            ? held.url.replace(encodeURIComponent(SNAPSHOT_ME), encodeURIComponent(SNAPSHOT_ALICE))
+            : target === 'unknown room'
+              ? held.url.replace(
+                  encodeURIComponent(SNAPSHOT_ROOM),
+                  encodeURIComponent('!unknown:matrix.acme.kodera.io')
+                )
+              : target === 'extra path'
+                ? `${held.url}/extra`
+                : target === 'message endpoint'
+                  ? held.url.replace(
+                      `/typing/${encodeURIComponent(SNAPSHOT_ME)}`,
+                      '/send/m.room.message/retired'
+                    )
+                  : held.url.replace('https://matrix.acme.kodera.io', 'https://other.example.test')
+        await expect(
+          Promise.resolve().then(() =>
+            held.transport(url, { method: 'PUT', body: '{"typing":false}' })
+          )
+        ).rejects.toThrow('No content was sent')
+        expect(held.fixture.typingNotices).toHaveLength(1)
+        expect(held.fixture.requests).toEqual([])
+      } finally {
+        held.release()
+      }
+    }
+  )
+
+  it('revokes an undispatched ordinary cleanup when sign-out follows retirement', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      held.fixture.store.stop('signed-out')
+      await expect(
+        Promise.resolve().then(() =>
+          held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+        )
+      ).rejects.toThrow('No content was sent')
+      expect(held.fixture.typingNotices).toHaveLength(1)
+    } finally {
+      held.release()
+    }
+  })
+
+  it('does not read an opaque Request body or permit sign-out cleanup', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      const request = new Request(held.url, { method: 'PUT', body: '{"typing":false}' })
+      await expect(Promise.resolve().then(() => held.transport(request))).rejects.toThrow(
+        'No content was sent'
+      )
+      held.fixture.store.stop('signed-out')
+      await expect(
+        Promise.resolve().then(() =>
+          held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+        )
+      ).rejects.toThrow('No content was sent')
+      expect(held.fixture.typingNotices).toHaveLength(1)
+    } finally {
+      held.release()
+    }
+  })
+
+  it('refuses an unknown room before any SDK send or resend', async () => {
+    const fixture = snapshotFixture()
+    try {
+      await fixture.start()
+      const unknownRoom = '!unknown:matrix.acme.kodera.io'
+      expect(fixture.store.getRoomBoundary(unknownRoom)).toBe('unknown')
+      expect(fixture.store.canPin(unknownRoom)).toBe(false)
+      expect(fixture.store.getPinned(unknownRoom)).toEqual([])
+      expect(fixture.store.getHistory(unknownRoom)).toBe('start')
+      await expect(fixture.store.send(unknownRoom, 'private')).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.setPinned(unknownRoom, '$root', true)).rejects.toThrow(
+        'No content was sent'
+      )
+      await fixture.store.markRead(unknownRoom)
+      await fixture.store.loadOlder(unknownRoom)
+      expect(fixture.requests).toEqual([])
+    } finally {
+      fixture.stop()
+    }
+  })
+
+  it('purges cached pins, history, read marker, and writer ordering on quarantine and withholds unclassified room state', async () => {
+    const QUIET_PEER = '@claire.moreau:matrix.acme.kodera.io'
+    const fixture = snapshotFixture([snapshotMessage('$root', 'hello from zoe')], {
+      names: { [SNAPSHOT_ALICE]: 'Zoe', [SNAPSHOT_ME]: 'Moi' },
+      accountData: [{ type: 'm.fully_read', content: { event_id: '$root' } }],
+      state: [
+        {
+          ...snapshotMessage('$join-quiet', ''),
+          type: 'm.room.member',
+          state_key: QUIET_PEER,
+          sender: QUIET_PEER,
+          content: { membership: 'join', displayname: 'Aaron' },
+        },
+        {
+          ...snapshotMessage('$power', ''),
+          type: 'm.room.power_levels',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { users: { [SNAPSHOT_ME]: 100 }, state_default: 50 },
+        },
+        {
+          ...snapshotMessage('$pins', ''),
+          type: 'm.room.pinned_events',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { pinned: ['$root'] },
+        },
+      ],
+    })
+    try {
+      await fixture.start()
+      expect(fixture.store.canPin(SNAPSHOT_ROOM)).toBe(true)
+      expect(fixture.store.getPinned(SNAPSHOT_ROOM)).toEqual(['$root'])
+      expect(fixture.store.getHistory(SNAPSHOT_ROOM)).toBe('more')
+      expect(fixture.store.getReadMarker(SNAPSHOT_ROOM)).toBe('$root')
+      expect(fixture.store.getSnapshot().rooms[0]?.faces?.map((face) => face.name)).toEqual([
+        'Zoe',
+        'Aaron',
+      ])
+
+      await fixture.publishState(protectedState('io.kodera.mls.v1'))
+      expect(fixture.store.canPin(SNAPSHOT_ROOM)).toBe(false)
+      expect(fixture.store.getPinned(SNAPSHOT_ROOM)).toEqual([])
+      expect(fixture.store.getHistory(SNAPSHOT_ROOM)).toBe('start')
+      expect(fixture.store.getReadMarker(SNAPSHOT_ROOM)).toBeNull()
+      expect(fixture.store.getSnapshot().rooms[0]?.faces?.map((face) => face.name)).toEqual([
+        'Aaron',
+        'Zoe',
+      ])
+      await expect(fixture.store.setPinned(SNAPSHOT_ROOM, '$root', false)).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.setPinned(SNAPSHOT_ROOM, '$other', true)).rejects.toThrow(
+        'No content was sent'
+      )
+      await fixture.store.markRead(SNAPSHOT_ROOM)
+      await fixture.store.loadOlder(SNAPSHOT_ROOM)
+      expect(fixture.requests).toEqual([])
+
+      // Also verify an unclassified joined room lacking m.room.create fails closed on all paths.
+      const client = matrixClientForTests(fixture.store)
+      const unclassifiedId = '!unclassified:matrix.acme.kodera.io'
+      const unclassified = new Room(unclassifiedId, client, SNAPSHOT_ME)
+      vi.spyOn(unclassified, 'getMyMembership').mockReturnValue('join')
+      unclassified.currentState.setStateEvents([
+        new MatrixEvent({
+          room_id: unclassifiedId,
+          event_id: '$unclassified-power',
+          type: 'm.room.power_levels',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { users: { [SNAPSHOT_ME]: 100 }, state_default: 50 },
+        }),
+        new MatrixEvent({
+          room_id: unclassifiedId,
+          event_id: '$unclassified-pins',
+          type: 'm.room.pinned_events',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { pinned: ['$unclassified-msg'] },
+        }),
+      ])
+      const originalGetRoom = client.getRoom.bind(client)
+      vi.spyOn(client, 'getRoom').mockImplementation((id) =>
+        id === unclassifiedId ? unclassified : originalGetRoom(id)
+      )
+      const sendState = vi.spyOn(client, 'sendStateEvent')
+      const setMarkers = vi.spyOn(client, 'setRoomReadMarkers')
+      const scrollback = vi.spyOn(client, 'scrollback')
+
+      expect(fixture.store.getRoomBoundary(unclassifiedId)).toBe('unknown')
+      expect(fixture.store.canPin(unclassifiedId)).toBe(false)
+      expect(fixture.store.getPinned(unclassifiedId)).toEqual([])
+      expect(fixture.store.getHistory(unclassifiedId)).toBe('start')
+      await expect(
+        fixture.store.setPinned(unclassifiedId, '$unclassified-msg', false)
+      ).rejects.toThrow('No content was sent')
+      await fixture.store.markRead(unclassifiedId)
+      await fixture.store.loadOlder(unclassifiedId)
+      expect(sendState).not.toHaveBeenCalled()
+      expect(setMarkers).not.toHaveBeenCalled()
+      expect(scrollback).not.toHaveBeenCalled()
+    } finally {
+      fixture.stop()
+    }
+  })
 })

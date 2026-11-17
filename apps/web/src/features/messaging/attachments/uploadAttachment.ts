@@ -56,6 +56,8 @@ export interface UploadInput {
   file: Blob
   checked: Extract<Preflight, { ok: true }>
   signal?: AbortSignal
+  /** Must remain authorized for the target room at every upload boundary. */
+  mayUpload?: () => boolean
   /** For tests: the transport the bytes go through. */
   put?: typeof fetch
 }
@@ -66,10 +68,13 @@ export async function uploadAttachment({
   checked,
   signal,
   put = putToStorage,
+  mayUpload,
 }: UploadInput): Promise<Attachment> {
   signal?.throwIfAborted()
+  if (mayUpload?.() === false) throw new UploadRefused('ticket')
   const sha256 = await sha256Hex(file)
   signal?.throwIfAborted()
+  if (mayUpload?.() === false) throw new UploadRefused('ticket')
   const ticket = checkTicket(
     await mutate(
       { method: 'post', path: '/organisations/{organisation_id}/workspace/attachments/uploads' },
@@ -79,6 +84,7 @@ export async function uploadAttachment({
           header: { 'Idempotency-Key': crypto.randomUUID() },
         },
         ...(signal === undefined ? {} : { signal }),
+        ...(mayUpload === undefined ? {} : { dispatchGuard: mayUpload }),
         body: {
           filename: checked.filename,
           contentType: checked.contentType,
@@ -89,6 +95,7 @@ export async function uploadAttachment({
     )
   )
   signal?.throwIfAborted()
+  if (mayUpload?.() === false) throw new UploadRefused('ticket')
   const stored = await put(ticket.uploadUrl, {
     method: 'PUT',
     headers: ticket.headers as Record<string, string>,
@@ -100,6 +107,7 @@ export async function uploadAttachment({
     ...(signal === undefined ? {} : { signal }),
   })
   signal?.throwIfAborted()
+  if (mayUpload?.() === false) throw new UploadRefused('ticket')
   if (!stored.ok) throw new UploadRefused('storage')
   const data = await mutate(
     {
@@ -112,6 +120,7 @@ export async function uploadAttachment({
         header: { 'Idempotency-Key': crypto.randomUUID() },
       },
       ...(signal === undefined ? {} : { signal }),
+      ...(mayUpload === undefined ? {} : { dispatchGuard: mayUpload }),
     }
   )
   if (data === undefined || data.sha256 !== sha256) throw new UploadRefused('complete')

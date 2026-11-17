@@ -31,15 +31,21 @@ const NONE: readonly QueuedFile[] = []
 export class AttachmentQueue {
   readonly #organisationId: string
   readonly #upload: Upload
+  readonly #mayUpload: (room: string) => boolean
   #rooms = new Map<string, readonly QueuedFile[]>()
   #aborts = new Map<string, AbortController>()
   #listeners = new Set<() => void>()
   #serial = 0
   #generation = 0
 
-  constructor(organisationId: string, upload: Upload = uploadAttachment) {
+  constructor(
+    organisationId: string,
+    upload: Upload = uploadAttachment,
+    mayUpload: (room: string) => boolean = () => true
+  ) {
     this.#organisationId = organisationId
     this.#upload = upload
+    this.#mayUpload = mayUpload
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -59,6 +65,7 @@ export class AttachmentQueue {
   }
 
   async add(room: string, incoming: readonly File[]): Promise<void> {
+    if (!this.#mayUpload(room)) return
     const generation = this.#generation
     await Promise.all(
       incoming.map(async (file) => {
@@ -80,6 +87,10 @@ export class AttachmentQueue {
           this.#replace(room, key, { ...base, status: 'refused', reason: checked.reason })
           return
         }
+        if (!this.#mayUpload(room)) {
+          this.#replace(room, key, { ...base, status: 'failed' })
+          return
+        }
         if (generation !== this.#generation || !this.files(room).some((entry) => entry.key === key))
           return
         const named = { ...base, filename: checked.filename }
@@ -91,6 +102,7 @@ export class AttachmentQueue {
             file,
             checked,
             signal: abort.signal,
+            mayUpload: () => generation === this.#generation && this.#mayUpload(room),
           })
           this.#replace(room, key, {
             ...named,

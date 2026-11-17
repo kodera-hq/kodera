@@ -154,6 +154,58 @@ export function lastRequestId(): string | undefined {
   return lastId
 }
 
+const attachmentGuards = new Map<string, (request: Request) => Request>()
+
+function requirePolicy(check: () => boolean): void {
+  try {
+    if (check()) return
+  } catch {
+    // Fail closed below.
+  }
+  throw new NetworkError(undefined)
+}
+
+function checkAttachmentRequest(request: Request, isCurrent: () => boolean): Request {
+  requirePolicy(() => {
+    const u = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+    const base = new URL(coreApiUrl())
+    const root = base.origin + base.pathname.replace(/\/$/, '')
+    const prefix = root + '/organisations/'
+    return (
+      root === base.href.replace(/\/$/, '') &&
+      request.url.startsWith(prefix) &&
+      new RegExp(`^${u}/workspace/attachments/(?:uploads|${u}/complete)$`).test(
+        request.url.slice(prefix.length)
+      ) &&
+      request.method === 'POST' &&
+      isCurrent() === true
+    )
+  })
+  return request.redirect === 'error' ? request : new Request(request, { redirect: 'error' })
+}
+
+export async function withAttachmentDispatchGuard<T>(
+  headers: Record<string, string>,
+  params: { header?: Record<string, string> } | undefined,
+  isCurrent: () => boolean,
+  send: (extra: Record<string, unknown>) => Promise<T>
+): Promise<T> {
+  const key =
+    params?.header?.['Idempotency-Key'] ?? (headers['Idempotency-Key'] = crypto.randomUUID())
+  requirePolicy(() => key !== '' && !attachmentGuards.has(key) && isCurrent() === true)
+  const check = (request: Request) => checkAttachmentRequest(request, isCurrent)
+  const guard: Middleware = { onRequest: ({ request }) => check(request) }
+  attachmentGuards.set(key, check)
+  try {
+    return await send({
+      redirect: 'error',
+      middleware: [guard],
+    })
+  } finally {
+    if (attachmentGuards.get(key) === check) attachmentGuards.delete(key)
+  }
+}
+
 const middleware: Middleware = {
   onRequest({ request }) {
     const token = tokenProvider()
@@ -164,7 +216,8 @@ const middleware: Middleware = {
     if (request.method === 'POST' && !request.headers.has('Idempotency-Key')) {
       request.headers.set('Idempotency-Key', crypto.randomUUID())
     }
-    return request
+    const key = request.headers.get('Idempotency-Key')
+    return (key ? attachmentGuards.get(key) : undefined)?.(request) ?? request
   },
   async onResponse({ response }) {
     lastId = response.headers.get('X-Request-Id') ?? undefined

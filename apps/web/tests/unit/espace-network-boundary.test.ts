@@ -47,6 +47,9 @@ describe('fetch in the browser bundle', () => {
       'src/features/workspace/OpenEspace.tsx',
       // Beside the storage transport, not the transport: the upload itself goes through it.
       'src/features/messaging/attachments/uploadAttachment.ts',
+      // Only src/api/client.ts holds the Core native boundary; sibling API modules never gain fetch.
+      'src/api/dispatchGuard.ts',
+      'src/api/mutations.ts',
     ]) {
       expect(await rulesFired(network, path), path).toEqual([
         'no-restricted-globals',

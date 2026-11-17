@@ -3,7 +3,7 @@
 // declares, the idempotency key (added by the client middleware), and the optimistic
 // concurrency token that every `PATCH` now requires (`docs/api/CONVENTIONS.md` §10).
 
-import { coreApi } from './client'
+import { coreApi, withAttachmentDispatchGuard } from './client'
 import type { paths } from './schema'
 
 /** The verbs that write. `PUT` does not exist in this API (CONSOLE_RECONCILIATION §4.6). */
@@ -78,7 +78,10 @@ export type MutateInit<M extends MutationMethod, P extends PathsWith<M>> = Param
   OperationOf<M, P>
 > &
   BodyArg<OperationOf<M, P>> &
-  ConcurrencyArg<M>
+  ConcurrencyArg<M> & {
+    /** A live policy check at final transport dispatch, after asynchronous middleware. */
+    dispatchGuard?: () => boolean
+  }
 
 export interface MutationOp<M extends MutationMethod, P extends PathsWith<M>> {
   readonly method: M
@@ -118,7 +121,7 @@ export async function mutate<M extends MutationMethod, P extends PathsWith<M>>(
   // `concurrency` is this module's own field, not one openapi-fetch's `request()` knows —
   // spreading the rest of `init` straight into it would otherwise carry it along as a
   // stray property on the fetch init object.
-  const { concurrency, ...rest } = init as MutateInit<M, P> & { concurrency?: string }
+  const { concurrency, dispatchGuard, ...rest } = init as MutateInit<M, P> & { concurrency?: string }
 
   const headers: Record<string, string> = {}
   const contentType = mediaType(op.method)
@@ -135,6 +138,13 @@ export async function mutate<M extends MutationMethod, P extends PathsWith<M>>(
     init: Record<string, unknown>
   ) => Promise<{ data?: unknown; response: Response }>
 
-  const { data } = await request(op.method, op.path, { ...rest, headers })
+  const { data } = dispatchGuard
+    ? await withAttachmentDispatchGuard(
+        headers,
+        (rest as { params?: { header?: Record<string, string> } }).params,
+        dispatchGuard,
+        (extra) => request(op.method, op.path, { ...rest, headers, ...extra })
+      )
+    : await request(op.method, op.path, { ...rest, headers })
   return data as SuccessBody<OperationOf<M, P>>
 }

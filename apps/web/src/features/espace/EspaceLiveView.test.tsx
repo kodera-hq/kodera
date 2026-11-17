@@ -15,6 +15,8 @@ import { communityWorkspace } from '../../mocks/demo/community'
 import { createLocalWorkspaceStore } from '../../mocks/demo/workspaceStore'
 import type { Workspace } from '../workspace/workspace'
 import { EspaceLiveView } from './EspaceLiveView'
+import { confidentialMessages } from './confidentialMessages'
+import type { RoomBoundary } from '../confidential/room-boundary'
 import type { AudioCallLike, EspaceStoreLike } from './EspaceLiveView'
 import type { CallSnapshot } from './audio/call'
 import {
@@ -4226,4 +4228,78 @@ it('keeps the same call and document subtree across canvas navigation', async ()
   expect(call.leave).not.toHaveBeenCalled()
   await user.click(screen.getByRole('button', { name: 'Couper le micro' }))
   expect(call.setMuted).toHaveBeenCalledWith(true)
+})
+
+describe('honest room protection presentation', () => {
+  it.each(['en', 'fr'] as const)(
+    'labels unavailable confidential protection and withholds the composer in %s',
+    async (locale) => {
+      await act(async () => {
+        await i18n.changeLanguage(locale)
+      })
+      const store = makeFakeStore({ timelines: {}, threads: {} })
+      store.getRoomBoundary = () => 'confidential-unavailable'
+      // The protection boundary independently disables writing even if another capability is stale.
+      store.canSendMessage = () => true
+      render(
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme SA"
+          workspace={WORKSPACE}
+          channelId={GENERAL}
+          store={store}
+        />
+      )
+      const copy = confidentialMessages[locale]
+      expect(screen.getByText(copy['confidential-unavailable'])).toHaveAttribute('role', 'status')
+      expect(screen.getByText(copy.unavailable)).toBeInTheDocument()
+      expect(screen.queryByRole('textbox')).toBeNull()
+      expect(store.send).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['ordinary', 'community'] as const)(
+    'explicitly labels %s messages as not end-to-end encrypted',
+    async (boundary) => {
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+      const store = makeFakeStore({ timelines: {}, threads: {} })
+      store.getRoomBoundary = (): RoomBoundary => boundary
+      render(
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme SA"
+          workspace={WORKSPACE}
+          channelId={GENERAL}
+          store={store}
+        />
+      )
+      expect(screen.getByText(confidentialMessages.en[boundary])).toBeInTheDocument()
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
+    }
+  )
+})
+
+it('refuses protected audio before any call token or media capture starts', async () => {
+  await act(async () => {
+    await i18n.changeLanguage('en')
+  })
+  const store = makeFakeStore()
+  store.getRoomBoundary = (roomId) =>
+    roomId === STANDUP_ROOM ? 'confidential-unavailable' : 'ordinary'
+  const call = makeFakeCall()
+  render(
+    <EspaceLiveView
+      org="acme"
+      organisationName="Acme SA"
+      workspace={WORKSPACE}
+      channelId={GENERAL}
+      store={store}
+      call={call}
+    />
+  )
+  await userEvent.setup().click(screen.getByRole('button', { name: /Join Point quotidien/ }))
+  expect(call.join).not.toHaveBeenCalled()
+  expect(screen.getByText(confidentialMessages.en.unavailable)).toBeInTheDocument()
 })

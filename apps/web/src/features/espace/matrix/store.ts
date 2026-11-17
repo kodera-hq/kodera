@@ -33,6 +33,7 @@ import {
   type Room,
   type RoomState,
 } from 'matrix-js-sdk'
+import { track } from '../../../analytics/track'
 import { clearMatrixSession } from '@/auth/matrix'
 import { cleanText } from '../../../ui/safeText'
 import { AVATAR_TYPES, inspectRasterImage, MAX_AVATAR_BYTES } from '../../profile/avatarImage'
@@ -58,6 +59,12 @@ import {
   type TimelineEvent,
 } from './timeline'
 import { openTimelineCache, type TimelineCache } from './timelineCache'
+import {
+  RoomBoundaryTracker,
+  ConfidentialRoomUnavailable,
+  permitsPlaintext,
+  type RoomBoundary,
+} from '../../confidential/room-boundary'
 
 export type SyncStatus = 'starting' | 'live' | 'reconnecting' | 'signed-out' | 'stopped'
 
@@ -82,6 +89,8 @@ export interface RoomSummary {
   name: string
   /** The canonical alias, for display only: a channel's room is found by `channels`, never by this. */
   alias: string | null
+  /** Transport classification; only authenticated room decryption can establish confidentiality. */
+  confidentiality?: RoomBoundary
   /** Text channel or audio room, from the room's `io.kodera.room.policy` (design §2.1). */
   kind: 'text' | 'audio'
   unread: number
@@ -362,6 +371,8 @@ export function matrixClientForTests(store: EspaceStore): MatrixClient {
 
 export class EspaceStore {
   readonly #client: MatrixClient
+  readonly #boundaries = new RoomBoundaryTracker()
+  readonly #joinedTelemetry = new Set<string>()
   readonly #me: string
   /** Kodera's own accounts on the member's homeserver (`SERVICE_LOCALPARTS`). */
   readonly #services: ReadonlySet<string>
@@ -437,6 +448,8 @@ export class EspaceStore {
   #presenceChanged = false
   /** When the member's last « typing » notice went to each room it still stands in. */
   readonly #typingSent = new Map<string, number>()
+  /** One content-free teardown dispatch per already active ordinary-room typing notice. */
+  readonly #typingCleanup = new Set<string>()
   /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
   #directsChanged = false
   #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
@@ -471,10 +484,42 @@ export class EspaceStore {
     this.#me = session.userId
     const server = session.userId.slice(session.userId.indexOf(':') + 1)
     this.#services = new Set(SERVICE_LOCALPARTS.map((localpart) => `@${localpart}:${server}`))
+    // Fence the actual transport, inside refresh retries and after any SDK await/scheduler.
+    const fenced: typeof fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), session.baseUrl)
+      const method = (
+        init?.method ?? (input instanceof Request ? input.method : 'GET')
+      ).toUpperCase()
+      const timeline =
+        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing|read_markers|receipt|messages|state\/m\.room\.pinned_events)(?:\/|$)/.exec(
+          url.pathname
+        )
+      if (timeline && (timeline[2] === 'messages' || (method !== 'GET' && method !== 'HEAD'))) {
+        const roomId = decodeURIComponent(timeline[1]!)
+        const cleanup = this.#typingCleanup.delete(roomId)
+        const ownTyping =
+          /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/[^/]+\/typing\/([^/]+)$/.exec(
+            url.pathname
+          )
+        // No Request body reads or JSON parsing: only this exact content-free stop is eligible.
+        const mayFinishTyping =
+          cleanup &&
+          timeline[2] === 'typing' &&
+          method === 'PUT' &&
+          url.origin === new URL(session.baseUrl).origin &&
+          url.search === '' &&
+          ownTyping !== null &&
+          decodeURIComponent(ownTyping[1]!) === this.#me &&
+          init?.body === '{"typing":false}' &&
+          permitsPlaintext(this.getRoomBoundary(roomId))
+        if (!mayFinishTyping) this.#requirePlaintextRoom(roomId)
+      }
+      return base(input, init)
+    }
     this.#fetch =
       this.#refresh === undefined || this.#refreshToken === undefined
-        ? base
-        : refreshingFetch(base, {
+        ? fenced
+        : refreshingFetch(fenced, {
             current: () => this.#accessToken,
             refresh: () => this.#renew(),
           })
@@ -657,6 +702,11 @@ export class EspaceStore {
     let changed = false
     for (const [roomId, messages] of rooms) {
       if (this.#timelines.has(roomId)) continue
+      const boundary = this.getRoomBoundary(roomId)
+      if (boundary !== 'unknown' && !permitsPlaintext(boundary)) {
+        this.#cache?.forget(roomId)
+        continue
+      }
       this.#cached.set(roomId, messages)
       changed = true
     }
@@ -692,12 +742,20 @@ export class EspaceStore {
   }
 
   stop(status: SyncStatus = 'stopped'): void {
-    if (this.#stopped) return
+    if (this.#stopped) {
+      if (status === 'signed-out') this.#typingCleanup.clear()
+      return
+    }
     // The view going, another organisation or a new session: the others stop seeing the member
     // type. A signed-out session has no token left to say it with.
     if (status !== 'signed-out') {
       for (const roomId of this.#typingSent.keys()) {
-        this.#client.sendTyping(roomId, false, TYPING_TIMEOUT_MS).catch(() => undefined)
+        if (!permitsPlaintext(this.getRoomBoundary(roomId))) continue
+        this.#typingCleanup.add(roomId)
+        this.#client
+          .sendTyping(roomId, false, TYPING_TIMEOUT_MS)
+          .catch(() => undefined)
+          .finally(() => this.#typingCleanup.delete(roomId))
       }
     }
     this.#stopped = true
@@ -736,10 +794,15 @@ export class EspaceStore {
 
   /** One room's messages, oldest first; the same array until one of them changes. */
   getTimeline = (roomId: string): readonly MessageView[] =>
-    this.#timelines.get(roomId) ?? this.#cached.get(roomId) ?? NONE
+    permitsPlaintext(this.getRoomBoundary(roomId))
+      ? (this.#timelines.get(roomId) ?? this.#cached.get(roomId) ?? NONE)
+      : NONE
 
   /** How far back one room's timeline reaches; it changes with the snapshot, as messages do. */
-  getHistory = (roomId: string): History => this.#histories.get(roomId) ?? 'more'
+  getHistory = (roomId: string): History =>
+    permitsPlaintext(this.getRoomBoundary(roomId))
+      ? (this.#histories.get(roomId) ?? 'more')
+      : 'start'
 
   /**
    * The event the member has read up to in the room: its fully-read marker (`m.fully_read`
@@ -748,6 +811,7 @@ export class EspaceStore {
    * for a room never read, or not known.
    */
   getReadMarker = (roomId: string): string | null => {
+    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return null
     const marker = this.#client
       .getRoom(roomId)
       ?.getAccountData('m.fully_read')
@@ -763,6 +827,7 @@ export class EspaceStore {
    * follows it.
    */
   firstShownAfter = (roomId: string, eventId: string): string | null => {
+    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return null
     const events = this.#client.getRoom(roomId)?.getLiveTimeline().getEvents() ?? []
     const at = events.findIndex((event) => event.getId() === eventId)
     if (at === -1) return null
@@ -776,6 +841,7 @@ export class EspaceStore {
 
   /** One thread's replies, oldest first; the same array until one of them changes. */
   getThread = (roomId: string, rootEventId: string): readonly MessageView[] => {
+    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return NONE
     const byRoom = this.#threads.get(roomId)
     const cached = byRoom?.get(rootEventId)
     if (cached !== undefined) return cached
@@ -831,7 +897,11 @@ export class EspaceStore {
         // until its next `m.typing` says who is. (A room still being set up was never joined.)
         if (this.#timelines.has(roomId)) this.#typingIds.set(roomId, [])
         messageDataChanged ||=
-          this.#timelines.has(roomId) || this.#threads.has(roomId) || this.#eventsByRoom.has(roomId)
+          this.#timelines.has(roomId) ||
+          this.#threads.has(roomId) ||
+          this.#eventsByRoom.has(roomId) ||
+          this.#pins.has(roomId) ||
+          this.#histories.has(roomId)
         this.#timelines.delete(roomId)
         // Out of the room: what this device kept of it goes too.
         if (this.#cached.delete(roomId)) messageDataChanged = true
@@ -839,11 +909,24 @@ export class EspaceStore {
         this.#threads.delete(roomId)
         this.#pins.delete(roomId)
         this.#eventsByRoom.delete(roomId)
+        this.#paging.delete(roomId)
         this.#histories.delete(roomId)
         this.#members.delete(roomId)
         continue
       }
       messageDataChanged = true
+      const plaintext = permitsPlaintext(this.getRoomBoundary(roomId))
+      if (!plaintext) {
+        this.#timelines.delete(roomId)
+        this.#cached.delete(roomId)
+        this.#cache?.forget(roomId)
+        this.#threads.delete(roomId)
+        this.#pins.delete(roomId)
+        this.#eventsByRoom.delete(roomId)
+        this.#paging.delete(roomId)
+        this.#histories.delete(roomId)
+        continue
+      }
       const events = this.#events(room)
       this.#eventsByRoom.set(roomId, events)
       this.#histories.set(roomId, this.#historyOf(room))
@@ -942,6 +1025,9 @@ export class EspaceStore {
     const policy = room.currentState.getStateEvents(POLICY, '')?.getContent() as
       { kind?: unknown } | undefined
     const kind = policy?.kind === 'audio' ? 'audio' : 'text'
+    if (this.#joinedTelemetry.delete(room.roomId)) {
+      track('channel_joined', { kind: kind === 'audio' ? 'voice' : 'chat' })
+    }
     const occupancy =
       kind === 'audio'
         ? occupancyOf(room.currentState.getStateEvents(OCCUPANCY, '')?.getContent())
@@ -957,6 +1043,7 @@ export class EspaceStore {
       roomId: room.roomId,
       name: room.name,
       alias: room.getCanonicalAlias(),
+      confidentiality: this.getRoomBoundary(room.roomId),
       kind,
       unread: room.getUnreadNotificationCount(NotificationCountType.Total),
       mentions: room.getUnreadNotificationCount(NotificationCountType.Highlight),
@@ -1006,6 +1093,7 @@ export class EspaceStore {
 
   /** The latest people to write in the room's loaded log, still in it. */
   #latestWriters(room: Room): MemberView[] {
+    if (!permitsPlaintext(this.getRoomBoundary(room.roomId))) return []
     const faces: MemberView[] = []
     const seen = new Set<string>()
     const events = room.getLiveTimeline().getEvents()
@@ -1085,26 +1173,57 @@ export class EspaceStore {
   }
 
   /** The room's pinned events, oldest pin first; the same array until they change. */
-  getPinned = (roomId: string): readonly string[] => this.#pins.get(roomId) ?? NO_PINS
+  getPinned = (roomId: string): readonly string[] =>
+    permitsPlaintext(this.getRoomBoundary(roomId)) ? (this.#pins.get(roomId) ?? NO_PINS) : NO_PINS
 
   /** Whether the room's power levels let the member change its pins. */
   canPin = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+      return false
     return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
+  }
+
+  /** No caller can opt a marked room back into plaintext, even after a state downgrade. */
+  getRoomBoundary = (roomId: string): RoomBoundary => {
+    const room = this.#client.getRoom(roomId)
+    const value = (type: string) => {
+      const event = room?.currentState.getStateEvents(type as never, '')
+      return event ? { sender: event.getSender(), content: event.getContent() } : undefined
+    }
+    const server = serverNameOf(this.#me)
+    return this.#boundaries.observe(
+      roomId,
+      value('m.room.create'),
+      value('m.room.encryption'),
+      server === undefined ? '' : `@kodera-agent:${server}`,
+      server?.startsWith('community.') === true &&
+        room?.currentState.getStateEvents('m.room.join_rules', '')?.getContent().join_rule ===
+          'public'
+    )
+  }
+
+  #isPlaintextRoomAllowed(roomId: string): boolean {
+    return !this.#stopped && permitsPlaintext(this.getRoomBoundary(roomId))
+  }
+
+  #requirePlaintextRoom(roomId: string): void {
+    if (!this.#isPlaintextRoomAllowed(roomId)) throw new ConfidentialRoomUnavailable()
   }
 
   /** Whether the room's power levels let the member post messages (`m.room.message`). */
   canSendMessage = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+      return false
     return room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
   }
 
   /** Whether the room's power levels let the member react to messages (`m.reaction`). */
   canReact = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+      return false
     return room.currentState.maySendEvent(EventType.Reaction, this.#me)
   }
 
@@ -1113,6 +1232,7 @@ export class EspaceStore {
 
   /** Pins or unpins one event; the room's next state answers with the new list. */
   async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     const current = this.getPinned(roomId)
     if (current.includes(eventId) === pinned) return
     const next = pinned ? [...current, eventId] : current.filter((id) => id !== eventId)
@@ -1220,7 +1340,7 @@ export class EspaceStore {
    * failure is not shown.
    */
   setTyping = (roomId: string, typing: boolean, now = Date.now()): void => {
-    if (this.#stopped) return
+    if (this.#stopped || !permitsPlaintext(this.getRoomBoundary(roomId))) return
     const sent = this.#typingSent.get(roomId)
     if (typing) {
       if (sent !== undefined && now - sent < TYPING_RESEND_MS) return
@@ -1422,6 +1542,7 @@ export class EspaceStore {
   }
 
   async send(roomId: string, body: string, options: SendOptions = {}): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     const relatesTo =
       options.threadRootId !== undefined
         ? {
@@ -1447,6 +1568,7 @@ export class EspaceStore {
   }
 
   async edit(roomId: string, eventId: string, body: string): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     await this.#client.sendMessage(roomId, {
       msgtype: MsgType.Text,
       body: `* ${body}`,
@@ -1456,10 +1578,12 @@ export class EspaceStore {
   }
 
   async remove(roomId: string, eventId: string): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     await this.#client.redactEvent(roomId, eventId)
   }
 
   async react(roomId: string, eventId: string, key: string): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     await this.#client.sendEvent(
       roomId,
       'm.reaction' as never,
@@ -1470,6 +1594,7 @@ export class EspaceStore {
   }
 
   async unreact(roomId: string, eventId: string, key: string): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     const room = this.#client.getRoom(roomId)
     if (room === null) return
     const match = [...room.getLiveTimeline().getEvents(), ...room.getPendingEvents()].find(
@@ -1861,6 +1986,8 @@ export class EspaceStore {
       .joinRoom(roomId)
       .then(() => {
         if (this.#stopped) return
+        this.#joinedTelemetry.add(roomId)
+        this.#schedule()
         this.#joinSettled.add(roomId)
         this.#joinFailures.delete(roomId)
         const room = this.#client.getRoom(roomId)
@@ -1979,6 +2106,7 @@ export class EspaceStore {
    * itself waits a few seconds before a new ask after one.
    */
   loadOlder = async (roomId: string): Promise<void> => {
+    if (!this.#isPlaintextRoomAllowed(roomId)) return
     const room = this.#client.getRoom(roomId)
     if (room === null || this.#paging.get(roomId) === 'loading') return
     if (this.#historyOf(room) === 'start') return
@@ -1998,6 +2126,7 @@ export class EspaceStore {
   /** Marks everything in the room as read, up to its last event: the read receipt and the
    * fully-read marker together, as Matrix clients do on opening a room. */
   async markRead(roomId: string): Promise<void> {
+    if (!this.#isPlaintextRoomAllowed(roomId)) return
     const room = this.#client.getRoom(roomId)
     const last = room
       ?.getLiveTimeline()
@@ -2019,6 +2148,7 @@ export class EspaceStore {
 
   /** Sends a failed message again, by its row key. */
   async resend(roomId: string, key: string): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     const unsent = this.#unsent(roomId, key)
     if (unsent !== null) await this.#client.resendEvent(unsent.event, unsent.room)
   }
