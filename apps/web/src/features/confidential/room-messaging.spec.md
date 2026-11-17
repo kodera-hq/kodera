@@ -28,11 +28,12 @@ alone is never labelled confidentiality. The client shows no verified lock or
 end-to-end encryption success claim.
 
 Message bodies, edits, thread replies, attachment references, reactions, failed
-message resends and typing submissions refuse before SDK transport in a
-protected or unknown room. The Matrix transport rechecks policy after SDK
-encryption/scheduler awaits and before each actual fetch, including credential
-refresh retries. Unauthenticated incoming plaintext and encrypted
-envelopes render no messages or threads. Protected room views are never saved
+message resends, pin updates, read markers, older-history pagination and typing
+submissions refuse or fail closed before SDK transport in a protected or unknown
+room. The Matrix transport rechecks policy after SDK encryption/scheduler awaits
+and before each actual fetch, including credential refresh retries.
+Unauthenticated incoming plaintext and encrypted envelopes render no messages,
+threads, pins or recent-writer ordering. Protected room views are never saved
 to the plaintext timeline cache. Cached plaintext is withheld before fresh
 creation-state classification; ordinary rooms resume their existing live-cache
 writes after sync. Logout still wipes the cache.
@@ -40,7 +41,10 @@ writes after sync. Logout still wipes the cache.
 Uploads require a live room authorization callback before file preflight and
 again after asynchronous preparation. The upload path rechecks it before each
 Core mutation invocation and immediately before dispatching storage bytes. Both
-Core mutations also carry a final dispatch guard after asynchronous API middleware.
+Core mutations also enforce a synchronous pre-check and a final request-guard
+middleware inside `src/api/client.ts` after asynchronous API middleware and
+across credential-refresh retries, keeping `src/api/client.ts` as the sole Core
+API native `fetch` module.
 An upload begun in an unavailable protected room emits
 neither ticket metadata nor plaintext bytes. Both the composer and workspace Files panel bind
 the callback to their actual Espace store. An upload already dispatched for an

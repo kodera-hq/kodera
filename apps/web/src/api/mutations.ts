@@ -3,8 +3,7 @@
 // declares, the idempotency key (added by the client middleware), and the optimistic
 // concurrency token that every `PATCH` now requires (`docs/api/CONVENTIONS.md` §10).
 
-import { coreApi } from './client'
-import { guardCoreDispatch } from './dispatchGuard'
+import { coreApi, withAttachmentDispatchGuard } from './client'
 import type { paths } from './schema'
 
 /** The verbs that write. `PUT` does not exist in this API (CONSOLE_RECONCILIATION §4.6). */
@@ -139,10 +138,13 @@ export async function mutate<M extends MutationMethod, P extends PathsWith<M>>(
     init: Record<string, unknown>
   ) => Promise<{ data?: unknown; response: Response }>
 
-  const { data } = await request(op.method, op.path, {
-    ...rest,
-    headers,
-    ...(dispatchGuard === undefined ? {} : { fetch: guardCoreDispatch(dispatchGuard) }),
-  })
+  const { data } = dispatchGuard
+    ? await withAttachmentDispatchGuard(
+        headers,
+        (rest as { params?: { header?: Record<string, string> } }).params,
+        dispatchGuard,
+        (extra) => request(op.method, op.path, { ...rest, headers, ...extra })
+      )
+    : await request(op.method, op.path, { ...rest, headers })
   return data as SuccessBody<OperationOf<M, P>>
 }

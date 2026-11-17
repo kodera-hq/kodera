@@ -135,6 +135,25 @@ describe('configured confidential device native exception', () => {
     refused(await one(lint, bad), nativeRule)
     await accepted(healthy)
   })
+  it('strictly bans native and globalThis fetch in sibling src/api modules including dispatchGuard.ts', async () => {
+    for (const relative of ['../../../src/api/dispatchGuard.ts', '../../../src/api/mutations.ts']) {
+      const target = fileURLToPath(new URL(relative, import.meta.url))
+      const configured: Linter.Config | undefined = await lint.calculateConfigForFile(target)
+      expect(configured?.rules?.[nativeRule]).toBeUndefined()
+      refused(
+        await one(lint, "export const call = () => fetch('https://core.invalid/')\n", target),
+        'no-restricted-globals'
+      )
+      refused(
+        await one(
+          lint,
+          "export const call = () => globalThis.fetch('https://core.invalid/')\n",
+          target
+        ),
+        'no-restricted-properties'
+      )
+    }
+  })
 })
 
 const direct =

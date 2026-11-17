@@ -2613,8 +2613,12 @@ describe('confidential room plaintext quarantine', () => {
         expect(store.getSnapshot().rooms[0]?.confidentiality).toBe('confidential-unavailable')
         expect(store.getTimeline(SNAPSHOT_ROOM)).toEqual([])
         expect(store.getThread(SNAPSHOT_ROOM, '$leaked')).toEqual([])
+        expect(store.getPinned(SNAPSHOT_ROOM)).toEqual([])
+        expect(store.getHistory(SNAPSHOT_ROOM)).toBe('start')
+        expect(store.getReadMarker(SNAPSHOT_ROOM)).toBeNull()
         expect(store.canSendMessage(SNAPSHOT_ROOM)).toBe(false)
         expect(store.canReact(SNAPSHOT_ROOM)).toBe(false)
+        expect(store.canPin(SNAPSHOT_ROOM)).toBe(false)
         const refused = [
           () => store.send(SNAPSHOT_ROOM, 'private'),
           () => store.send(SNAPSHOT_ROOM, 'private reply', { threadRootId: '$leaked' }),
@@ -2634,9 +2638,13 @@ describe('confidential room plaintext quarantine', () => {
           () => store.react(SNAPSHOT_ROOM, '$leaked', 'private reaction'),
           () => store.unreact(SNAPSHOT_ROOM, '$leaked', 'private reaction'),
           () => store.resend(SNAPSHOT_ROOM, '$leaked'),
+          () => store.setPinned(SNAPSHOT_ROOM, '$leaked', true),
+          () => store.setPinned(SNAPSHOT_ROOM, '$leaked', false),
         ]
         for (const attempt of refused)
           await expect(attempt()).rejects.toThrow('No content was sent')
+        await store.markRead(SNAPSHOT_ROOM)
+        await store.loadOlder(SNAPSHOT_ROOM)
         store.setTyping(SNAPSHOT_ROOM, true)
         expect(fixture.requests).toEqual([])
         expect(fixture.typingNotices).toEqual([])
@@ -2909,11 +2917,127 @@ describe('confidential room plaintext quarantine', () => {
     const fixture = snapshotFixture()
     try {
       await fixture.start()
-      expect(fixture.store.getRoomBoundary('!unknown:matrix.acme.kodera.io')).toBe('unknown')
-      await expect(fixture.store.send('!unknown:matrix.acme.kodera.io', 'private')).rejects.toThrow(
+      const unknownRoom = '!unknown:matrix.acme.kodera.io'
+      expect(fixture.store.getRoomBoundary(unknownRoom)).toBe('unknown')
+      expect(fixture.store.canPin(unknownRoom)).toBe(false)
+      expect(fixture.store.getPinned(unknownRoom)).toEqual([])
+      expect(fixture.store.getHistory(unknownRoom)).toBe('start')
+      await expect(fixture.store.send(unknownRoom, 'private')).rejects.toThrow(
         'No content was sent'
       )
+      await expect(fixture.store.setPinned(unknownRoom, '$root', true)).rejects.toThrow(
+        'No content was sent'
+      )
+      await fixture.store.markRead(unknownRoom)
+      await fixture.store.loadOlder(unknownRoom)
       expect(fixture.requests).toEqual([])
+    } finally {
+      fixture.stop()
+    }
+  })
+
+  it('purges cached pins, history, read marker, and writer ordering on quarantine and withholds unclassified room state', async () => {
+    const QUIET_PEER = '@claire.moreau:matrix.acme.kodera.io'
+    const fixture = snapshotFixture([snapshotMessage('$root', 'hello from zoe')], {
+      names: { [SNAPSHOT_ALICE]: 'Zoe', [SNAPSHOT_ME]: 'Moi' },
+      accountData: [{ type: 'm.fully_read', content: { event_id: '$root' } }],
+      state: [
+        {
+          ...snapshotMessage('$join-quiet', ''),
+          type: 'm.room.member',
+          state_key: QUIET_PEER,
+          sender: QUIET_PEER,
+          content: { membership: 'join', displayname: 'Aaron' },
+        },
+        {
+          ...snapshotMessage('$power', ''),
+          type: 'm.room.power_levels',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { users: { [SNAPSHOT_ME]: 100 }, state_default: 50 },
+        },
+        {
+          ...snapshotMessage('$pins', ''),
+          type: 'm.room.pinned_events',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { pinned: ['$root'] },
+        },
+      ],
+    })
+    try {
+      await fixture.start()
+      expect(fixture.store.canPin(SNAPSHOT_ROOM)).toBe(true)
+      expect(fixture.store.getPinned(SNAPSHOT_ROOM)).toEqual(['$root'])
+      expect(fixture.store.getHistory(SNAPSHOT_ROOM)).toBe('more')
+      expect(fixture.store.getReadMarker(SNAPSHOT_ROOM)).toBe('$root')
+      expect(fixture.store.getSnapshot().rooms[0]?.faces?.map((face) => face.name)).toEqual([
+        'Zoe',
+        'Aaron',
+      ])
+
+      await fixture.publishState(protectedState('io.kodera.mls.v1'))
+      expect(fixture.store.canPin(SNAPSHOT_ROOM)).toBe(false)
+      expect(fixture.store.getPinned(SNAPSHOT_ROOM)).toEqual([])
+      expect(fixture.store.getHistory(SNAPSHOT_ROOM)).toBe('start')
+      expect(fixture.store.getReadMarker(SNAPSHOT_ROOM)).toBeNull()
+      expect(fixture.store.getSnapshot().rooms[0]?.faces?.map((face) => face.name)).toEqual([
+        'Aaron',
+        'Zoe',
+      ])
+      await expect(fixture.store.setPinned(SNAPSHOT_ROOM, '$root', false)).rejects.toThrow(
+        'No content was sent'
+      )
+      await expect(fixture.store.setPinned(SNAPSHOT_ROOM, '$other', true)).rejects.toThrow(
+        'No content was sent'
+      )
+      await fixture.store.markRead(SNAPSHOT_ROOM)
+      await fixture.store.loadOlder(SNAPSHOT_ROOM)
+      expect(fixture.requests).toEqual([])
+
+      // Also verify an unclassified joined room lacking m.room.create fails closed on all paths.
+      const client = matrixClientForTests(fixture.store)
+      const unclassifiedId = '!unclassified:matrix.acme.kodera.io'
+      const unclassified = new Room(unclassifiedId, client, SNAPSHOT_ME)
+      vi.spyOn(unclassified, 'getMyMembership').mockReturnValue('join')
+      unclassified.currentState.setStateEvents([
+        new MatrixEvent({
+          room_id: unclassifiedId,
+          event_id: '$unclassified-power',
+          type: 'm.room.power_levels',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { users: { [SNAPSHOT_ME]: 100 }, state_default: 50 },
+        }),
+        new MatrixEvent({
+          room_id: unclassifiedId,
+          event_id: '$unclassified-pins',
+          type: 'm.room.pinned_events',
+          state_key: '',
+          sender: SNAPSHOT_ME,
+          content: { pinned: ['$unclassified-msg'] },
+        }),
+      ])
+      const originalGetRoom = client.getRoom.bind(client)
+      vi.spyOn(client, 'getRoom').mockImplementation((id) =>
+        id === unclassifiedId ? unclassified : originalGetRoom(id)
+      )
+      const sendState = vi.spyOn(client, 'sendStateEvent')
+      const setMarkers = vi.spyOn(client, 'setRoomReadMarkers')
+      const scrollback = vi.spyOn(client, 'scrollback')
+
+      expect(fixture.store.getRoomBoundary(unclassifiedId)).toBe('unknown')
+      expect(fixture.store.canPin(unclassifiedId)).toBe(false)
+      expect(fixture.store.getPinned(unclassifiedId)).toEqual([])
+      expect(fixture.store.getHistory(unclassifiedId)).toBe('start')
+      await expect(
+        fixture.store.setPinned(unclassifiedId, '$unclassified-msg', false)
+      ).rejects.toThrow('No content was sent')
+      await fixture.store.markRead(unclassifiedId)
+      await fixture.store.loadOlder(unclassifiedId)
+      expect(sendState).not.toHaveBeenCalled()
+      expect(setMarkers).not.toHaveBeenCalled()
+      expect(scrollback).not.toHaveBeenCalled()
     } finally {
       fixture.stop()
     }

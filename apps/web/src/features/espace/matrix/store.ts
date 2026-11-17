@@ -491,10 +491,10 @@ export class EspaceStore {
         init?.method ?? (input instanceof Request ? input.method : 'GET')
       ).toUpperCase()
       const timeline =
-        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing)(?:\/|$)/.exec(
+        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing|read_markers|receipt|messages|state\/m\.room\.pinned_events)(?:\/|$)/.exec(
           url.pathname
         )
-      if (timeline && method !== 'GET' && method !== 'HEAD') {
+      if (timeline && (timeline[2] === 'messages' || (method !== 'GET' && method !== 'HEAD'))) {
         const roomId = decodeURIComponent(timeline[1]!)
         const cleanup = this.#typingCleanup.delete(roomId)
         const ownTyping =
@@ -799,7 +799,10 @@ export class EspaceStore {
       : NONE
 
   /** How far back one room's timeline reaches; it changes with the snapshot, as messages do. */
-  getHistory = (roomId: string): History => this.#histories.get(roomId) ?? 'more'
+  getHistory = (roomId: string): History =>
+    permitsPlaintext(this.getRoomBoundary(roomId))
+      ? (this.#histories.get(roomId) ?? 'more')
+      : 'start'
 
   /**
    * The event the member has read up to in the room: its fully-read marker (`m.fully_read`
@@ -808,6 +811,7 @@ export class EspaceStore {
    * for a room never read, or not known.
    */
   getReadMarker = (roomId: string): string | null => {
+    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return null
     const marker = this.#client
       .getRoom(roomId)
       ?.getAccountData('m.fully_read')
@@ -823,6 +827,7 @@ export class EspaceStore {
    * follows it.
    */
   firstShownAfter = (roomId: string, eventId: string): string | null => {
+    if (!permitsPlaintext(this.getRoomBoundary(roomId))) return null
     const events = this.#client.getRoom(roomId)?.getLiveTimeline().getEvents() ?? []
     const at = events.findIndex((event) => event.getId() === eventId)
     if (at === -1) return null
@@ -892,7 +897,11 @@ export class EspaceStore {
         // until its next `m.typing` says who is. (A room still being set up was never joined.)
         if (this.#timelines.has(roomId)) this.#typingIds.set(roomId, [])
         messageDataChanged ||=
-          this.#timelines.has(roomId) || this.#threads.has(roomId) || this.#eventsByRoom.has(roomId)
+          this.#timelines.has(roomId) ||
+          this.#threads.has(roomId) ||
+          this.#eventsByRoom.has(roomId) ||
+          this.#pins.has(roomId) ||
+          this.#histories.has(roomId)
         this.#timelines.delete(roomId)
         // Out of the room: what this device kept of it goes too.
         if (this.#cached.delete(roomId)) messageDataChanged = true
@@ -900,21 +909,32 @@ export class EspaceStore {
         this.#threads.delete(roomId)
         this.#pins.delete(roomId)
         this.#eventsByRoom.delete(roomId)
+        this.#paging.delete(roomId)
         this.#histories.delete(roomId)
         this.#members.delete(roomId)
         continue
       }
       messageDataChanged = true
       const plaintext = permitsPlaintext(this.getRoomBoundary(roomId))
-      const events = plaintext ? this.#events(room) : []
+      if (!plaintext) {
+        this.#timelines.delete(roomId)
+        this.#cached.delete(roomId)
+        this.#cache?.forget(roomId)
+        this.#threads.delete(roomId)
+        this.#pins.delete(roomId)
+        this.#eventsByRoom.delete(roomId)
+        this.#paging.delete(roomId)
+        this.#histories.delete(roomId)
+        continue
+      }
+      const events = this.#events(room)
       this.#eventsByRoom.set(roomId, events)
       this.#histories.set(roomId, this.#historyOf(room))
       const next = timelineView(events, this.#me)
       const timeline = reuse(this.#timelines.get(roomId), next, (m) => m.key)
       this.#timelines.set(roomId, timeline)
       this.#cached.delete(roomId)
-      if (plaintext) this.#cache?.save(roomId, timeline)
-      else this.#cache?.forget(roomId)
+      this.#cache?.save(roomId, timeline)
       const pins = pinnedOf(room.currentState.getStateEvents(PINNED_EVENTS, '')?.getContent())
       const knownPins = this.#pins.get(roomId)
       this.#pins.set(roomId, knownPins !== undefined && sameIds(knownPins, pins) ? knownPins : pins)
@@ -1073,6 +1093,7 @@ export class EspaceStore {
 
   /** The latest people to write in the room's loaded log, still in it. */
   #latestWriters(room: Room): MemberView[] {
+    if (!permitsPlaintext(this.getRoomBoundary(room.roomId))) return []
     const faces: MemberView[] = []
     const seen = new Set<string>()
     const events = room.getLiveTimeline().getEvents()
@@ -1152,12 +1173,14 @@ export class EspaceStore {
   }
 
   /** The room's pinned events, oldest pin first; the same array until they change. */
-  getPinned = (roomId: string): readonly string[] => this.#pins.get(roomId) ?? NO_PINS
+  getPinned = (roomId: string): readonly string[] =>
+    permitsPlaintext(this.getRoomBoundary(roomId)) ? (this.#pins.get(roomId) ?? NO_PINS) : NO_PINS
 
   /** Whether the room's power levels let the member change its pins. */
   canPin = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
+    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+      return false
     return room.currentState.maySendStateEvent(PINNED_EVENTS, this.#me)
   }
 
@@ -1180,29 +1203,28 @@ export class EspaceStore {
     )
   }
 
+  #isPlaintextRoomAllowed(roomId: string): boolean {
+    return !this.#stopped && permitsPlaintext(this.getRoomBoundary(roomId))
+  }
+
   #requirePlaintextRoom(roomId: string): void {
-    if (this.#stopped || !permitsPlaintext(this.getRoomBoundary(roomId)))
-      throw new ConfidentialRoomUnavailable()
+    if (!this.#isPlaintextRoomAllowed(roomId)) throw new ConfidentialRoomUnavailable()
   }
 
   /** Whether the room's power levels let the member post messages (`m.room.message`). */
   canSendMessage = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
-    return (
-      permitsPlaintext(this.getRoomBoundary(roomId)) &&
-      room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
-    )
+    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+      return false
+    return room.currentState.maySendEvent(EventType.RoomMessage, this.#me)
   }
 
   /** Whether the room's power levels let the member react to messages (`m.reaction`). */
   canReact = (roomId: string): boolean => {
     const room = this.#client.getRoom(roomId)
-    if (this.#stopped || room === null || room.getMyMembership() !== 'join') return false
-    return (
-      permitsPlaintext(this.getRoomBoundary(roomId)) &&
-      room.currentState.maySendEvent(EventType.Reaction, this.#me)
-    )
+    if (!this.#isPlaintextRoomAllowed(roomId) || room === null || room.getMyMembership() !== 'join')
+      return false
+    return room.currentState.maySendEvent(EventType.Reaction, this.#me)
   }
 
   /** State of an in-flight or refused join for `roomId`, or `undefined` otherwise. */
@@ -1210,6 +1232,7 @@ export class EspaceStore {
 
   /** Pins or unpins one event; the room's next state answers with the new list. */
   async setPinned(roomId: string, eventId: string, pinned: boolean): Promise<void> {
+    this.#requirePlaintextRoom(roomId)
     const current = this.getPinned(roomId)
     if (current.includes(eventId) === pinned) return
     const next = pinned ? [...current, eventId] : current.filter((id) => id !== eventId)
@@ -2083,6 +2106,7 @@ export class EspaceStore {
    * itself waits a few seconds before a new ask after one.
    */
   loadOlder = async (roomId: string): Promise<void> => {
+    if (!this.#isPlaintextRoomAllowed(roomId)) return
     const room = this.#client.getRoom(roomId)
     if (room === null || this.#paging.get(roomId) === 'loading') return
     if (this.#historyOf(room) === 'start') return
@@ -2102,6 +2126,7 @@ export class EspaceStore {
   /** Marks everything in the room as read, up to its last event: the read receipt and the
    * fully-read marker together, as Matrix clients do on opening a room. */
   async markRead(roomId: string): Promise<void> {
+    if (!this.#isPlaintextRoomAllowed(roomId)) return
     const room = this.#client.getRoom(roomId)
     const last = room
       ?.getLiveTimeline()
