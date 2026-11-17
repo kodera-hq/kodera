@@ -18,7 +18,8 @@ Status: Implemented for review on Core API 0.43.0; service release remains separ
 - **Sending.** The message waits while any file is still sending, or refused and not yet removed. The composer lists each file with its state, and shows at most ten (`attachmentQueue.ts`).
 - **Where the bytes may go.** The console's policy allows the upload under the deployment's `--attachment-base` only: an https origin with a path ending in `/` (`server/static.mjs`). A bare origin, a wildcard, or Core's or the identity provider's origin is refused at start. A deployment without the flag offers no upload, since its policy blocks one. `storageTransport.ts` is the one file where ESLint allows `fetch`.
 - **In the message.** The Matrix event names each file by Core's id under `io.kodera.attachments`, never by an address. Its `body` falls back to « 📎 name » lines for other clients.
-- **Reading a file reference.** A reader keeps only references that look like Core's: a UUID, a known type and a positive size. The name is cleaned. Opening one asks Core for a fresh, short-lived download address, which must be https, and opens it in a new tab with no opener. No image from storage is drawn inside the console.
+- **Reading a file reference.** A reader keeps only references that look like Core's: a UUID, a known type and a positive size. The name is cleaned. An explicit open asks Core for a fresh, short-lived https download address. Raster images are fetched without credentials or referrer, bounded to the attachment size and 25 MiB, checked for the expected MIME type and signature, then previewed in a modal from a local blob URL. The request is cancelled when its owner leaves and the URL is revoked on close. Other formats open in a new tab with no opener. No remote address is used as an image source.
+- **Files hub.** The hub includes attachments from resolved workspace channels and joined direct conversations, shows each filename once, and formats totals through GB. It observes workspace storage quotas, refuses a known capacity overflow before upload, and stages chosen or dropped files for an explicitly selected writable channel. Publishing waits for stored references and a separate Send action; Core remains the authoritative quota enforcer.
 
 ### Link previews
 
@@ -31,9 +32,12 @@ Status: Implemented for review on Core API 0.43.0; service release remains separ
   - any canonical address is http or https too.
 - A canonical address on another site is not followed.
 - Text loses control, zero-width and direction-override characters, and is cut on whole characters.
-- No image is drawn. `img-src` names no remote origin, and a remote image would tell its host who read the message. It allows `'self'` and `blob:` only: a blob is bytes this page already holds — a member's own avatar, fetched from their homeserver over `connect-src` — so drawing one tells no host anything. An address a message carries is never drawn: `safeUnfurl.ts` refuses `data:` and `blob:` addresses outright.
+- No link-preview image is drawn. `img-src` names no remote origin, and a remote image would tell its host who read the message. It allows `'self'` and `blob:` only: a blob is bytes this page already holds — a member's own avatar fetched from their homeserver, or an explicitly opened raster attachment fetched from storage over `connect-src` — so drawing one tells no host anything. An address a message carries is never drawn: `safeUnfurl.ts` refuses `data:` and `blob:` addresses outright.
 
 ### Direct conversations
+
+The member picker merges known channel rosters with the homeserver’s discoverable user directory. Directory search is debounced, limited to 30 results, and guarded against stale responses or retired sessions. IDs come directly from Matrix; no Core identity is converted to a guessed Matrix ID. Directory results are labelled as such and do not claim workspace membership or completeness.
+
 
 - The sidebar's « Messages directs » lists the joined rooms that `m.direct` names, by their people's names (`matrix/directs.ts`, `DirectMessages.tsx`).
 - « Nouveau » opens a conversation with one to eight Matrix ids:

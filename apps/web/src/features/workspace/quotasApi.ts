@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 // Workspace resource quota observation API (Core API 0.44.0).
 // Observation only: Core enforces authoritative reservations under lock and
 // refuses exhausted writes with 402 (seats/pages), 413 (media bytes), or 503
@@ -54,4 +55,14 @@ export async function fetchWorkspaceQuotaUsage(
   }
   requireWorkspaceQuotaUsage(data)
   return data
+}
+
+/** Shared observation for file surfaces; enforcement remains authoritative in Core. */
+export function useWorkspaceQuotasQuery(organisationId: string) {
+  return useQuery({
+    queryKey: ['workspace-quotas', organisationId],
+    queryFn: () => fetchWorkspaceQuotaUsage(organisationId),
+    staleTime: 30_000,
+    retry: false,
+  })
 }

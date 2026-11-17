@@ -514,7 +514,7 @@ function ChannelSidebarView({
     <nav
       aria-labelledby={headingId}
       ref={cssProperty('width', narrow ? undefined : `${width}px`)}
-      className="order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft bg-c-sunken p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0"
+      className="material-panel order-first flex w-shell-sidebar-width shrink-0 flex-col justify-between overflow-hidden border-r border-c-border-soft p-3 narrow:max-h-[calc(100vh*3/4)] narrow:w-full narrow:border-r-0"
     >
       <div className="flex min-h-0 flex-1 flex-col">
         {channelNavigation}

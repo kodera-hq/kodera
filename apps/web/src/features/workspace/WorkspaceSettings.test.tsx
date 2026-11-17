@@ -93,6 +93,11 @@ it('keeps appearance and audio available to a member while filtering admin desti
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
   await user.click(screen.getByRole('tab', { name: 'Voix & audio' }))
   expect(await screen.findByRole('button', { name: 'Tester le son' })).toBeVisible()
+  expect(await screen.findByRole('slider', { name: 'Volume principal' })).toBeVisible()
+  expect(screen.getByRole('switch', { name: 'Mentions et messages' })).toBeVisible()
+  expect(
+    screen.getByRole('radiogroup', { name: 'Signal de mention et message direct' })
+  ).toBeVisible()
   await user.click(screen.getByRole('tab', { name: 'Hébergement & administration' }))
   // « Sécurité & MFA » and « Fédération » are not offered: both routes render only the
   // placeholder today, so following either lands on « Cette page n'est pas encore disponible »,

@@ -62,7 +62,7 @@ export const DropdownMenu = forwardRef<HTMLDivElement, DropdownMenuProps>(functi
           align={align}
           sideOffset={4}
           className={cx(
-            'z-50 rounded-md border border-c-border bg-c-elevated p-1 shadow-pop shadow-c-shadow-2',
+            'material-popover z-50 rounded-md border border-c-border p-1 shadow-pop shadow-c-shadow-2',
             'focus:outline-hidden',
             // 180 px is not on the tokens package's spacing grid and
             // COMPONENTS.md gives the row action menu no width of its own —

@@ -2497,3 +2497,24 @@ describe('fetchOwnAvatar origin pinning, raster magic-byte guard, and reactive o
     }
   })
 })
+
+it('does not publish an avatar whose upload settles after its Matrix session stops', async () => {
+  const store = createEspaceStore(
+    { baseUrl: HS, userId: '@member:example.org', deviceId: 'DEV1', accessToken: 'tok' },
+    vi.fn(),
+    { cache: null }
+  )
+  const client = matrixClientForTests(store)
+  let finish!: (value: { content_uri: string }) => void
+  vi.spyOn(client, 'uploadContent').mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve
+    })
+  )
+  const publish = vi.spyOn(client, 'setAvatarUrl').mockResolvedValue({})
+  const uploading = store.setProfileAvatar(new Blob(['image'], { type: 'image/png' }), 'avatar.png')
+  store.stop()
+  finish({ content_uri: 'mxc://example.org/uploaded' })
+  await expect(uploading).rejects.toThrow('stopped')
+  expect(publish).not.toHaveBeenCalled()
+})

@@ -1,3 +1,5 @@
+import { CanvasNavigation } from './canvasNavigation'
+import { flushSync } from 'react-dom'
 import { readLocalWorkspaceView } from './localWorkspaceView'
 import { COMMUNITY_CATEGORIES } from '../docs/communityStructure'
 import { developerDocsCopy } from '../docs/developerDocsMessages'
@@ -37,7 +39,7 @@ import { onboardingCopy } from '../onboarding/onboardingMessages'
 // not repeated.
 
 import { useParams, useRouter } from '@tanstack/react-router'
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { WorkspacePageRecord } from '../docs/WorkspaceCollaborativeDocs'
 import {
   createDemoWorkspaceStore,
@@ -376,7 +378,22 @@ function LiveWorkspace({
       ? 'Member'
       : safeDisplayName(preferredName ?? accountName, userId, unnamed)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [canvas, setCanvas] = useState<CanvasMode>('chat')
+  const [canvas, setCanvasState] = useState<CanvasMode>('chat')
+  const [canvasNavigation] = useState(
+    () =>
+      new CanvasNavigation((mode) => flushSync(() => setCanvasState(mode)), {
+        start:
+          typeof document.startViewTransition === 'function'
+            ? (update) => document.startViewTransition(update)
+            : undefined,
+        reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      })
+  )
+  const setCanvas = useCallback(
+    (mode: CanvasMode) => canvasNavigation.change(mode),
+    [canvasNavigation]
+  )
+  useEffect(() => () => canvasNavigation.dispose(), [canvasNavigation])
   // « Docs » opens on the collaborative Pages in the live workspace. `team` is the channel pads
   // view, which only a store supplies (`teamPadsSlot` below); without one it falls through to a
   // placeholder card pointing at a `docs.<host>` address this deployment does not serve, so a
@@ -402,7 +419,7 @@ function LiveWorkspace({
     }
     window.addEventListener(WORKSPACE_COMMAND_EVENT, command)
     return () => window.removeEventListener(WORKSPACE_COMMAND_EVENT, command)
-  }, [])
+  }, [setCanvas])
   useEffect(() => {
     if (!channel || channel.kind !== 'text' || !store) return
     const room = store.getSnapshot().channels.get(channel.id)

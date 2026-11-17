@@ -5,7 +5,7 @@
 //
 // Nothing is fetched to draw the list: the name, the type and the size come from the messages
 // already synced. Opening a file asks Core for a fresh, short-lived address and follows it in a
-// new tab, so the file never runs inside the console's origin (`MessageAttachments.tsx`).
+// local raster preview or a new tab for other formats (`MessageAttachments.tsx`).
 
 import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,6 +14,7 @@ import { StudioGlyph } from '../../ui/icons/StudioGlyph'
 import { TextField } from '../../ui/TextField/TextField'
 import { cx } from '../../ui/cx'
 import { TOUCH_TARGET } from '../../ui/touchTarget'
+import { FilesUpload } from './FilesUpload'
 import { MessageAttachments } from '../messaging/attachments/MessageAttachments'
 import type { ChannelDoc } from '../docs/ChannelDocsEditor'
 import type { ChannelSearchEntry } from '../workspace/ChannelSearch'
@@ -45,11 +46,12 @@ export interface WorkspaceFilesPanelProps {
   /** Opens a document in the documents canvas; absent where this view cannot open one. */
   readonly onOpenDocument?: ((doc: ChannelDoc) => void) | undefined
   /** Opens the channel a file was sent in. */
+  readonly onOpenDirect?: ((roomId: string) => void) | undefined
   readonly onOpenChannel: (channelId: string) => void
 }
 
 function sizeOf(bytes: number, language: string | undefined): string {
-  const units = ['B', 'KB', 'MB'] as const
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'] as const
   let value = bytes
   let unit = 0
   while (value >= 1024 && unit < units.length - 1) {
@@ -66,6 +68,7 @@ export function WorkspaceFilesPanel({
   documents,
   onOpenDocument,
   onOpenChannel,
+  onOpenDirect,
 }: WorkspaceFilesPanelProps) {
   const { t, i18n } = useTranslation()
   const headingId = useId()
@@ -101,7 +104,8 @@ export function WorkspaceFilesPanel({
       onOpenDocument?.(entry.document)
       return
     }
-    onOpenChannel(entry.channel.id)
+    if (entry.directRoomId !== undefined) onOpenDirect?.(entry.directRoomId)
+    else onOpenChannel(entry.channel.id)
   }
 
   const card = (entry: WorkspaceFileEntry) => (
@@ -109,35 +113,40 @@ export function WorkspaceFilesPanel({
       <div
         className={cx(
           'flex h-full min-w-0 gap-3 rounded-lg border border-c-border bg-c-surface p-3',
-          'motion-safe:transition-shadow motion-safe:duration-150 hover:shadow-card hover:shadow-c-shadow-1',
+          'hover:shadow-card hover:shadow-c-shadow-1 motion-safe:transition-shadow motion-safe:duration-150',
           layout === 'grid' ? 'flex-col' : 'flex-row items-center'
         )}
       >
         <span aria-hidden="true" className="shrink-0 text-c-ink-3">
           <StudioGlyph name={entry.document === undefined ? 'files' : 'docs'} />
         </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <button
-            type="button"
-            onClick={() => openEntry(entry)}
-            className={cx(
-              'truncate rounded-sm text-left text-sm font-medium text-c-ink',
-              'hover:underline focus-visible:ring focus-visible:outline-hidden'
-            )}
-          >
-            {entry.name}
-          </button>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          {entry.ref === undefined ? (
+            <button
+              type="button"
+              onClick={() => openEntry(entry)}
+              className={cx(
+                'truncate rounded-sm text-left text-sm font-medium text-c-ink',
+                'hover:underline focus-visible:ring focus-visible:outline-hidden'
+              )}
+            >
+              {entry.name}
+            </button>
+          ) : (
+            <MessageAttachments refs={[entry.ref]} />
+          )}
           <span className="truncate text-xs text-c-ink-3" title={entry.senderId ?? undefined}>
             {[
-              `#${entry.channel.label}`,
+              `${entry.directRoomId === undefined ? '#' : ''}${entry.channel.label}`,
               senderOf(entry),
-              entry.sizeBytes === undefined ? '' : sizeOf(entry.sizeBytes, i18n.resolvedLanguage),
+              entry.sizeBytes === undefined || entry.ref !== undefined
+                ? ''
+                : sizeOf(entry.sizeBytes, i18n.resolvedLanguage),
             ]
               .filter(Boolean)
               .join(' · ')}
           </span>
-          {entry.ref === undefined ? null : <MessageAttachments refs={[entry.ref]} />}
-        </span>
+        </div>
       </div>
     </li>
   )
@@ -156,7 +165,11 @@ export function WorkspaceFilesPanel({
             })}
           </p>
         </div>
-        <div role="group" aria-label={t('console.workspace.files.label-layout')} className="flex gap-2">
+        <div
+          role="group"
+          aria-label={t('console.workspace.files.label-layout')}
+          className="flex gap-2"
+        >
           {(['grid', 'list'] as const).map((value) => (
             <button
               key={value}
@@ -234,17 +247,14 @@ export function WorkspaceFilesPanel({
           className={cx(
             'min-h-0 flex-1 overflow-y-auto',
             layout === 'grid'
-              ? 'grid grid-cols-3 gap-3 narrow:grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+              ? 'grid grid-cols-3 gap-3 md:grid-cols-2 lg:grid-cols-3 narrow:grid-cols-1'
               : 'flex flex-col gap-2'
           )}
         >
           {shown.map(card)}
         </ul>
       )}
-      {/* Files are sent from a channel's composer, which holds the upload the contract accepts
-          (25 MiB, ten at a time, active content refused). This view gathers them; it does not
-          offer a second way in that would have to repeat those rules. */}
-      <p className="text-xs text-c-ink-3">{t('console.workspace.files.hint-upload')}</p>
+      <FilesUpload store={store} snapshot={snapshot} channels={searchEntries} />
     </section>
   )
 }

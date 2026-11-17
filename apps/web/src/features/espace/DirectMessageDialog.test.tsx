@@ -9,6 +9,10 @@ import { EspaceLiveView, type EspaceStoreLike } from './EspaceLiveView'
 import type { CanvasMode } from './liveViewModel'
 import type { EspaceSnapshot } from './matrix/store'
 
+vi.mock('../workspace/quotasApi', () => ({
+  useWorkspaceQuotasQuery: () => ({ data: undefined, refetch: vi.fn() }),
+}))
+
 const GENERAL = 'a1111111-1111-4111-8111-000000000001'
 const ROOM = '!general:matrix.acme.kodera.io'
 const DM_ROOM = '!dm:matrix.acme.kodera.io'

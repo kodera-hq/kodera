@@ -804,6 +804,27 @@ export class SoundEngine {
       }
     }
 
+    // Manifest cooldowns are scoped to the cue and conversation. A busy room must not
+    // suppress a different room; evaluate alone never consumes the cooldown.
+    const cueKey = `${cue.slug}:${context.channelId ?? context.roomId ?? 'default'}`
+    const lastCue = this.lastCuePlayedAt.get(cueKey)
+    if (lastCue !== undefined && this.now() - lastCue < cue.cooldownMs) {
+      return {
+        allowed: false,
+        reason: 'cue-cooldown',
+        effectivePack,
+        cueSlug: cue.slug,
+        triggerId,
+        category: cue.category,
+        tier: cue.tier,
+        gain: 0,
+        pan: 0,
+        ducked: false,
+        durationMs: cue.durationMs,
+        loopIntervalMs: cue.loopIntervalMs ?? null,
+      }
+    }
+
     return {
       allowed: true,
       reason: 'none',
@@ -852,7 +873,12 @@ export class SoundEngine {
     ) {
       this.lastMentionByChannel.set(context.channelId ?? 'default', now)
     }
-    this.lastCuePlayedAt.set(decision.triggerId, now)
+    if (!context.forcePreview) {
+      this.lastCuePlayedAt.set(
+        `${decision.cueSlug}:${context.channelId ?? context.roomId ?? 'default'}`,
+        now
+      )
+    }
 
     this.dispatchWebAudio(decision)
     return decision

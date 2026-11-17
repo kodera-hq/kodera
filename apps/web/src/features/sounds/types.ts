@@ -5,14 +5,7 @@ export type SoundPackId = AcousticPackId | 'silencieux'
 export type SoundCategory = 'voice' | 'calls' | 'messages' | 'workspace'
 
 export type BlueprintCueCategory =
-  | 'control'
-  | 'presence'
-  | 'peer'
-  | 'compliance'
-  | 'notify'
-  | 'ring'
-  | 'network'
-  | 'diagnostic'
+  'control' | 'presence' | 'peer' | 'compliance' | 'notify' | 'ring' | 'network' | 'diagnostic'
 
 export type SoundTier = 0 | 1 | 2 | 3
 
@@ -90,11 +83,7 @@ export type SemanticTriggerId =
   | 'workspace_speaker_test'
 
 export type SoundTriggerInput =
-  | SemanticTriggerId
-  | CanonicalCueSlug
-  | `semantic.sound.${string}`
-  | 'ptt_engage'
-  | 'ptt_release'
+  SemanticTriggerId | CanonicalCueSlug | `semantic.sound.${string}` | 'ptt_engage' | 'ptt_release'
 
 export interface SoundPackDescriptor {
   readonly id: SoundPackId
@@ -192,6 +181,7 @@ export type SuppressionReason =
   | 'crowd-limit'
   | 'peer-burst-coalesced'
   | 'mention-cooldown'
+  | 'cue-cooldown'
   | 'self-message'
   | 'unknown-trigger'
   | 'audio-unavailable'

@@ -27,6 +27,7 @@ export interface WorkspaceSettingsRuntime {
   /** The name the console's own account carries (`Me.display_name`, else the address's local
    * part): a human name to start from when neither this device nor the homeserver holds one. */
   accountName?: string | undefined
+  channels?: readonly { id: string; label: string }[] | undefined
   members: readonly MemberView[]
   call: AudioSettingsCall | null
   invite: ((userId: string) => Promise<void>) | undefined
@@ -68,6 +69,7 @@ export function registerWorkspaceSettingsRuntime(
       ...runtime,
       call: null,
       invite: undefined,
+      channels: [],
       // The homeserver's profile is reachable only while its session is: a panel left open after
       // the session ends offers nothing it could not carry out.
       profile: undefined,

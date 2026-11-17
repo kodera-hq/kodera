@@ -24,6 +24,8 @@ export const themeStudioMessages = {
     importLabel: 'Code de thème à importer',
     importPlaceholder: 'Collez un code kodera-theme:v1:…',
     importApply: 'Importer et appliquer',
+    contrastRefused:
+      'Palette refusée : le texte et les boutons doivent conserver un contraste d’au moins 4,5:1.',
     saveFailed: 'Le thème n’a pas été sauvegardé. Le stockage local est indisponible.',
     applied: (name: string) => `Palette « ${name} » appliquée.`,
     saveDone: (name: string) => `Thème « ${name} » sauvegardé dans votre bibliothèque locale.`,
@@ -92,6 +94,7 @@ export const themeStudioMessages = {
     importLabel: 'Theme code to import',
     importPlaceholder: 'Paste a kodera-theme:v1:… code',
     importApply: 'Import and apply',
+    contrastRefused: 'Palette refused: text and buttons must retain at least 4.5:1 contrast.',
     saveFailed: 'The theme was not saved. Local storage is unavailable.',
     applied: (name: string) => `Palette “${name}” applied.`,
     saveDone: (name: string) => `Theme “${name}” saved to your local library.`,

@@ -34,6 +34,7 @@ export class AttachmentQueue {
   #aborts = new Map<string, AbortController>()
   #listeners = new Set<() => void>()
   #serial = 0
+  #generation = 0
 
   constructor(organisationId: string, upload: Upload = uploadAttachment) {
     this.#organisationId = organisationId
@@ -57,6 +58,7 @@ export class AttachmentQueue {
   }
 
   async add(room: string, incoming: readonly File[]): Promise<void> {
+    const generation = this.#generation
     await Promise.all(
       incoming.map(async (file) => {
         const key = `f${++this.#serial}`
@@ -66,11 +68,19 @@ export class AttachmentQueue {
           return
         }
         this.#put(room, { ...base, status: 'uploading' })
-        const checked = preflight(file, await headOf(file))
+        let checked
+        try {
+          checked = preflight(file, await headOf(file))
+        } catch {
+          this.#replace(room, key, { ...base, status: 'failed' })
+          return
+        }
         if (!checked.ok) {
           this.#replace(room, key, { ...base, status: 'refused', reason: checked.reason })
           return
         }
+        if (generation !== this.#generation || !this.files(room).some((entry) => entry.key === key))
+          return
         const named = { ...base, filename: checked.filename }
         const abort = new AbortController()
         this.#aborts.set(key, abort)
@@ -116,6 +126,7 @@ export class AttachmentQueue {
 
   /** Stops every upload: the composer is gone. */
   close(): void {
+    this.#generation += 1
     for (const abort of this.#aborts.values()) abort.abort()
     this.#aborts.clear()
   }

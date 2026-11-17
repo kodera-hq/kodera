@@ -451,3 +451,50 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Canvas changes animate only compositor properties; reduced motion skips them entirely. */
+@layer components {
+  @media (prefers-reduced-motion: no-preference) {
+    .canvas-enter {
+      animation: canvas-enter var(--dur-fast) var(--ease-out);
+    }
+    @keyframes canvas-enter {
+      from {
+        opacity: 0;
+        transform: translateY(var(--sp-1));
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  }
+}
+
+@layer components {
+  .workspace-canvas {
+    view-transition-name: workspace-canvas;
+  }
+  :root:active-view-transition .canvas-enter {
+    animation: none;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-group(workspace-canvas) {
+    animation: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    ::view-transition-old(workspace-canvas) {
+      animation: canvas-exit var(--dur-fast) var(--ease-out) both;
+    }
+    ::view-transition-new(workspace-canvas) {
+      animation: canvas-enter var(--dur-fast) var(--ease-out) both;
+    }
+    @keyframes canvas-exit {
+      to {
+        opacity: 0;
+        transform: translateY(calc(-1 * var(--sp-1)));
+      }
+    }
+  }
+}

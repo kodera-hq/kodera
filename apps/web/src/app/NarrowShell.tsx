@@ -162,7 +162,7 @@ export function NarrowTopBar({
   return (
     <header
       ref={bar}
-      className="safe-area-top sticky top-0 z-10 border-b border-c-border-soft bg-c-surface"
+      className="safe-area-top material-bar sticky top-0 z-10 border-b border-c-border-soft"
     >
       <div className="flex min-h-[56px] items-center gap-3 px-4">
         <KoderaMark className="h-[18px] w-auto shrink-0 text-c-ink" />
@@ -288,7 +288,7 @@ export function NarrowModuleBar({ org, organisationId }: NarrowModuleBarProps) {
     <nav
       ref={bar}
       aria-label={t('console.shell.rail.a11y-label')}
-      className="safe-area-bottom sticky bottom-0 z-10 order-last border-t border-c-border-soft bg-c-surface"
+      className="safe-area-bottom material-bar sticky bottom-0 z-10 order-last border-t border-c-border-soft"
     >
       <ul className={`grid ${GRID_COLUMNS[2 + surfaces.length + apps.length] ?? 'grid-cols-6'}`}>
         <li className="flex">
@@ -393,7 +393,7 @@ export function NarrowTabBar({ org, role }: NarrowTabBarProps) {
     <nav
       ref={bar}
       aria-label={t('console.shell.tabs.a11y-label')}
-      className="safe-area-bottom sticky bottom-0 z-10 order-last border-t border-c-border-soft bg-c-surface"
+      className="safe-area-bottom material-bar sticky bottom-0 z-10 order-last border-t border-c-border-soft"
     >
       <ul className={`grid ${GRID_COLUMNS[tabs.length + 1] ?? 'grid-cols-5'}`}>
         {tabs.map((item) => (

@@ -140,7 +140,7 @@ export const Dialog = forwardRef<HTMLDivElement, DialogProps>(function Dialog(
           <RadixDialog.Content
             ref={ref}
             className={cx(
-              'w-full rounded-lg border border-c-border bg-c-elevated p-6 shadow-pop shadow-c-shadow-2',
+              'material-dialog w-full rounded-lg border border-c-border p-6 shadow-pop shadow-c-shadow-2',
               FOCUS_GROUND_ELEVATED,
               SIZE[size]
             )}

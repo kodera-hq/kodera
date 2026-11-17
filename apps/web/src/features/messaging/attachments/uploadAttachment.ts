@@ -67,7 +67,9 @@ export async function uploadAttachment({
   signal,
   put = putToStorage,
 }: UploadInput): Promise<Attachment> {
+  signal?.throwIfAborted()
   const sha256 = await sha256Hex(file)
+  signal?.throwIfAborted()
   const ticket = checkTicket(
     await mutate(
       { method: 'post', path: '/organisations/{organisation_id}/workspace/attachments/uploads' },
@@ -76,6 +78,7 @@ export async function uploadAttachment({
           path: { organisation_id: organisationId },
           header: { 'Idempotency-Key': crypto.randomUUID() },
         },
+        ...(signal === undefined ? {} : { signal }),
         body: {
           filename: checked.filename,
           contentType: checked.contentType,
@@ -85,6 +88,7 @@ export async function uploadAttachment({
       }
     )
   )
+  signal?.throwIfAborted()
   const stored = await put(ticket.uploadUrl, {
     method: 'PUT',
     headers: ticket.headers as Record<string, string>,
@@ -95,6 +99,7 @@ export async function uploadAttachment({
     mode: 'cors',
     ...(signal === undefined ? {} : { signal }),
   })
+  signal?.throwIfAborted()
   if (!stored.ok) throw new UploadRefused('storage')
   const data = await mutate(
     {

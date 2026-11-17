@@ -114,6 +114,31 @@ describe('SoundEngine policy & precedence matrix (SoundEngine.ts)', () => {
     return { engine, ...mock }
   }
 
+  it('enforces the manifest cooldown, permits its boundary, and keeps rooms independent', () => {
+    const { engine, startedSources } = makeEngine()
+    expect(engine.play('voice_self_join', { roomId: 'one' }).allowed).toBe(true)
+    expect(engine.play('voice_self_join', { roomId: 'one' }).reason).toBe('cue-cooldown')
+    expect(startedSources).toHaveLength(1)
+    expect(engine.play('voice_self_join', { roomId: 'two' }).allowed).toBe(true)
+    fakeNow += 149
+    expect(engine.play('voice_self_join', { roomId: 'one' }).allowed).toBe(false)
+    fakeNow += 1
+    expect(engine.play('voice_self_join', { roomId: 'one' }).allowed).toBe(true)
+  })
+
+  it('does not consume cooldowns on evaluation, suppressed playback or an explicit preview', () => {
+    const { engine } = makeEngine()
+    engine.evaluate('voice_self_join')
+    engine.previewPack('givre')
+    engine.setMasterMode('off')
+    expect(engine.play('voice_self_join').allowed).toBe(false)
+    engine.setMasterMode('on')
+    expect(engine.play('voice_self_join').allowed).toBe(true)
+    expect(engine.play('voice_self_join').reason).toBe('cue-cooldown')
+    engine.resetCooldowns()
+    expect(engine.play('voice_self_join').allowed).toBe(true)
+  })
+
   it('persists and loads preferences in localStorage under kodera:sound-preferences:v1', () => {
     const { engine } = makeEngine()
     expect(engine.getPreferences()).toEqual({
@@ -338,6 +363,7 @@ describe('SoundEngine policy & precedence matrix (SoundEngine.ts)', () => {
     expect(engine.isLoopActive('call_ring_incoming_loop')).toBe(true)
     expect(startedSources).toHaveLength(1)
 
+    fakeNow += 3200
     vi.advanceTimersByTime(3200)
     expect(startedSources).toHaveLength(2)
 

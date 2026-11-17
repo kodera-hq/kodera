@@ -217,7 +217,7 @@ export function Shell({
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           aria-label={t('console.shell.header.a11y-label')}
-          className="flex h-shell-header-height shrink-0 items-center gap-3 border-b border-c-border-soft bg-c-surface px-6"
+          className="material-bar flex h-shell-header-height shrink-0 items-center gap-3 border-b border-c-border-soft px-6"
         >
           <Tooltip content={toggleName} side="bottom" names>
             <Button

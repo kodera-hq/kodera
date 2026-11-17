@@ -33,6 +33,7 @@ export interface WorkspaceFileEntry {
   /** Milliseconds since the epoch; `0` for a document, which carries no time here. */
   readonly ts: number
   readonly senderId?: string | undefined
+  readonly directRoomId?: string | undefined
   readonly channel: ChannelSearchEntry
   /** The reference to ask Core for a download address with; absent for the other two shapes. */
   readonly ref?: AttachmentRef | undefined
@@ -59,8 +60,31 @@ export function workspaceFilesOf(
 ): readonly WorkspaceFileEntry[] {
   const files: WorkspaceFileEntry[] = []
   const pages: WorkspaceFileEntry[] = []
-  for (const channel of searchEntries) {
-    const resolved = snapshot.channels.get(channel.id)
+  const directs = store.getDirects?.() ?? []
+  const directById = new Map(directs.map((direct) => [direct.roomId, direct]))
+  const sources: readonly ChannelSearchEntry[] = [
+    ...searchEntries,
+    ...directs
+      .filter(
+        (direct) =>
+          !searchEntries.some(
+            (entry) =>
+              snapshot.channels.get(entry.id)?.state === 'resolved' &&
+              (snapshot.channels.get(entry.id) as { roomId: string }).roomId === direct.roomId
+          )
+      )
+      .map((direct) => ({
+        id: direct.roomId,
+        label: cleanText(direct.name, 120),
+        kind: 'text' as const,
+      })),
+  ]
+  for (const channel of sources) {
+    const direct = directById.get(channel.id)
+    const resolved =
+      direct === undefined
+        ? snapshot.channels.get(channel.id)
+        : { state: 'resolved' as const, roomId: direct.roomId }
     if (resolved?.state === 'resolved') {
       for (const message of store.getTimeline(resolved.roomId)) {
         if (message.redacted) continue
@@ -73,6 +97,7 @@ export function workspaceFilesOf(
             ts: message.ts,
             senderId: message.sender,
             channel,
+            ...(direct === undefined ? {} : { directRoomId: direct.roomId }),
             ref,
           })
         }
@@ -86,6 +111,7 @@ export function workspaceFilesOf(
             ts: message.ts,
             senderId: message.sender,
             channel,
+            ...(direct === undefined ? {} : { directRoomId: direct.roomId }),
           })
         }
       }
