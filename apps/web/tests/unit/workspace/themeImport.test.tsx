@@ -46,4 +46,9 @@ it('lets a connector setup choose an available channel while stating that delive
   expect(
     screen.getByText('Ce choix prépare la configuration. Aucune connexion n’est encore activée.')
   ).toBeVisible()
+  const disclosure = screen.getByText('Détails techniques & sécurité', { exact: true })
+  expect(disclosure.closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByRole('textbox', { name: /URL de destination du webhook/ })).not.toBeVisible()
+  await userEvent.click(disclosure)
+  expect(screen.getByRole('textbox', { name: /URL de destination du webhook/ })).toBeVisible()
 })

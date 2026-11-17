@@ -210,9 +210,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     // Every connector is offered by name, with what it does: the manifest id is a technical
     // detail, drawn under « Détails techniques & sécurité » once a connector is chosen.
     for (const ext of OFFICIAL_EXTENSIONS_CATALOG) {
-      expect(
-        screen.getByRole('button', { name: `${ext.name} — Connecter` })
-      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: `${ext.name} — Connecter` })).toBeInTheDocument()
       expect(screen.getByTestId(`extension-verified-${ext.slug}`)).toHaveTextContent(
         'Schéma v1 vérifié'
       )
@@ -278,6 +276,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
 
     // The scopes a connector asks for are drawn with its setup, under the technical details.
     await user.click(screen.getByRole('button', { name: `${chosen.name} — Connecter` }))
+    await user.click(screen.getByText('Détails techniques & sécurité', { exact: true }))
     for (const scope of chosen.scopes) {
       expect(screen.getAllByText(scope).length).toBeGreaterThanOrEqual(1)
     }

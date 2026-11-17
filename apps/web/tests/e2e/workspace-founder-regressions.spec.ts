@@ -63,6 +63,15 @@ test('founder surfaces: profile, audio controls, connector target and settings E
       { exact: true }
     )
   ).toBeVisible()
+  const disclosure = settings.getByText('Détails techniques & sécurité', { exact: true })
+  await expect(disclosure.locator('..')).not.toHaveAttribute('open', '')
+  await expect(
+    settings.getByRole('textbox', { name: /URL de destination du webhook/ })
+  ).not.toBeVisible()
+  await disclosure.click()
+  await expect(
+    settings.getByRole('textbox', { name: /URL de destination du webhook/ })
+  ).toBeVisible()
   await page.screenshot({
     path: info.outputPath('workspace-connector-target.png'),
     animations: 'disabled',
@@ -109,13 +118,11 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
     canvas.getContext('2d')!.fillRect(0, 0, 2, 2)
     return canvas.toDataURL('image/png').split(',')[1]!
   })
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles({
-      name: 'founder-preview.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(png, 'base64'),
-    })
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'founder-preview.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(png, 'base64'),
+  })
   await expect(page.getByText('founder-preview.png', { exact: true })).toHaveCount(1)
   await expect
     .poll(() =>
