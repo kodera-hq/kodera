@@ -27,6 +27,8 @@ fn assert_utf8_json(rel_path: &str) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=KODERA_DESKTOP_UPDATE_FEED");
+    println!("cargo:rerun-if-env-changed=KODERA_DESKTOP_UPDATE_PUBLIC_KEY");
     assert_utf8_json("tauri.conf.json");
     assert_utf8_json("capabilities/default.json");
 

@@ -19,7 +19,7 @@ Status: Implemented tao/wry host and Tauri-compatible IPC; native launch and ins
 - **Strict CSP & least-privilege capabilities (`src/csp_policy.rs`, `tauri.conf.json`, `capabilities/default.json`)**:
   - Enforces `default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, zero `'unsafe-eval'`, and explicit path-scoped HTTPS/WSS `connect-src` origins (`https://api.kodera.io`, `https://staging-api.kodera.io`, `https://auth.kodera.io/realms/`, `https://matrix.kodera.io/_matrix/`, `https://*.kodera.io/_matrix/`, `wss://livekit.kodera.io`, `wss://collab.kodera.io`).
   - `capabilities/default.json` binds only the `main` window on local assets (`local: true`) to `core:default`, `core:window:allow-show`, `core:window:allow-hide`, `core:window:allow-set-focus`, `core:window:allow-unminimize`, and `deep-link:default` — zero shell, filesystem, or wildcard permissions.
-  - `build.rs` verifies `tauri.conf.json`, `capabilities/default.json`, and the binary headers of all 6 icon files (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.png`, `icon.icns`, `icon.ico`) at compile time.
+  - `build.rs` verifies `tauri.conf.json`, `capabilities/default.json`, and the binary headers of the required bundle icons at compile time. `icons:check` additionally verifies every 16–1024 px raster and all ICNS/ICO frames against the official seven-path monogram and Cobalt 500 / Frost 100 design tokens.
 - **Proximity mesh, self-host planner, automated `deploy/community` wizard & health inspector (`src/lib.rs`, `src/self_host_deploy.rs`, `src/self_host_health.rs`)**:
   - `DesktopProximityNode` coordinates signed 129-byte proximity check-ins (`kodera-rs`), replay suppression, and priority relay queues within one provisioned organisation session.
   - `#proximity` is an everyday presence channel with a voluntary, pseudonymous check-in. It is not an emergency service: it does not reach emergency services, and delivery is never guaranteed. It was first named `#urgence`. The 129-byte public frame and every other v1 wire byte are frozen under their historical values (magic `KE`, signed label `kodera-emergency-v1:`); only names in code, routes and copy changed.
@@ -41,7 +41,7 @@ if (desktop.isNativeDesktop()) {
 ```
 
 - Detects `window.__TAURI_INTERNALS__.invoke` (`isTauriDesktopRuntime`) and falls back to deterministic no-ops outside Tauri without touching `localStorage` or `sessionStorage`, while still enforcing client-side scheme/origin/character validation.
-- Exposes `getAppMetadata()`, `checkForAppUpdates()`, `routeDeepLink(rawUri)`, `listenDeepLinks(listener)`, `setUnreadCount(unreadCount)`, `updateTrayState(state)`, `triggerTrayAction(action)`, `listenTrayActions(listener)`, `sendNotification(request)`, `storeSecureCredential(input)`, `loadSecureCredentialStatus(secretKind, matrixUserId)`, `deleteSecureCredential(secretKind, matrixUserId)`, `beginOidcPkceLoopback(input)`, `completeOidcPkceCallback(callbackUri)`, `restoreWindowBounds(savedStateJson)`, `preflightCommunityDeploy(input)`, `prepareCommunityDeploy(input)`, and `deployCommunityStack(input)`.
+- Exposes `getAppMetadata()`, `checkForAppUpdates()`, `restartToUpdate()`, `routeDeepLink(rawUri)`, `listenDeepLinks(listener)`, `setUnreadCount(unreadCount)`, `updateTrayState(state)`, `triggerTrayAction(action)`, `listenTrayActions(listener)`, `sendNotification(request)`, `storeSecureCredential(input)`, `loadSecureCredentialStatus(secretKind, matrixUserId)`, `deleteSecureCredential(secretKind, matrixUserId)`, `beginOidcPkceLoopback(input)`, `completeOidcPkceCallback(callbackUri)`, `restoreWindowBounds(savedStateJson)`, `preflightCommunityDeploy(input)`, `prepareCommunityDeploy(input)`, and `deployCommunityStack(input)`.
 
 ## Bounded JSON Command Seam (40 Routes + 3 Permanent Aliases)
 
@@ -89,7 +89,7 @@ if (desktop.isNativeDesktop()) {
 
 Authentication navigation into the admitted identity origin grants no native command authority. Each new document creates a random identity for promise/callback delivery. Each navigation also rotates a native 256-bit OS-random capability, delivered only through identity-guarded activation; both capability and generation are required on commands. OS entropy failure denies activation and commands. The native page-load generation and capability reject queued work from departed documents, clears listeners and volatile host state, and binds replies/events to the originating document. Route changes within an existing document do not reset it.
 
-The fallback stylesheet is generated from `@kodera/design-tokens` by `scripts/generate-bootstrap-css.mjs --write`; preflight rejects drift and literal styles. The updater reports unsupported until a real checked update implementation is wired. Native OS keychain execution, tray behavior and installed-package acceptance remain separate qualification work; command models and status-only credential loads do not prove vault persistence or secret extraction.
+The fallback stylesheet is generated from `@kodera/design-tokens` by `scripts/generate-bootstrap-css.mjs --write`; preflight rejects drift and literal styles. macOS builds with a pinned update key and feed check and stage signed updates in a background worker. The desktop-owned update pill appears only after verification and staging; unconfigured builds and other operating systems report unsupported. Native OS keychain execution, tray behavior and installed-package acceptance remain separate qualification work; command models and status-only credential loads do not prove vault persistence or secret extraction.
 
 ### Native GUI Window vs Headless CLI Execution
 
@@ -156,3 +156,28 @@ cargo test --locked --workspace --all-targets --all-features
 ## License
 
 Licensed under the Apache License, Version 2.0 ([`LICENSE`](./LICENSE)).
+
+## Installation and signed updates
+
+Status: macOS signed-update execution implemented; public signing, notarization and installed-package qualification remain operator gates. Windows and Linux self-update are deferred.
+
+The macOS disk image contains `Kodera.app`, an `Applications` shortcut and installation instructions. Drag the app onto Applications, launch the copied app, then eject the image. A build artifact alone does not establish Gatekeeper acceptance: the fallback packager does not sign or notarize. A refused app needs an officially signed and notarized replacement; the instructions never ask members to disable platform protection.
+
+For a macOS release that supports updates, set these **public build settings** before compiling:
+
+- `KODERA_DESKTOP_UPDATE_FEED`: a direct HTTPS manifest URL, without redirects, credentials, query or fragment.
+- `KODERA_DESKTOP_UPDATE_PUBLIC_KEY`: the 32-byte Ed25519 verification key as 64 lowercase hexadecimal characters. The signing key stays outside the application and repository.
+
+The feed serves this exact JSON schema, with a detached Ed25519 signature over the exact response bytes at `<feed>.sig` (128 lowercase hexadecimal characters):
+
+```json
+{"version":"0.1.1","platform":"macos-universal","url":"https://downloads.example.org/kodera-desktop-macos-universal.app.tar.gz","sha256":"<64 lowercase hexadecimal characters>","expires_at":<Unix seconds>}
+```
+
+`expires_at` must be in the future and within 30 days. Versions have three numeric components and must advance the running version. The archive must be the genuine signed and notarized universal macOS app bundle with root `Kodera.app/`; archive links, traversal and special entries are refused. Publish the archive and signature before the manifest. HTTPS alone or a SHA-256 checksum without the detached signature never authorizes installation.
+
+The native worker verifies the signature before parsing, bounds the download, checks the archive digest, extracts into private staging beside the installed app, and requires both `codesign --verify --deep --strict` and `spctl --assess` to succeed. It needs write access to the installation directory and never requests privilege escalation. Only then does **Update Ready · Restart to Update** appear (French follows the document language). The keyboard-accessible pill uses generated design tokens in an isolated shadow tree and is absent in ordinary web browsers.
+
+Restart rechecks signature, freshness, digest and platform acceptance. A fixed native-owned helper waits for this process to exit, replaces the app by same-volume rename, restores the previous app if replacement or relaunch fails, and removes staging. WebView payloads cannot choose a key, feed, path or command. The existing `quit` action preserves window state during handoff. A failed recheck closes the stale affordance without interrupting the workspace.
+
+Tests cover throwaway-key signature rejection, tampering, wrong keys, expiry, downgrade, malformed platform/URL, hidden unverified UI, bilingual ready/restart behavior and container resolutions. These tests do not constitute public release signing or a real Gatekeeper-approved installed update; that end-to-end acceptance belongs on the hosted macOS release runner with operator-managed signing.

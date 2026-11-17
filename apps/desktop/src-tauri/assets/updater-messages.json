@@ -1,0 +1,14 @@
+{
+  "en": {
+    "region": "Kodera update",
+    "ready": "Update Ready · Restart to Update",
+    "restarting": "Restarting…",
+    "unavailable": "Update unavailable"
+  },
+  "fr": {
+    "region": "Mise à jour de Kodera",
+    "ready": "Mise à jour prête · Redémarrer",
+    "restarting": "Redémarrage…",
+    "unavailable": "Mise à jour indisponible"
+  }
+}

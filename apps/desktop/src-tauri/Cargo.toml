@@ -22,6 +22,8 @@ default = ["desktop-app"]
 desktop-app = ["dep:tao", "dep:wry"]
 
 [dependencies]
+ed25519-dalek = "=3.0.0"
+serde_json = "1.0"
 getrandom = "=0.4.3"
 kodera-rs = { path = "../../../packages/kodera-rs" }
 tao = { version = "0.37.2", default-features = false, features = ["rwh_06"], optional = true }
