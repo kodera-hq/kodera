@@ -346,18 +346,21 @@ export async function generate(options: Options) {
       .map((line) => {
         if (!line.includes('=')) return line
         const [key, ...rest] = line.split('=')
+        const templateValue = rest.join('=')
         const value =
           values[key] ??
-          (rest.join('=').includes('CHANGE_ME_')
+          (templateValue.includes('CHANGE_ME_')
             ? !GENERATED_SECRETS.has(key)
               ? ''
-              : key.endsWith('SEAL_KEY') || key === 'KODERA_COLLAB_TICKET_KEY'
+              : templateValue.includes('BASE64URL_32')
                 ? randomBytes(32)
                     .toString('base64')
                     .replace(/\+/gu, '-')
                     .replace(/\//gu, '_')
-                : randomBytes(32).toString('hex')
-            : rest.join('='))
+                : templateValue.includes('BASE64_32')
+                  ? randomBytes(32).toString('base64')
+                  : randomBytes(32).toString('hex')
+            : templateValue)
         return `${key}=${value}`
       })
       .join('\n') + `\nKODERA_SOURCE_DIR='${source}'\n`
@@ -568,6 +571,18 @@ export async function selftest() {
     })
     const mode = (await stat(join(output, '.env'))).mode & 0o777
     test(() => assert.equal(mode, 0o600))
+    const generatedEnv = await readFile(join(output, '.env'), 'utf8')
+    const discoveryLine = generatedEnv
+      .split('\n')
+      .find((line) => line.startsWith('KODERA_DISCOVERY_HMAC_KEY='))
+    test(() => {
+      assert.ok(discoveryLine)
+      const encoded = discoveryLine.slice('KODERA_DISCOVERY_HMAC_KEY='.length)
+      const decoded = Buffer.from(encoded, 'base64')
+      assert.equal(encoded.length, 44)
+      assert.equal(decoded.length, 32)
+      assert.equal(decoded.toString('base64'), encoded)
+    })
     await assert.rejects(() =>
       generate({
         ...base,

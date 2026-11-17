@@ -161,6 +161,15 @@ def isolate(config, scratch, project):
     return config
 
 
+def generate_placeholder_secret(placeholder):
+    """Match each CHANGE_ME_ placeholder to the exact 32-byte encoding its consumer validates."""
+    if "BASE64URL_32" in placeholder:
+        return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
+    if "BASE64_32" in placeholder:
+        return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
+    return secrets.token_hex(32)
+
+
 class Qualification:
     def __init__(self):
         self.deadline = time.monotonic() + EXECUTION_SECONDS
@@ -251,8 +260,7 @@ class Qualification:
             if "=" in line and not line.startswith("#"):
                 key, value = line.split("=", 1)
                 if value.startswith("CHANGE_ME_"):
-                    value = (base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
-                             if "BASE64URL" in value else secrets.token_hex(32))
+                    value = generate_placeholder_secret(value)
                 values[key] = value
         values.update(KODERA_AUTH_TRUST=json.dumps(trust, separators=(",", ":")),
                       KODERA_DEFAULT_COMMUNITY_ORG_SLUG="", KODERA_DEFAULT_COMMUNITY_ISSUER="",

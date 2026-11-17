@@ -156,7 +156,7 @@ git clone https://github.com/kodera-hq/kodera.git
 cd kodera/deploy/community
 cp .env.example .env
 # Populate KODERA_DOMAIN, your OIDC issuer (KODERA_OIDC_PROVIDER_ORIGIN, KODERA_AUTH_TRUST),
-# hex secrets (openssl rand -hex 32) and 32-byte seal keys (openssl rand -base64 32 | tr '+/' '-_')
+# hex secrets (openssl rand -hex 32), discovery HMAC key (openssl rand -base64 32) and base64url keys (openssl rand -base64 32 | tr '+/' '-_')
 python3 ../../scripts/ci/check-community-deploy.py --preflight .env
 docker compose up -d
 ```
