@@ -356,6 +356,8 @@ export function createDesktopClient(options = {}) {
         return {
           supported: false,
           updateAvailable: false,
+          updateReady: false,
+          verified: false,
           currentVersion: DESKTOP_APP_VERSION,
           latestVersion: null,
           channel: 'web',
@@ -365,12 +367,22 @@ export function createDesktopClient(options = {}) {
         await internals.invoke('check_app_updates', {})
       );
       return {
-        supported: typeof response?.supported === 'boolean' ? response.supported : true,
-        updateAvailable: Boolean(response?.updateAvailable),
+        supported: response?.supported === true,
+        updateAvailable: response?.supported === true && response?.updateAvailable === true,
+        updateReady: response?.supported === true && response?.verified === true && response?.updateReady === true,
+        verified: response?.verified === true,
         currentVersion: typeof response?.currentVersion === 'string' ? response.currentVersion : DESKTOP_APP_VERSION,
         latestVersion: typeof response?.latestVersion === 'string' ? response.latestVersion : null,
         channel: typeof response?.channel === 'string' ? response.channel : 'stable',
       };
+    },
+
+    async restartToUpdate() {
+      const internals = getInternals();
+      if (!internals) throw new Error('update_not_ready');
+      const response = /** @type {Record<string, unknown> | null} */ (await internals.invoke('restart_to_update', {}));
+      if (response?.restarting !== true) throw new Error('update_not_ready');
+      return { restarting: true };
     },
 
     /**

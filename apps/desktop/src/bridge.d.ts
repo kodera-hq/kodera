@@ -30,6 +30,8 @@ export interface DesktopAppMetadata {
 }
 
 export interface DesktopUpdateStatus {
+  updateReady: boolean;
+  verified: boolean;
   supported: boolean;
   updateAvailable: boolean;
   currentVersion: string;
@@ -217,6 +219,7 @@ export interface KoderaDesktopClient {
   setOrganisationId(organisationId: string | null): void;
   getAppMetadata(): Promise<DesktopAppMetadata>;
   checkForAppUpdates(): Promise<DesktopUpdateStatus>;
+  restartToUpdate(): Promise<{ restarting: boolean }>;
   routeDeepLink(rawUri: string): Promise<DesktopDeepLinkResult>;
   listenDeepLinks(listener: (event: DesktopDeepLinkEvent) => void): Promise<() => Promise<void>>;
   setUnreadCount(unreadCount: number): Promise<DesktopUnreadBadgeResult>;

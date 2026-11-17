@@ -183,6 +183,9 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
             };
           case 'check_app_updates':
             return {
+              supported: true,
+              verified: true,
+              updateReady: true,
               updateAvailable: true,
               currentVersion: '0.1.0',
               latestVersion: '0.1.1',
@@ -227,6 +230,8 @@ test('Tauri IPC bridge invokes native commands, filters incoming events, and enf
   const updateInfo = await client.checkForAppUpdates();
   assert.equal(updateInfo.supported, true);
   assert.equal(updateInfo.latestVersion, '0.1.1');
+  assert.equal(updateInfo.updateReady, true);
+  assert.equal(updateInfo.verified, true);
 
   // Deep link event listener drops malicious javascript: payloads and forwards valid kodera:// URIs.
   /** @type {string[]} */

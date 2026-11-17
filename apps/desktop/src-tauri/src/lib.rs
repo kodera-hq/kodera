@@ -25,6 +25,7 @@ pub mod self_host_deploy;
 pub mod self_host_health;
 pub mod shell;
 pub mod tray_ptt;
+pub mod updater;
 pub mod window_state;
 
 pub use commands::{

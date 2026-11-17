@@ -33,8 +33,10 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  readlinkSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -501,6 +503,8 @@ export function renderNsisScript({ conf, setupOut, stagedExe, stagedIco, stagedW
   return [
     `Name "${conf.productName}"`,
     `OutFile "${setupOut}"`,
+    `Icon "${stagedIco}"`,
+    `UninstallIcon "${stagedIco}"`,
     'InstallDir "$PROGRAMFILES64\\Kodera"',
     'RequestExecutionLevel admin',
     'SilentInstall normal',
@@ -524,6 +528,23 @@ export function renderNsisScript({ conf, setupOut, stagedExe, stagedIco, stagedW
   ].join('\r\n');
 }
 
+export function stageMacosDiskImage(appDir, stageDir) {
+  mkdirSync(stageDir, { recursive: true });
+  cpSync(appDir, join(stageDir, 'Kodera.app'), { recursive: true });
+  symlinkSync('/Applications', join(stageDir, 'Applications'));
+  writeFileSync(join(stageDir, 'Install Kodera.txt'), [
+    'Install Kodera',
+    '',
+    'Drag Kodera.app onto Applications, then open Kodera from Applications.',
+    'Eject this disk image after copying the application.',
+    '',
+    'If macOS refuses the application, keep its security protection enabled.',
+    'Use a signed and notarized release from the official download page.',
+    'A development artifact is not a qualified public installer.',
+    '',
+  ].join('\n'));
+}
+
 export function renderMacosInfoPlist(conf) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -532,25 +553,30 @@ export function renderMacosInfoPlist(conf) {
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>${conf.productName}</string>
+  <string>${escapeXml(conf.productName)}</string>
   <key>CFBundleExecutable</key>
   <string>kodera-desktop</string>
   <key>CFBundleIconFile</key>
   <string>icon.icns</string>
   <key>CFBundleIdentifier</key>
-  <string>${conf.identifier}</string>
+  <string>${escapeXml(conf.identifier)}</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>${conf.productName}</string>
+  <string>${escapeXml(conf.productName)}</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>${conf.version}</string>
+  <string>${escapeXml(conf.version)}</string>
   <key>CFBundleVersion</key>
-  <string>${conf.version}</string>
+  <string>${escapeXml(conf.version)}</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>${escapeXml(conf.identifier)}</string>
+    <key>CFBundleURLSchemes</key><array><string>kodera</string><string>matrix</string></array>
+  </dict></array>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>
@@ -621,8 +647,7 @@ function packageMacosHost(conf, outDir) {
     runChecked('tar', ['-czf', appTarGz, '-C', scratch, 'Kodera.app']);
 
     const dmgStage = join(scratch, 'dmg-root');
-    mkdirSync(dmgStage, { recursive: true });
-    cpSync(appDir, join(dmgStage, 'Kodera.app'), { recursive: true });
+    stageMacosDiskImage(appDir, dmgStage);
     const dmgOut = join(outDir, 'kodera-desktop-macos-universal.dmg');
     runChecked('hdiutil', [
       'create',
@@ -994,7 +1019,7 @@ function runSelftest() {
   const conf = JSON.parse(readFileSync(join(tauriDir, 'tauri.conf.json'), 'utf8'));
   const plist = renderMacosInfoPlist(conf);
   assert.match(plist, /<string>kodera-desktop<\/string>/u);
-  assert.match(plist, new RegExp(`<string>${conf.identifier}</string>`, 'u'));
+  assert.match(plist, new RegExp(`<string>${escapeXml(conf.identifier)}</string>`, 'u'));
 
   const control = renderDebianControl(conf);
   assert.match(
@@ -1177,6 +1202,17 @@ function runSelftest() {
     for (const file of EXPECTED_RELEASE_ASSETS.macos) {
       writeFileSync(join(scratch, file), 'non-empty');
     }
+    if (process.platform !== 'win32') {
+      const fixtureApp = join(scratch, 'fixture-app');
+      mkdirSync(fixtureApp, { recursive: true });
+      writeFileSync(join(fixtureApp, 'test-resource'), 'official-install-layout');
+      const imageStage = join(scratch, 'disk-image');
+      stageMacosDiskImage(fixtureApp, imageStage);
+      assert.ok(lstatSync(join(imageStage, 'Applications')).isSymbolicLink());
+      assert.equal(readlinkSync(join(imageStage, 'Applications')), '/Applications');
+      assert.match(readFileSync(join(imageStage, 'Install Kodera.txt'), 'utf8'), /Drag Kodera.app onto Applications/);
+    }
+    assert.match(renderMacosInfoPlist({ productName: 'Kodera', identifier: 'io.kodera.desktop', version: '0.1.0' }), /CFBundleURLSchemes/);
     verifyStagedAssets('macos', scratch);
   } finally {
     rmSync(scratch, { recursive: true, force: true });

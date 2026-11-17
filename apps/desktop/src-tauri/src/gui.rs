@@ -671,6 +671,15 @@ pub fn resolve_asset_response(
         };
     };
 
+    if normalized == "/__desktop-update.css" {
+        return AssetHttpPayload {
+            status: 200,
+            content_type: "text/css; charset=utf-8",
+            csp_header: embedded_csp.to_owned(),
+            body: include_bytes!("../assets/updater.css").to_vec(),
+        };
+    }
+
     if let Some(root) = asset_root {
         if let Ok(canonical_root) = fs::canonicalize(root) {
             let relative = normalized.trim_start_matches('/');
@@ -829,6 +838,7 @@ pub struct DesktopWebViewBridge {
     document_id: Option<String>,
     document_generation: u64,
     document_capability: Option<String>,
+    ready_update: Option<crate::updater::ReadyUpdate>,
 }
 
 impl DesktopWebViewBridge {
@@ -847,6 +857,7 @@ impl DesktopWebViewBridge {
             document_id: None,
             document_generation: 0,
             document_capability: fresh_document_capability(),
+            ready_update: None,
         }
     }
 
@@ -988,11 +999,38 @@ impl DesktopWebViewBridge {
                 eval_scripts.push(resolve_js_promise(document_id, req_id, true, &payload));
             }
             "check_app_updates" => {
-                let payload = format!(
-                    r#"{{"supported":false,"updateAvailable":false,"currentVersion":"{}","latestVersion":null,"channel":"stable"}}"#,
-                    DESKTOP_APP_VERSION,
-                );
+                let payload = if let Some(ref update) = self.ready_update {
+                    serde_json::json!({"supported": true, "updateAvailable": true, "updateReady": true, "verified": true, "currentVersion": DESKTOP_APP_VERSION, "latestVersion": update.version, "channel": "stable"}).to_string()
+                } else {
+                    format!(
+                        r#"{{"supported":false,"updateAvailable":false,"currentVersion":"{}","latestVersion":null,"channel":"stable"}}"#,
+                        DESKTOP_APP_VERSION,
+                    )
+                };
                 eval_scripts.push(resolve_js_promise(document_id, req_id, true, &payload));
+            }
+            "restart_to_update" => {
+                let result = self
+                    .ready_update
+                    .take()
+                    .ok_or("update_not_ready")
+                    .and_then(crate::updater::ReadyUpdate::restart);
+                if result.is_ok() {
+                    window_action = Some(GuiWindowAction::Quit);
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        true,
+                        r#"{"restarting":true}"#,
+                    ));
+                } else {
+                    eval_scripts.push(resolve_js_promise(
+                        document_id,
+                        req_id,
+                        false,
+                        r#"{"error":"update_not_ready"}"#,
+                    ));
+                }
             }
             "plugin:event|listen" => {
                 let Some(event_name) = extract_json_string_field(json_body, "event") else {
@@ -1386,6 +1424,7 @@ mod native_runtime {
             body: String,
         },
         DocumentChanged(u64),
+        UpdateReady(crate::updater::ReadyUpdate),
         InterceptedDeepLink {
             generation: u64,
             admitted: AdmittedDeepLink,
@@ -1486,7 +1525,12 @@ mod native_runtime {
         monitors: &[MonitorWorkArea],
     ) -> WindowBuilder {
         let (min_width, min_height) = super::effective_gui_min_inner_size(placement, monitors);
+        const WINDOW_ICON: &[u8; 256 * 256 * 4] = include_bytes!("../icons/window-icon.rgba");
         WindowBuilder::new()
+            .with_window_icon(Some(
+                tao::window::Icon::from_rgba(WINDOW_ICON.to_vec(), 256, 256)
+                    .expect("official window icon has verified RGBA dimensions"),
+            ))
             .with_title(DESKTOP_WINDOW_TITLE)
             .with_inner_size(LogicalSize::new(
                 f64::from(placement.bounds.width),
@@ -1588,6 +1632,14 @@ mod native_runtime {
                 }
             })
             .with_initialization_script_for_main_only(build_ipc_init_script(), true)
+            .with_initialization_script_for_main_only(
+                format!(
+                    "(function(messages){{ {} }})({});",
+                    include_str!("../assets/updater.js"),
+                    include_str!("../assets/updater-messages.json")
+                ),
+                true,
+            )
             .with_ipc_handler(move |request| {
                 let body = request.body();
                 if body.len() <= MAX_IPC_COMMAND_BYTES {
@@ -1662,6 +1714,12 @@ mod native_runtime {
                 .map_err(|_| DesktopShellError::GuiWebViewInitFailed)?
         };
 
+        let update_proxy = event_loop.create_proxy();
+        std::thread::spawn(move || {
+            if let Ok(update) = crate::updater::check() {
+                let _ = update_proxy.send_event(DesktopUserEvent::UpdateReady(update));
+            }
+        });
         let mut bridge =
             DesktopWebViewBridge::new(options.allow_dev_origin, options.initial_deep_link);
         let mut live_state = SavedWindowState {
@@ -1723,6 +1781,9 @@ mod native_runtime {
                     for js in bridge.enqueue_deep_link(admitted) {
                         let _ = webview.evaluate_script(&js);
                     }
+                }
+                Event::UserEvent(DesktopUserEvent::UpdateReady(update)) => {
+                    bridge.ready_update = Some(update);
                 }
                 Event::UserEvent(DesktopUserEvent::DocumentChanged(generation)) => {
                     if generation == document_generation.load(std::sync::atomic::Ordering::SeqCst) {

@@ -27,6 +27,8 @@ fn assert_utf8_json(rel_path: &str) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=KODERA_DESKTOP_UPDATE_FEED");
+    println!("cargo:rerun-if-env-changed=KODERA_DESKTOP_UPDATE_PUBLIC_KEY");
     assert_utf8_json("tauri.conf.json");
     assert_utf8_json("capabilities/default.json");
 
@@ -35,6 +37,13 @@ fn main() {
     assert_magic("icons/128x128.png", PNG_MAGIC);
     assert_magic("icons/128x128@2x.png", PNG_MAGIC);
     assert_magic("icons/icon.png", PNG_MAGIC);
+    println!("cargo:rerun-if-changed=icons/window-icon.rgba");
+    assert_eq!(
+        fs::read("icons/window-icon.rgba")
+            .expect("official window icon is present")
+            .len(),
+        256 * 256 * 4
+    );
     assert_magic("icons/icon.icns", b"icns");
     assert_magic("icons/icon.ico", &[0x00, 0x00, 0x01, 0x00]);
 }
