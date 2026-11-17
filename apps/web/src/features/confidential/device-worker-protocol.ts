@@ -45,11 +45,16 @@ export function deviceWorkerObject(value: unknown, keys: readonly string[]): Rec
   deviceWorkerNeed(value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype)
   const descriptors = Object.getOwnPropertyDescriptors(value), actual = Reflect.ownKeys(descriptors)
   deviceWorkerNeed(actual.length === keys.length && actual.every((key) => typeof key === 'string' && keys.includes(key)))
-  const result: Record<string, unknown> = {}
+  const result = Object.create(null) as Record<string, unknown>
   for (const key of keys) {
     const item = descriptors[key]
     deviceWorkerNeed(item && item.enumerable && 'value' in item)
-    result[key] = item.value
+    Object.defineProperty(result, key, {
+      value: item.value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
   }
   return result
 }

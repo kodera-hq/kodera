@@ -12,12 +12,16 @@ const client = fileURLToPath(new URL('../../../src/api/client.ts', import.meta.u
 const factory = fileURLToPath(
   new URL('../../../src/features/confidential/device-worker-client.ts', import.meta.url)
 )
+const workerEntry = fileURLToPath(
+  new URL('../../../src/features/confidential/device.worker.ts', import.meta.url)
+)
 const other = fileURLToPath(
   new URL('../../../src/features/confidential/not-the-factory.ts', import.meta.url)
 )
 const config = fileURLToPath(new URL('../../../eslint.config.js', import.meta.url))
 const nativeRule = 'kodera/owner-claim-native-fetch'
 const importRule = 'kodera/confidential-device-private-import'
+const workerImportRule = 'kodera/confidential-device-worker-import'
 const lint = new ESLint({ cwd: root, overrideConfigFile: config, fix: false })
 const pristine = `function invokeConfidentialDeviceNative(cell: {url: string; init: RequestInit}) {
   return fetch(cell.url, cell.init)
@@ -45,7 +49,10 @@ async function one(instance: ESLint, source: string, filePath = client) {
   expect(result.fatalErrorCount).toBe(0)
   expect(
     result.suppressedMessages.filter(
-      (message) => message.ruleId === nativeRule || message.ruleId === importRule
+      (message) =>
+        message.ruleId === nativeRule ||
+        message.ruleId === importRule ||
+        message.ruleId === workerImportRule
     )
   ).toEqual([])
   return result
@@ -139,12 +146,17 @@ describe('configured internal dispatcher import boundary', () => {
     const configured: Linter.Config | undefined = await lint.calculateConfigForFile(other)
     if (!configured) throw new Error('DEVICE_POLICY_CONFIG_MISSING')
     const rule = configured.rules?.[importRule],
+      workerRule = configured.rules?.[workerImportRule],
       plugin = configured.plugins?.kodera
     const severity = Array.isArray(rule) ? rule[0] : rule
+    const workerSeverity = Array.isArray(workerRule) ? workerRule[0] : workerRule
     if (
       (severity !== 2 && severity !== 'error') ||
+      (workerSeverity !== 2 && workerSeverity !== 'error') ||
       !rule ||
+      !workerRule ||
       !plugin?.rules?.['confidential-device-private-import'] ||
+      !plugin?.rules?.['confidential-device-worker-import'] ||
       !configured.languageOptions?.parser
     )
       throw new Error('DEVICE_POLICY_NOT_ENABLED')
@@ -161,12 +173,16 @@ describe('configured internal dispatcher import boundary', () => {
           ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
           languageOptions: configured.languageOptions,
           plugins: { kodera: plugin },
-          rules: { [importRule]: rule },
+          rules: { [importRule]: rule, [workerImportRule]: workerRule },
         },
       ],
     })
     const hidden = '/* eslint-disable kodera/confidential-device-private-import */\n' + direct
     refused(await one(gate, hidden, other), importRule)
+    const hiddenWorker =
+      '/* eslint-disable kodera/confidential-device-worker-import */\n' +
+      "import './device.worker'\n"
+    refused(await one(gate, hiddenWorker, other), workerImportRule)
     // Preserve actual configured global ignores, especially the generated
     // megabyte-scale declaration, without copying a second ignore policy.
     const pending = [fileURLToPath(new URL('../../../src/', import.meta.url))]
@@ -187,7 +203,11 @@ describe('configured internal dispatcher import boundary', () => {
     expect(results.length).toBeGreaterThan(0)
     for (const result of results) {
       expect(result.fatalErrorCount).toBe(0)
-      expect(result.messages.filter((message) => message.ruleId === importRule)).toEqual([])
+      expect(
+        result.messages.filter(
+          (message) => message.ruleId === importRule || message.ruleId === workerImportRule
+        )
+      ).toEqual([])
     }
   }, 20_000)
   it('allows only the fixed factory direct import/call and erased type imports', async () => {
@@ -253,5 +273,116 @@ describe('configured internal dispatcher import boundary', () => {
     expect(unguarded.messages).toEqual([])
     expect(() => refused(unguarded, importRule)).toThrow()
     refused(await one(lint, direct, other), importRule)
+  })
+})
+
+describe('configured worker-only module import boundary', () => {
+  it('accepts actual device.worker.ts and the fixed worker URL constructor in device-worker-client.ts', async () => {
+    await accepted(await readFile(workerEntry, 'utf8'), workerEntry)
+    await accepted(await readFile(factory, 'utf8'), factory)
+  })
+  it.each([
+    ['relative side-effect device.worker', "import './device.worker'\n", other],
+    ['relative extension device.worker.ts', "import './device.worker.ts'\n", factory],
+    ['vite query device.worker?worker', "import WorkerEntry from './device.worker?worker'\nvoid WorkerEntry\n", factory],
+    ['alias device.worker', "import '@/features/confidential/device.worker'\n", client],
+    ['root-relative device.worker', "import '/src/features/confidential/device.worker.ts'\n", client],
+    ['dynamic device.worker', "void import('./device.worker')\n", other],
+    ['require device.worker', "const mod = require('./device.worker'); void mod\n", other],
+    ['re-export device.worker', "export * from './device.worker'\n", other],
+    ['worker self-import device.worker', "import './device.worker'\n", workerEntry],
+    [
+      'relative native glue',
+      "import initializeNative, {BrowserMlsHttpDevice} from './native/kodera_rs.js'\nvoid initializeNative\nvoid BrowserMlsHttpDevice\n",
+      other,
+    ],
+    [
+      'factory native glue',
+      "import initializeNative from './native/kodera_rs.js'\nvoid initializeNative\n",
+      factory,
+    ],
+    [
+      'alias native glue',
+      "import initializeNative from '@/features/confidential/native/kodera_rs.js'\nvoid initializeNative\n",
+      client,
+    ],
+    [
+      'root-relative native wasm url',
+      "import wasmUrl from '/src/features/confidential/native/kodera_rs_bg.wasm?url'\nvoid wasmUrl\n",
+      other,
+    ],
+    [
+      'dynamic native glue',
+      "void import('@/features/confidential/native/kodera_rs.js')\n",
+      other,
+    ],
+    [
+      'template dynamic native',
+      "const target = 'kodera_rs.js'; void import(`./native/${target}`)\n",
+      other,
+    ],
+    [
+      're-export native glue',
+      "export {BrowserMlsHttpDevice} from './native/kodera_rs.js'\n",
+      other,
+    ],
+    ['require native glue', "const mod = require('./native/kodera_rs.js'); void mod\n", other],
+    [
+      'type import native glue',
+      "import type {BrowserMlsHttpDevice} from './native/kodera_rs.js'\nexport type Actor = BrowserMlsHttpDevice\n",
+      other,
+    ],
+    [
+      'import-type query native glue',
+      "export type Actor = typeof import('./native/kodera_rs.js')\n",
+      other,
+    ],
+    [
+      'relative device-cas-host',
+      "import {createDeviceCasHost} from './device-cas-host'\nvoid createDeviceCasHost\n",
+      other,
+    ],
+    [
+      'factory device-cas-host',
+      "import {createDeviceCasHost} from './device-cas-host.ts'\nvoid createDeviceCasHost\n",
+      factory,
+    ],
+    [
+      'alias device-cas-host',
+      "import {createDeviceCasHost} from '@/features/confidential/device-cas-host'\nvoid createDeviceCasHost\n",
+      client,
+    ],
+    [
+      'root-relative device-cas-host',
+      "import {createDeviceCasHost} from '/src/features/confidential/device-cas-host.ts'\nvoid createDeviceCasHost\n",
+      other,
+    ],
+    ['dynamic device-cas-host', "void import('./device-cas-host')\n", other],
+    [
+      're-export device-cas-host',
+      "export {createDeviceCasHost} from './device-cas-host'\n",
+      other,
+    ],
+    ['require device-cas-host', "const mod = require('./device-cas-host'); void mod\n", other],
+    [
+      'type import device-cas-host',
+      "import type {DeviceCasHostError} from './device-cas-host'\nexport type HostError = DeviceCasHostError\n",
+      other,
+    ],
+  ])('%s is rejected outside device.worker.ts', async (_name, source, path) => {
+    refused(await one(lint, source, path), workerImportRule)
+  })
+  it('proves the worker-only import guard is actually configured', async () => {
+    const sample = "import {createDeviceCasHost} from './device-cas-host'\nvoid createDeviceCasHost\n"
+    const disabled = new ESLint({
+      cwd: root,
+      overrideConfigFile: config,
+      fix: false,
+      overrideConfig: { files: ['src/**/*.ts'], rules: { [workerImportRule]: 'off' } },
+    })
+    const unguarded = await one(disabled, sample, other)
+    expect(unguarded.messages).toEqual([])
+    expect(() => refused(unguarded, workerImportRule)).toThrow()
+    refused(await one(lint, sample, other), workerImportRule)
   })
 })

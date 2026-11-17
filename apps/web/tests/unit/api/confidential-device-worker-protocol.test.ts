@@ -60,4 +60,24 @@ describe('fixed device worker structural protocol', () => {
       { version: 1, nonce, rpcId: 2, kind: 'refused', code: 'raw-error-text' },
       { version: 1, nonce, kind: 'ready', rpcId: 1 }]) expect(() => parseDeviceControlReply(bad, nonce)).toThrow()
   })
+  it('defines extracted object properties without invoking Object.prototype setters', () => {
+    let intercepted = false
+    Object.defineProperty(Object.prototype, 'command', {
+      configurable: true,
+      set() {
+        intercepted = true
+        throw new Error('POLLUTED_OBJECT_PROTOTYPE_SETTER')
+      },
+    })
+    try {
+      const parsed = parseDeviceCommand(
+        JSON.parse(`{"version":1,"nonce":"${nonce}","rpcId":1,"kind":"command","command":"create"}`),
+        nonce
+      )
+      expect(parsed.command).toBe('create')
+      expect(intercepted).toBe(false)
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'command')
+    }
+  })
 })

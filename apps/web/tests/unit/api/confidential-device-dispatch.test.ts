@@ -827,4 +827,21 @@ describe('fixed private confidential-device dispatch', () => {
     expect(() => harness()).toThrow('Confidential device dispatch refused.')
     expect(calls).toEqual([])
   })
+  it('defines extracted frame fields without invoking Object.prototype setters', async () => {
+    let intercepted = false
+    Object.defineProperty(Object.prototype, 'mode', {
+      configurable: true,
+      set() {
+        intercepted = true
+        throw new Error('POLLUTED_DISPATCH_SETTER')
+      },
+    })
+    try {
+      const h = harness()
+      await initialize(h)
+      expect(intercepted).toBe(false)
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'mode')
+    }
+  })
 })

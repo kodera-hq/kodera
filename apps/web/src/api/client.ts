@@ -749,11 +749,16 @@ function deviceFields(value: unknown, keys: readonly string[]): Record<string, u
     actual.length === keys.length &&
       actual.every((key) => typeof key === 'string' && keys.includes(key))
   )
-  const result: Record<string, unknown> = {}
+  const result = Object.create(null) as Record<string, unknown>
   for (const key of keys) {
     const descriptor = descriptors[key]
     deviceNeed(descriptor && descriptor.enumerable && 'value' in descriptor)
-    result[key] = descriptor.value
+    Object.defineProperty(result, key, {
+      value: descriptor.value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
   }
   return result
 }

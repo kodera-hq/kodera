@@ -250,10 +250,17 @@ const ownerClaimNativeRule = {
   },
 }
 
+const srcRoot = fileURLToPath(new URL('./src', import.meta.url))
 const clientModule = fileURLToPath(new URL('./src/api/client', import.meta.url))
 const deviceFactory = fileURLToPath(
   new URL('./src/features/confidential/device-worker-client.ts', import.meta.url)
 )
+const deviceWorkerEntry = fileURLToPath(
+  new URL('./src/features/confidential/device.worker.ts', import.meta.url)
+).replaceAll('\\', '/')
+const confidentialRoot = fileURLToPath(
+  new URL('./src/features/confidential', import.meta.url)
+).replaceAll('\\', '/')
 const devicePrivateImportRule = {
   meta: {
     type: 'problem',
@@ -357,10 +364,101 @@ const devicePrivateImportRule = {
     }
   },
 }
+const deviceWorkerImportRule = {
+  meta: {
+    type: 'problem',
+    schema: [],
+    messages: {
+      DEVICE_WORKER_PRIVATE_IMPORT: 'DEVICE_WORKER_PRIVATE_IMPORT',
+    },
+  },
+  create(context) {
+    const filename = context.filename.replaceAll('\\', '/')
+    const workerBase = `${confidentialRoot}/device.worker`
+    const casHostBase = `${confidentialRoot}/device-cas-host`
+    const nativeBase = `${confidentialRoot}/native`
+    const report = (node) => context.report({ node, messageId: 'DEVICE_WORKER_PRIVATE_IMPORT' })
+    const classify = (node) => {
+      let raw = ''
+      let prefix = false
+      if (node?.type === 'Literal' && typeof node.value === 'string') {
+        raw = node.value
+      } else if (node?.type === 'TemplateLiteral' && node.quasis.length > 0) {
+        raw = node.quasis[0].value.cooked ?? node.quasis[0].value.raw ?? ''
+        prefix = node.expressions.length > 0
+      } else {
+        return null
+      }
+      const clean = raw.split(/[?#]/, 1)[0].replaceAll('\\', '/')
+      if (!clean) return null
+      const resolved = clean.startsWith('@/')
+        ? resolve(srcRoot, clean.slice(2)).replaceAll('\\', '/')
+        : clean.startsWith('/src/')
+          ? resolve(srcRoot, clean.slice(5)).replaceAll('\\', '/')
+          : clean.startsWith('src/')
+            ? resolve(srcRoot, clean.slice(4)).replaceAll('\\', '/')
+            : clean.startsWith('.')
+              ? resolve(dirname(context.filename), clean).replaceAll('\\', '/')
+              : ''
+      if (
+        resolved === workerBase ||
+        resolved.startsWith(`${workerBase}.`) ||
+        (prefix && resolved.startsWith(workerBase)) ||
+        /(?:^|\/)features\/confidential\/device\.worker(?:$|\.)/.test(clean)
+      ) {
+        return 'worker-entry'
+      }
+      if (
+        resolved === nativeBase ||
+        resolved.startsWith(`${nativeBase}/`) ||
+        /(?:^|\/)features\/confidential\/native(?:$|\/)/.test(clean) ||
+        resolved === casHostBase ||
+        resolved.startsWith(`${casHostBase}.`) ||
+        (prefix && resolved.startsWith(casHostBase)) ||
+        /(?:^|\/)features\/confidential\/device-cas-host(?:$|\.)/.test(clean)
+      ) {
+        return 'worker-only'
+      }
+      return null
+    }
+    const check = (sourceNode, reportNode = sourceNode) => {
+      const kind = classify(sourceNode)
+      if (!kind) return
+      if (kind === 'worker-entry' || filename !== deviceWorkerEntry) report(reportNode)
+    }
+    return {
+      ImportDeclaration(node) {
+        check(node.source)
+      },
+      ExportNamedDeclaration(node) {
+        if (node.source) check(node.source)
+      },
+      ExportAllDeclaration(node) {
+        check(node.source)
+      },
+      ImportExpression(node) {
+        check(node.source)
+      },
+      TSImportType(node) {
+        check(node.source ?? node.argument?.literal ?? node.argument, node)
+      },
+      CallExpression(node) {
+        if (
+          node.callee.type === 'Identifier' &&
+          node.callee.name === 'require' &&
+          node.arguments.length > 0
+        ) {
+          check(node.arguments[0], node)
+        }
+      },
+    }
+  },
+}
 const koderaPlugin = {
   rules: {
     'owner-claim-native-fetch': ownerClaimNativeRule,
     'confidential-device-private-import': devicePrivateImportRule,
+    'confidential-device-worker-import': deviceWorkerImportRule,
   },
 }
 
@@ -563,6 +661,9 @@ export default tseslint.config(
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     plugins: { kodera: koderaPlugin },
-    rules: { 'kodera/confidential-device-private-import': 'error' },
+    rules: {
+      'kodera/confidential-device-private-import': 'error',
+      'kodera/confidential-device-worker-import': 'error',
+    },
   }
 )
