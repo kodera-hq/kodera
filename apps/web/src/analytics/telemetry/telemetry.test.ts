@@ -237,6 +237,47 @@ describe('scoped consent and startup', () => {
       expect(request).not.toHaveBeenCalled()
     }
   )
+  it('delivers only a fixed content-free boundary signal during active consent', async () => {
+    const request = vi.fn().mockResolvedValue({})
+    vi.stubGlobal('fetch', request)
+    disposals.push(
+      await startTelemetry(mockRouter().router, 'key', EU_INGESTION_HOST, async () => ({
+        createTelemetryTransport,
+      }))
+    )
+    window.dispatchEvent(new Event('kodera:route-error'))
+    expect(request).not.toHaveBeenCalled()
+    setTelemetryConsent(true)
+    await settle()
+    const previous = location.href
+    try {
+      history.replaceState(null, '', '/sample/workspace/private-document?token=private')
+      window.dispatchEvent(
+        new CustomEvent('kodera:route-error', {
+          detail: {
+            error: new TypeError('private message member@example.test'),
+            stack: 'private stack',
+          },
+        })
+      )
+      expect(request).toHaveBeenCalledOnce()
+      const body = JSON.parse(request.mock.calls[0]![1].body)
+      expect(body.properties).toEqual({
+        source: 'boundary',
+        component: 'RouteError',
+        kind: 'unknown',
+        area: 'workspace',
+        $process_person_profile: false,
+        $geoip_disable: true,
+      })
+      expect(JSON.stringify(body)).not.toMatch(/private|member@/)
+      setTelemetryConsent(false)
+      window.dispatchEvent(new Event('kodera:route-error'))
+      expect(request).toHaveBeenCalledOnce()
+    } finally {
+      history.replaceState(null, '', previous)
+    }
+  })
   it('starts only after consent, never backfills, and immediately aborts on withdrawal', async () => {
     const request = vi.fn().mockImplementation(() => new Promise(() => {}))
     vi.stubGlobal('fetch', request)
@@ -399,7 +440,9 @@ describe('scoped consent and startup', () => {
     setTelemetryConsent(true)
     await settle()
     stale(
-      { getEntries: () => [{ name: 'https://matrix.test/_matrix/media/v3/upload', duration: 10 }] } as unknown as PerformanceObserverEntryList,
+      {
+        getEntries: () => [{ name: 'https://matrix.test/_matrix/media/v3/upload', duration: 10 }],
+      } as unknown as PerformanceObserverEntryList,
       {} as PerformanceObserver
     )
     expect(request).toHaveBeenCalledTimes(6)

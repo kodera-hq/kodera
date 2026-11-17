@@ -1,4 +1,4 @@
-import { bindTelemetryScope, setTelemetryScope } from '../analytics/telemetry/consent'
+import { deferTelemetryScopeBinding } from '../analytics/telemetry/scopeBinding'
 import { announcedTitleKey, contentTitleKey } from './contentTitle'
 // The `/$org` layout route: the auth guard, the slug → organisation
 // resolution `GET /me` does once (ADR-0005 consequence — the browser URL
@@ -276,8 +276,14 @@ function OrgLayoutContent() {
   const mfaEnrolled = useMfaGuard(me, auth.user?.identity, org)
   const onMfaScreen = pathname === mfaEnrolPath(org)
   useLayoutEffect(() => {
-    if (authorityMismatch || !hasUsableToken) return setTelemetryScope(undefined)
-    return bindTelemetryScope(
+    if (!import.meta.env.VITE_POSTHOG_KEY?.trim()) return
+    if (
+      import.meta.env.VITE_POSTHOG_HOST &&
+      import.meta.env.VITE_POSTHOG_HOST !== 'https://eu.i.posthog.com'
+    )
+      return
+    if (authorityMismatch || !hasUsableToken) return
+    return deferTelemetryScopeBinding(
       { person: me.id, workspace: membership.organisation.id, slug: org },
       lifetime
     )

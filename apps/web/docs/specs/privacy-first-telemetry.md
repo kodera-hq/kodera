@@ -9,7 +9,10 @@ capture transport when unset. `VITE_POSTHOG_HOST` accepts only `https://eu.i.pos
 Configured builds still collect nothing until the current person explicitly enables optional
 diagnostics for the current workspace in workspace privacy settings. Consent is a browser-local
 choice keyed by account and workspace, not an organisation-wide administrator setting.
-Switching account, workspace or losing session authority stops the prior sink. No earlier events
+Scope binding loads lazily only in configured builds and verifies the original authentication
+retirement stamp, usable credential and mounted owner before binding. Pending imports cannot
+revive a departed account or workspace. Switching account, workspace or losing session authority
+stops the prior sink. No earlier events
 are buffered or replayed. Storage failure refuses opt-in and cannot prevent immediate opt-out.
 Cross-tab withdrawal stops collection too. An explicit static-server `--telemetry-host` flag
 admits only the EU `/i/v0/e/` endpoint; unconfigured Community deployments have no such CSP origin.
@@ -36,8 +39,10 @@ must preserve these rules and prove that it cannot enrich events with content or
 
 The existing `track()` API feeds the optional sink. Navigation reports a closed route area and
 elapsed duration, never a path. Onboarding reports actual completion and a closed hosting mode;
-channel opening derives chat/voice from the selected channel, and chat/docs/files canvas changes report actual applied transitions with elapsed duration. Error boundaries, uncaught errors and promise
-rejections report only an allowlisted class, source, component code and sanitized code locations.
+channel opening derives chat/voice from the selected channel, and chat/docs/files canvas changes report actual applied transitions with elapsed duration. Error boundaries emit a plain content-free local event only in configured EU builds. The active
+consenting bootstrap records only the fixed boundary source, unknown error kind, RouteError
+component code and closed route area; no error object or stack crosses that event. Uncaught errors
+and promise rejections retain only an allowlisted class, source and sanitized code locations.
 Performance observers collect LCP candidates, CLS session-window maxima and interaction latency after consent,
 and classify resource latency into fixed chat, document and file operation names without sending
 resource URLs. Interaction latency is not labelled as INP. Browser timing support varies. No observer backfills activity before consent.

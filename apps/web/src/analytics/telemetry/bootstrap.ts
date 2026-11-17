@@ -33,6 +33,16 @@ export async function startTelemetry(
         const error = (event: ErrorEvent) => reportTelemetryError(event.error, 'error')
         const rejection = (event: PromiseRejectionEvent) =>
           reportTelemetryError(event.reason, 'rejection')
+        const boundary = () => {
+          if (current !== epoch || !hasTelemetryConsent()) return
+          track('client_error', {
+            source: 'boundary',
+            component: 'RouteError',
+            kind: 'unknown',
+            area: routeArea(location.pathname),
+          })
+        }
+        window.addEventListener('kodera:route-error', boundary)
         window.addEventListener('error', error)
         window.addEventListener('unhandledrejection', rejection)
         const observers: PerformanceObserver[] = []
@@ -109,6 +119,7 @@ export async function startTelemetry(
         stopActive = () => {
           untrack()
           transport.stop()
+          window.removeEventListener('kodera:route-error', boundary)
           window.removeEventListener('error', error)
           window.removeEventListener('unhandledrejection', rejection)
           for (const observer of observers) observer.disconnect()
