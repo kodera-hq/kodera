@@ -94,8 +94,13 @@ Matrix fetch fence runs inside access-token refresh retries and after SDK
 encryption/scheduler awaits. A refresh-retry adversarial test changes protection
 while credential renewal is pending and checks that no second request leaves.
 Protected audio is refused before the call controller can request a token or
-start capture. Retirement also refuses queued typing cleanup; a
-previously sent notice expires at its existing server timeout. Queue and upload tests verify authorization changes across asynchronous
+start capture. Ordinary teardown grants one finite dispatch capability for an
+already active typing notice: an exact PUT to the current member’s typing
+endpoint with the body `{"typing":false}`. The final fence consumes it once,
+requires an ordinary or Community boundary at dispatch, and refuses unknown,
+protected, foreign-member, opaque-body and content-bearing requests. Sign-out
+grants no cleanup capability and revokes any pending one. Other retired work
+remains refused; protected notices expire at their existing server timeout. Queue and upload tests verify authorization changes across asynchronous
 preflight and ticket issuance cannot dispatch plaintext storage uploads. Cache
 tests verify no pre-classification plaintext restore and ordinary post-sync
 writes. Attachment primitive tests cover AEAD tamper, wrong scope/epoch,

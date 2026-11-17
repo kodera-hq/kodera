@@ -1,4 +1,4 @@
-import { Room } from 'matrix-js-sdk'
+import { MatrixEvent, Room } from 'matrix-js-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backoff, createEspaceStore, matrixClientForTests } from './store'
 import { onTrack } from '../../../analytics/track'
@@ -1261,11 +1261,12 @@ describe("a member's name, from the room's member events (M1)", () => {
       // A stretch after « no longer » starts over at once.
       fixture.store.setTyping(SNAPSHOT_ROOM, true, 9_700)
       await vi.waitFor(() => expect(notices()).toHaveLength(4))
-      // Retirement refuses queued SDK work at transport; existing notices expire on the server.
+      // Ordinary teardown may end its existing notice once; new work remains retired.
       fixture.store.stop()
       fixture.store.setTyping(SNAPSHOT_ROOM, true, 30_000)
+      await vi.waitFor(() => expect(notices()).toHaveLength(5))
       await new Promise((resolve) => setTimeout(resolve, 20))
-      expect(notices().slice(3)).toEqual([{ typing: true, timeout: 10_000 }])
+      expect(notices().slice(3)).toEqual([{ typing: true, timeout: 10_000 }, { typing: false }])
     } finally {
       fixture.stop()
     }
@@ -2723,6 +2724,184 @@ describe('confidential room plaintext quarantine', () => {
     } finally {
       releaseRefresh?.({ accessToken: 'synthetic-cleanup-token' })
       fixture.stop()
+    }
+  })
+
+  async function holdTypingCleanup() {
+    const fixture = snapshotFixture()
+    await fixture.start()
+    fixture.store.setTyping(SNAPSHOT_ROOM, true, 1_000)
+    await vi.waitFor(() => expect(fixture.typingNotices).toHaveLength(1))
+    const client = matrixClientForTests(fixture.store)
+    let finish = () => {}
+    const pending = vi.spyOn(client, 'sendTyping').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({})
+        })
+    )
+    fixture.store.stop()
+    const transport = client.http.opts.fetchFn!
+    const url = `https://matrix.acme.kodera.io/_matrix/client/v3/rooms/${encodeURIComponent(SNAPSHOT_ROOM)}/typing/${encodeURIComponent(SNAPSHOT_ME)}`
+    return {
+      fixture,
+      client,
+      transport,
+      url,
+      release() {
+        finish()
+        pending.mockRestore()
+        fixture.stop()
+      },
+    }
+  }
+
+  it('admits one exact content-free ordinary typing cleanup and refuses replay after retirement', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      await held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+      expect(held.fixture.typingNotices).toEqual([
+        { typing: true, timeout: 10_000 },
+        { typing: false },
+      ])
+      await expect(
+        Promise.resolve().then(() =>
+          held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+        )
+      ).rejects.toThrow('No content was sent')
+      expect(held.fixture.typingNotices).toHaveLength(2)
+    } finally {
+      held.release()
+    }
+  })
+
+  it.each([
+    { label: 'active typing', init: { method: 'PUT', body: '{"typing":true}' } },
+    {
+      label: 'extra plaintext field',
+      init: { method: 'PUT', body: '{"typing":false,"body":"private"}' },
+    },
+    { label: 'noncanonical body', init: { method: 'PUT', body: '{ "typing": false }' } },
+    {
+      label: 'binary body',
+      init: { method: 'PUT', body: new TextEncoder().encode('{"typing":false}') },
+    },
+    { label: 'wrong method', init: { method: 'POST', body: '{"typing":false}' } },
+  ])(
+    'refuses $label at a stopped typing transport and consumes its cleanup capability',
+    async ({ init }) => {
+      const held = await holdTypingCleanup()
+      try {
+        await expect(Promise.resolve().then(() => held.transport(held.url, init))).rejects.toThrow(
+          'No content was sent'
+        )
+        await expect(
+          Promise.resolve().then(() =>
+            held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+          )
+        ).rejects.toThrow('No content was sent')
+        expect(held.fixture.typingNotices).toHaveLength(1)
+      } finally {
+        held.release()
+      }
+    }
+  )
+
+  it('refuses an already granted cleanup after the room becomes protected', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      const init = { method: 'PUT', body: '{"typing":false}' }
+      const room = held.client.getRoom(SNAPSHOT_ROOM)!
+      room.currentState.setStateEvents(
+        protectedState('io.kodera.mls.v1').map(
+          ({ event_id, type, sender, origin_server_ts, state_key, content }) =>
+            new MatrixEvent({
+              room_id: SNAPSHOT_ROOM,
+              event_id,
+              type,
+              sender,
+              origin_server_ts,
+              state_key,
+              content,
+            })
+        )
+      )
+      expect(held.fixture.store.getRoomBoundary(SNAPSHOT_ROOM)).toBe('confidential-unavailable')
+      await expect(Promise.resolve().then(() => held.transport(held.url, init))).rejects.toThrow(
+        'No content was sent'
+      )
+      expect(held.fixture.typingNotices).toHaveLength(1)
+      expect(held.fixture.requests).toEqual([])
+    } finally {
+      held.release()
+    }
+  })
+
+  it.each(['foreign member', 'unknown room', 'extra path', 'message endpoint', 'foreign origin'])(
+    'does not spend ordinary typing cleanup on a %s',
+    async (target) => {
+      const held = await holdTypingCleanup()
+      try {
+        const url =
+          target === 'foreign member'
+            ? held.url.replace(encodeURIComponent(SNAPSHOT_ME), encodeURIComponent(SNAPSHOT_ALICE))
+            : target === 'unknown room'
+              ? held.url.replace(
+                  encodeURIComponent(SNAPSHOT_ROOM),
+                  encodeURIComponent('!unknown:matrix.acme.kodera.io')
+                )
+              : target === 'extra path'
+                ? `${held.url}/extra`
+                : target === 'message endpoint'
+                  ? held.url.replace(
+                      `/typing/${encodeURIComponent(SNAPSHOT_ME)}`,
+                      '/send/m.room.message/retired'
+                    )
+                  : held.url.replace('https://matrix.acme.kodera.io', 'https://other.example.test')
+        await expect(
+          Promise.resolve().then(() =>
+            held.transport(url, { method: 'PUT', body: '{"typing":false}' })
+          )
+        ).rejects.toThrow('No content was sent')
+        expect(held.fixture.typingNotices).toHaveLength(1)
+        expect(held.fixture.requests).toEqual([])
+      } finally {
+        held.release()
+      }
+    }
+  )
+
+  it('revokes an undispatched ordinary cleanup when sign-out follows retirement', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      held.fixture.store.stop('signed-out')
+      await expect(
+        Promise.resolve().then(() =>
+          held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+        )
+      ).rejects.toThrow('No content was sent')
+      expect(held.fixture.typingNotices).toHaveLength(1)
+    } finally {
+      held.release()
+    }
+  })
+
+  it('does not read an opaque Request body or permit sign-out cleanup', async () => {
+    const held = await holdTypingCleanup()
+    try {
+      const request = new Request(held.url, { method: 'PUT', body: '{"typing":false}' })
+      await expect(Promise.resolve().then(() => held.transport(request))).rejects.toThrow(
+        'No content was sent'
+      )
+      held.fixture.store.stop('signed-out')
+      await expect(
+        Promise.resolve().then(() =>
+          held.transport(held.url, { method: 'PUT', body: '{"typing":false}' })
+        )
+      ).rejects.toThrow('No content was sent')
+      expect(held.fixture.typingNotices).toHaveLength(1)
+    } finally {
+      held.release()
     }
   })
 

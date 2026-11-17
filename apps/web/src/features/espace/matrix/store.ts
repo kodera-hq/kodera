@@ -448,6 +448,8 @@ export class EspaceStore {
   #presenceChanged = false
   /** When the member's last « typing » notice went to each room it still stands in. */
   readonly #typingSent = new Map<string, number>()
+  /** One content-free teardown dispatch per already active ordinary-room typing notice. */
+  readonly #typingCleanup = new Set<string>()
   /** `m.direct` changed since the last rebuild: the direct conversations are read again. */
   #directsChanged = false
   #directs: { snapshot: EspaceSnapshot; list: readonly DirectSummary[] } | null = null
@@ -489,11 +491,28 @@ export class EspaceStore {
         init?.method ?? (input instanceof Request ? input.method : 'GET')
       ).toUpperCase()
       const timeline =
-        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(?:send|redact|typing)(?:\/|$)/.exec(
+        /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/([^/]+)\/(send|redact|typing)(?:\/|$)/.exec(
           url.pathname
         )
       if (timeline && method !== 'GET' && method !== 'HEAD') {
-        this.#requirePlaintextRoom(decodeURIComponent(timeline[1]!))
+        const roomId = decodeURIComponent(timeline[1]!)
+        const cleanup = this.#typingCleanup.delete(roomId)
+        const ownTyping =
+          /^\/_matrix\/client\/(?:v3|r0|unstable)\/rooms\/[^/]+\/typing\/([^/]+)$/.exec(
+            url.pathname
+          )
+        // No Request body reads or JSON parsing: only this exact content-free stop is eligible.
+        const mayFinishTyping =
+          cleanup &&
+          timeline[2] === 'typing' &&
+          method === 'PUT' &&
+          url.origin === new URL(session.baseUrl).origin &&
+          url.search === '' &&
+          ownTyping !== null &&
+          decodeURIComponent(ownTyping[1]!) === this.#me &&
+          init?.body === '{"typing":false}' &&
+          permitsPlaintext(this.getRoomBoundary(roomId))
+        if (!mayFinishTyping) this.#requirePlaintextRoom(roomId)
       }
       return base(input, init)
     }
@@ -723,12 +742,20 @@ export class EspaceStore {
   }
 
   stop(status: SyncStatus = 'stopped'): void {
-    if (this.#stopped) return
+    if (this.#stopped) {
+      if (status === 'signed-out') this.#typingCleanup.clear()
+      return
+    }
     // The view going, another organisation or a new session: the others stop seeing the member
     // type. A signed-out session has no token left to say it with.
     if (status !== 'signed-out') {
       for (const roomId of this.#typingSent.keys()) {
-        this.#client.sendTyping(roomId, false, TYPING_TIMEOUT_MS).catch(() => undefined)
+        if (!permitsPlaintext(this.getRoomBoundary(roomId))) continue
+        this.#typingCleanup.add(roomId)
+        this.#client
+          .sendTyping(roomId, false, TYPING_TIMEOUT_MS)
+          .catch(() => undefined)
+          .finally(() => this.#typingCleanup.delete(roomId))
       }
     }
     this.#stopped = true

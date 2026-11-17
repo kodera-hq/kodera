@@ -279,14 +279,40 @@ describe('configured internal dispatcher import boundary', () => {
 describe('configured worker-only module import boundary', () => {
   it('accepts actual device.worker.ts and the fixed worker URL constructor in device-worker-client.ts', async () => {
     await accepted(await readFile(workerEntry, 'utf8'), workerEntry)
+    await accepted("import './attachment-crypto.worker'\n", workerEntry)
     await accepted(await readFile(factory, 'utf8'), factory)
   })
   it.each([
+    ['relative attachment crypto', "import './attachment-crypto.worker'\n", other],
+    ['factory attachment crypto', "import './attachment-crypto.worker.ts'\n", factory],
+    [
+      'alias attachment crypto',
+      "void import('@/features/confidential/attachment-crypto.worker')\n",
+      client,
+    ],
+    [
+      'root-relative attachment crypto',
+      "export * from '/src/features/confidential/attachment-crypto.worker.ts'\n",
+      other,
+    ],
+    [
+      'template attachment crypto',
+      "const target = 'ts'; void import(`./attachment-crypto.worker.${target}`)\n",
+      other,
+    ],
     ['relative side-effect device.worker', "import './device.worker'\n", other],
     ['relative extension device.worker.ts', "import './device.worker.ts'\n", factory],
-    ['vite query device.worker?worker', "import WorkerEntry from './device.worker?worker'\nvoid WorkerEntry\n", factory],
+    [
+      'vite query device.worker?worker',
+      "import WorkerEntry from './device.worker?worker'\nvoid WorkerEntry\n",
+      factory,
+    ],
     ['alias device.worker', "import '@/features/confidential/device.worker'\n", client],
-    ['root-relative device.worker', "import '/src/features/confidential/device.worker.ts'\n", client],
+    [
+      'root-relative device.worker',
+      "import '/src/features/confidential/device.worker.ts'\n",
+      client,
+    ],
     ['dynamic device.worker', "void import('./device.worker')\n", other],
     ['require device.worker', "const mod = require('./device.worker'); void mod\n", other],
     ['re-export device.worker', "export * from './device.worker'\n", other],
@@ -311,11 +337,7 @@ describe('configured worker-only module import boundary', () => {
       "import wasmUrl from '/src/features/confidential/native/kodera_rs_bg.wasm?url'\nvoid wasmUrl\n",
       other,
     ],
-    [
-      'dynamic native glue',
-      "void import('@/features/confidential/native/kodera_rs.js')\n",
-      other,
-    ],
+    ['dynamic native glue', "void import('@/features/confidential/native/kodera_rs.js')\n", other],
     [
       'template dynamic native',
       "const target = 'kodera_rs.js'; void import(`./native/${target}`)\n",
@@ -358,11 +380,7 @@ describe('configured worker-only module import boundary', () => {
       other,
     ],
     ['dynamic device-cas-host', "void import('./device-cas-host')\n", other],
-    [
-      're-export device-cas-host',
-      "export {createDeviceCasHost} from './device-cas-host'\n",
-      other,
-    ],
+    ['re-export device-cas-host', "export {createDeviceCasHost} from './device-cas-host'\n", other],
     ['require device-cas-host', "const mod = require('./device-cas-host'); void mod\n", other],
     [
       'type import device-cas-host',
@@ -373,7 +391,8 @@ describe('configured worker-only module import boundary', () => {
     refused(await one(lint, source, path), workerImportRule)
   })
   it('proves the worker-only import guard is actually configured', async () => {
-    const sample = "import {createDeviceCasHost} from './device-cas-host'\nvoid createDeviceCasHost\n"
+    const sample =
+      "import {createDeviceCasHost} from './device-cas-host'\nvoid createDeviceCasHost\n"
     const disabled = new ESLint({
       cwd: root,
       overrideConfigFile: config,
