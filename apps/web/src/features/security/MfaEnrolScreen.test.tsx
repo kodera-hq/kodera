@@ -6,11 +6,18 @@ import i18n from '../../i18n'
 
 const signOut = vi.hoisted(() => vi.fn(async () => {}))
 const signIn = vi.hoisted(() => vi.fn(async () => {}))
-vi.mock('../../auth/AuthProvider', () => ({ useAuth: () => ({ signOut }) }))
+const authState = vi.hoisted(() => ({ realm: undefined as string | undefined }))
+vi.mock('../../auth/AuthProvider', () => ({
+  useAuth: () => ({
+    user: authState.realm === undefined ? undefined : { realm: authState.realm },
+    signOut,
+  }),
+}))
 vi.mock('../../auth/oidc', () => ({ authAdapter: { signIn } }))
 afterEach(async () => {
   vi.unstubAllEnvs()
   vi.clearAllMocks()
+  authState.realm = undefined
   sessionStorage.clear()
   window.history.replaceState(null, '', '/')
   await i18n.changeLanguage('fr')
@@ -43,9 +50,10 @@ describe('real MFA enrollment remains unavailable', () => {
 })
 
 describe('Community OIDC MFA enrolment and step-up', () => {
-  it('offers Keycloak TOTP setup, 2FA step-up sign-in, and sign-out on /community/security/mfa', async () => {
+  it('offers Keycloak TOTP setup, 2FA step-up sign-in, and sign-out for the community realm', async () => {
     vi.stubEnv('VITE_AUTH_MODE', 'oidc')
     vi.stubEnv('VITE_ENABLE_MSW', '0')
+    authState.realm = 'community'
     window.history.replaceState(null, '', '/community/security/mfa')
     const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
     const { container } = render(
@@ -71,6 +79,7 @@ describe('Community OIDC MFA enrolment and step-up', () => {
   it('starts a 2FA verification login and supports English copy and sign-out', async () => {
     vi.stubEnv('VITE_AUTH_MODE', 'oidc')
     vi.stubEnv('VITE_ENABLE_MSW', '0')
+    authState.realm = 'community'
     await i18n.changeLanguage('en')
     window.history.replaceState(null, '', '/community/security/mfa')
     const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
@@ -92,5 +101,34 @@ describe('Community OIDC MFA enrolment and step-up', () => {
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Sign out' }))
     expect(signOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('steps up kodera-staff with prompt=login only and refuses cross-realm signIn for tenant realms', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_ENABLE_MSW', '0')
+    authState.realm = 'kodera-staff'
+    window.history.replaceState(null, '', '/community/security/mfa')
+    const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
+    const { unmount } = render(
+      <MfaEnrolScreen accountEmail="staff@kodera.test" onEnrolled={vi.fn()} />
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Configurer la double authentification' })
+    ).not.toBeInTheDocument()
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Vérifier avec mon code 2FA' }))
+    expect(signIn).toHaveBeenCalledWith('kodera-staff', { prompt: 'login' })
+    unmount()
+
+    signIn.mockClear()
+    authState.realm = 'acme-sa'
+    render(<MfaEnrolScreen accountEmail="member@acme.test" onEnrolled={vi.fn()} />)
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Son activation n’est pas encore disponible dans cette console.'
+    )
+    expect(screen.getAllByRole('button')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Se déconnecter' })).toBeVisible()
+    expect(signIn).not.toHaveBeenCalled()
   })
 })

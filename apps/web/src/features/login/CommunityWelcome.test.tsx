@@ -1,3 +1,10 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, expect, it, vi } from 'vitest'
@@ -6,6 +13,22 @@ import { authAdapter } from '../../auth/oidc'
 import { CommunityWelcome } from './CommunityWelcome'
 
 vi.mock('../../auth/oidc', () => ({ authAdapter: { signIn: vi.fn() } }))
+
+async function renderWelcome() {
+  const root = createRootRoute()
+  const login = createRoute({
+    getParentRoute: () => root,
+    path: '/login',
+    component: CommunityWelcome,
+  })
+  const router = createRouter({
+    routeTree: root.addChildren([login]),
+    history: createMemoryHistory({ initialEntries: ['/login'] }),
+  })
+  render(<RouterProvider router={router} />)
+  expect(await screen.findByRole('heading', { name: 'Kodera Community' })).toBeVisible()
+}
+
 beforeEach(async () => {
   sessionStorage.clear()
   vi.mocked(authAdapter.signIn).mockReset().mockResolvedValue(undefined)
@@ -20,8 +43,7 @@ it.each([
   'starts %s %s with a community return destination',
   async (locale, name, registration) => {
     await i18n.changeLanguage(locale)
-    render(<CommunityWelcome />)
-    expect(screen.getByRole('heading', { name: 'Kodera Community' })).toBeVisible()
+    await renderWelcome()
     await userEvent.click(screen.getByRole('button', { name }))
     expect(authAdapter.signIn).toHaveBeenCalledWith('community', { registration })
     expect(sessionStorage.getItem('kodera.web.auth.returnTo')).toBe('/community/workspace')
@@ -30,14 +52,14 @@ it.each([
 )
 it('offers a retry after an auth setup failure without leaking the error', async () => {
   vi.mocked(authAdapter.signIn).mockRejectedValueOnce(new Error('sensitive upstream text'))
-  render(<CommunityWelcome />)
+  await renderWelcome()
   await userEvent.click(screen.getByRole('button', { name: 'Créer un compte' }))
   await waitFor(() => expect(screen.getByRole('alert')).toBeVisible())
   expect(screen.queryByText('sensitive upstream text')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Se connecter' })).toBeEnabled()
 })
 it('switches locale without leaving the welcome screen', async () => {
-  render(<CommunityWelcome />)
+  await renderWelcome()
   expect(screen.getByRole('link', { name: 'Connexion organisation dédiée' })).toHaveAttribute(
     'href',
     '/login?mode=tenant'

@@ -27,6 +27,7 @@ const Simulation =
 
 export function MfaEnrolScreen(props: MfaEnrolScreenProps) {
   const { t } = useTranslation()
+  const auth = useAuth()
   if (Simulation !== undefined) {
     return (
       <Suspense fallback={<p role="status">{t('console.login.mfa.status-loading-simulation')}</p>}>
@@ -34,17 +35,25 @@ export function MfaEnrolScreen(props: MfaEnrolScreenProps) {
       </Suspense>
     )
   }
+  const activeRealm = auth.user?.realm
   if (
     import.meta.env.VITE_AUTH_MODE === 'oidc' &&
     typeof window !== 'undefined' &&
-    window.location.pathname === '/community/security/mfa'
+    window.location.pathname === '/community/security/mfa' &&
+    (activeRealm === 'community' || activeRealm === 'kodera-staff')
   ) {
-    return <CommunityMfaEnrol accountEmail={props.accountEmail} />
+    return <CommunityMfaEnrol accountEmail={props.accountEmail} realm={activeRealm} />
   }
   return <EnrollmentUnavailable />
 }
 
-function CommunityMfaEnrol({ accountEmail }: { accountEmail: string }) {
+function CommunityMfaEnrol({
+  accountEmail,
+  realm,
+}: {
+  accountEmail: string
+  realm: 'community' | 'kodera-staff'
+}) {
   const { i18n } = useTranslation()
   const auth = useAuth()
   const copy = communityCopy(i18n.resolvedLanguage)
@@ -62,7 +71,7 @@ function CommunityMfaEnrol({ accountEmail }: { accountEmail: string }) {
     setFailed(false)
     try {
       rememberReturnTo('/community/workspace')
-      await authAdapter.signIn('community', options)
+      await authAdapter.signIn(realm, options)
     } catch {
       setPending(false)
       setFailed(true)
@@ -85,14 +94,16 @@ function CommunityMfaEnrol({ accountEmail }: { accountEmail: string }) {
             <p className="text-sm text-c-ink-2">{copy.mfaBody}</p>
           </div>
           <div className="flex flex-wrap gap-3">
+            {realm === 'community' ? (
+              <Button
+                disabled={pending}
+                onClick={() => void start({ kcAction: 'CONFIGURE_TOTP', prompt: 'login' })}
+              >
+                {copy.mfaConfigure}
+              </Button>
+            ) : null}
             <Button
-              disabled={pending}
-              onClick={() => void start({ kcAction: 'CONFIGURE_TOTP', prompt: 'login' })}
-            >
-              {copy.mfaConfigure}
-            </Button>
-            <Button
-              variant="secondary"
+              variant={realm === 'community' ? 'secondary' : 'primary'}
               disabled={pending}
               onClick={() => void start({ prompt: 'login' })}
             >

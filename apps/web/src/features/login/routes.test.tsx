@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '../../i18n'
 import { rootRoute } from '../../app/root-route'
@@ -37,22 +38,34 @@ describe('Community /login routing and tenant escape hatch', () => {
     })
   })
 
-  it('defaults bare /login to Community only on community.* hostnames unless mode=tenant is set', async () => {
+  it('matches only the exact configured community.{VITE_MATRIX_DOMAIN} host and rejects look-alikes', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.io')
     const { shouldRenderCommunityWelcome } = await import('./routes')
     expect(shouldRenderCommunityWelcome('community', undefined, 'localhost')).toBe(true)
     expect(shouldRenderCommunityWelcome('community', 'tenant', 'community.kodera.io')).toBe(true)
     expect(shouldRenderCommunityWelcome(undefined, undefined, 'community.kodera.io')).toBe(true)
+    expect(shouldRenderCommunityWelcome(undefined, 'tenant', 'community.kodera.io')).toBe(false)
+    expect(shouldRenderCommunityWelcome('acme-sa', undefined, 'community.kodera.io')).toBe(false)
+    expect(
+      shouldRenderCommunityWelcome(undefined, undefined, 'community.kodera.io.attacker.test')
+    ).toBe(false)
+    expect(shouldRenderCommunityWelcome(undefined, undefined, 'community.acme.fr')).toBe(false)
+    expect(shouldRenderCommunityWelcome(undefined, undefined, 'community.staging.kodera.io')).toBe(
+      false
+    )
+    expect(shouldRenderCommunityWelcome(undefined, undefined, 'localhost')).toBe(false)
+    expect(shouldRenderCommunityWelcome(undefined, undefined, 'console.kodera.io')).toBe(false)
+
+    vi.stubEnv('VITE_MATRIX_DOMAIN', 'staging.kodera.io')
     expect(shouldRenderCommunityWelcome(undefined, undefined, 'community.staging.kodera.io')).toBe(
       true
     )
-    expect(shouldRenderCommunityWelcome(undefined, 'tenant', 'community.kodera.io')).toBe(false)
-    expect(shouldRenderCommunityWelcome('acme-sa', undefined, 'community.kodera.io')).toBe(false)
-    expect(shouldRenderCommunityWelcome(undefined, undefined, 'localhost')).toBe(false)
-    expect(shouldRenderCommunityWelcome(undefined, undefined, 'console.kodera.io')).toBe(false)
   })
 
-  it('renders CommunityWelcome on community.kodera.io /login and LoginScreen on /login?mode=tenant', async () => {
+  it('renders CommunityWelcome on community.kodera.io /login and SPA-navigates to /login?mode=tenant', async () => {
     vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_MATRIX_DOMAIN', 'kodera.io')
     Object.defineProperty(window, 'location', {
       value: new URL('https://community.kodera.io/login'),
       configurable: true,
@@ -60,27 +73,20 @@ describe('Community /login routing and tenant escape hatch', () => {
     const { loginRoute } = await import('./routes')
     const routeTree = rootRoute.addChildren([loginRoute])
 
-    const communityRouter = createRouter({
+    const router = createRouter({
       routeTree,
       history: createMemoryHistory({ initialEntries: ['/login'] }),
     })
-    const firstRender = render(<RouterProvider router={communityRouter} />)
-    expect(await screen.findByRole('heading', { name: 'Kodera Community' })).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Connexion organisation dédiée' })).toHaveAttribute(
-      'href',
-      '/login?mode=tenant'
-    )
-    firstRender.unmount()
-
-    const tenantRouter = createRouter({
-      routeTree,
-      history: createMemoryHistory({ initialEntries: ['/login?mode=tenant'] }),
-    })
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <RouterProvider router={tenantRouter} />
+        <RouterProvider router={router} />
       </QueryClientProvider>
     )
+    expect(await screen.findByRole('heading', { name: 'Kodera Community' })).toBeVisible()
+    const tenantLink = screen.getByRole('link', { name: 'Connexion organisation dédiée' })
+    expect(tenantLink).toHaveAttribute('href', '/login?mode=tenant')
+
+    await userEvent.click(tenantLink)
     expect(await screen.findByRole('textbox')).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Kodera Community' })).not.toBeInTheDocument()
   })

@@ -239,15 +239,7 @@ export class OidcAuthAdapter implements AuthAdapter {
   #publishedAccessToken: string | undefined
   #listeners = new Set<() => void>()
   #restoration: Promise<boolean> | undefined
-  #signIn:
-    | {
-        realm: string
-        registration: boolean
-        kcAction: SignInOptions['kcAction']
-        prompt: SignInOptions['prompt']
-        request: Promise<void>
-      }
-    | undefined
+  #signIn: { key: string; request: Promise<void> } | undefined
   #expiringCallbacks = new Set<() => void>()
   #unwire: (() => void) | undefined
   #renewedCallbacks = new Set<() => void>()
@@ -459,13 +451,8 @@ export class OidcAuthAdapter implements AuthAdapter {
       throw new Error('Invalid authentication action.')
     if (prompt !== undefined && prompt !== 'login')
       throw new Error('Invalid authentication prompt.')
-    if (
-      this.#signIn?.realm === realm &&
-      this.#signIn.registration === registration &&
-      this.#signIn.kcAction === kcAction &&
-      this.#signIn.prompt === prompt &&
-      this.#snapshot.status === 'pending'
-    )
+    const key = `${realm}:${registration}:${kcAction ?? ''}:${prompt ?? ''}`
+    if (this.#signIn?.key === key && this.#snapshot.status === 'pending')
       return this.#signIn.request
     this.#retireManager()
     this.#user = undefined
@@ -481,16 +468,12 @@ export class OidcAuthAdapter implements AuthAdapter {
         const manager = managerFor(realm, false, registration)
         this.#manager = manager
         this.#wireEvents(manager)
-        const redirectArgs =
-          prompt !== undefined || kcAction !== undefined
-            ? {
-                ...(prompt === undefined ? {} : { prompt }),
-                ...(kcAction === undefined ? {} : { extraQueryParams: { kc_action: kcAction } }),
-              }
-            : undefined
-        return redirectArgs === undefined
-          ? manager.signinRedirect()
-          : manager.signinRedirect(redirectArgs)
+        return prompt || kcAction
+          ? manager.signinRedirect({
+              ...(prompt ? { prompt } : {}),
+              ...(kcAction ? { extraQueryParams: { kc_action: kcAction } } : {}),
+            })
+          : manager.signinRedirect()
       })
       .catch((error: unknown) => {
         if (this.#snapshot.generation === generation) {
@@ -507,7 +490,7 @@ export class OidcAuthAdapter implements AuthAdapter {
         }
         throw error
       })
-    this.#signIn = { realm, registration, kcAction, prompt, request }
+    this.#signIn = { key, request }
     this.#publish('pending', true)
     await request
   }

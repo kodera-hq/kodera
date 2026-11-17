@@ -223,3 +223,11 @@ def test_staff_community_factor_refuses_missing_factor_future_iat_or_naive_clock
         evaluate_staff_community_factor(verified=valid, database_now=NOW.replace(tzinfo=None))
         is None
     )
+    explicit_false = replace(base, amr=("pwd", "hwk"), mfa_enrolled=False)
+    assert evaluate_staff_community_factor(verified=explicit_false, database_now=NOW) is False
+    assert (
+        evaluate_staff_community_factor(
+            verified=explicit_false, database_now=NOW + timedelta(seconds=290)
+        )
+        is None
+    )

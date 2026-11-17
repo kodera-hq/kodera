@@ -275,6 +275,8 @@ def evaluate_staff_community_factor(
         return None
     if now >= horizon:
         return None
+    if verified.mfa_enrolled is False:
+        return False
     return True
 
 

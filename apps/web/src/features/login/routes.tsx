@@ -1,6 +1,7 @@
 import { createRoute } from '@tanstack/react-router'
 import { lazy, Suspense } from 'react'
 import { z } from '@/validation-policy'
+import { onCommunityHost } from '../../app/communityHost'
 import { rootRoute } from '../../app/root-route'
 import { SessionLoading } from '../../app/SessionLoading'
 import { LoginScreen } from './LoginScreen'
@@ -25,12 +26,11 @@ export const loginSearchSchema = z.object({
 export function shouldRenderCommunityWelcome(
   org: string | undefined,
   mode: 'tenant' | undefined,
-  hostname: string | undefined = typeof window === 'undefined'
-    ? undefined
-    : window.location.hostname
+  hostname?: string
 ): boolean {
-  if (org === 'community') return true
-  return org === undefined && mode !== 'tenant' && Boolean(hostname?.startsWith('community.'))
+  return (
+    org === 'community' || (org === undefined && mode !== 'tenant' && onCommunityHost(hostname))
+  )
 }
 
 export const loginRoute = createRoute({
