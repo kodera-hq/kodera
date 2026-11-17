@@ -99,6 +99,7 @@ async function run() {
     const h = await start('hold-record-completion'); let settled = false
     void h.command('create').then(() => { settled = true })
     need(await h.fixture === 'record-committed-completion-held', 'realTransactionCommitted')
+    await delay(50)
     const before = await fingerprint(await saved())
     need(before !== null && !settled, 'durableBeforeAcknowledgement'); h.stop()
     const replacement = await start(), restored = await replacement.command('restore')

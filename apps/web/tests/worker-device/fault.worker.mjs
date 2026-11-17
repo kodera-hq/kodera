@@ -2,6 +2,19 @@
 const first = await new Promise((resolve) => self.addEventListener('message', resolve, { once: true }))
 const { fixtureFault: mode, ...bootstrap } = first.data
 if (!['abort-record-write', 'hold-record-completion'].includes(mode)) throw new Error('Fixture mode refused')
+const held = new WeakSet()
+if (mode === 'hold-record-completion') {
+  const openTx = IDBDatabase.prototype.transaction
+  IDBDatabase.prototype.transaction = function (...args) {
+    const tx = Reflect.apply(openTx, this, args)
+    tx.addEventListener('complete', (event) => {
+      if (!held.has(tx)) return
+      event.stopImmediatePropagation()
+      self.postMessage({ fixture: 1, kind: 'record-committed-completion-held' })
+    }, { once: true })
+    return tx
+  }
+}
 const add = IDBObjectStore.prototype.add
 let armed = true
 IDBObjectStore.prototype.add = function (...args) {
@@ -15,10 +28,7 @@ IDBObjectStore.prototype.add = function (...args) {
         self.postMessage({ fixture: 1, kind: 'record-aborted' })
       }, { once: true })
     } else {
-      tx.addEventListener('complete', (event) => {
-        event.stopImmediatePropagation()
-        self.postMessage({ fixture: 1, kind: 'record-committed-completion-held' })
-      }, { once: true })
+      held.add(tx)
     }
   }
   return request
