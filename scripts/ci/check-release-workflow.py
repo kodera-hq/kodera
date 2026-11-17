@@ -229,6 +229,30 @@ def check_workflow_text(text: str, root: Path = ROOT) -> list[str]:
         errors.append("android-release must configure Temurin JDK 21")
     if "./gradlew clean assembleRelease" not in android_block and "./gradlew assembleRelease" not in android_block:
         errors.append("android-release must build release APK via ./gradlew assembleRelease")
+    for env_binding in (
+        "KODERA_ANDROID_CORE_ORIGIN: ${{ vars.KODERA_ANDROID_CORE_ORIGIN || 'https://api.kodera.io' }}",
+        "KODERA_ANDROID_ISSUER_ORIGINS: ${{ vars.KODERA_ANDROID_ISSUER_ORIGINS || 'https://auth.kodera.io' }}",
+        "KODERA_ANDROID_CLIENT_ID: ${{ vars.KODERA_ANDROID_CLIENT_ID || 'kodera-android' }}",
+        "KODERA_ANDROID_CONSOLE_ORIGIN: ${{ vars.KODERA_ANDROID_CONSOLE_ORIGIN || 'https://community.kodera.io' }}",
+    ):
+        if env_binding not in android_block:
+            errors.append(f"android-release must bind release deployment env '{env_binding}'")
+    configured_assemble_re = re.compile(
+        r"\./gradlew clean assembleRelease \\\n"
+        r"\s+-Pkodera\.coreOrigin=\"\$KODERA_ANDROID_CORE_ORIGIN\" \\\n"
+        r"\s+-Pkodera\.issuerOrigins=\"\$KODERA_ANDROID_ISSUER_ORIGINS\" \\\n"
+        r"\s+-Pkodera\.clientId=\"\$KODERA_ANDROID_CLIENT_ID\" \\\n"
+        r"\s+-Pkodera\.consoleOrigin=\"\$KODERA_ANDROID_CONSOLE_ORIGIN\" \\\n"
+        r"\s+--no-daemon"
+    )
+    if len(configured_assemble_re.findall(android_block)) != 2:
+        errors.append(
+            "android-release must pass -Pkodera.coreOrigin, -Pkodera.issuerOrigins, -Pkodera.clientId, and -Pkodera.consoleOrigin on both reproducible assembleRelease builds"
+        )
+    if "--require-configured-buildconfig" not in android_block:
+        errors.append(
+            "android-release must pass --require-configured-buildconfig to package-android-release.py"
+        )
     if (
         "export-android-runtime.init.gradle.kts" not in android_block
         or ":app:exportReleaseRuntimeArtifacts" not in android_block
@@ -470,6 +494,30 @@ def run_selftest(baseline: str) -> int:
             "removed Android native packaging check",
             lambda s: s.replace("python3 scripts/ci/check-native-packaging.py", "echo skipped", 1),
             "android-release must verify candidate APKs via scripts/ci/check-native-packaging.py",
+        ),
+        (
+            "missing Android release deployment env binding",
+            lambda s: s.replace(
+                "KODERA_ANDROID_ISSUER_ORIGINS: ${{ vars.KODERA_ANDROID_ISSUER_ORIGINS || 'https://auth.kodera.io' }}",
+                "KODERA_ANDROID_ISSUER_ORIGINS: ''",
+                1,
+            ),
+            "android-release must bind release deployment env",
+        ),
+        (
+            "omitted -Pkodera.coreOrigin on first assembleRelease",
+            lambda s: s.replace('-Pkodera.coreOrigin="$KODERA_ANDROID_CORE_ORIGIN" \\\n', "", 1),
+            "android-release must pass -Pkodera.coreOrigin, -Pkodera.issuerOrigins, -Pkodera.clientId, and -Pkodera.consoleOrigin on both reproducible assembleRelease builds",
+        ),
+        (
+            "omitted -Pkodera.clientId on second assembleRelease",
+            lambda s: "".join(s.rsplit('-Pkodera.clientId="$KODERA_ANDROID_CLIENT_ID" \\\n', 1)),
+            "android-release must pass -Pkodera.coreOrigin, -Pkodera.issuerOrigins, -Pkodera.clientId, and -Pkodera.consoleOrigin on both reproducible assembleRelease builds",
+        ),
+        (
+            "omitted --require-configured-buildconfig post-build gate",
+            lambda s: s.replace("            --require-configured-buildconfig\n", "", 1),
+            "android-release must pass --require-configured-buildconfig to package-android-release.py",
         ),
         (
             "removed Android runtime Maven artifact resolution",

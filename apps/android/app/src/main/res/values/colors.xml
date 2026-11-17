@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- @kodera/design-tokens color.cobalt.500 (Cobalt x Kodera — givre) -->
+    <color name="ic_launcher_background">#2B4BDB</color>
+    <!-- @kodera/design-tokens color.frost.100 (Cobalt x Kodera — givre) -->
+    <color name="ic_launcher_foreground">#EEF3F8</color>
+</resources>

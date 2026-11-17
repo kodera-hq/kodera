@@ -10,7 +10,7 @@ struct ChannelPollCard: View {
     @State private var context: ChannelPollContext?
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
     // Old scope data is hidden synchronously, before the lifecycle callback clears its reducer.
     private var preview: Bool {

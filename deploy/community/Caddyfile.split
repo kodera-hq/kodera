@@ -22,10 +22,13 @@ api.{$KODERA_MATRIX_DOMAIN} {
 
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		defer
 	}
+	header ?X-Content-Type-Options "nosniff"
+	header ?X-Frame-Options "DENY"
+	header ?Referrer-Policy "strict-origin-when-cross-origin"
+	header ?Permissions-Policy "accelerometer=(), autoplay=(self), browsing-topics=(), camera=(self), display-capture=(self), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(self), publickey-credentials-get=(self), screen-wake-lock=(self), serial=(), speaker-selection=(self), usb=(), xr-spatial-tracking=()"
 
 	# The agent API and staff plane are never exposed on the public Community ingress.
 	@internal path /agent /agent/* /staff /staff/*
@@ -68,10 +71,13 @@ matrix.{$KODERA_DOMAIN} {
 
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		defer
 	}
+	header ?X-Content-Type-Options "nosniff"
+	header ?X-Frame-Options "DENY"
+	header ?Referrer-Policy "strict-origin-when-cross-origin"
+	header ?Permissions-Policy "accelerometer=(), autoplay=(self), browsing-topics=(), camera=(self), display-capture=(self), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(self), publickey-credentials-get=(self), screen-wake-lock=(self), serial=(), speaker-selection=(self), usb=(), xr-spatial-tracking=()"
 
 	# room-access grants CORS to ROOM_ACCESS_ALLOWED_ORIGINS itself and refuses any other preflight.
 	@room_access path /_kodera/rooms/token
@@ -83,12 +89,14 @@ matrix.{$KODERA_DOMAIN} {
 	}
 
 	# Synapse answers every origin with `Access-Control-Allow-Origin: *`; here the grant names the
-	# web origin only.
+	# web origin only, and Synapse's `Server` version banner is stripped from headers and CORS exposure.
 	@matrix path /_matrix/client/* /_matrix/media/* /_synapse/client/*
 	handle @matrix {
 		reverse_proxy synapse:8008 {
 			import client_address
 			header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"
+			header_down -Server
+			header_down Access-Control-Expose-Headers "(?i)(?:,\s*server(\s*,|$)|^\s*server\s*,\s*|^\s*server\s*$)" "$1"
 		}
 	}
 
@@ -101,10 +109,13 @@ matrix.{$KODERA_DOMAIN} {
 livekit.{$KODERA_DOMAIN} {
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		defer
 	}
+	header ?X-Content-Type-Options "nosniff"
+	header ?X-Frame-Options "DENY"
+	header ?Referrer-Policy "strict-origin-when-cross-origin"
+	header ?Permissions-Policy "accelerometer=(), autoplay=(self), browsing-topics=(), camera=(self), display-capture=(self), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(self), publickey-credentials-get=(self), screen-wake-lock=(self), serial=(), speaker-selection=(self), usb=(), xr-spatial-tracking=()"
 
 	@livekit path /rtc /rtc/*
 	handle @livekit {

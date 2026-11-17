@@ -9,7 +9,7 @@ struct DocsWorkspaceCard: View {
     @State private var coordinator = DocsWorkspaceCoordinator()
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
     // Hide obsolete metadata synchronously before onChange clears the previous reducer state.
     private var preview: Bool {

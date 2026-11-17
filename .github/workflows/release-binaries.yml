@@ -158,17 +158,32 @@ jobs:
 
       - name: Build paired release APKs and export resolved runtime Maven artifacts
         working-directory: apps/android
+        env:
+          KODERA_ANDROID_CORE_ORIGIN: ${{ vars.KODERA_ANDROID_CORE_ORIGIN || 'https://api.kodera.io' }}
+          KODERA_ANDROID_ISSUER_ORIGINS: ${{ vars.KODERA_ANDROID_ISSUER_ORIGINS || 'https://auth.kodera.io' }}
+          KODERA_ANDROID_CLIENT_ID: ${{ vars.KODERA_ANDROID_CLIENT_ID || 'kodera-android' }}
+          KODERA_ANDROID_CONSOLE_ORIGIN: ${{ vars.KODERA_ANDROID_CONSOLE_ORIGIN || 'https://community.kodera.io' }}
         run: |
           set -euo pipefail
           bash scripts/ci/check-app-resources.selftest.sh
           python3 scripts/ci/check-app-resources.py
-          ./gradlew clean assembleRelease --no-daemon
+          ./gradlew clean assembleRelease \
+            -Pkodera.coreOrigin="$KODERA_ANDROID_CORE_ORIGIN" \
+            -Pkodera.issuerOrigins="$KODERA_ANDROID_ISSUER_ORIGINS" \
+            -Pkodera.clientId="$KODERA_ANDROID_CLIENT_ID" \
+            -Pkodera.consoleOrigin="$KODERA_ANDROID_CONSOLE_ORIGIN" \
+            --no-daemon
           python3 scripts/ci/check-app-resources.py \
             --merged-release app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
           first_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           test -n "$first_apk"
           cp "$first_apk" "$RUNNER_TEMP/first-release.apk"
-          ./gradlew clean assembleRelease --no-daemon
+          ./gradlew clean assembleRelease \
+            -Pkodera.coreOrigin="$KODERA_ANDROID_CORE_ORIGIN" \
+            -Pkodera.issuerOrigins="$KODERA_ANDROID_ISSUER_ORIGINS" \
+            -Pkodera.clientId="$KODERA_ANDROID_CLIENT_ID" \
+            -Pkodera.consoleOrigin="$KODERA_ANDROID_CONSOLE_ORIGIN" \
+            --no-daemon
           second_apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           test -n "$second_apk"
           cp "$second_apk" "$RUNNER_TEMP/second-release.apk"
@@ -189,7 +204,8 @@ jobs:
             --second-raw "$RUNNER_TEMP/second-release.apk" \
             --resolved-artifacts-json "$RUNNER_TEMP/android-runtime-artifacts.json" \
             --candidate-dir candidate \
-            --revision "$EXPECTED_REVISION"
+            --revision "$EXPECTED_REVISION" \
+            --require-configured-buildconfig
           python3 scripts/ci/check-native-packaging.py \
             --first candidate/first/package.zip \
             --second candidate/second/package.zip \

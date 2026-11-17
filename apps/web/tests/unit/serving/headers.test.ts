@@ -28,6 +28,28 @@ const CONTROL = 'synthetic-outside-file-must-never-be-served'
 // The built assets' policy (docs/specs/asset-caching-and-compression.md); every other response
 // is `no-store`.
 const ASSET_CACHE = 'public, max-age=31536000, immutable'
+const PERMISSIONS_POLICY = [
+  'accelerometer=()',
+  'autoplay=(self)',
+  'browsing-topics=()',
+  'camera=(self)',
+  'display-capture=(self)',
+  'encrypted-media=()',
+  'fullscreen=(self)',
+  'geolocation=()',
+  'gyroscope=()',
+  'magnetometer=()',
+  'microphone=(self)',
+  'midi=()',
+  'payment=()',
+  'picture-in-picture=(self)',
+  'publickey-credentials-get=(self)',
+  'screen-wake-lock=(self)',
+  'serial=()',
+  'speaker-selection=(self)',
+  'usb=()',
+  'xr-spatial-tracking=()',
+].join(', ')
 const APP_JS = 'export const fixture = true\n'
 
 interface Running {
@@ -272,6 +294,7 @@ function security(
   cache: 'no-store' | typeof ASSET_CACHE = 'no-store'
 ) {
   expect(headers['referrer-policy']).toBe('no-referrer')
+  expect(headers['permissions-policy']).toBe(PERMISSIONS_POLICY)
   expect(headers['cache-control']).toBe(cache)
   expect(headers['x-content-type-options']).toBe('nosniff')
   // No opener policy, of any value: the sign-in popup (src/auth/oidc.ts) is watched through
@@ -996,9 +1019,10 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '5e7c364f7efe2ca9caa70c2e231f02e17e092ea112514d0ebd5f793200f391ed'
+const PRISTINE_SHA = '9050d7a6bd3506554eeeea4af83d020ce1dd85716d0b7364145785d1a0877515'
 type Scenario =
   | 'referrer'
+  | 'permissions-policy'
   | 'directive'
   | 'callback'
   | 'symlink'
@@ -1084,6 +1108,12 @@ const MUTATIONS: readonly Mutation[] = [
     scenario: 'document-cache',
     from: "  const asset = within(local, '/assets')",
     to: '  const asset = true',
+  },
+  {
+    id: 'M11-permissions-policy',
+    scenario: 'permissions-policy',
+    from: "    'Permissions-Policy': PERMISSIONS_POLICY,",
+    to: "    'Permissions-Policy': 'camera=*, microphone=*',",
   },
 ]
 
@@ -1213,6 +1243,8 @@ async function phase(script: string, root: string, mutation: Mutation, changed: 
       // Confirm the selected unsafe effect separately, before challenging the guard.
       if (mutation.scenario === 'referrer')
         expect(result.headers['referrer-policy']).toBe('unsafe-url')
+      else if (mutation.scenario === 'permissions-policy')
+        expect(result.headers['permissions-policy']).toBe('camera=*, microphone=*')
       else if (mutation.scenario === 'directive')
         expect(directives(result.headers).has('script-src-elem')).toBe(true)
       else if (mutation.scenario === 'callback')
@@ -1222,6 +1254,7 @@ async function phase(script: string, root: string, mutation: Mutation, changed: 
       else if (mutation.scenario === 'error-headers') {
         for (const field of [
           'referrer-policy',
+          'permissions-policy',
           'cache-control',
           'x-content-type-options',
           'content-security-policy',

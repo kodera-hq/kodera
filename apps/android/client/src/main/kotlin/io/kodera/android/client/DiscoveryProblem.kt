@@ -41,13 +41,30 @@ sealed interface AnonymousDiscoveryOutcome {
 }
 class DiscoveryDecodingException(val failure: DiscoveryFailure = DiscoveryFailure.ProtocolViolation) : Exception("Discovery response refused")
 object DiscoveryProblem {
+    private val SINGLE_VALUE_HEADERS = setOf(
+        "content-type",
+        "content-encoding",
+        "content-length",
+        "transfer-encoding",
+        "x-request-id",
+        "retry-after",
+        "www-authenticate",
+    )
+
     internal fun validateHeaders(input: List<Pair<String, String>>, problem: Boolean): Map<String, String> {
         val headers = linkedMapOf<String, String>()
         for ((name, value) in input) {
             val key = name.lowercase(Locale.ROOT)
-            if (headers.containsKey(key)) refused()
-            headers[key] = value
+            val existing = headers[key]
+            if (existing != null) {
+                if (key in SINGLE_VALUE_HEADERS) refused()
+                headers[key] = "$existing, $value"
+            } else {
+                headers[key] = value
+            }
         }
+        val length = headers["content-length"]
+        if (length != null && (length.isEmpty() || length.any { it !in '0'..'9' })) refused()
         val media = headers["content-type"]?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
         val policies = headers["cache-control"]?.split(',')?.map { it.trim().lowercase(Locale.ROOT) } ?: emptyList()
         if (media != (if (problem) "application/problem+json" else "application/json") || "no-store" !in policies ||

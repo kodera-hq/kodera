@@ -249,8 +249,17 @@ fresh; replace $M/AndroidManifest.xml 'android:usesCleartextTraffic="false">' 'a
 expect_refusal "a network security configuration" 1 \
   "AndroidManifest.xml sets android:networkSecurityConfig; only the debug source set may"
 
+fresh; replace $M/AndroidManifest.xml 'android:enableOnBackInvokedCallback="true"' 'android:enableOnBackInvokedCallback="false"'
+expect_refusal "predictive back disabled" 1 'AndroidManifest.xml does not set android:enableOnBackInvokedCallback="true"'
+
+fresh; replace $M/AndroidManifest.xml 'android:icon="@mipmap/ic_launcher"' 'android:icon="@mipmap/other"'
+expect_refusal "an unapproved launcher icon reference" 1 'AndroidManifest.xml does not set android:icon="@mipmap/ic_launcher"'
+
+fresh; replace $M/AndroidManifest.xml 'android:roundIcon="@mipmap/ic_launcher_round"' 'android:roundIcon="@mipmap/other"'
+expect_refusal "an unapproved round launcher icon reference" 1 'AndroidManifest.xml does not set android:roundIcon="@mipmap/ic_launcher_round"'
+
 fresh; printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/></manifest>\n' > "$work/$M/AndroidManifest.xml"
-expect_refusal "a manifest with no application element" 5 'AndroidManifest.xml does not set android:allowBackup="false"'
+expect_refusal "a manifest with no application element" 8 'AndroidManifest.xml does not set android:allowBackup="false"'
 
 fresh; replace $M/AndroidManifest.xml '<application' '<uses-permission android:name="android.permission.CAMERA"/><application'
 expect_refusal "an extra permission" 1 "AndroidManifest.xml permissions differ from the reviewed foreground radio allowlist"
@@ -343,6 +352,42 @@ expect_refusal "a cloud-backup exclude for another path" 1 \
 fresh; replace $X/backup_rules.xml 'domain="file"' 'domain="database"'
 expect_refusal "full backup that carries the session" 1 \
   "backup_rules.xml does not exclude the session directory from full backup"
+
+# ── adaptive launcher icons ────────────────────────────────────────────────
+fresh; replace $M/res/values/colors.xml '#2B4BDB' '#000000'
+expect_refusal "an unapproved launcher background hex" 1 \
+  "res/values/colors.xml must define only the approved Cobalt x Givre launcher palette"
+
+fresh; replace $M/res/values/colors.xml '</resources>' '    <color name="extra">#FFFFFF</color>
+</resources>'
+expect_refusal "an extra colour resource in colors.xml" 1 \
+  "res/values/colors.xml must define only the approved Cobalt x Givre launcher palette"
+
+fresh; mkdir -p "$work/$M/res/values-night"
+printf '<resources><color name="ic_launcher_background">#000000</color></resources>\n' > "$work/$M/res/values-night/colors.xml"
+expect_refusal "an unreviewed night colours file" 1 \
+  "res/values-night/colors.xml defines unreviewed colour resources"
+
+fresh; replace $M/res/drawable/ic_launcher_foreground.xml 'android:width="108dp"' 'android:width="24dp"'
+expect_refusal "a launcher foreground outside the 108dp adaptive viewport" 1 \
+  "res/drawable/ic_launcher_foreground.xml must declare a 108dp x 108dp adaptive-icon viewport"
+
+fresh; replace $M/res/drawable/ic_launcher_foreground.xml 'M431.788 580.051' 'M0 0'
+expect_refusal "launcher foreground geometry drifted from kodera_monogram" 1 \
+  "res/drawable/ic_launcher_foreground.xml path geometry differs from kodera_monogram.xml"
+
+fresh; replace $M/res/drawable/ic_launcher_foreground.xml '<path android:fillColor="@color/ic_launcher_foreground" android:pathData="M431.788' '<path android:fillColor="#FFFFFF" android:pathData="M431.788'
+expect_refusal "a literal hex fill in the launcher foreground" 1 \
+  "res/drawable/ic_launcher_foreground.xml must fill every path with @color/ic_launcher_foreground"
+
+fresh; replace $M/res/mipmap-anydpi-v26/ic_launcher.xml '    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+' ''
+expect_refusal "a launcher icon lacking its monochrome layer" 1 \
+  "res/mipmap-anydpi-v26/ic_launcher.xml must bind adaptive background, foreground and monochrome launcher layers"
+
+fresh; replace $M/res/mipmap-anydpi-v26/ic_launcher_round.xml 'foreground android:drawable="@drawable/ic_launcher_foreground"' 'foreground android:drawable="@drawable/kodera_monogram"'
+expect_refusal "a round launcher icon binding another foreground" 1 \
+  "res/mipmap-anydpi-v26/ic_launcher_round.xml must bind adaptive background, foreground and monochrome launcher layers"
 
 # ── network security configuration ─────────────────────────────────────────
 N=app/src/debug/res/xml/debug_loopback_cleartext.xml
@@ -620,6 +665,9 @@ expect_unreadable "a malformed JSON input"
 fresh; rm -r -- "$work/$M/res/font"
 expect_unreadable "a missing res/font directory"
 
+fresh; rm -- "$work/$M/res/mipmap-anydpi-v26/ic_launcher.xml"
+expect_unreadable "a missing adaptive launcher icon"
+
 fresh; rm -- "$work/config/local.properties.example"
 expect_unreadable "a missing config/local.properties.example"
 
@@ -745,9 +793,21 @@ merged_fresh; replace $F 'android:dataExtractionRules="@xml/data_extraction_rule
 expect_merged_refusal "data extraction rules a library replaced" 1 \
   'merged manifest does not set android:dataExtractionRules="@xml/data_extraction_rules"'
 
+merged_fresh; replace $F 'android:enableOnBackInvokedCallback="true"' 'android:enableOnBackInvokedCallback="false"'
+expect_merged_refusal "predictive back disabled in merged manifest" 1 \
+  'merged manifest does not set android:enableOnBackInvokedCallback="true"'
+
+merged_fresh; replace $F 'android:icon="@mipmap/ic_launcher"' 'android:icon="@mipmap/library_icon"'
+expect_merged_refusal "launcher icon replaced in merged manifest" 1 \
+  'merged manifest does not set android:icon="@mipmap/ic_launcher"'
+
+merged_fresh; replace $F 'android:roundIcon="@mipmap/ic_launcher_round"' 'android:roundIcon="@mipmap/library_icon"'
+expect_merged_refusal "round launcher icon replaced in merged manifest" 1 \
+  'merged manifest does not set android:roundIcon="@mipmap/ic_launcher_round"'
+
 # Every application guard speaks; there are no components to read.
 merged_fresh; printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET" /></manifest>\n' > "$work/merged.xml"
-expect_merged_refusal "a manifest with no application element" 4 'merged manifest does not set android:allowBackup="false"'
+expect_merged_refusal "a manifest with no application element" 7 'merged manifest does not set android:allowBackup="false"'
 
 # AppAuth's redirect receiver: exactly VIEW + DEFAULT + BROWSABLE and the one scheme.
 RA="net.openid.appauth.RedirectUriReceiverActivity"
@@ -889,6 +949,6 @@ printf '%s\n' "$_out" | grep -qF "Nothing was checked." || fail "--merged: a mal
 cases=$((cases + 1)); printf '  ok  --merged: a malformed manifest is could not look (exit 2)\n'
 
 # A harness that aborted early, or a case list that shrank, must not pass.
-expected_cases=165
+expected_cases=180
 [ "$cases" -eq "$expected_cases" ] || fail "ran $cases cases, expected $expected_cases"
 echo "self-test passed: $cases cases, each proved by its own message, finding count AND exit status"

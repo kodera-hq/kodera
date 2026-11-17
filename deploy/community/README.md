@@ -89,6 +89,7 @@ What `docker-compose.split.yml` changes, and nothing more:
 The static host must:
 
 - publish `GET https://<KODERA_DOMAIN>/.well-known/matrix/client` returning `{"m.homeserver":{"base_url":"https://matrix.<KODERA_DOMAIN>"}}` with `Access-Control-Allow-Origin: *`, because Synapse no longer answers on the server name;
+- proxy `GET https://<KODERA_DOMAIN>/.well-known/apple-app-site-association` and `GET https://<KODERA_DOMAIN>/.well-known/assetlinks.json` to `https://api.<KODERA_MATRIX_DOMAIN>` when iOS Universal Links or Android App Links are configured for `<KODERA_DOMAIN>` (see "Mobile app association");
 - serve a web client built with `VITE_AUTH_MODE=oidc`, `VITE_ENABLE_MSW=0`, `VITE_CORE_API_URL=https://api.<KODERA_MATRIX_DOMAIN>/api/v1`, `VITE_KEYCLOAK_URL=<KODERA_OIDC_PROVIDER_ORIGIN>` and `VITE_MATRIX_DOMAIN=<KODERA_MATRIX_DOMAIN>`;
 - admit exactly those origins in its Content-Security-Policy `connect-src`: the identity provider, `https://api.<KODERA_MATRIX_DOMAIN>`, `https://matrix.<KODERA_DOMAIN>` and `wss://livekit.<KODERA_DOMAIN>`.
 

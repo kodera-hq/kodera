@@ -979,11 +979,23 @@ REVIEWED_CADDY_GLOBAL_OPTIONS = ("email {$KODERA_ACME_EMAIL}",)
 REVIEWED_CADDY_SNIPPETS = {"client_address": (CLIENT_ADDRESS_OVERRIDE, *STRIPPED_CLIENT_HEADERS)}
 REVIEWED_CADDY_SITE = "{$KODERA_DOMAIN}"
 REVIEWED_CADDY_SITE_LINES = frozenset({"encode zstd gzip"})
+PERMISSIONS_POLICY_VALUE = (
+    "accelerometer=(), autoplay=(self), browsing-topics=(), camera=(self), display-capture=(self), "
+    "encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), "
+    "microphone=(self), midi=(), payment=(), picture-in-picture=(self), "
+    "publickey-credentials-get=(self), screen-wake-lock=(self), serial=(), "
+    "speaker-selection=(self), usb=(), xr-spatial-tracking=()"
+)
 REVIEWED_CADDY_RESPONSE_HEADERS = (
     'Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"',
-    'X-Content-Type-Options "nosniff"',
-    'X-Frame-Options "DENY"',
-    'Referrer-Policy "strict-origin-when-cross-origin"',
+    "-Server",
+    "defer",
+)
+REVIEWED_CADDY_CONDITIONAL_HEADERS = (
+    'header ?X-Content-Type-Options "nosniff"',
+    'header ?X-Frame-Options "DENY"',
+    'header ?Referrer-Policy "strict-origin-when-cross-origin"',
+    f'header ?Permissions-Policy "{PERMISSIONS_POLICY_VALUE}"',
 )
 REVIEWED_CADDY_REWRITES = {"rewrite * /token": "room-access:8095"}
 SINGLE_CADDY_SITES: dict[str, frozenset[str]] = {REVIEWED_CADDY_SITE: frozenset(ALLOWED_PUBLIC_ROUTES)}
@@ -1001,8 +1013,22 @@ SPLIT_CADDY_SITES: dict[str, frozenset[str]] = {
 # Synapse answers every origin with `Access-Control-Allow-Origin: *`. On its own origin that grant
 # is replaced by the one console origin; the API and room-access already grant exact origins only.
 SPLIT_SYNAPSE_CORS = 'header_down Access-Control-Allow-Origin "https://{$KODERA_DOMAIN}"'
+SYNAPSE_STRIP_SERVER = "header_down -Server"
+SYNAPSE_STRIP_EXPOSED_SERVER = (
+    'header_down Access-Control-Expose-Headers "(?i)(?:,\\s*server(\\s*,|$)|^\\s*server\\s*,\\s*|^\\s*server\\s*$)" "$1"'
+)
+SINGLE_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    (REVIEWED_CADDY_SITE, "synapse:8008"): (
+        SYNAPSE_STRIP_SERVER,
+        SYNAPSE_STRIP_EXPOSED_SERVER,
+    ),
+}
 SPLIT_PROXY_OPTIONS: dict[tuple[str, str], tuple[str, ...]] = {
-    (SPLIT_MATRIX_SITE, "synapse:8008"): (SPLIT_SYNAPSE_CORS,),
+    (SPLIT_MATRIX_SITE, "synapse:8008"): (
+        SPLIT_SYNAPSE_CORS,
+        SYNAPSE_STRIP_SERVER,
+        SYNAPSE_STRIP_EXPOSED_SERVER,
+    ),
 }
 
 
@@ -1013,7 +1039,13 @@ def _directive(line: str) -> str:
 
 def check_caddy_routes(caddyfile_text: str) -> list[str]:
     """The single-origin Caddyfile: one site block, the web client as its catch-all."""
-    return _check_caddy(caddyfile_text, label="Caddyfile", site_upstreams=SINGLE_CADDY_SITES, catch_all=CATCH_ALL_UPSTREAM)
+    return _check_caddy(
+        caddyfile_text,
+        label="Caddyfile",
+        site_upstreams=SINGLE_CADDY_SITES,
+        catch_all=CATCH_ALL_UPSTREAM,
+        proxy_options=SINGLE_PROXY_OPTIONS,
+    )
 
 
 def check_split_caddy_routes(caddyfile_text: str) -> list[str]:
@@ -1099,6 +1131,8 @@ def _check_caddy(
         routed_to_upstream: dict[str, set[str]] = {}
         closed_paths: set[str] = set()
         answers_unrouted = False
+        conditional_headers: list[str] = []
+        header_blocks = 0
         for line in site.lines:
             if line.startswith("@"):
                 found = re.fullmatch(r"@([a-z_]+)[ \t]+path[ \t]+(\S.*)", line)
@@ -1110,10 +1144,13 @@ def _check_caddy(
                     matchers[found.group(1)] = found.group(2).split()
             elif _directive(line) == "import":
                 errors.append(f"{label} imports a snippet outside a reverse_proxy block, where it was not reviewed")
+            elif _directive(line) == "header":
+                conditional_headers.append(line)
             elif line not in REVIEWED_CADDY_SITE_LINES:
                 errors.append(f"{label} has an unreviewed directive in a site block: '{_directive(line)}'")
         for block in site.blocks:
             if block.header == "header":
+                header_blocks += 1
                 if block.blocks or tuple(block.lines) != REVIEWED_CADDY_RESPONSE_HEADERS:
                     errors.append(f"{label} response headers differ from the reviewed set")
                 continue
@@ -1209,6 +1246,8 @@ def _check_caddy(
                         )
                     else:
                         errors.append(f"{label} exposes an unreviewed route to '{upstream}': '{path}'")
+        if header_blocks != 1 or tuple(conditional_headers) != REVIEWED_CADDY_CONDITIONAL_HEADERS:
+            errors.append(f"{label} response headers differ from the reviewed set")
         if "server:8000" in site_upstreams.get(site.header, frozenset()):
             server_routes = routed_to_upstream.get("server:8000", set())
             for required_route in sorted(MOBILE_ASSOCIATION_ROUTES):
@@ -2311,8 +2350,21 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
                    "Caddyfile has an unreviewed reverse_proxy option for 'server:8000': 'header_up Host'"),
         caddy_case("the snippet gains a directive", "\theader_up -Forwarded\n", "\theader_up -Forwarded\n\theader_up X-Internal-Token secret\n",
                    "Caddyfile snippet 'client_address' differs from the reviewed one"),
-        caddy_case("a security response header is dropped", '\t\tX-Frame-Options "DENY"\n', "",
+        caddy_case("a security response header is dropped", '\theader ?X-Frame-Options "DENY"\n', "",
                    "Caddyfile response headers differ from the reviewed set"),
+        caddy_case("an unconditional header duplicates upstream policy", '\theader ?Referrer-Policy "strict-origin-when-cross-origin"\n',
+                   '\theader Referrer-Policy "strict-origin-when-cross-origin"\n',
+                   "Caddyfile response headers differ from the reviewed set"),
+        caddy_case("Permissions-Policy is dropped from Caddyfile", f'\theader ?Permissions-Policy "{PERMISSIONS_POLICY_VALUE}"\n', "",
+                   "Caddyfile response headers differ from the reviewed set"),
+        caddy_case("Server header suppression is dropped from Caddyfile", "\t\t-Server\n", "",
+                   "Caddyfile response headers differ from the reviewed set"),
+        caddy_case("deferred header application is dropped from Caddyfile", "\t\tdefer\n", "",
+                   "Caddyfile response headers differ from the reviewed set"),
+        caddy_case("Synapse Server header stripping is dropped from Caddyfile", "\t\t\theader_down -Server\n", "",
+                   "Caddyfile must set the reviewed reverse_proxy option for 'synapse:8008': 'header_down -Server'"),
+        caddy_case("Synapse CORS exposed Server stripping is dropped from Caddyfile", f"\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n", "",
+                   f"Caddyfile must set the reviewed reverse_proxy option for 'synapse:8008': '{SYNAPSE_STRIP_EXPOSED_SERVER}'"),
         caddy_case("Caddy's admin API is opened", "\temail {$KODERA_ACME_EMAIL}\n", "\temail {$KODERA_ACME_EMAIL}\n\tadmin 0.0.0.0:2019\n",
                    "Caddyfile global options differ from the reviewed ones"),
         caddy_case("a directive outside every block", site_open, "debug\n\n" + site_open,
@@ -2453,7 +2505,15 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         ),
         (
             "the client address override is removed from the Synapse upstream",
-            lambda c, e, cf: (c, e, cf.replace("reverse_proxy synapse:8008 {\n\t\t\timport client_address\n\t\t}", "reverse_proxy synapse:8008", 1)),
+            lambda c, e, cf: (
+                c,
+                e,
+                cf.replace(
+                    f"reverse_proxy synapse:8008 {{\n\t\t\timport client_address\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
+                    f"reverse_proxy synapse:8008 {{\n\t\t\t{SYNAPSE_STRIP_SERVER}\n\t\t\t{SYNAPSE_STRIP_EXPOSED_SERVER}\n\t\t}}",
+                    1,
+                ),
+            ),
             "Caddyfile must overwrite X-Forwarded-For with the peer address for 'synapse:8008'",
         ),
         (
@@ -2975,6 +3035,15 @@ SPLIT_MUTATIONS: tuple[SplitMutation, ...] = (
      "(got '/_synapse/admin/*')"),
     ("Synapse keeps granting every origin", "caddy", _first("\t\t\t" + SPLIT_SYNAPSE_CORS + "\n", ""),
      f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SPLIT_SYNAPSE_CORS}'"),
+    ("Synapse keeps exposing its Server banner", "caddy", _first("\t\t\t" + SYNAPSE_STRIP_SERVER + "\n", ""),
+     f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SYNAPSE_STRIP_SERVER}'"),
+    ("Synapse keeps exposing Server in Access-Control-Expose-Headers", "caddy", _first("\t\t\t" + SYNAPSE_STRIP_EXPOSED_SERVER + "\n", ""),
+     f"Caddyfile.split must set the reviewed reverse_proxy option for 'synapse:8008': '{SYNAPSE_STRIP_EXPOSED_SERVER}'"),
+    ("split API origin duplicates upstream Referrer-Policy", "caddy",
+     _first('\theader ?Referrer-Policy "strict-origin-when-cross-origin"\n', '\theader Referrer-Policy "strict-origin-when-cross-origin"\n'),
+     "Caddyfile.split response headers differ from the reviewed set"),
+    ("split origin drops Server header suppression", "caddy", _first("\t\t-Server\n", ""),
+     "Caddyfile.split response headers differ from the reviewed set"),
     ("Synapse grants a wildcard origin", "caddy", _first(SPLIT_SYNAPSE_CORS, 'header_down Access-Control-Allow-Origin "*"'),
      "Caddyfile.split has an unreviewed reverse_proxy option for 'synapse:8008': 'header_down Access-Control-Allow-Origin'"),
     ("the API is answered on the signalling origin", "caddy", _first("reverse_proxy livekit:7880 {", "reverse_proxy server:8000 {"),

@@ -79,4 +79,54 @@ final class DiscoveryProblemTests: XCTestCase {
             .temporarilyUnavailable(RetryHint(seconds: 5), correlation))
         XCTAssertThrowsError(try decode(status: 503, type: "service-unavailable", retry: 6, header: "6"))
     }
+
+    func testDuplicateFramingAndSecurityHeadersAreRefused() throws {
+        let baseOk = DiscoveryFixtures.headers.map { ($0.key, $0.value) }
+        let criticalDuplicates: [(String, String, String)] = [
+            ("X-Request-Id", DiscoveryFixtures.requestID, "second-request-id"),
+            ("Content-Type", "application/json", "application/json"),
+            ("Content-Encoding", "identity", "gzip"),
+            ("Content-Length", "24", "24"),
+            ("Transfer-Encoding", "chunked", "chunked"),
+            ("Retry-After", "5", "5"),
+            ("WWW-Authenticate", "Bearer", "Bearer"),
+        ]
+        for (name, first, second) in criticalDuplicates {
+            var pairs = baseOk.filter { $0.0.lowercased() != name.lowercased() }
+            pairs.append((name, first))
+            pairs.append((name.lowercased(), second))
+            XCTAssertThrowsError(try DiscoveryProblem.validateHeaders(pairs, problem: false), name)
+            var dict = DiscoveryFixtures.headers
+            dict[name] = first
+            dict[name.lowercased()] = second
+            XCTAssertThrowsError(try DiscoveryProblem.validateHeaders(dict, problem: false), "\(name) dictionary")
+        }
+
+        let rateBody = try DiscoveryFixtures.problem(status: 429, type: "rate-limited", retry: 2)
+        var retryPairs = DiscoveryFixtures.problemHeaders(retry: "2").map { ($0.key, $0.value) }
+        retryPairs.append(("retry-after", "2"))
+        XCTAssertThrowsError(try DiscoveryProblem.decode(data: rateBody, status: 429, headerPairs: retryPairs))
+    }
+
+    func testRepeatedReverseProxyPolicyHeadersAreTolerated() throws {
+        var okPairs = DiscoveryFixtures.headers.map { ($0.key, $0.value) }
+        okPairs.append(("Referrer-Policy", "strict-origin-when-cross-origin"))
+        okPairs.append(("referrer-policy", "same-origin"))
+        okPairs.append(("X-Content-Type-Options", "nosniff"))
+        okPairs.append(("x-content-type-options", "nosniff"))
+        let normalizedOk = try DiscoveryProblem.validateHeaders(okPairs, problem: false)
+        XCTAssertEqual(normalizedOk["referrer-policy"], "strict-origin-when-cross-origin, same-origin")
+        XCTAssertEqual(normalizedOk["x-content-type-options"], "nosniff, nosniff")
+
+        var dictHeaders = DiscoveryFixtures.problemHeaders()
+        dictHeaders["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        dictHeaders["referrer-policy"] = "same-origin"
+        dictHeaders["X-Content-Type-Options"] = "nosniff"
+        dictHeaders["x-content-type-options"] = "nosniff"
+        let problemData = try DiscoveryFixtures.problem(status: 400, type: "malformed-request")
+        XCTAssertEqual(
+            try DiscoveryProblem.decode(data: problemData, status: 400, headers: dictHeaders),
+            .rejectedRequest(.malformedRequest)
+        )
+    }
 }

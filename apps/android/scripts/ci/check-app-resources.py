@@ -9,11 +9,14 @@ Gradle and AGP do not fail a build on any of these, and each ships silently:
   missing accessible copy;
 - a font file that drifted from its source hash, one that is not bound, or a
   binding to another face; a font licence notice that is missing or drifted;
-- an AndroidManifest.xml that allows backup or cleartext traffic, names a
+- an AndroidManifest.xml that allows backup or cleartext traffic, lacks the
+  adaptive launcher icons or predictive-back callback opt-in, names a
   network security configuration, asks for a permission outside the reviewed foreground radio allowlist,
   declares an intent filter other than the MAIN/LAUNCHER entry (AppAuth's
   redirect activity arrives through the merger and is allowlisted there), or
   exports a provider, receiver or service;
+- launcher icon resources whose palette or monogram vector geometry drifted
+  from the approved Cobalt x Givre tokens and kodera_monogram.xml;
 - backup and device-transfer rules that stop excluding the sealed session
   directory (app/src/test SessionStorageTests ties the store's path to them);
 - a network security configuration anywhere but the debug source set, or a
@@ -101,6 +104,21 @@ COMPONENT_TAGS = ("activity", "activity-alias", "service", "receiver", "provider
 
 # Backup and transfer: the sealed session never leaves the device.
 BACKUP_RULES = {"dataExtractionRules": "@xml/data_extraction_rules", "fullBackupContent": "@xml/backup_rules"}
+APPLICATION_ATTRIBUTES = {
+    "enableOnBackInvokedCallback": "true",
+    "icon": "@mipmap/ic_launcher",
+    "roundIcon": "@mipmap/ic_launcher_round",
+}
+LAUNCHER_COLORS = {
+    "ic_launcher_background": "#2B4BDB",
+    "ic_launcher_foreground": "#EEF3F8",
+}
+LAUNCHER_ICONS = ("ic_launcher.xml", "ic_launcher_round.xml")
+LAUNCHER_LAYERS = (
+    ("background", "@color/ic_launcher_background"),
+    ("foreground", "@drawable/ic_launcher_foreground"),
+    ("monochrome", "@drawable/ic_launcher_foreground"),
+)
 SESSION_EXCLUDE = {"domain": "file", "path": "session"}
 
 # The one network security configuration: debug only, cleartext to loopback only.
@@ -348,7 +366,7 @@ def findings(root):
         errors.append('AndroidManifest.xml does not set android:usesCleartextTraffic="false"')
     if application is not None and application.get(ANDROID + "networkSecurityConfig") is not None:
         errors.append("AndroidManifest.xml sets android:networkSecurityConfig; only the debug source set may")
-    for attribute, value in BACKUP_RULES.items():
+    for attribute, value in {**BACKUP_RULES, **APPLICATION_ATTRIBUTES}.items():
         if application is None or application.get(ANDROID + attribute) != value:
             errors.append(f'AndroidManifest.xml does not set android:{attribute}="{value}"')
     permissions = [p.get(ANDROID + "name") for tag in ("uses-permission", "uses-permission-sdk-23")
@@ -370,6 +388,7 @@ def findings(root):
                 errors.append(f"AndroidManifest.xml exports a {tag} ({component.get(ANDROID + 'name')})")
 
     errors += backup_findings(main)
+    errors += launcher_icon_findings(main)
     errors += network_findings(src)
 
     for path in sorted(src.rglob("*.xml")):
@@ -457,6 +476,46 @@ def backup_findings(main):
     backup = read_xml(main / "res/xml/backup_rules.xml")
     if backup.tag != "full-backup-content" or not excludes_session(backup):
         errors.append("backup_rules.xml does not exclude the session directory from full backup")
+    return errors
+
+
+def launcher_icon_findings(main):
+    errors = []
+    colors_path = main / "res/values/colors.xml"
+    colors = read_xml(colors_path)
+    entries = list(colors)
+    declared_colors = {c.get("name"): (c.text or "").strip().upper() for c in entries if c.tag == "color"}
+    if (colors.tag != "resources" or len(entries) != len(LAUNCHER_COLORS)
+            or any(c.tag != "color" or list(c) for c in entries) or declared_colors != LAUNCHER_COLORS):
+        errors.append("res/values/colors.xml must define only the approved Cobalt x Givre launcher palette")
+    for extra in sorted((main / "res").glob("values*/colors*.xml")):
+        if extra != colors_path:
+            errors.append(f"{extra.relative_to(main).as_posix()} defines unreviewed colour resources")
+
+    monogram = read_xml(main / "res/drawable/kodera_monogram.xml")
+    monogram_paths = [p.get(ANDROID + "pathData") for p in monogram.iter("path")]
+    foreground = read_xml(main / "res/drawable/ic_launcher_foreground.xml")
+    viewport = (
+        foreground.get(ANDROID + "width"),
+        foreground.get(ANDROID + "height"),
+        foreground.get(ANDROID + "viewportWidth"),
+        foreground.get(ANDROID + "viewportHeight"),
+    )
+    if foreground.tag != "vector" or viewport != ("108dp", "108dp", "108", "108"):
+        errors.append("res/drawable/ic_launcher_foreground.xml must declare a 108dp x 108dp adaptive-icon viewport")
+    fg_paths = list(foreground.iter("path"))
+    if [p.get(ANDROID + "pathData") for p in fg_paths] != monogram_paths:
+        errors.append("res/drawable/ic_launcher_foreground.xml path geometry differs from kodera_monogram.xml")
+    if any(p.get(ANDROID + "fillColor") != "@color/ic_launcher_foreground" for p in fg_paths):
+        errors.append("res/drawable/ic_launcher_foreground.xml must fill every path with @color/ic_launcher_foreground")
+
+    for icon_name in LAUNCHER_ICONS:
+        adaptive = read_xml(main / "res/mipmap-anydpi-v26" / icon_name)
+        layers = [(c.tag, c.get(ANDROID + "drawable")) for c in adaptive]
+        if adaptive.tag != "adaptive-icon" or layers != list(LAUNCHER_LAYERS):
+            errors.append(
+                f"res/mipmap-anydpi-v26/{icon_name} must bind adaptive background, foreground and monochrome launcher layers"
+            )
     return errors
 
 
@@ -571,7 +630,7 @@ def merged_findings(path, release=False):
     if configuration is not None and (release or configuration != DEBUG_NSC):
         errors.append(f"merged manifest sets android:networkSecurityConfig to {configuration}; "
                       + ("a release build names none" if release else f"only {DEBUG_NSC} is allowed"))
-    for attribute, value in BACKUP_RULES.items():
+    for attribute, value in {**BACKUP_RULES, **APPLICATION_ATTRIBUTES}.items():
         if application is None or application.get(ANDROID + attribute) != value:
             errors.append(f'merged manifest does not set android:{attribute}="{value}"')
     if release and application is not None:

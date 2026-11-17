@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,7 @@ import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +44,11 @@ CHECK_NATIVE_PACKAGING = ROOT / "scripts" / "ci" / "check-native-packaging.py"
 FIXED_ZIP_DATE_TIME = (2020, 1, 1, 0, 0, 0)
 FIXED_SOURCE_DATE_EPOCH = 1704067200
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+CLIENT_ID_RE = re.compile(r"\A[\x21-\x7e]{1,128}\Z")
+DNS_HOST_RE = re.compile(r"\A(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\Z")
+DEX_ENTRY_RE = re.compile(r"^classes[0-9]*\.dex$")
+BUILDCONFIG_DESCRIPTOR = "Lio/kodera/android/BuildConfig;"
+DEX_ENDIAN_CONSTANT = 0x12345678
 MAX_POM_BYTES = 2 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 
@@ -109,6 +116,242 @@ def canonicalize_apk_zip(src_apk: Path, dst_apk: Path) -> tuple[str, int]:
                     zout.writestr(out_info, payload)
     raw = dst_apk.read_bytes()
     return hashlib.sha256(raw).hexdigest(), len(raw)
+
+
+def _read_uleb128(buf: bytes, offset: int) -> tuple[int, int]:
+    result = 0
+    shift = 0
+    for _ in range(5):
+        if offset >= len(buf):
+            raise ValueError("truncated ULEB128 in DEX payload")
+        byte = buf[offset]
+        offset += 1
+        result |= (byte & 0x7F) << shift
+        if (byte & 0x80) == 0:
+            return result, offset
+        shift += 7
+    raise ValueError("overlong ULEB128 in DEX payload")
+
+
+def _default_dex_static_value(type_descriptor: str) -> object:
+    if type_descriptor == "Z":
+        return False
+    if type_descriptor in {"B", "S", "C", "I", "J"}:
+        return 0
+    if type_descriptor in {"F", "D"}:
+        return 0.0
+    return None
+
+
+def _read_dex_encoded_value(
+    buf: bytes, offset: int, get_string: object
+) -> tuple[object, int]:
+    if offset >= len(buf):
+        raise ValueError("truncated DEX encoded_value")
+    header = buf[offset]
+    offset += 1
+    value_type = header & 0x1F
+    value_arg = header >> 5
+
+    if value_type in {0x00, 0x02, 0x04, 0x06}:
+        size = 1 if value_type == 0x00 else (value_arg + 1)
+        return int.from_bytes(buf[offset : offset + size], "little", signed=True), offset + size
+    if value_type in {0x03, 0x17, 0x18, 0x19, 0x1A, 0x1B}:
+        size = value_arg + 1
+        idx = int.from_bytes(buf[offset : offset + size], "little", signed=False)
+        offset += size
+        if value_type == 0x17:
+            return get_string(idx), offset  # type: ignore[operator]
+        return idx, offset
+    if value_type in {0x10, 0x11}:
+        return 0.0, offset + value_arg + 1
+    if value_type == 0x1C:
+        count, offset = _read_uleb128(buf, offset)
+        items: list[object] = []
+        for _ in range(count):
+            val, offset = _read_dex_encoded_value(buf, offset, get_string)
+            items.append(val)
+        return items, offset
+    if value_type == 0x1D:
+        _, offset = _read_uleb128(buf, offset)
+        count, offset = _read_uleb128(buf, offset)
+        for _ in range(count):
+            _, offset = _read_uleb128(buf, offset)
+            _, offset = _read_dex_encoded_value(buf, offset, get_string)
+        return None, offset
+    if value_type == 0x1E:
+        return None, offset
+    if value_type == 0x1F:
+        return bool(value_arg), offset
+    raise ValueError(f"unsupported DEX encoded_value type 0x{value_type:02x}")
+
+
+def _parse_buildconfig_from_dex(buf: bytes) -> dict[str, object] | None:
+    if len(buf) < 112 or buf[:4] != b"dex\n" or buf[7:8] != b"\x00":
+        raise ValueError("invalid DEX header magic")
+    endian_tag = struct.unpack_from("<I", buf, 40)[0]
+    if endian_tag != DEX_ENDIAN_CONSTANT:
+        raise ValueError(f"unexpected DEX endian tag 0x{endian_tag:08x}")
+
+    string_ids_size, string_ids_off = struct.unpack_from("<II", buf, 56)
+    type_ids_size, type_ids_off = struct.unpack_from("<II", buf, 64)
+    field_ids_size, field_ids_off = struct.unpack_from("<II", buf, 80)
+    class_defs_size, class_defs_off = struct.unpack_from("<II", buf, 96)
+
+    def get_string(idx: int) -> str:
+        if idx < 0 or idx >= string_ids_size:
+            raise ValueError(f"DEX string index {idx} out of range ({string_ids_size})")
+        data_off = struct.unpack_from("<I", buf, string_ids_off + idx * 4)[0]
+        _, pos = _read_uleb128(buf, data_off)
+        end = buf.find(b"\x00", pos)
+        if end == -1:
+            raise ValueError("unterminated MUTF-8 string in DEX")
+        return buf[pos:end].decode("utf-8", errors="replace")
+
+    def get_type(idx: int) -> str:
+        if idx < 0 or idx >= type_ids_size:
+            raise ValueError(f"DEX type index {idx} out of range ({type_ids_size})")
+        desc_idx = struct.unpack_from("<I", buf, type_ids_off + idx * 4)[0]
+        return get_string(desc_idx)
+
+    def get_field(idx: int) -> tuple[int, int, int]:
+        if idx < 0 or idx >= field_ids_size:
+            raise ValueError(f"DEX field index {idx} out of range ({field_ids_size})")
+        return struct.unpack_from("<HHI", buf, field_ids_off + idx * 8)
+
+    for c_idx in range(class_defs_size):
+        (
+            class_type_idx,
+            _access_flags,
+            _super_idx,
+            _interfaces_off,
+            _source_idx,
+            _annotations_off,
+            class_data_off,
+            static_values_off,
+        ) = struct.unpack_from("<IIIIIIII", buf, class_defs_off + c_idx * 32)
+        if get_type(class_type_idx) != BUILDCONFIG_DESCRIPTOR:
+            continue
+        if class_data_off == 0:
+            return {}
+        static_fields_size, pos = _read_uleb128(buf, class_data_off)
+        _, pos = _read_uleb128(buf, pos)
+        _, pos = _read_uleb128(buf, pos)
+        _, pos = _read_uleb128(buf, pos)
+
+        static_fields: list[tuple[str, str]] = []
+        field_idx = 0
+        for _ in range(static_fields_size):
+            delta, pos = _read_uleb128(buf, pos)
+            _, pos = _read_uleb128(buf, pos)
+            field_idx += delta
+            _, f_type_idx, f_name_idx = get_field(field_idx)
+            static_fields.append((get_string(f_name_idx), get_type(f_type_idx)))
+
+        encoded_values: list[object] = []
+        if static_values_off != 0:
+            val_count, vpos = _read_uleb128(buf, static_values_off)
+            for _ in range(val_count):
+                val, vpos = _read_dex_encoded_value(buf, vpos, get_string)
+                encoded_values.append(val)
+
+        fields: dict[str, object] = {}
+        for idx, (f_name, f_type) in enumerate(static_fields):
+            fields[f_name] = (
+                encoded_values[idx]
+                if idx < len(encoded_values)
+                else _default_dex_static_value(f_type)
+            )
+        return fields
+
+    return None
+
+
+def extract_apk_buildconfig_fields(apk_path: Path) -> dict[str, object]:
+    """Read `io.kodera.android.BuildConfig` static constants directly from APK `classes*.dex`."""
+    with zipfile.ZipFile(apk_path, "r") as archive:
+        dex_names = sorted(
+            name for name in archive.namelist() if DEX_ENTRY_RE.fullmatch(name)
+        )
+        if not dex_names:
+            raise ValueError(f"APK contains no classes*.dex entries: {apk_path}")
+        for dex_name in dex_names:
+            found = _parse_buildconfig_from_dex(archive.read(dex_name))
+            if found is not None:
+                return found
+    raise ValueError(
+        f"APK DEX bytecode does not contain {BUILDCONFIG_DESCRIPTOR}: {apk_path}"
+    )
+
+
+def _validate_https_origin(raw: str, field_name: str) -> None:
+    parsed = urllib.parse.urlsplit(raw)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.port is not None
+        or ":" in parsed.netloc
+        or parsed.netloc != parsed.hostname
+        or not DNS_HOST_RE.fullmatch(parsed.hostname)
+        or len(parsed.hostname) > 253
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != ""
+        or parsed.query
+        or parsed.fragment
+        or raw != f"https://{parsed.hostname}"
+    ):
+        raise ValueError(
+            f"BuildConfig.{field_name} must be a bare https:// DNS origin without port, path, or query, got {raw!r}"
+        )
+
+
+def verify_apk_release_buildconfig(apk_path: Path) -> dict[str, object]:
+    """Refuse unconfigured, debug, or non-HTTPS `BuildConfig` fields in a release APK."""
+    fields = extract_apk_buildconfig_fields(apk_path)
+    if fields.get("APPLICATION_ID") != "io.kodera.app":
+        raise ValueError(
+            f"BuildConfig.APPLICATION_ID must be 'io.kodera.app', got {fields.get('APPLICATION_ID')!r}"
+        )
+    if fields.get("BUILD_TYPE") != "release":
+        raise ValueError(
+            f"BuildConfig.BUILD_TYPE must be 'release', got {fields.get('BUILD_TYPE')!r}"
+        )
+    if fields.get("DEBUG") is not False:
+        raise ValueError(
+            f"BuildConfig.DEBUG must be False in release APK, got {fields.get('DEBUG')!r}"
+        )
+    if "KODERA_DEV_ISSUER" in fields:
+        raise ValueError("release APK BuildConfig must never declare KODERA_DEV_ISSUER")
+
+    core_origin = fields.get("KODERA_CORE_ORIGIN")
+    if not isinstance(core_origin, str) or not core_origin.strip():
+        raise ValueError("BuildConfig.KODERA_CORE_ORIGIN is empty in release APK")
+    _validate_https_origin(core_origin, "KODERA_CORE_ORIGIN")
+
+    issuer_raw = fields.get("KODERA_ISSUER_ORIGINS")
+    if not isinstance(issuer_raw, str) or not issuer_raw.strip():
+        raise ValueError("BuildConfig.KODERA_ISSUER_ORIGINS is empty in release APK")
+    issuers = [part for part in issuer_raw.split(" ") if part]
+    if not issuers or len(set(issuers)) != len(issuers):
+        raise ValueError(
+            f"BuildConfig.KODERA_ISSUER_ORIGINS must hold unique non-empty origins, got {issuer_raw!r}"
+        )
+    for issuer_origin in issuers:
+        _validate_https_origin(issuer_origin, "KODERA_ISSUER_ORIGINS")
+
+    client_id = fields.get("KODERA_CLIENT_ID")
+    if not isinstance(client_id, str) or not CLIENT_ID_RE.fullmatch(client_id):
+        raise ValueError(
+            f"BuildConfig.KODERA_CLIENT_ID must be a non-empty client identifier, got {client_id!r}"
+        )
+
+    console_origin = fields.get("KODERA_CONSOLE_ORIGIN")
+    if not isinstance(console_origin, str) or not console_origin.strip():
+        raise ValueError("BuildConfig.KODERA_CONSOLE_ORIGIN is empty in release APK")
+    _validate_https_origin(console_origin, "KODERA_CONSOLE_ORIGIN")
+
+    return fields
 
 
 def sha256_regular_file(path: Path, max_bytes: int = MAX_ARTIFACT_BYTES) -> str:
@@ -685,9 +928,14 @@ def stage_android_release_bundle(
     root: Path = ROOT,
     java_version_override: str | None = None,
     enforce_permissive: bool = True,
+    require_configured_buildconfig: bool = False,
 ) -> dict[str, object]:
     if not REVISION_RE.fullmatch(revision):
         raise ValueError("revision must be a 40-character lowercase hex commit SHA")
+
+    if require_configured_buildconfig:
+        verify_apk_release_buildconfig(first_raw)
+        verify_apk_release_buildconfig(second_raw)
 
     first_pkg = candidate_dir / "first" / "package.zip"
     second_pkg = candidate_dir / "second" / "package.zip"
@@ -783,6 +1031,7 @@ def stage_android_release_bundle(
     )
 
     result: dict[str, object] = {
+        "buildconfig_verified": require_configured_buildconfig,
         "first_sha256": first_sha,
         "second_sha256": second_sha,
         "components": len(inventory_items),
@@ -795,10 +1044,153 @@ def stage_android_release_bundle(
     return result
 
 
-def _write_synthetic_apk(path: Path, dex_suffix: bytes = b"035\x00payload") -> None:
+def _encode_uleb128(value: int) -> bytes:
+    if value < 0:
+        raise ValueError("ULEB128 requires non-negative integer")
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _build_synthetic_buildconfig_dex(fields: dict[str, object]) -> bytes:
+    type_descriptors = {"Lio/kodera/android/BuildConfig;", "Ljava/lang/Object;"}
+    string_pool = set(type_descriptors)
+    typed_fields: list[tuple[str, str, object]] = []
+    for name, val in fields.items():
+        string_pool.add(name)
+        if isinstance(val, bool):
+            desc = "Z"
+        elif isinstance(val, int):
+            desc = "I"
+        elif isinstance(val, str):
+            desc = "Ljava/lang/String;"
+            string_pool.add(val)
+        else:
+            raise ValueError(f"unsupported synthetic field value {val!r}")
+        type_descriptors.add(desc)
+        string_pool.add(desc)
+        typed_fields.append((name, desc, val))
+
+    strings = sorted(string_pool)
+    str_idx = {s: idx for idx, s in enumerate(strings)}
+    types = sorted(type_descriptors, key=lambda d: str_idx[d])
+    type_idx = {d: idx for idx, d in enumerate(types)}
+
+    bc_type_idx = type_idx[BUILDCONFIG_DESCRIPTOR]
+    obj_type_idx = type_idx["Ljava/lang/Object;"]
+
+    sorted_fields = sorted(
+        typed_fields,
+        key=lambda item: (bc_type_idx, type_idx[item[1]], str_idx[item[0]]),
+    )
+
+    header_size = 112
+    string_ids_off = header_size
+    type_ids_off = string_ids_off + len(strings) * 4
+    field_ids_off = type_ids_off + len(types) * 4
+    class_defs_off = field_ids_off + len(sorted_fields) * 8
+    data_off = class_defs_off + 32
+
+    data = bytearray()
+    string_data_offsets: list[int] = []
+    for s in strings:
+        string_data_offsets.append(data_off + len(data))
+        raw = s.encode("utf-8")
+        data.extend(_encode_uleb128(len(s)))
+        data.extend(raw)
+        data.append(0)
+
+    class_data_off = data_off + len(data)
+    data.extend(_encode_uleb128(len(sorted_fields)))
+    data.extend(_encode_uleb128(0))
+    data.extend(_encode_uleb128(0))
+    data.extend(_encode_uleb128(0))
+    for idx in range(len(sorted_fields)):
+        delta = idx if idx == 0 else 1
+        data.extend(_encode_uleb128(delta))
+        data.extend(_encode_uleb128(0x0019))
+
+    static_values_off = data_off + len(data)
+    data.extend(_encode_uleb128(len(sorted_fields)))
+    for _name, desc, val in sorted_fields:
+        if desc == "Z":
+            data.append(0x1F | ((1 if val else 0) << 5))
+        elif desc == "I":
+            data.extend(struct.pack("<Bi", 0x04 | (3 << 5), int(val)))  # type: ignore[arg-type]
+        else:
+            data.extend(struct.pack("<BI", 0x17 | (3 << 5), str_idx[str(val)]))
+
+    while len(data) % 4 != 0:
+        data.append(0)
+
+    body = bytearray()
+    for off in string_data_offsets:
+        body.extend(struct.pack("<I", off))
+    for desc in types:
+        body.extend(struct.pack("<I", str_idx[desc]))
+    for name, desc, _val in sorted_fields:
+        body.extend(struct.pack("<HHI", bc_type_idx, type_idx[desc], str_idx[name]))
+    body.extend(
+        struct.pack(
+            "<IIIIIIII",
+            bc_type_idx,
+            0x0011,
+            obj_type_idx,
+            0,
+            0xFFFFFFFF,
+            0,
+            class_data_off,
+            static_values_off,
+        )
+    )
+    body.extend(data)
+
+    file_size = header_size + len(body)
+    header_tail = struct.pack(
+        "<IIIIIIIIIIIIIIIIIIII",
+        file_size,
+        header_size,
+        DEX_ENDIAN_CONSTANT,
+        0,
+        0,
+        0,
+        len(strings),
+        string_ids_off,
+        len(types),
+        type_ids_off,
+        0,
+        0,
+        len(sorted_fields),
+        field_ids_off,
+        0,
+        0,
+        1,
+        class_defs_off,
+        len(data),
+        data_off,
+    )
+    sha1_digest = hashlib.sha1(header_tail + body).digest()
+    adler = zlib.adler32(sha1_digest + header_tail + body) & 0xFFFFFFFF
+    return b"dex\n035\x00" + struct.pack("<I", adler) + sha1_digest + header_tail + bytes(body)
+
+
+def _write_synthetic_apk(
+    path: Path,
+    dex_suffix: bytes = b"035\x00payload",
+    dex_bytes: bytes | None = None,
+) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("AndroidManifest.xml", b"<manifest package='io.kodera.app'/>")
-        archive.writestr("classes.dex", b"dex\n" + dex_suffix)
+        archive.writestr(
+            "classes.dex",
+            dex_bytes if dex_bytes is not None else (b"dex\n" + dex_suffix),
+        )
 
 
 def _write_maven_cache_entry(
@@ -1219,6 +1611,90 @@ def run_selftest() -> int:
                 )
                 return 1
 
+        # 7. Release BuildConfig DEX verification (--require-configured-buildconfig):
+        #    accepts configured HTTPS release APKs and refuses empty, cleartext, debug, or missing BuildConfig.
+        valid_fields: dict[str, object] = {
+            "APPLICATION_ID": "io.kodera.app",
+            "BUILD_TYPE": "release",
+            "DEBUG": False,
+            "VERSION_CODE": 1,
+            "VERSION_NAME": "0.1.0",
+            "KODERA_CLIENT_ID": "kodera-android",
+            "KODERA_CONSOLE_ORIGIN": "https://community.kodera.io",
+            "KODERA_CORE_ORIGIN": "https://api.kodera.io",
+            "KODERA_ISSUER_ORIGINS": "https://auth.kodera.io",
+            "KODERA_OFFLINE_ACCESS": "",
+        }
+        cfg_apk1 = scratch / "configured1.apk"
+        cfg_apk2 = scratch / "configured2.apk"
+        valid_dex = _build_synthetic_buildconfig_dex(valid_fields)
+        _write_synthetic_apk(cfg_apk1, dex_bytes=valid_dex)
+        _write_synthetic_apk(cfg_apk2, dex_bytes=valid_dex)
+        stage_android_release_bundle(
+            cfg_apk1,
+            cfg_apk2,
+            scratch / "configured-cand",
+            revision,
+            resolved_artifacts_json=manifest_path,
+            java_version_override="21.0.2",
+            require_configured_buildconfig=True,
+        )
+
+        # 7b. Visible-ASCII OAuth client IDs (e.g. URN form) supported by SignInConfiguration must pass.
+        urn_apk = scratch / "configured-urn.apk"
+        _write_synthetic_apk(
+            urn_apk,
+            dex_bytes=_build_synthetic_buildconfig_dex(
+                {**valid_fields, "KODERA_CLIENT_ID": "urn:example:android"}
+            ),
+        )
+        stage_android_release_bundle(
+            urn_apk,
+            urn_apk,
+            scratch / "configured-urn-cand",
+            revision,
+            resolved_artifacts_json=manifest_path,
+            java_version_override="21.0.2",
+            require_configured_buildconfig=True,
+        )
+
+        bad_buildconfig_cases: list[tuple[str, dict[str, object] | None, str]] = [
+            ("missing BuildConfig class", None, "does not contain Lio/kodera/android/BuildConfig;"),
+            ("empty KODERA_CORE_ORIGIN", {**valid_fields, "KODERA_CORE_ORIGIN": ""}, "KODERA_CORE_ORIGIN is empty"),
+            ("empty KODERA_ISSUER_ORIGINS", {**valid_fields, "KODERA_ISSUER_ORIGINS": ""}, "KODERA_ISSUER_ORIGINS is empty"),
+            ("empty KODERA_CLIENT_ID", {**valid_fields, "KODERA_CLIENT_ID": ""}, "KODERA_CLIENT_ID must be a non-empty"),
+            ("empty KODERA_CONSOLE_ORIGIN", {**valid_fields, "KODERA_CONSOLE_ORIGIN": ""}, "KODERA_CONSOLE_ORIGIN is empty"),
+            ("cleartext loopback core origin", {**valid_fields, "KODERA_CORE_ORIGIN": "http://localhost:8000"}, "KODERA_CORE_ORIGIN must be a bare https:// DNS origin"),
+            ("explicit port in core origin", {**valid_fields, "KODERA_CORE_ORIGIN": "https://api.kodera.io:443"}, "KODERA_CORE_ORIGIN must be a bare https:// DNS origin"),
+            ("debug flag enabled", {**valid_fields, "DEBUG": True}, "BuildConfig.DEBUG must be False"),
+            ("dev issuer leaked into release", {**valid_fields, "KODERA_DEV_ISSUER": "https://auth.kodera.io/realms/dev"}, "must never declare KODERA_DEV_ISSUER"),
+        ]
+        for idx, (label, bad_fields, expected_err) in enumerate(bad_buildconfig_cases):
+            bad_apk = scratch / f"bad-bc-{idx}.apk"
+            if bad_fields is None:
+                _write_synthetic_apk(bad_apk, dex_bytes=_build_synthetic_buildconfig_dex({"ONLY_OTHER": "x"}).replace(b"Lio/kodera/android/BuildConfig;", b"Lio/kodera/android/OtherConfig;"))
+            else:
+                _write_synthetic_apk(bad_apk, dex_bytes=_build_synthetic_buildconfig_dex(bad_fields))
+            refused = False
+            try:
+                stage_android_release_bundle(
+                    bad_apk,
+                    cfg_apk2,
+                    scratch / f"bad-bc-cand-{idx}",
+                    revision,
+                    resolved_artifacts_json=manifest_path,
+                    java_version_override="21.0.2",
+                    require_configured_buildconfig=True,
+                )
+            except ValueError as exc:
+                refused = expected_err in str(exc)
+            if not refused:
+                print(
+                    f"[FAIL] BuildConfig negative case '{label}' did not fail with '{expected_err}'",
+                    file=sys.stderr,
+                )
+                return 1
+
     print(
         "OK: package-android-release.py selftest passed "
         "(real Maven artifact SHA-256 + POM SPDX inheritance + drifted/GPL/missing-license refusals)."
@@ -1235,6 +1711,7 @@ def main() -> int:
     parser.add_argument("--resolved-artifacts-json", type=Path, default=None)
     parser.add_argument("--gradle-user-home", type=Path, default=None)
     parser.add_argument("--revision", default="")
+    parser.add_argument("--require-configured-buildconfig", action="store_true")
     parser.add_argument("--selftest", action="store_true")
     args = parser.parse_args()
 
@@ -1252,6 +1729,7 @@ def main() -> int:
         out_apk=args.out_apk,
         resolved_artifacts_json=args.resolved_artifacts_json,
         gradle_user_home=args.gradle_user_home,
+        require_configured_buildconfig=args.require_configured_buildconfig,
     )
     print(json.dumps(result, sort_keys=True))
     return 0

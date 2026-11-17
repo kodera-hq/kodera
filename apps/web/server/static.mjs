@@ -39,6 +39,28 @@ const LIVEKIT_PATHS = ['/rtc', '/rtc/v1', '/rtc/validate', '/rtc/v1/validate']
 // the SPA fallback first (claim and invitation entries carry a secret in the address), stays
 // `no-store` (docs/specs/asset-caching-and-compression.md).
 const ASSET_CACHE = 'public, max-age=31536000, immutable'
+const PERMISSIONS_POLICY = [
+  'accelerometer=()',
+  'autoplay=(self)',
+  'browsing-topics=()',
+  'camera=(self)',
+  'display-capture=(self)',
+  'encrypted-media=()',
+  'fullscreen=(self)',
+  'geolocation=()',
+  'gyroscope=()',
+  'magnetometer=()',
+  'microphone=(self)',
+  'midi=()',
+  'payment=()',
+  'picture-in-picture=(self)',
+  'publickey-credentials-get=(self)',
+  'screen-wake-lock=(self)',
+  'serial=()',
+  'speaker-selection=(self)',
+  'usb=()',
+  'xr-spatial-tracking=()',
+].join(', ')
 // Encodings the build writes beside a text asset (`scripts/precompress.mjs`), brotli first: the
 // server's choice when a request weights both alike. A sibling is served only when the request
 // accepts its encoding.
@@ -276,6 +298,7 @@ function headers(config, path) {
   ].join('; ')
   return {
     'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': PERMISSIONS_POLICY,
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': policy,
