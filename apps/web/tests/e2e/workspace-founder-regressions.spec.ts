@@ -65,10 +65,12 @@ test('founder surfaces: profile, audio controls, connector target and settings E
   ).toBeVisible()
   const disclosure = settings.getByText('Détails techniques & sécurité', { exact: true })
   await expect(disclosure.locator('..')).not.toHaveAttribute('open', '')
+  await expect(settings.getByText('Schéma v1 vérifié', { exact: true })).not.toBeVisible()
   await expect(
     settings.getByRole('textbox', { name: /URL de destination du webhook/ })
   ).not.toBeVisible()
   await disclosure.click()
+  await expect(settings.getByText('Schéma v1 vérifié', { exact: true })).toBeVisible()
   await expect(
     settings.getByRole('textbox', { name: /URL de destination du webhook/ })
   ).toBeVisible()
@@ -98,6 +100,13 @@ test('founder canvases: Docs and Files mount, channel selection restores chat, r
     files.getByRole('textbox', { name: 'Rechercher un fichier', exact: true })
   ).toBeVisible()
   await expect(files.getByRole('button', { name: 'Images', exact: true })).toBeVisible()
+  const firstCard = files.locator('ul > li').first()
+  await expect(firstCard).toBeVisible()
+  const cardBounds = await firstCard.boundingBox()
+  expect(cardBounds).not.toBeNull()
+  // A single file/document packs at its content height instead of filling the canvas.
+  expect(cardBounds!.height).toBeLessThanOrEqual(160)
+
   expect(
     (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze())
       .violations

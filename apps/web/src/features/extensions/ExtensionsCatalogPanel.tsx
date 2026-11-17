@@ -276,14 +276,6 @@ export function ExtensionsCatalogPanel({
                       >
                         {isSelected ? copy.connected : copy.connect}
                       </span>
-                      {ext.verifiedManifest ? (
-                        <span
-                          data-testid={`extension-verified-${ext.slug}`}
-                          className="rounded-full border border-c-ok-border bg-c-ok-soft px-2 py-1 text-xs font-medium text-c-ok-ink"
-                        >
-                          {copy.verifiedBadge}
-                        </span>
-                      ) : null}
                     </span>
                   </button>
                 </li>
@@ -315,9 +307,6 @@ export function ExtensionsCatalogPanel({
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {selectedExtension.verifiedManifest ? (
-                    <StatusPill state="success">{copy.verifiedBadge}</StatusPill>
-                  ) : null}
                   <StatusPill state="info">{selectedExtension.slashCommand}</StatusPill>
                 </div>
               </div>
@@ -408,6 +397,13 @@ export function ExtensionsCatalogPanel({
                   ) : null}
                 </div>
                 <div className="flex flex-col gap-3 pt-3">
+                  {selectedExtension.verifiedManifest ? (
+                    <StatusPill state="success">
+                      <span data-testid={`extension-verified-${selectedExtension.slug}`}>
+                        {copy.verifiedBadge}
+                      </span>
+                    </StatusPill>
+                  ) : null}
                   <p className="text-sm font-regular text-c-ink-2">
                     {copy.schemaLabel}{' '}
                     <span className="font-mono font-medium text-c-ink">

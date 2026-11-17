@@ -211,9 +211,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     // detail, drawn under « Détails techniques & sécurité » once a connector is chosen.
     for (const ext of OFFICIAL_EXTENSIONS_CATALOG) {
       expect(screen.getByRole('button', { name: `${ext.name} — Connecter` })).toBeInTheDocument()
-      expect(screen.getByTestId(`extension-verified-${ext.slug}`)).toHaveTextContent(
-        'Schéma v1 vérifié'
-      )
+      expect(screen.queryByTestId(`extension-verified-${ext.slug}`)).toBeNull()
     }
     // Nothing is chosen on arrival, so no setup panel is open.
     expect(screen.getByText('Choisissez un connecteur pour voir sa configuration.')).toBeVisible()
@@ -222,6 +220,7 @@ describe('ExtensionsCatalogPanel & catalog', () => {
     }
     const chosen = OFFICIAL_EXTENSIONS_CATALOG[0]!
     await user.click(screen.getByRole('button', { name: `${chosen.name} — Connecter` }))
+    expect(screen.getByTestId(`extension-verified-${chosen.slug}`)).not.toBeVisible()
     expect(screen.getAllByText(new RegExp(`${chosen.id}(?:$|\\s)`)).length).toBeGreaterThanOrEqual(
       1
     )
@@ -334,6 +333,9 @@ describe('ExtensionsCatalogPanel & catalog', () => {
       expect(screen.getByTestId('extension-verified-renderfarm')).toHaveTextContent(
         'Verified v1 schema'
       )
+      expect(screen.getByTestId('extension-verified-renderfarm')).not.toBeVisible()
+      await userEvent.click(screen.getByText('Technical details & security', { exact: true }))
+      expect(screen.getByTestId('extension-verified-renderfarm')).toBeVisible()
       expect(
         screen.getByText(/Tracks 3D and VFX render queues with shot codes/i)
       ).toBeInTheDocument()

@@ -247,7 +247,7 @@ export function WorkspaceFilesPanel({
           className={cx(
             'min-h-0 flex-1 overflow-y-auto',
             layout === 'grid'
-              ? 'grid grid-cols-3 gap-3 md:grid-cols-2 lg:grid-cols-3 narrow:grid-cols-1'
+              ? 'grid auto-rows-min grid-cols-3 content-start gap-3 md:grid-cols-2 lg:grid-cols-3 narrow:grid-cols-1'
               : 'flex flex-col gap-2'
           )}
         >
