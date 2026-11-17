@@ -6,7 +6,7 @@ One file per decision, numbered, never edited after acceptance except to change 
 |---|---|---|
 | [0001](0001-console-is-a-separate-app.md) | The console is a separate application, not part of the hub | Accepted; superseded in part by ADR-0009 (deployment address only) |
 | [0002](0002-tenant-realm-login.md) | Tenant admins log in against their own tenant realm | Accepted |
-| [0003](0003-console-talks-only-to-core-api.md) | The console talks only to the Core API | Accepted; superseded in part by ADR-0011 (Espace's homeserver only) |
+| [0003](0003-console-talks-only-to-core-api.md) | The console talks only to the Core API | Accepted; superseded in part by ADR-0011 (workspace homeserver) and ADR-0015 (optional EU diagnostics) |
 | [0004](0004-shared-design-tokens.md) | The design tokens are a shared package, not a file copied into two repositories | Accepted |
 | [0005](0005-routing-and-server-state.md) | Routing and server state: a typed router with a code-based route tree, and a query cache | Accepted; superseded in part by ADR-0010 (gated owner-claim consume dispatch only) |
 | [0006](0006-forms-and-validation.md) | Forms are react-hook-form with zod schemas, wrapped once | Accepted |
@@ -18,6 +18,7 @@ One file per decision, numbered, never edited after acceptance except to change 
 | [0012](0012-audio-rooms-join-the-second-backend.md) | Audio rooms join the second backend, and every organisation's homeserver is found under one matrix domain | Accepted |
 | [0013](0013-shared-community-entry.md) | Shared community entry and public member authentication | Accepted |
 | [0014](0014-confidential-device-native-dispatch.md) | Durable confidential-device requests have one closed native dispatcher | Accepted design; implementation and runtime qualification in progress |
+| [0015](0015-optional-eu-diagnostics.md) | Optional diagnostics use a consent-gated EU capture endpoint | Accepted |
 
 The cross-repository identity decision is `kodera-core` ADR-0006. The active
 execution sequence is the project roadmap.

@@ -65,9 +65,14 @@ outDir=""
 enableMsw=""
 scanOnly=0
 mfaOnly=0
+telemetry=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --telemetry)
+      telemetry="$2"
+      shift 2
+      ;;
     --mode)
       mode="$2"
       shift 2
@@ -97,6 +102,7 @@ done
 
 case "$mode" in oidc|mock) ;; *) echo "invalid auth mode" >&2; exit 1 ;; esac
 case "$profile" in production|staging) ;; *) echo "invalid profile" >&2; exit 1 ;; esac
+case "$telemetry" in 0|1) ;; *) echo "invalid telemetry flag" >&2; exit 1 ;; esac
 journey=0
 [ "$profile" = "staging" ] && journey=1
 if [ "$scanOnly" = 1 ] && [ -z "$outDir" ]; then
@@ -136,6 +142,10 @@ DEV_SERVER_NAME="dev-only-server-name.invalid"
 
 if [ "$scanOnly" = 0 ]; then
   echo "check-production-bundle: building $profile (VITE_AUTH_MODE=$mode VITE_ENABLE_MSW=$enableMsw VITE_FIRST_OWNER_JOURNEY=$journey) -> $outDir" >&2
+  telemetryKey=""
+  [ "$telemetry" = 1 ] && telemetryKey="phc_build_verification_placeholder"
+  VITE_POSTHOG_KEY="$telemetryKey" \
+  VITE_POSTHOG_HOST="https://eu.i.posthog.com" \
   VITE_AUTH_MODE="$mode" \
   VITE_FIRST_OWNER_JOURNEY="$journey" \
   VITE_ENABLE_MSW="$enableMsw" \
@@ -249,6 +259,10 @@ MFA_LITERALS=(
 )
 if [ "$mfaOnly" = 1 ]; then LITERALS=(); fi
 LITERALS+=("${MFA_LITERALS[@]}")
+# Unconfigured builds carry no collection adapter, even as a dormant lazy chunk.
+if [ "$telemetry" = 0 ] && [ "$mfaOnly" = 0 ]; then
+  LITERALS+=('$process_person_profile' '$geoip_disable' '/i/v0/e/')
+fi
 
 assets="$outDir/assets"
 if [ ! -d "$assets" ]; then
@@ -293,6 +307,16 @@ PY
     echo "$matches" | sed 's/^/  /' >&2
   fi
 done
+
+# An explicitly configured build must actually carry the restricted adapter.
+if [ "$telemetry" = 1 ] && [ "$mfaOnly" = 0 ]; then
+  for literal in '$process_person_profile' '$geoip_disable' '/i/v0/e/'; do
+    if ! grep -rqF -- "$literal" "${jsFiles[@]}" 2>/dev/null; then
+      found=1
+      echo "check-production-bundle: missing '$literal' — configured telemetry adapter absent" >&2
+    fi
+  done
+fi
 
 # `msw`'s service worker SCRIPT ITSELF, at the dist root — not a JS literal,
 # a real static file `navigator.serviceWorker.register()` fetches

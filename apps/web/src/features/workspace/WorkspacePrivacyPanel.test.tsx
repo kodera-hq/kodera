@@ -1,7 +1,12 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import i18n from '@/i18n'
+import {
+  hasTelemetryConsent,
+  setTelemetryConsent,
+  setTelemetryScope,
+} from '../../analytics/telemetry/consent'
 import { ApiProblem } from '../../api/client'
 import type * as PrivacyApiModule from './privacyApi'
 import { WorkspacePrivacyPanel } from './WorkspacePrivacyPanel'
@@ -37,7 +42,14 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  await i18n.changeLanguage('fr')
+  act(() => {
+    setTelemetryScope(undefined)
+  })
+  localStorage.clear()
+  vi.unstubAllEnvs()
+  await act(async () => {
+    await i18n.changeLanguage('fr')
+  })
   vi.restoreAllMocks()
 })
 
@@ -152,7 +164,9 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     // Statutory retention notice names Invoice, CreditNote, Payment, LegalDocument / Dpa, purge_after, and L123-22
     expect(screen.getByText(/Code de commerce L123-22/)).toBeVisible()
     expect(
-      screen.getByText(/`Invoice`, `CreditNote`, `Payment`.*`LegalDocument` \/ `Dpa`.*`purge_after`/)
+      screen.getByText(
+        /`Invoice`, `CreditNote`, `Payment`.*`LegalDocument` \/ `Dpa`.*`purge_after`/
+      )
     ).toBeVisible()
 
     const confirmButton = screen.getByRole('button', {
@@ -171,16 +185,16 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     expect(confirmButton).toBeEnabled()
 
     await user.click(confirmButton)
-    await waitFor(() =>
-      expect(apiMocks.requestWorkspaceDeletion).toHaveBeenCalledWith('org-1', {})
-    )
+    await waitFor(() => expect(apiMocks.requestWorkspaceDeletion).toHaveBeenCalledWith('org-1', {}))
     expect(
       await screen.findByText('Contenu purgé · Rétention légale comptable active')
     ).toBeVisible()
     expect(screen.getByText(/2036/)).toBeVisible()
 
     // Non-owner member sees owner-only restriction for workspace scope + full EN parity
-    await i18n.changeLanguage('en')
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
     rerender(<WorkspacePrivacyPanel org="acme-sa" organisationId="org-1" role={memberRole} />)
 
     expect(
@@ -192,5 +206,111 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     expect(screen.queryByRole('button', { name: 'Confirm workspace deletion' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Confirm my account deletion' })).toBeDisabled()
     expect(container.querySelectorAll('[style]')).toHaveLength(0)
+  })
+
+  it('revokes active telemetry consent and purges localStorage consent keys on GDPR Art. 17 workspace or account deletion', async () => {
+    const user = userEvent.setup()
+    vi.stubEnv('VITE_POSTHOG_KEY', 'public-project-key')
+    vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
+
+    setTelemetryScope({ person: 'person-1', workspace: 'org-1', slug: 'acme-sa' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-2', workspace: 'org-1', slug: 'acme-sa' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-1', workspace: 'org-2', slug: 'beta-btp' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-1', workspace: 'org-1', slug: 'acme-sa' })
+    expect(hasTelemetryConsent()).toBe(true)
+
+    const { unmount } = render(
+      <WorkspacePrivacyPanel
+        org="acme-sa"
+        organisationId="org-1"
+        personId="person-1"
+        role={ownerRole}
+      />
+    )
+
+    const toggle = screen.getByRole('switch', {
+      name: 'Autoriser les diagnostics facultatifs pour cet espace',
+    })
+    expect(toggle).toBeChecked()
+
+    // Rejected deletion (HTTP 409) does not purge consent
+    apiMocks.requestWorkspaceDeletion.mockRejectedValueOnce(
+      new ApiProblem({
+        type: 'https://kodera.io/problems/conflict',
+        title: 'Last owner',
+        status: 409,
+      })
+    )
+    const slugInputs = screen.getAllByLabelText(
+      'Saisissez « acme-sa » pour confirmer la suppression'
+    )
+    await user.type(slugInputs[0]!, 'acme-sa')
+    await user.click(screen.getByRole('button', { name: 'Confirmer la suppression de l’espace' }))
+    expect(await screen.findByText(/Suppression refusée \(HTTP 409\)/)).toBeVisible()
+    expect(hasTelemetryConsent()).toBe(true)
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-1"]')).toBe('yes')
+
+    // Accepted workspace deletion revokes active consent and purges all org-1 consent keys
+    apiMocks.requestWorkspaceDeletion.mockResolvedValueOnce({
+      id: '00000000-0000-7000-8000-000000000030',
+      scope: 'workspace',
+      kind: 'deletion',
+      status: 'queued',
+      requestedAt: '2026-11-13T12:10:00Z',
+      updatedAt: '2026-11-13T12:10:00Z',
+      expiresAt: null,
+      purgeAfter: null,
+      failureCode: null,
+    })
+    await user.click(screen.getByRole('button', { name: 'Confirmer la suppression de l’espace' }))
+    await waitFor(() => expect(hasTelemetryConsent()).toBe(false))
+    expect(toggle).not.toBeChecked()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-1"]')).toBeNull()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-2","org-1"]')).toBeNull()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-2"]')).toBe('yes')
+
+    unmount()
+
+    // Accepted account deletion purges all workspaces for person-1 while preserving person-2
+    setTelemetryScope({ person: 'person-1', workspace: 'org-1', slug: 'acme-sa' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-2', workspace: 'org-2', slug: 'beta-btp' })
+    setTelemetryConsent(true)
+    setTelemetryScope({ person: 'person-1', workspace: 'org-1', slug: 'acme-sa' })
+    expect(hasTelemetryConsent()).toBe(true)
+
+    apiMocks.requestAccountDeletion.mockResolvedValueOnce({
+      id: '00000000-0000-7000-8000-000000000031',
+      scope: 'account',
+      kind: 'deletion',
+      status: 'queued',
+      requestedAt: '2026-11-13T12:15:00Z',
+      updatedAt: '2026-11-13T12:15:00Z',
+      expiresAt: null,
+      purgeAfter: null,
+      failureCode: null,
+    })
+
+    render(
+      <WorkspacePrivacyPanel
+        org="acme-sa"
+        organisationId="org-1"
+        personId="person-1"
+        role={memberRole}
+      />
+    )
+
+    await user.type(
+      screen.getByLabelText('Saisissez « acme-sa » pour confirmer la suppression'),
+      'acme-sa'
+    )
+    await user.click(screen.getByRole('button', { name: 'Confirmer la suppression de mon compte' }))
+    await waitFor(() => expect(hasTelemetryConsent()).toBe(false))
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-1"]')).toBeNull()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-1","org-2"]')).toBeNull()
+    expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-2","org-2"]')).toBe('yes')
   })
 })

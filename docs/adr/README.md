@@ -80,6 +80,7 @@ as [`GOVERNANCE.md`](../../GOVERNANCE.md#3-architectural-changes-docsrfcs) descr
 | `WEB-ADR-0012` | [ADR-0012: Audio rooms join the second backend, and every organisation's homeserver is found under one matrix domain](../../apps/web/docs/adr/0012-audio-rooms-join-the-second-backend.md) |
 | `WEB-ADR-0013` | [ADR-0013: Shared community entry and public member authentication](../../apps/web/docs/adr/0013-shared-community-entry.md) |
 | `WEB-ADR-0014` | [ADR-0014: Durable confidential-device requests have one closed native dispatcher](../../apps/web/docs/adr/0014-confidential-device-native-dispatch.md) |
+| `WEB-ADR-0015` | [ADR-0015: Optional diagnostics use a consent-gated EU capture endpoint](../../apps/web/docs/adr/0015-optional-eu-diagnostics.md) |
 
 ### Design tokens (`TOK-ADR-*`, in `packages/design-tokens/docs/adr/`)
 

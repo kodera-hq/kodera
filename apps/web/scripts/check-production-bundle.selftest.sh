@@ -179,6 +179,15 @@ rm "$tmp/oidc/assets/dev-homeserver-mutation.js"
 "$check" --scan-only "$tmp/oidc" > "$tmp/clean-after-dev-homeserver.log" 2>&1 ||
   fail "removing the development homeserver mutation did not restore the clean control"
 
+# Each collection marker independently proves the unconfigured-build gate can fail.
+for marker in '$process_person_profile' '$geoip_disable' '/i/v0/e/'; do
+  printf 'void "%s";\n' "$marker" > "$tmp/oidc/assets/telemetry-mutation.js"
+  if "$check" --scan-only "$tmp/oidc" > "$tmp/telemetry-mutation.log" 2>&1; then
+    fail "the isolated telemetry marker $marker was not rejected"
+  fi
+  rm "$tmp/oidc/assets/telemetry-mutation.js"
+done
+
 # The staging profile (the release playbook's build, VITE_FIRST_OWNER_JOURNEY=1) must pass and
 # carry the claim route; the production assets, scanned as staging, must fail for lacking it.
 "$check" --profile staging "$tmp/staging" > "$tmp/staging.log" 2>&1 || {

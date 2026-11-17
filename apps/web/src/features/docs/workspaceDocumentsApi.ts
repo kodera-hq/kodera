@@ -1,3 +1,4 @@
+import { measureTelemetryOperation } from '../../analytics/telemetry/diagnostics'
 import { ApiProblem, coreApi } from '@/api/client'
 import type { components } from '@/api/schema'
 import {
@@ -67,11 +68,13 @@ export async function listWorkspaceDocuments(
   organisationId: string,
   signal?: AbortSignal
 ): Promise<readonly CoreWorkspaceDocument[]> {
-  const { data } = await coreApi().GET('/organisations/{organisation_id}/workspace/documents', {
-    params: { path: { organisation_id: organisationId } },
-    ...(signal ? { signal } : {}),
+  return measureTelemetryOperation('docs_load', async () => {
+    const { data } = await coreApi().GET('/organisations/{organisation_id}/workspace/documents', {
+      params: { path: { organisation_id: organisationId } },
+      ...(signal ? { signal } : {}),
+    })
+    return data?.data ?? []
   })
-  return data?.data ?? []
 }
 
 export async function getWorkspaceDocument(
@@ -79,48 +82,52 @@ export async function getWorkspaceDocument(
   documentId: string,
   signal?: AbortSignal
 ): Promise<WorkspaceDocumentWithEtag> {
-  const { data, response } = await coreApi().GET(
-    '/organisations/{organisation_id}/workspace/documents/{document_id}',
-    {
-      params: {
-        path: {
-          organisation_id: organisationId,
-          document_id: documentId,
+  return measureTelemetryOperation('docs_load', async () => {
+    const { data, response } = await coreApi().GET(
+      '/organisations/{organisation_id}/workspace/documents/{document_id}',
+      {
+        params: {
+          path: {
+            organisation_id: organisationId,
+            document_id: documentId,
+          },
         },
-      },
-      ...(signal ? { signal } : {}),
+        ...(signal ? { signal } : {}),
+      }
+    )
+    if (data === undefined) {
+      throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
     }
-  )
-  if (data === undefined) {
-    throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
-  }
-  return {
-    document: data,
-    etag: response.headers.get('ETag'),
-  }
+    return {
+      document: data,
+      etag: response.headers.get('ETag'),
+    }
+  })
 }
 
 export async function createWorkspaceDocument(
   organisationId: string,
   body: CoreWorkspaceDocumentRequest
 ): Promise<WorkspaceDocumentWithEtag> {
-  const { data, response } = await coreApi().POST(
-    '/organisations/{organisation_id}/workspace/documents',
-    {
-      params: {
-        path: { organisation_id: organisationId },
-        header: { 'Idempotency-Key': crypto.randomUUID() },
-      },
-      body,
+  return measureTelemetryOperation('docs_save', async () => {
+    const { data, response } = await coreApi().POST(
+      '/organisations/{organisation_id}/workspace/documents',
+      {
+        params: {
+          path: { organisation_id: organisationId },
+          header: { 'Idempotency-Key': crypto.randomUUID() },
+        },
+        body,
+      }
+    )
+    if (data === undefined) {
+      throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
     }
-  )
-  if (data === undefined) {
-    throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
-  }
-  return {
-    document: data,
-    etag: response.headers.get('ETag'),
-  }
+    return {
+      document: data,
+      etag: response.headers.get('ETag'),
+    }
+  })
 }
 
 export async function updateWorkspaceDocument(
@@ -129,26 +136,28 @@ export async function updateWorkspaceDocument(
   etag: string,
   body: CoreWorkspaceDocumentPatch
 ): Promise<WorkspaceDocumentWithEtag> {
-  const { data, response } = await coreApi().PATCH(
-    '/organisations/{organisation_id}/workspace/documents/{document_id}',
-    {
-      params: {
-        path: {
-          organisation_id: organisationId,
-          document_id: documentId,
+  return measureTelemetryOperation('docs_save', async () => {
+    const { data, response } = await coreApi().PATCH(
+      '/organisations/{organisation_id}/workspace/documents/{document_id}',
+      {
+        params: {
+          path: {
+            organisation_id: organisationId,
+            document_id: documentId,
+          },
+          header: { 'If-Match': etag },
         },
-        header: { 'If-Match': etag },
-      },
-      body,
+        body,
+      }
+    )
+    if (data === undefined) {
+      throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
     }
-  )
-  if (data === undefined) {
-    throw new ApiProblem({ type: null, status: response.status, title: response.statusText })
-  }
-  return {
-    document: data,
-    etag: response.headers.get('ETag') ?? etag,
-  }
+    return {
+      document: data,
+      etag: response.headers.get('ETag') ?? etag,
+    }
+  })
 }
 
 /**
@@ -290,7 +299,9 @@ export async function listWorkspaceCollections(
     }
   )
   const items = (data?.data ?? []).map((item) =>
-    fromWireWorkspaceCollection(item as unknown as Parameters<typeof fromWireWorkspaceCollection>[0])
+    fromWireWorkspaceCollection(
+      item as unknown as Parameters<typeof fromWireWorkspaceCollection>[0]
+    )
   )
   return {
     collections: items,
@@ -410,17 +421,14 @@ export async function deleteWorkspaceCollection(
   organisationId: string,
   collectionId: string
 ): Promise<void> {
-  await coreApi().DELETE(
-    '/organisations/{organisation_id}/workspace/collections/{collection_id}',
-    {
-      params: {
-        path: {
-          organisation_id: organisationId,
-          collection_id: collectionId,
-        },
+  await coreApi().DELETE('/organisations/{organisation_id}/workspace/collections/{collection_id}', {
+    params: {
+      path: {
+        organisation_id: organisationId,
+        collection_id: collectionId,
       },
-    }
-  )
+    },
+  })
 }
 
 export async function queryWorkspaceCollection(

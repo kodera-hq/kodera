@@ -15,7 +15,7 @@ import {
 } from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MockInstance } from 'vitest'
 import '@/i18n'
 import { ApiProblem } from '../api/client'
@@ -23,6 +23,7 @@ import { authAdapter } from '../auth/oidc'
 import type * as Analytics from './analytics'
 import { AppProviders, createQueryClient } from './providers'
 import { ROUTE_UNITS, createAppRouter } from './routeTree'
+import { notifyRouteError } from './RouteError'
 
 const { loadCurrentUser, trackSessionExpiryDialogShown } = vi.hoisted(() => ({
   loadCurrentUser: vi.fn(),
@@ -420,5 +421,48 @@ describe('other 403s and unregistered problems, as before identity-unknown', () 
     ).toBeInTheDocument()
     expect(screen.queryByText("Pas encore d'organisation")).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Se reconnecter' })).not.toBeInTheDocument()
+  })
+})
+
+describe('optional boundary diagnostics', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+  it.each([
+    ['', 'https://eu.i.posthog.com'],
+    ['key', 'https://us.i.posthog.com'],
+  ])('emits no event without a configured EU destination', (key, host) => {
+    vi.stubEnv('VITE_POSTHOG_KEY', key)
+    vi.stubEnv('VITE_POSTHOG_HOST', host)
+    const listener = vi.fn()
+    window.addEventListener('kodera:route-error', listener)
+    try {
+      notifyRouteError()
+      expect(listener).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('kodera:route-error', listener)
+    }
+  })
+  it('emits a plain content-free event from the real boundary without the error object', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'key')
+    vi.stubEnv('VITE_POSTHOG_HOST', 'https://eu.i.posthog.com')
+    const listener = vi.fn()
+    window.addEventListener('kodera:route-error', listener)
+    try {
+      loadCurrentUser.mockRejectedValue(
+        new Error('private-document member@example.test secret-token')
+      )
+      await openConsoleAt('/')
+      await screen.findByRole('heading', { level: 1, name: "Impossible d'afficher votre console" })
+      await waitFor(() => expect(listener).toHaveBeenCalled())
+      for (const [event] of listener.mock.calls) {
+        expect(event.constructor).toBe(Event)
+        expect(event).not.toHaveProperty('detail')
+        expect(event).not.toHaveProperty('error')
+        expect(JSON.stringify(event)).not.toMatch(/private|member@|secret-token/)
+      }
+    } finally {
+      window.removeEventListener('kodera:route-error', listener)
+    }
   })
 })

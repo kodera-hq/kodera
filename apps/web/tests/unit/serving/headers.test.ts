@@ -385,6 +385,21 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
     security(head.headers)
   })
 
+  it('admits the telemetry capture path only after explicit EU configuration', async () => {
+    const configured = await start([...args(root), '--telemetry-host', 'https://eu.i.posthog.com'])
+    try {
+      const response = await http(configured.port, '/console/sample/home')
+      const sources = directives(response.headers).get('connect-src')!
+      expect(sources).toContain('https://eu.i.posthog.com/i/v0/e/')
+      expect(sources).not.toContain('https://eu.i.posthog.com')
+      expect(
+        directives((await http(port(), '/console/sample/home')).headers).get('connect-src')
+      ).not.toContain('https://eu.i.posthog.com/i/v0/e/')
+    } finally {
+      await stop(configured)
+    }
+  })
+
   it('keeps only the exact ordinary callback same-origin frameable', async () => {
     const ordinary = await http(port(), '/console/auth/callback?code=synthetic')
     expect(ordinary.status).toBe(200)
@@ -829,6 +844,10 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
     ],
     ['a flag without its value', ['--allow-loopback', '--livekit-origin']],
     ['an unknown flag', ['--turn-origin', 'turns://turn.fixture.test']],
+    ['a non-EU telemetry host', ['--telemetry-host', 'https://us.i.posthog.com']],
+    ['a telemetry host with credentials', ['--telemetry-host', 'https://user@eu.i.posthog.com']],
+    ['a telemetry host with a path', ['--telemetry-host', 'https://eu.i.posthog.com/']],
+    ['an empty telemetry host', ['--telemetry-host', '']],
     ['a second matrix domain', ['--matrix-domain', 'other.fixture.test']],
     ['a host that is neither loopback nor every address', ['--host', '192.0.2.1']],
     ['a host name instead of an address', ['--host', 'localhost']],
@@ -977,7 +996,7 @@ describe('actual source static-serving boundary', { concurrent: false }, () => {
 
 // Finite real-source controls. The production file is read and hash-checked only;
 // each executable variant is an owned temporary exact copy, never a fake server.
-const PRISTINE_SHA = '0738766d5e1f187eee5e91a49a41dbccffa6123b8d18374364a73af3203fbcd3'
+const PRISTINE_SHA = '5e7c364f7efe2ca9caa70c2e231f02e17e092ea112514d0ebd5f793200f391ed'
 type Scenario =
   | 'referrer'
   | 'directive'

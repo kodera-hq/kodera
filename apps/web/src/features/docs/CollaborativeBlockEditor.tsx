@@ -655,7 +655,7 @@ export function CollaborativeBlockEditor({
         </div>
       ) : null}
 
-      <EditorContent editor={editor} />
+      <EditorContent data-ph-no-capture className="ph-no-capture" editor={editor} />
     </div>
   )
 }

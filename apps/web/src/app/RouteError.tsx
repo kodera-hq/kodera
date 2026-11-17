@@ -228,7 +228,21 @@ function LoadFailedContent({ error, reset }: ErrorComponentProps) {
   )
 }
 
+/** A content-free signal; only the active, consenting bootstrap listens to it. */
+export function notifyRouteError(): void {
+  if (!import.meta.env.VITE_POSTHOG_KEY?.trim()) return
+  if (
+    import.meta.env.VITE_POSTHOG_HOST &&
+    import.meta.env.VITE_POSTHOG_HOST !== 'https://eu.i.posthog.com'
+  )
+    return
+  window.dispatchEvent(new Event('kodera:route-error'))
+}
+
 export function RouteError(props: ErrorComponentProps) {
+  useEffect(() => {
+    notifyRouteError()
+  }, [props.error])
   // The shell is on screen only when the organisation layout itself loaded;
   // its own failure, and every route outside it, get the whole page.
   const inShell = useMatches({

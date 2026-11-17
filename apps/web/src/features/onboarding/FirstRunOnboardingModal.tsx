@@ -1,3 +1,4 @@
+import { track } from '../../analytics/track'
 import * as Modal from '@radix-ui/react-dialog'
 import { isOrganisationSlug } from '../../api/organisationSlug'
 import {
@@ -131,6 +132,7 @@ export function FirstRunOnboardingModal({
         onConfigure?.({ name: name.trim(), hosting, template: selectedTemplate, theme })
         setResult(claimed)
         markOnboardingCompleted()
+        track('onboarding_completed', { mode: localMode ? 'local' : 'cloud' })
         onComplete()
       } catch {
         setLocalRefused(true)
@@ -153,6 +155,7 @@ export function FirstRunOnboardingModal({
       setResult(claimed)
       onClaimed?.(claimed)
       markOnboardingCompleted()
+      track('onboarding_completed', { mode: localMode ? 'local' : 'cloud' })
       window.dispatchEvent(
         new CustomEvent('kodera:workspace-claimed', { detail: { slug: payload.slug } })
       )
@@ -162,6 +165,7 @@ export function FirstRunOnboardingModal({
         setResult(localClaim(payload))
         onConfigure?.({ name: name.trim(), hosting, template: selectedTemplate, theme })
         markOnboardingCompleted()
+        track('onboarding_completed', { mode: localMode ? 'local' : 'cloud' })
         onComplete()
       } else setRefused(true)
     } finally {

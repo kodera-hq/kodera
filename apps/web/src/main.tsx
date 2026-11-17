@@ -83,4 +83,16 @@ export async function boot(entry?: BootEntry): Promise<void> {
       </AppProviders>
     </StrictMode>
   )
+
+  // Literal build gate: an unconfigured deployment emits no collection transport.
+  if (import.meta.env.VITE_POSTHOG_KEY?.trim()) {
+    const host = import.meta.env.VITE_POSTHOG_HOST || 'https://eu.i.posthog.com'
+    if (host === 'https://eu.i.posthog.com') {
+      void import('./analytics/telemetry/bootstrap')
+        .then(({ startTelemetry }) =>
+          startTelemetry(router, import.meta.env.VITE_POSTHOG_KEY, host)
+        )
+        .catch(() => undefined)
+    }
+  }
 }
