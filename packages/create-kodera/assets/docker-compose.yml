@@ -90,6 +90,7 @@ services:
       KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID: ${KODERA_DEFAULT_COMMUNITY_OWNER_USER_ID:-}
       KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in operator configuration}
       KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
+      KODERA_CONSOLE_CLIENT_ID: ${KODERA_CONSOLE_CLIENT_ID:-${KODERA_OIDC_CLIENT_ID:-console}}
       KODERA_BILLING_ENABLED: "false"
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in .env}
       KODERA_CONTACT_SEAL_KEY: ${KODERA_CONTACT_SEAL_KEY:?Set KODERA_CONTACT_SEAL_KEY in .env}
@@ -135,6 +136,46 @@ services:
       timeout: 3s
       retries: 10
 
+  # Only this initializer and the signing worker receive the storage credential directory.
+  media-socket-init:
+    mem_limit: 64m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile
+    user: "0:0"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["python", "-c", "import os; from pathlib import Path; Path('/run/kodera-media/media.sock').unlink(missing_ok=True); [(os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"]
+    restart: "no"
+    volumes:
+      - media_socket:/run/kodera-media
+      - ${KODERA_MEDIA_SECRETS_SOURCE:-media_secrets}:/run/kodera-media-secrets
+
+  media-storage-worker:
+    mem_limit: 128m
+    build:
+      context: ${KODERA_SOURCE_DIR:?Set the Community source checkout}/apps/server
+      dockerfile: Dockerfile
+    user: "10001:10001"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["python", "-m", "apps.media.storage_worker", "--socket", "/run/kodera-media/media.sock", "--secret-directory", "/run/kodera-media-secrets"]
+    restart: unless-stopped
+    volumes:
+      - media_socket:/run/kodera-media
+      - ${KODERA_MEDIA_SECRETS_SOURCE:-media_secrets}:/run/kodera-media-secrets:ro
+    depends_on:
+      media-socket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(1); s.connect('/run/kodera-media/media.sock'); s.close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
   server:
     mem_limit: 768m
     build:
@@ -149,6 +190,7 @@ services:
       KODERA_COLLAB_PUBLIC_URL: wss://${KODERA_DOMAIN:-chat.example.org}/documents/collab
       KODERA_AUTH_TRUST: ${KODERA_AUTH_TRUST:?Set KODERA_AUTH_TRUST in .env (README.md, Sign-in)}
       KODERA_STAFF_ISSUER: ${KODERA_STAFF_ISSUER:-}
+      KODERA_CONSOLE_CLIENT_ID: ${KODERA_CONSOLE_CLIENT_ID:-${KODERA_OIDC_CLIENT_ID:-console}}
       KODERA_DEFAULT_COMMUNITY_ORG_SLUG: ${KODERA_DEFAULT_COMMUNITY_ORG_SLUG:-}
       KODERA_DEFAULT_COMMUNITY_ISSUER: ${KODERA_DEFAULT_COMMUNITY_ISSUER:-}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-${KODERA_DOMAIN:-chat.example.org},127.0.0.1,server}
@@ -159,9 +201,16 @@ services:
       KODERA_DISCOVERY_HMAC_KEY: ${KODERA_DISCOVERY_HMAC_KEY:?Set KODERA_DISCOVERY_HMAC_KEY in .env}
       DATABASE_URL: postgresql://kodera_api:${KODERA_API_DATABASE_PASSWORD:?Set the isolated API database password}@db:5432/${POSTGRES_DB:-kodera_server}
       KODERA_PROXIMITY_BROKER_SOCKET: /run/proximity/broker.sock
+      KODERA_MEDIA_GATEWAY_SOCKET: /run/kodera-media/media.sock
+      KODERA_IOS_APP_IDS: ${KODERA_IOS_APP_IDS:-}
+      KODERA_ANDROID_ASSETLINKS_SHA256: ${KODERA_ANDROID_ASSETLINKS_SHA256:-}
     volumes:
       - proximity_socket:/run/proximity:ro
+      # Linux permits connecting to the owner-writable socket inode through a read-only mount.
+      - media_socket:/run/kodera-media:ro
     depends_on:
+      media-storage-worker:
+        condition: service_healthy
       proximity-broker:
         condition: service_healthy
       migrate:
@@ -370,6 +419,8 @@ services:
       - ./livekit.yaml:/etc/livekit.yaml:ro
 
 volumes:
+  media_socket:
+  media_secrets:
   proximity_socket:
   agent_state:
   caddy_data:

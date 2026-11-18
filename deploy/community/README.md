@@ -99,6 +99,13 @@ Status: the split topology is checked by the repository gate and its Caddy confi
 
 ## Sign-in
 
+`KODERA_CONSOLE_CLIENT_ID` selects the OAuth client used for owner/admin MFA
+verification. Leave it empty to inherit `KODERA_OIDC_CLIENT_ID` (`console` by
+default), or set it to exactly that same client ID. Both `server` and `migrate`
+receive the nested fallback in both topologies. The preflight refuses mismatched
+or malformed identifiers. In split deployments, build the separately hosted web
+client with the same `KODERA_OIDC_CLIENT_ID`.
+
 Two settings connect the stack to your issuer:
 
 - **`KODERA_OIDC_PROVIDER_ORIGIN`**: the origin of your issuer, for example `https://id.example.org`. The web client is built with it and signs users in under its `/realms/<name>/` paths; the web server's Content-Security-Policy admits only that origin. It signs in as the public OIDC client `console`, so register a client with that id in your realm: the server admits a member's token only when its `azp` claim names `console` (or one of the native apps' clients, `kodera-ios` and `kodera-android`), and refuses any other.
@@ -151,6 +158,10 @@ Caddy is the only service that publishes HTTP ports. In the `single` topology it
 It answers `404` on `/agent/*`, `/staff/*` and on every other `/_matrix/*` and `/_synapse/*` path. The agent API (`/agent/v1/...`) is for the tenant agent, which calls `http://server:8000` on the stack's internal network; Synapse's admin API (`/_synapse/admin/*`) is likewise reached by the agent only. LiveKit also publishes its media ports (7881/tcp, 50000–50200/udp), exactly those of `livekit.yaml`.
 
 ### Mobile app association
+
+The server receives `KODERA_IOS_APP_IDS` and `KODERA_ANDROID_ASSETLINKS_SHA256`
+from Compose in both topologies. Set these to identifiers and signing fingerprints
+from your own signed mobile builds; the template leaves both empty.
 
 `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` leave their runtime defaults empty in version control so an unconfigured stack answers `503` (`well_known_unconfigured`) instead of advertising placeholder mobile signing identifiers. To enable iOS Universal Links and Android App Links for official Kodera native builds in operator-owned configuration (comments/examples only — keep uncommitted runtime defaults empty on isolated deployments):
 
@@ -490,6 +501,58 @@ its isolated replacement; do not weaken Synapse policy to recover access. A poli
 downgrade that removes additive governance fields needs an explicit review because
 it removes the independent room-policy defense. Re-run canonical bootstrap and
 the two-account negative checks after reconciliation before reopening traffic.
+
+## Media attachment signing worker
+
+Status: Implemented; provider credentials remain operator-provisioned
+
+The API delegates attachment signing to `media-storage-worker` through
+`/run/kodera-media/media.sock`, selected by `KODERA_MEDIA_GATEWAY_SOCKET`. It receives
+only the read-only `media_socket` mount. The API and worker run as UID/GID
+`10001:10001`; the directory is mode `0700` and the worker creates a mode `0600`
+socket. Linux checks the socket inode's write permission when connecting; a
+read-only mount permits this connection while preventing filesystem changes,
+matching the proximity socket boundary.
+
+`media-socket-init` removes the stale socket and establishes mode `0700` and
+ownership `10001:10001` on both runtime directories before the worker starts. Its
+root filesystem is read-only and its only capabilities are `CHOWN`, `FOWNER` and
+`DAC_OVERRIDE`; the last permits cleanup inside the existing owner-only directory.
+The worker has no added capabilities, published ports or environment credentials.
+The API waits for the worker's Unix socket connection healthcheck in both topologies.
+An empty credential directory allows worker startup; the API's readiness probe
+checks its database and does not require storage credentials. Attachment signing
+without an organisation credential returns a retryable `503`.
+
+`KODERA_MEDIA_SECRETS_SOURCE` defaults to the named `media_secrets` volume. To use
+an operator-provisioned host directory, set it to an absolute path on the Docker
+host, such as `/srv/kodera/media-secrets`; both services use that same source.
+The initializer needs this mount writable to set directory permissions; the worker
+receives it read-only. No other service receives it. The initializer never changes
+credential file contents or recursively changes their ownership: provision files
+readable by UID `10001` (normally owner `10001:10001`, mode `0600`). Each file is
+named by its organisation UUID and contains `endpoint`, `bucket`, `region`,
+`accessKey`, `secretKey` and optionally `sessionToken`. Use an HTTPS endpoint and a
+private bucket; the worker loads credentials per operation. These values belong
+only in the separately provisioned directory.
+
+After an abrupt worker termination, its `unless-stopped` restart policy does not
+rerun the initializer. The worker refuses a surviving socket file. Stop the API
+and worker before deliberately clearing that stale path and restarting:
+
+```sh
+docker compose stop server media-storage-worker
+docker compose run --rm --no-deps media-socket-init
+docker compose up -d media-storage-worker server
+```
+
+Use the same Compose files for these commands as for the running topology,
+including `-f docker-compose.yml -f docker-compose.split.yml` for split deployments.
+Never run the initializer against a live worker. The local check
+`PYTHONDONTWRITEBYTECODE=1 TMPDIR=/tmp python3 deploy/community/test_media_worker_startup.py`
+exercises stale socket cleanup, empty-directory startup, the actual health probe
+and signing refusal without contacting a storage provider. It does not start the
+full Compose stack.
 
 ## Shared ephemeral proximity state
 
