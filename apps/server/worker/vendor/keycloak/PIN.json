@@ -1,6 +1,6 @@
 {
   "repository": "kodera-hq/kodera-ops",
-  "commit": "1a2e455fc513272edcdd6ee046cd2aae033b51fa",
+  "commit": "5d7b53c6a3c4ac7949491ede7330a2578659b23b",
   "files": {
     "realm-apply.sh": {
       "source": "keycloak-ops/tools/realm-apply.sh",

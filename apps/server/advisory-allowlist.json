@@ -24,14 +24,6 @@
       "severity": "moderate",
       "range": ">=9.0.0 <=14.0.1",
       "reason": "glob 13.0.5 is bundled in the integrity-pinned @redocly/cli 2.72.1 contract linter. The reviewed glob importer passes cwd but no AbortSignal; the repository invokes only lint and --version, including its declarative-config lint probes, with no executable plugin or cancellation activity. The advisory's AbortSignal cancellation path is not used by that reviewed activity; this does not claim expensive traversal is impossible. Reassessed by hand at the 2.72.1 bump: it still bundles glob 13.0.5 and the activity is unchanged. Reassess on any @redocly/cli bump (a reviewer check, not gated: nothing enforces this binding), and remove this exception when the CLI removes glob or bundles fixed glob >=14.0.2."
-    },
-    {
-      "ecosystem": "npm",
-      "advisory": "GHSA-fc5q-39xc-vjpf",
-      "package": "picomatch",
-      "severity": "high",
-      "range": "<=4.0.7",
-      "reason": "picomatch 4.0.4 and 4.0.7 are bundled in the integrity-pinned @redocly/cli 2.72.1 contract linter, listed in its THIRD_PARTY_NOTICES. No @redocly/cli release or upstream picomatch release above 4.0.7 is published yet. In this repository the CLI runs only `redocly lint` and `--version` in CI over repository-owned contracts/*.openapi.yaml with trusted static glob patterns and zero untrusted input, so the ReDoS path over attacker-controlled glob patterns is unreachable. Reassess on any @redocly/cli bump and remove this exception when @redocly/cli removes picomatch or bundles fixed picomatch > 4.0.7."
     }
   ]
 }
