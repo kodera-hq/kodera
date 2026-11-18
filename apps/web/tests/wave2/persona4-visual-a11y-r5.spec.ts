@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { Actor, gateWorld, readWave2Input, targets } from './world'
+import { selectInterfaceLanguage } from './language'
 import { finishCleanup } from './cleanup'
 import { NetworkLedger, recordNetwork } from './oracles/r1-network'
 import { RateBudget } from './oracles/r3-rate-budget'
@@ -68,8 +69,12 @@ test('Persona 4: twelve explicit web cells on one retained owner page', async ({
           )
         }, theme)
         // Use the application's actual language control: locale and storageState do not switch it.
-        await actor.page.locator(input.visual.languageButton).click()
-        await actor.page.locator(input.visual.languageOptions[language]).click()
+        await selectInterfaceLanguage(actor.page, {
+          button: input.visual.languageButton,
+          option: input.visual.languageOptions[language],
+          section: input.visual.languageSection,
+          close: input.visual.languageClose,
+        })
         for (const width of VIEWPORT_WIDTHS) {
           const cell: VisualCell = {
             origin: 'web',

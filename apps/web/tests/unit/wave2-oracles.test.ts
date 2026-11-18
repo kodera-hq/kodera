@@ -7,6 +7,9 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import scrubArtifacts from '../wave2/teardown'
 import { finishCleanup } from '../wave2/cleanup'
 import { findMailLink, mailLinkPattern } from '../wave2/mailpit'
+import { enterOrganisation } from '../wave2/login'
+import { enterWorkspace } from '../wave2/workspace'
+import { selectInterfaceLanguage } from '../wave2/language'
 import type { APIRequestContext, BrowserContext, Page, Request, Route } from '@playwright/test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NetworkLedger, recordNetwork } from '../wave2/oracles/r1-network'
@@ -947,6 +950,110 @@ function relativeImports(source: string): string[] {
 }
 
 describe('adversarial regression coverage', () => {
+  it.each([false, true])(
+    'switches language through real controls with a settings panel: %s',
+    async (panel) => {
+      const actions: string[] = []
+      const page = {
+        locator: (selector: string) => ({
+          click: async () => {
+            actions.push(selector)
+          },
+        }),
+      } as unknown as Page
+      await selectInterfaceLanguage(page, {
+        button: '#language',
+        option: '#english',
+        ...(panel ? { section: '#appearance', close: '#close' } : {}),
+      })
+      expect(actions).toEqual(
+        panel ? ['#language', '#appearance', '#english', '#close'] : ['#language', '#english']
+      )
+    }
+  )
+
+  it.each(['home', 'workspace', 'workspace/previous'])(
+    'enters a channel through the retained workspace from %s',
+    async (start) => {
+      let path = `/synthetic-org/${start}`
+      const actions: string[] = []
+      const page = {
+        url: () => `${WEB}${path}`,
+        locator: (selector: string) => ({
+          first() {
+            return this
+          },
+          click: async () => {
+            const target = /^a\[href="([^"]+)"\]$/.exec(selector)![1]!
+            actions.push(target)
+            path = target
+          },
+          waitFor: async () => {
+            actions.push(`ready:${path}`)
+          },
+        }),
+      } as unknown as Page
+      await enterWorkspace(page, 'synthetic-org', '#ready', '/synthetic-org/workspace/channel')
+      expect(actions).toEqual([
+        ...(start === 'home' ? ['/synthetic-org/workspace'] : []),
+        `ready:/synthetic-org/${start === 'home' ? 'workspace' : start}`,
+        '/synthetic-org/workspace/channel',
+        'ready:/synthetic-org/workspace/channel',
+      ])
+      actions.length = 0
+      await enterWorkspace(page, 'synthetic-org', '#ready', path)
+      expect(actions).toEqual([`ready:${path}`])
+    }
+  )
+
+  it.each(['tenant', 'email-slug', 'email-provider'] as const)(
+    'enters the actual %s discovery form without waiting for an absent email field',
+    async (entry) => {
+      let state: 'email' | 'slug' | 'provider' = entry === 'tenant' ? 'slug' : 'email'
+      const fills: string[] = []
+      type DiscoveryLocator = {
+        isVisible: () => Promise<boolean>
+        fill: (value: string) => Promise<void>
+        or: (other: DiscoveryLocator) => {
+          first: () => { waitFor: () => Promise<void> }
+        }
+      }
+      const locator = (field: 'email' | 'slug' | 'provider'): DiscoveryLocator => ({
+        isVisible: async () => state === field,
+        fill: async (value: string) => {
+          expect(state).toBe(field)
+          fills.push(value)
+        },
+        or(other: DiscoveryLocator) {
+          return {
+            first: () => ({
+              waitFor: async () =>
+                expect((await this.isVisible()) || (await other.isVisible())).toBe(true),
+            }),
+          }
+        },
+      })
+      const page = {
+        getByLabel: (label: string) => locator(label === 'Adresse e-mail' ? 'email' : 'slug'),
+        locator: () => locator('provider'),
+        getByRole: () => ({
+          click: async () => {
+            state = state === 'email' && entry === 'email-slug' ? 'slug' : 'provider'
+          },
+        }),
+      } as unknown as Page
+      await enterOrganisation(page, 'synthetic@example.test', 'synthetic-org')
+      expect(state).toBe('provider')
+      expect(fills).toEqual(
+        entry === 'tenant'
+          ? ['synthetic-org']
+          : entry === 'email-slug'
+            ? ['synthetic@example.test', 'synthetic-org']
+            : ['synthetic@example.test']
+      )
+    }
+  )
+
   it.each([
     [WEB, '/assets/app.js', 404],
     [HS, '/_matrix/client/v3/sync', 401],
@@ -1096,6 +1203,60 @@ describe('adversarial regression coverage', () => {
       } as unknown as APIRequestContext
       await expect(findMailLink(request, API, to, /claim/)).rejects.toThrow(/^WAVE2_MAIL_SCAN$/)
     }
+  })
+
+  it('R2 searches by recipient and paginates beyond fifty messages with exact ownership checks', async () => {
+    const to = 'synthetic+wave@example.test'
+    const link = `${WEB}/claim/one#synthetic`
+    const get = vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/message/')) {
+        expect(url).toBe(`${API}/api/v1/message/owned`)
+        return { status: () => 200, json: async () => ({ HTML: link }) }
+      }
+      const parsed = new URL(url)
+      expect(parsed.pathname).toBe('/api/v1/search')
+      expect(parsed.searchParams.get('query')).toBe(`to:${to}`)
+      expect(parsed.searchParams.get('limit')).toBe('50')
+      const start = Number(parsed.searchParams.get('start'))
+      expect([0, 50]).toContain(start)
+      return {
+        status: () => 200,
+        json: async () => ({
+          messages:
+            start === 0
+              ? Array.from({ length: 50 }, (_, i) => ({
+                  ID: String(i),
+                  To: [{ Address: 'other@example.test' }],
+                }))
+              : [{ ID: 'owned', To: [{ Address: to.toUpperCase() }] }],
+        }),
+      }
+    })
+    expect(
+      await findMailLink(
+        { get } as unknown as APIRequestContext,
+        API,
+        to,
+        mailLinkPattern(`${WEB}/claim/one`)
+      )
+    ).toBe(link)
+    expect(get).toHaveBeenCalledTimes(3)
+  })
+
+  it('R2 bounds a nonterminating Mailpit listing and sanitizes later-page failures', async () => {
+    const messages = Array.from({ length: 50 }, (_, i) => ({ ID: String(i), To: [] }))
+    const get = vi.fn().mockResolvedValue({ status: () => 200, json: async () => ({ messages }) })
+    await expect(
+      findMailLink({ get } as unknown as APIRequestContext, API, 'synthetic@example.test', /claim/)
+    ).rejects.toThrow(/^WAVE2_MAIL_SCAN$/)
+    expect(get).toHaveBeenCalledTimes(100)
+    get
+      .mockReset()
+      .mockResolvedValueOnce({ status: () => 200, json: async () => ({ messages }) })
+      .mockRejectedValueOnce(new Error('private transport detail'))
+    await expect(
+      findMailLink({ get } as unknown as APIRequestContext, API, 'synthetic@example.test', /claim/)
+    ).rejects.toThrow(/^WAVE2_MAIL_SCAN$/)
   })
 
   it('R3 retains the shared-address ceiling across budgets and cleanup, with independent account counts', () => {

@@ -2,7 +2,7 @@
 
 Status: Implemented harness; live-service and renderer qualification pending
 
-All implementation is test tooling. Production sources and bundle inputs are unchanged.
+The harness is test tooling. Live execution also requires light themes to declare their native `color-scheme` explicitly; full renderer qualification remains pending.
 
 ## Entry points
 
@@ -42,6 +42,10 @@ Supply operator-owned JSON fixtures inside the ignored `tests/wave2/runtime/` di
 - A configured test capture key and the exact consent person/workspace scope for R5. Keys, snapshots, credentials and source content remain in fixture memory, outside receipts.
 
 Network templates must include automatic bootstrap/sync/API traffic and separately named refusal responses. Required actions also have explicit status/content assertions. Expected counts default to one; use `min: 0` for admitted optional traffic and `max: 0` for prohibited calls. Exact fixture paths can use `fixturePath()` to encode each identity segment. Queries and required response keys have independent guards.
+
+Build the first-owner entry with `VITE_FIRST_OWNER_JOURNEY=1` for Persona 1 and keep `VITE_ENABLE_MSW=0`. A tenant must expose its real messaging application through Core's configured application URL templates before the console offers its workspace link. Tenant sign-in starts with the organisation field; the shared entry may ask for an email first. Channel selection enters the connected workspace before looking for its channel links, while retaining the same page.
+
+Mailpit scans use the recipient search endpoint and verify exact recipient ownership again before opening a message. Results are paginated in fifty-message pages, including older matching messages. A bounded scan that cannot finish refuses with a sanitized error instead of treating a truncated listing as an empty mailbox.
 
 ## Determinism and confidentiality
 

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { expect } from '@playwright/test'
 import type { APIResponse, Browser, BrowserContext, Page, Request } from '@playwright/test'
 import { throughKeycloak } from './keycloak'
+import { enterOrganisation } from './login'
+import { enterWorkspace } from './workspace'
 import { finishCleanup } from './cleanup'
 import type { Account } from './keycloak'
 import { NetworkLedger, recordNetwork } from './oracles/r1-network'
@@ -52,6 +54,8 @@ export interface Wave2Input {
     monoSelector: string
     tokenSelector: string
     languageButton: string
+    languageSection?: string
+    languageClose?: string
     languageOptions: { fr: string; en: string }
     tabOrder: readonly string[] | Record<375 | 768 | 1440, readonly string[]>
     landingSansSelector: string
@@ -248,14 +252,7 @@ export class Actor {
       return object(body) && typeof body.realm === 'string'
     })
     await this.page.goto(`/login?org=${encodeURIComponent(this.input.organisation)}&mode=tenant`)
-    await this.page.getByLabel('Adresse e-mail').fill(this.input.account.email)
-    await this.page.getByRole('button', { name: 'Continuer', exact: true }).click()
-    const slug = this.page.getByLabel('Identifiant de votre organisation')
-    await expect(slug.or(this.page.locator('#username')).first()).toBeVisible()
-    if (await slug.isVisible()) {
-      await slug.fill(this.input.organisation)
-      await this.page.getByRole('button', { name: 'Continuer', exact: true }).click()
-    }
+    await enterOrganisation(this.page, this.input.account.email, this.input.organisation)
     const discovery: unknown = await (await discovered).json()
     guard(
       object(discovery) &&
@@ -296,9 +293,7 @@ export class Actor {
   }
   async workspace(selector: string, channelPath?: string) {
     this.budget.reusePage(this.alias, this.page)
-    const path = channelPath ?? `/${this.input.organisation}/workspace`
-    if (new URL(this.page.url()).pathname !== path)
-      await this.page.locator(`a[href="${path}"]`).first().click()
+    await enterWorkspace(this.page, this.input.organisation, selector, channelPath)
     await expect(this.page.locator(selector)).toBeVisible()
   }
   async core(

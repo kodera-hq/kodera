@@ -9,7 +9,7 @@ export function mailLinkPattern(target: string): RegExp {
   return new RegExp(`${escaped}#[^\\s"<>]+`)
 }
 
-/** One bounded scan. Only the caller receives the link; failures contain no message data. */
+/** One bounded, recipient-filtered paginated scan. Only the caller receives the link; failures contain no message data. */
 export async function findMailLink(
   request: APIRequestContext,
   mailpit: string,
@@ -18,34 +18,44 @@ export async function findMailLink(
 ): Promise<string | undefined> {
   try {
     exactOrigin(mailpit)
-    const listing = await request.get(`${mailpit}/api/v1/messages?limit=50`, { maxRedirects: 0 })
-    guard(listing.status() === 200, 'WAVE2_MAIL_STATUS')
-    const body: unknown = await listing.json()
-    guard(object(body) && Array.isArray(body.messages), 'WAVE2_MAIL_SHAPE')
-    for (const message of body.messages) {
-      guard(object(message) && typeof message.ID === 'string', 'WAVE2_MAIL_SHAPE')
-      if (
-        !Array.isArray(message.To) ||
-        !message.To.some(
-          (recipient: unknown) =>
-            object(recipient) &&
-            typeof recipient.Address === 'string' &&
-            recipient.Address.toLowerCase() === to.toLowerCase()
+    const limit = 50
+    for (let page = 0; page < 100; page++) {
+      const query = new URLSearchParams({
+        query: `to:${to}`,
+        limit: String(limit),
+        start: String(page * limit),
+      })
+      const listing = await request.get(`${mailpit}/api/v1/search?${query}`, { maxRedirects: 0 })
+      guard(listing.status() === 200, 'WAVE2_MAIL_STATUS')
+      const body: unknown = await listing.json()
+      guard(object(body) && Array.isArray(body.messages), 'WAVE2_MAIL_SHAPE')
+      guard(body.messages.length <= limit, 'WAVE2_MAIL_SHAPE')
+      for (const message of body.messages) {
+        guard(object(message) && typeof message.ID === 'string', 'WAVE2_MAIL_SHAPE')
+        if (
+          !Array.isArray(message.To) ||
+          !message.To.some(
+            (recipient: unknown) =>
+              object(recipient) &&
+              typeof recipient.Address === 'string' &&
+              recipient.Address.toLowerCase() === to.toLowerCase()
+          )
         )
-      )
-        continue
-      const response = await request.get(
-        `${mailpit}/api/v1/message/${encodeURIComponent(message.ID)}`,
-        { maxRedirects: 0 }
-      )
-      guard(response.status() === 200, 'WAVE2_MAIL_STATUS')
-      const full: unknown = await response.json()
-      guard(object(full), 'WAVE2_MAIL_SHAPE')
-      const text = `${typeof full.Text === 'string' ? full.Text : ''}\n${typeof full.HTML === 'string' ? full.HTML : ''}`
-      const match = text.match(new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '')))
-      if (match) return match[0].replace(/&amp;/g, '&')
+          continue
+        const response = await request.get(
+          `${mailpit}/api/v1/message/${encodeURIComponent(message.ID)}`,
+          { maxRedirects: 0 }
+        )
+        guard(response.status() === 200, 'WAVE2_MAIL_STATUS')
+        const full: unknown = await response.json()
+        guard(object(full), 'WAVE2_MAIL_SHAPE')
+        const text = `${typeof full.Text === 'string' ? full.Text : ''}\n${typeof full.HTML === 'string' ? full.HTML : ''}`
+        const match = text.match(new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '')))
+        if (match) return match[0].replace(/&amp;/g, '&')
+      }
+      if (body.messages.length < limit) return undefined
     }
-    return undefined
+    throw new Error('WAVE2_MAIL_SCAN_LIMIT')
   } catch {
     throw new Error('WAVE2_MAIL_SCAN')
   }
