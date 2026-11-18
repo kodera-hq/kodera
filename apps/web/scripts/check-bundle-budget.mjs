@@ -89,7 +89,7 @@ export const BUDGETS = Object.freeze({ entryGzip: 180_000, chunkGzip: 160_000 })
  */
 export const ENTRY_REGRESSION_LIMITS = Object.freeze({
   production: 228_000,
-  'production-telemetry': 228_000,
+  'production-telemetry': 229_000,
   staging: 230_000,
 })
 

@@ -538,6 +538,14 @@ def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -
         if not any("client identifier" in error or "must match" in error for error in preflight_env(env, environment)):
             print("[FAIL] unsafe Console client configuration escaped preflight", file=sys.stderr)
             return 1
+    for valid_source in ("", "media_secrets", "/secure/kodera-media-secrets", "/var/lib/kodera/media-secrets"):
+        if any("KODERA_MEDIA_SECRETS_SOURCE" in error for error in preflight_env(env, "KODERA_MEDIA_SECRETS_SOURCE=" + valid_source)):
+            print(f"[FAIL] valid KODERA_MEDIA_SECRETS_SOURCE '{valid_source}' refused", file=sys.stderr)
+            return 1
+    for unsafe_source in ("/", "/etc", "/etc/kodera", "/run/secrets", "./secrets", "other_volume", "/srv/secrets:rw", "/srv/../etc/secrets"):
+        if not any("KODERA_MEDIA_SECRETS_SOURCE" in error for error in preflight_env(env, "KODERA_MEDIA_SECRETS_SOURCE=" + unsafe_source)):
+            print(f"[FAIL] unsafe KODERA_MEDIA_SECRETS_SOURCE '{unsafe_source}' escaped preflight", file=sys.stderr)
+            return 1
     if effective_runtime_errors(compose, split):
         print("[FAIL] baseline split media/Console runtime invalid", file=sys.stderr)
         return 1
@@ -2133,6 +2141,22 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             for name in value.split(",")
         ):
             errors.append(f"{FEDERATION_ENV_NAME} must list public server names, comma-separated, with no wildcard")
+        elif key == "KODERA_MEDIA_SECRETS_SOURCE" and value != "media_secrets":
+            from pathlib import PurePosixPath
+            source_path = PurePosixPath(value)
+            forbidden_roots = ("/etc", "/var/run", "/run", "/proc", "/sys", "/dev", "/usr", "/boot")
+            if (
+                ":" in value
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+                or not source_path.is_absolute()
+                or str(source_path) != value
+                or ".." in source_path.parts
+                or len(source_path.parts) < 3
+                or any(value == root or value.startswith(root + "/") for root in forbidden_roots)
+            ):
+                errors.append(
+                    "KODERA_MEDIA_SECRETS_SOURCE must be media_secrets or a dedicated normalized colon-free absolute host directory"
+                )
     errors.extend(console_configuration_errors(actual))
     federation_environment = {key: actual.get(key, "").strip("'\"") for key in (FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME)}
     renderer = runpy.run_path(str(ROOT / "deploy/community/configure_synapse.py"))
@@ -2995,6 +3019,7 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
         else f"{key}=" if key in ("KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256")
         else f"{key}=console" if key == "KODERA_OIDC_CLIENT_ID"
+        else f"{key}=media_secrets" if key == "KODERA_MEDIA_SECRETS_SOURCE"
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64URL_32" in value
