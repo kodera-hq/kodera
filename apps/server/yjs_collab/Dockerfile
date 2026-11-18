@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 WORKDIR /app
 COPY package.json package-lock.json licenses.mjs ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && node licenses.mjs && npm cache clean --force

@@ -8,10 +8,10 @@ Status: in use from the first Espace change. Espace's chat and audio rooms are t
 
 | Service | Image | Port | Role |
 |---|---|---|---|
-| `synapse` | `matrixdotorg/synapse:v1.163.0` | 8008 | The homeserver `kodera.test` (client API only; not 8448, the federation port) |
+| `synapse` | `matrixdotorg/synapse:v1.165.0` | 8008 | The homeserver `kodera.test` (client API only; not 8448, the federation port) |
 | `postgres` | `postgres:16-alpine` | none | Synapse's database |
-| `keycloak` | `quay.io/keycloak/keycloak:26.0.7`, as `identity realm tooling` runs it | 8180 | The organisation's realm `acme-sa`, with Synapse's confidential client |
-| `livekit` | `livekit/livekit-server:v1.13.10` | 7880, 7881, UDP 50000–50020 | Audio rooms' media |
+| `keycloak` | `quay.io/keycloak/keycloak:26.8.2`, as `identity realm tooling` runs it | 8180 | The organisation's realm `acme-sa`, with Synapse's confidential client |
+| `livekit` | `livekit/livekit-server:v1.13.11` | 7880, 7881, UDP 50000–50020 | Audio rooms' media |
 
 Synapse is configured as the pilot requires (Core ADR-0018, the design's §2):
 

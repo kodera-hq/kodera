@@ -207,6 +207,17 @@ export function isCollectionPreconditionFailedError(error: unknown): error is Ap
   return error instanceof ApiProblem && error.status === 412
 }
 
+/**
+ * `precondition-required` (428): the write reached Core with no `If-Match` at all, so there was
+ * nothing to compare and nothing was saved. Distinct from 412 on purpose — the stale-tag case
+ * carries `currentEtag` and this one carries nothing (`src/api/client.ts`) — and the person is
+ * told something different (`console.docs.collection.error-version-required`): a plain retry
+ * would send the same version-less write again.
+ */
+export function isCollectionPreconditionRequiredError(error: unknown): error is ApiProblem {
+  return error instanceof ApiProblem && error.status === 428
+}
+
 export async function listWorkspaceDocumentBacklinks(
   organisationId: string,
   documentId: string,

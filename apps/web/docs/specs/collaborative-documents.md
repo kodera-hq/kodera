@@ -52,6 +52,17 @@ Status: Implemented for review on Core API 0.43.0; service release remains separ
 - Unified `⌘K` search (`UniversalSearch.tsx`) filters and navigates across channels, direct conversations, workspace members, and workspace documents.
 - Per product scope (`B1`), there is no chat-thread-to-document promotion button or bridge.
 
+### Structured collection: a refused write and its version recovery
+
+- Inline edits in the structured collection (`DocsCollectionView.tsx`) are optimistic and carry the row's version: `If-Match` with the `ETag` of the last read on an update, `If-None-Match: *` on a create.
+- Core refusing the precondition rolls the optimistic value back, forgets the refused version, and raises one banner with `role="alert"` — a refused write is announced assertively, because a `polite` announcement can be queued behind a sync update and reach the member after they have already retried.
+- The banner's sentence is one of two, by precondition, and both are governed catalogue copy in French and English:
+  - `precondition-failed` (`412` — the version sent was stale, somebody else wrote first) renders `console.docs.collection.error-version-conflict`;
+  - `precondition-required` (`428` — no version was sent, so nothing was compared and nothing was written) renders `console.docs.collection.error-version-required`;
+  - a row whose version cannot be read at all is refused here rather than written without a precondition, and reported as the same missing-version state.
+- Its action is `console.docs.collection.action-reload`, which re-reads the collection, the row and its current version.
+- Neither sentence names an HTTP status number, and neither instructs the member to retry: each names the cause and the re-read. The generic fallback `console.common.error-unexpected` never answers for a refused precondition — its "réessayez" would send the same refused write again.
+
 ## Acceptance
 
 Run:

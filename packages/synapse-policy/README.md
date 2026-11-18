@@ -84,7 +84,7 @@ Status: Planned — real Synapse confidential-room integration, encrypted envelo
 key persistence, browser/native interoperability and LiveKit frame transforms. No user-facing
 confidential-room capability is qualified by these callback tests alone.
 
-**To-device messages are not room events**, and Synapse (v1.163.0) offers a module no callback for them. This policy's timeline boundary does not inspect to-device key distribution.
+**To-device messages are not room events**, and Synapse (v1.165.0) offers a module no callback for them. This policy's timeline boundary does not inspect to-device key distribution.
 
 **Community governance supplements room power levels.** The tenant agent writes
 additive `read_only`, `audience`, `members` and `exempt` fields to
@@ -145,7 +145,7 @@ WITHOUT_MODULE=1 bash tests/integration/run.sh
 
 - **Unit tests.** They run the callbacks against a minimal stand-in for Synapse's module API (`tests/conftest.py`).
 - **Mutation script.** It proves every rule has a test that fails when the rule is broken, and names the test that must catch it.
-- **Integration test.** It runs the module inside the pinned Synapse v1.163.0 in Docker, and drives it over the client API as a third-party client would. This covers the invite inside `/createRoom`, the state a direct-message preset creates, refused e-mail invites and aliases, and the agent's own channel.
+- **Integration test.** It runs the module inside the pinned Synapse v1.165.0 in Docker, and drives it over the client API as a third-party client would. This covers the invite inside `/createRoom`, the state a direct-message preset creates, refused e-mail invites and aliases, and the agent's own channel.
 - **Negative control.** Run without the module, the same scenario must fail (exit 1).
 - **Two homeservers.** `../../apps/server/.venv/bin/python tests/integration/federation.py` runs the pinned homeservers on
   an internal-only Docker network and drives the real tenant-agent provisioning client. It
