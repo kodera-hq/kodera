@@ -84,10 +84,12 @@ function isOwnerClaimPurpose(value: unknown): boolean {
   return isProtectedPurpose(Object.getOwnPropertyDescriptor(value, 'purpose')?.value)
 }
 
+const INVALID_CLAIM_CONTEXT = 'Invalid owner-claim context.'
+
 function claimContext(value: unknown): OwnerClaimAuthContext {
   const keys = ['purpose', 'intentId', 'organisationId', 'organisationSlug', 'realm'] as const
   if (typeof value !== 'object' || value === null || Reflect.ownKeys(value).length !== keys.length)
-    throw new Error('Invalid owner-claim context.')
+    throw new Error(INVALID_CLAIM_CONTEXT)
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (
@@ -96,7 +98,7 @@ function claimContext(value: unknown): OwnerClaimAuthContext {
       typeof descriptor.value !== 'string' ||
       /[\r\n]/.test(descriptor.value)
     )
-      throw new Error('Invalid owner-claim context.')
+      throw new Error(INVALID_CLAIM_CONTEXT)
   }
   const context = value as OwnerClaimAuthContext
   if (
@@ -109,7 +111,7 @@ function claimContext(value: unknown): OwnerClaimAuthContext {
     !isRealmHint(context.organisationSlug) ||
     !isRealmHint(context.realm)
   )
-    throw new Error('Invalid owner-claim context.')
+    throw new Error(INVALID_CLAIM_CONTEXT)
   return Object.freeze({
     purpose: context.purpose,
     intentId: context.intentId,
@@ -198,7 +200,9 @@ function managerFor(realm: string, protectedClaim = false, registration = false)
     authority: `${keycloakUrl()}/realms/${realm}`,
     client_id: oidcClientId(),
     redirect_uri: redirectUri(),
-    ...(protectedClaim ? { popup_redirect_uri: claimRedirectUri(), loadUserInfo: false } : {}),
+    ...(protectedClaim
+      ? { popup_redirect_uri: claimRedirectUri(), loadUserInfo: false }
+      : { filterProtocolClaims: false }),
     // The registration flow uses the same state, nonce and S256 transaction as sign-in.
     ...(registration
       ? {
@@ -439,7 +443,15 @@ export class OidcAuthAdapter implements AuthAdapter {
       [...subject].some((character) => character.charCodeAt(0) > 127)
     )
       return undefined
-    return Object.freeze({ issuer, subject })
+    const rawAmr = (user.profile as { amr?: unknown } | undefined)?.amr
+    const amr =
+      Array.isArray(rawAmr) &&
+      rawAmr.length > 0 &&
+      rawAmr.length <= 32 &&
+      rawAmr.every((item): item is string => typeof item === 'string' && /^[\x21-\x7e]{1,128}$/.test(item))
+        ? Object.freeze([...rawAmr])
+        : undefined
+    return Object.freeze({ issuer, subject, ...(amr === undefined ? {} : { amr }) })
   }
 
   async signIn(realm: string, options?: SignInOptions): Promise<void> {

@@ -196,14 +196,20 @@ describe('the entry regression limit', () => {
   })
 
   it('is a number per profile, a few kilobytes above what that profile measures', () => {
-    expect(ENTRY_REGRESSION_LIMITS).toEqual({ production: 228_000, staging: 230_000 })
+    expect(ENTRY_REGRESSION_LIMITS).toEqual({
+      production: 228_000,
+      'production-telemetry': 229_000,
+      staging: 230_000,
+    })
     expect(budgetsFor('production')).toEqual({ ...BUDGETS, entryRegressionGzip: 228_000 })
+    expect(budgetsFor('production-telemetry')).toEqual({ ...BUDGETS, entryRegressionGzip: 229_000 })
     expect(budgetsFor('staging')).toEqual({ ...BUDGETS, entryRegressionGzip: 230_000 })
     expect(() => budgetsFor('preview')).toThrow('unknown profile "preview"')
   })
 
   it('only ever goes down: raising one means changing this line, and saying why', () => {
     expect(ENTRY_REGRESSION_LIMITS.production).toBeLessThanOrEqual(228_000)
+    expect(ENTRY_REGRESSION_LIMITS['production-telemetry']).toBeLessThanOrEqual(229_000)
     expect(ENTRY_REGRESSION_LIMITS.staging).toBeLessThanOrEqual(230_000)
   })
 
@@ -391,10 +397,11 @@ describe('the CI wiring', () => {
     .map((line) => line.trim())
     .filter((line) => line.startsWith('node scripts/check-bundle-budget'))
 
-  it('runs the self-test, then the gate on the production and the staging profile', () => {
+  it('runs the self-test, then the gate on the production, telemetry and staging profiles', () => {
     expect(runs).toEqual([
       'node scripts/check-bundle-budget.selftest.mjs',
       'node scripts/check-bundle-budget.mjs --report-only entry-size',
+      'node scripts/check-bundle-budget.mjs --profile production-telemetry --report-only entry-size',
       'node scripts/check-bundle-budget.mjs --profile staging --report-only entry-size',
     ])
   })

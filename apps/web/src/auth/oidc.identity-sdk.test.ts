@@ -98,6 +98,33 @@ describe('real installed SDK profile path', () => {
       await adapter.signOut()
     }
   })
+
+  it('retains bounded amr claims through the real SDK callback and drops malformed amr', async () => {
+    claims['amr'] = ['pwd', 'otp']
+    const adapter = await callback()
+    try {
+      await expect(adapter.handleCallback()).resolves.toBe('interactive')
+      expect(adapter.getUser()?.identity).toEqual({
+        issuer,
+        subject: 'sdk-processed-subject',
+        amr: ['pwd', 'otp'],
+      })
+    } finally {
+      await adapter.signOut()
+    }
+
+    claims['amr'] = ['pwd', 42]
+    const malformed = await callback()
+    try {
+      await expect(malformed.handleCallback()).resolves.toBe('interactive')
+      expect(malformed.getUser()?.identity).toEqual({
+        issuer,
+        subject: 'sdk-processed-subject',
+      })
+    } finally {
+      await malformed.signOut()
+    }
+  })
 })
 
 describe('installed SDK nonsecret state compatibility', () => {

@@ -7,7 +7,7 @@
 //!   origins (`https://api.kodera.io/api/v1/`, `https://auth.kodera.io/realms/`,
 //!   `https://*.kodera.io/.well-known/matrix/client`, `https://*.kodera.io/_matrix/`,
 //!   `https://*.kodera.io/_kodera/rooms/token`, `wss://*.kodera.io/rtc*`,
-//!   `wss://*.kodera.io/ws/collab/`). Bare wildcards (`*`, `https:`, `wss:`, `https://*.kodera.io`)
+//!   `wss://*.kodera.io/documents/collab`). Bare wildcards (`*`, `https:`, `wss:`, `https://*.kodera.io`)
 //!   and cleartext schemes (`http:`, `ws:`) fail closed.
 //! - `object-src`, `base-uri`, and `frame-ancestors` MUST all be `'none'`.
 
@@ -26,7 +26,7 @@ pub const APPROVED_CONNECT_SOURCES: [&str; 11] = [
     "wss://*.kodera.io/rtc/v1",
     "wss://*.kodera.io/rtc/validate",
     "wss://*.kodera.io/rtc/v1/validate",
-    "wss://*.kodera.io/ws/collab/",
+    "wss://*.kodera.io/documents/collab",
 ];
 
 /// Closed refusal codes for desktop CSP validation.

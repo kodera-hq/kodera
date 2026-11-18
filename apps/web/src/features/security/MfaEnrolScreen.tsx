@@ -61,6 +61,10 @@ function CommunityMfaEnrol({
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
 
+  const hasSecondFactor =
+    auth.user?.identity?.amr?.some((method) => method === 'otp' || method === 'hwk') === true
+  const showConfigureTotp = realm === 'community' && !hasSecondFactor
+
   useEffect(() => {
     heading.current?.focus()
   }, [])
@@ -94,7 +98,7 @@ function CommunityMfaEnrol({
             <p className="text-sm text-c-ink-2">{copy.mfaBody}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            {realm === 'community' ? (
+            {showConfigureTotp ? (
               <Button
                 disabled={pending}
                 onClick={() => void start({ kcAction: 'CONFIGURE_TOTP', prompt: 'login' })}
@@ -103,7 +107,7 @@ function CommunityMfaEnrol({
               </Button>
             ) : null}
             <Button
-              variant={realm === 'community' ? 'secondary' : 'primary'}
+              variant={showConfigureTotp ? 'secondary' : 'primary'}
               disabled={pending}
               onClick={() => void start({ prompt: 'login' })}
             >

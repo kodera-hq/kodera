@@ -380,6 +380,7 @@ def assert_image_boundary(ignore):
         "!apps/media/storage.py",
         "!apps/media/storage_gateway.py",
         "!apps/media/storage_protocol.py",
+        "!apps/media/storage_worker.py",
         "!apps/media/services.py",
         "!apps/media/api/__init__.py",
         "!apps/media/api/http.py",

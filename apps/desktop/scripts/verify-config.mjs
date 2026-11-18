@@ -189,6 +189,12 @@ function selftest() {
         'https://*.kodera.io',
       );
     }],
+    ['stale collaboration websocket path', /connect-src must use only approved sources/u, (config) => {
+      config.app.security.csp = config.app.security.csp.replace(
+        'wss://*.kodera.io/documents/collab',
+        'wss://*.kodera.io/ws/collab/',
+      );
+    }],
     ['insecure connections', /connect-src must use only approved sources/u, (config) => {
       config.app.security.csp = config.app.security.csp.replace(`connect-src ${connectFirst}`, `connect-src ${connectFirst} http: ws:`);
     }],

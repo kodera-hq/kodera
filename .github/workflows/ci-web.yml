@@ -89,6 +89,7 @@ jobs:
         run: |
           node scripts/check-bundle-budget.selftest.mjs
           node scripts/check-bundle-budget.mjs --report-only entry-size
+          node scripts/check-bundle-budget.mjs --profile production-telemetry --report-only entry-size
           node scripts/check-bundle-budget.mjs --profile staging --report-only entry-size
 
   web-e2e:

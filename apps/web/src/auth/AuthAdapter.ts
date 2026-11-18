@@ -14,6 +14,7 @@
 export interface AuthIdentity {
   readonly issuer: string
   readonly subject: string
+  readonly amr?: readonly string[]
 }
 
 export interface AuthUser {

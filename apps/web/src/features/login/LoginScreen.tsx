@@ -9,7 +9,7 @@ import { keepLanguagePreference } from '../../i18n/languagePreference'
 // for any of them), so they are views this one route swaps between rather
 // than three routes.
 
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { z } from '@/validation-policy'
@@ -38,10 +38,13 @@ import {
 } from './discovery'
 import type { EmailRefusal } from './discovery'
 import { Handoff } from './Handoff'
-import { OrganisationChoice } from './OrganisationChoice'
 import type { RealmDiscoveryResult } from './useDiscoverRealm'
 import { useDiscoverRealm } from './useDiscoverRealm'
 import { SUPPORT_EMAIL } from '../../app/supportContact'
+
+const OrganisationChoice = lazy(() =>
+  import('./OrganisationChoice').then(({ OrganisationChoice }) => ({ default: OrganisationChoice }))
+)
 
 type Candidate = RealmDiscoveryResult['candidates'][number]
 
@@ -323,18 +326,20 @@ export function LoginScreen({
 
   if (view.kind === 'organisation') {
     return (
-      <OrganisationChoice
-        candidates={view.candidates}
-        onChoose={(candidate) => {
-          trackOrganisationChosen(view.candidates.length)
-          setView({
-            kind: 'handoff',
-            realm: candidate.realm,
-            organisationName: candidate.organisation.name,
-          })
-        }}
-        onBack={() => setView({ kind: 'email' })}
-      />
+      <Suspense fallback={null}>
+        <OrganisationChoice
+          candidates={view.candidates}
+          onChoose={(candidate) => {
+            trackOrganisationChosen(view.candidates.length)
+            setView({
+              kind: 'handoff',
+              realm: candidate.realm,
+              organisationName: candidate.organisation.name,
+            })
+          }}
+          onBack={() => setView({ kind: 'email' })}
+        />
+      </Suspense>
     )
   }
 

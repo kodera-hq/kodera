@@ -6,10 +6,27 @@ import i18n from '../../i18n'
 
 const signOut = vi.hoisted(() => vi.fn(async () => {}))
 const signIn = vi.hoisted(() => vi.fn(async () => {}))
-const authState = vi.hoisted(() => ({ realm: undefined as string | undefined }))
+const authState = vi.hoisted(() => ({
+  realm: undefined as string | undefined,
+  amr: undefined as readonly string[] | undefined,
+}))
 vi.mock('../../auth/AuthProvider', () => ({
   useAuth: () => ({
-    user: authState.realm === undefined ? undefined : { realm: authState.realm },
+    user:
+      authState.realm === undefined
+        ? undefined
+        : {
+            realm: authState.realm,
+            ...(authState.amr === undefined
+              ? {}
+              : {
+                  identity: {
+                    issuer: `https://auth.kodera.test/realms/${authState.realm}`,
+                    subject: 'owner-1',
+                    amr: authState.amr,
+                  },
+                }),
+          },
     signOut,
   }),
 }))
@@ -18,6 +35,7 @@ afterEach(async () => {
   vi.unstubAllEnvs()
   vi.clearAllMocks()
   authState.realm = undefined
+  authState.amr = undefined
   sessionStorage.clear()
   window.history.replaceState(null, '', '/')
   await i18n.changeLanguage('fr')
@@ -130,5 +148,22 @@ describe('Community OIDC MFA enrolment and step-up', () => {
     expect(screen.getAllByRole('button')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Se déconnecter' })).toBeVisible()
     expect(signIn).not.toHaveBeenCalled()
+  })
+
+  it('hides CONFIGURE_TOTP when the current identity already carries otp or hwk in amr', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc')
+    vi.stubEnv('VITE_ENABLE_MSW', '0')
+    authState.realm = 'community'
+    authState.amr = ['pwd', 'otp']
+    window.history.replaceState(null, '', '/community/security/mfa')
+    const { MfaEnrolScreen } = await import('./MfaEnrolScreen')
+    render(<MfaEnrolScreen accountEmail="owner@kodera.test" onEnrolled={vi.fn()} />)
+    expect(
+      screen.queryByRole('button', { name: 'Configurer la double authentification' })
+    ).not.toBeInTheDocument()
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Vérifier avec mon code 2FA' }))
+    expect(signIn).toHaveBeenCalledWith('community', { prompt: 'login' })
   })
 })

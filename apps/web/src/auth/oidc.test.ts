@@ -890,4 +890,43 @@ describe('community registration', () => {
       'Invalid authentication prompt.'
     )
   })
+
+  it('preserves bounded ASCII amr claims on the processed identity and drops malformed amr', async () => {
+    window.sessionStorage.setItem('kodera.web.auth.realm', 'community')
+    signinRedirectCallback.mockResolvedValueOnce({
+      access_token: 'tok-otp',
+      expired: false,
+      expires_at: Math.floor(Date.now() / 1000) + 260,
+      profile: {
+        iss: 'https://id.example.test/realms/community',
+        sub: 'owner-sub',
+        amr: ['pwd', 'otp'],
+      },
+    })
+    const adapter = new OidcAuthAdapter()
+    await expect(adapter.handleCallback()).resolves.toBe('interactive')
+    expect(adapter.getUser()?.identity).toEqual({
+      issuer: 'https://id.example.test/realms/community',
+      subject: 'owner-sub',
+      amr: ['pwd', 'otp'],
+    })
+
+    const another = new OidcAuthAdapter()
+    window.sessionStorage.setItem('kodera.web.auth.realm', 'community')
+    signinRedirectCallback.mockResolvedValueOnce({
+      access_token: 'tok-bad-amr',
+      expired: false,
+      expires_at: Math.floor(Date.now() / 1000) + 260,
+      profile: {
+        iss: 'https://id.example.test/realms/community',
+        sub: 'owner-sub',
+        amr: ['pwd', 42],
+      },
+    })
+    await expect(another.handleCallback()).resolves.toBe('interactive')
+    expect(another.getUser()?.identity).toEqual({
+      issuer: 'https://id.example.test/realms/community',
+      subject: 'owner-sub',
+    })
+  })
 })

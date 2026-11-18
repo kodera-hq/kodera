@@ -22,6 +22,7 @@ import os
 import re
 import runpy
 import stat
+import subprocess
 import sys
 import tempfile
 import types
@@ -69,6 +70,11 @@ EXPECTED_PUBLIC_ENV_DEFAULTS = {
     "KODERA_ACME_EMAIL": "ops@example.org",
     "DJANGO_ALLOWED_HOSTS": "chat.example.org,127.0.0.1,server",
     "KODERA_OIDC_PROVIDER_ORIGIN": "https://id.example.org",
+    "KODERA_OIDC_CLIENT_ID": "console",
+    "KODERA_CONSOLE_CLIENT_ID": "",
+    "KODERA_IOS_APP_IDS": "",
+    "KODERA_ANDROID_ASSETLINKS_SHA256": "",
+    "KODERA_MEDIA_SECRETS_SOURCE": "media_secrets",
     "POSTGRES_USER": "kodera",
     "POSTGRES_DB": "kodera_server",
 }
@@ -89,7 +95,7 @@ REQUIRED_SECRET_ENV_KEYS = (
     "LIVEKIT_API_SECRET",
 )
 
-HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse", "synapse-db", "yjs-collab")
+HEALTHCHECK_REQUIRED_SERVICES = ("db", "valkey", "server", "synapse", "synapse-db", "yjs-collab", "media-storage-worker")
 
 # Public configuration that has no usable default: the operator's own identity provider.
 REQUIRED_PLACEHOLDER_KEYS = (
@@ -285,6 +291,268 @@ def parse_env_example(env_text: str) -> tuple[dict[str, str], list[str]]:
     return env_map, errors
 
 
+CONSOLE_CLIENT_EXPRESSION = "${KODERA_CONSOLE_CLIENT_ID:-${KODERA_OIDC_CLIENT_ID:-console}}"
+CONSOLE_CLIENT_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+MEDIA_SOCKET = "/run/kodera-media/media.sock"
+MEDIA_SECRETS_MOUNT = "${KODERA_MEDIA_SECRETS_SOURCE:-media_secrets}:/run/kodera-media-secrets"
+REVIEWED_MEDIA_MOUNTS = frozenset({
+    ("media-socket-init", MEDIA_SECRETS_MOUNT),
+    ("media-storage-worker", MEDIA_SECRETS_MOUNT + ":ro"),
+})
+MEDIA_INIT_CODE = (
+    "import os; from pathlib import Path; Path('/run/kodera-media/media.sock').unlink(missing_ok=True); "
+    "[(os.chmod(p, 0o700), os.chown(p, 10001, 10001)) for p in ('/run/kodera-media', '/run/kodera-media-secrets')]"
+)
+MEDIA_WORKER_COMMAND = ["python", "-m", "apps.media.storage_worker", "--socket", MEDIA_SOCKET,
+                        "--secret-directory", "/run/kodera-media-secrets"]
+MEDIA_HEALTH_CODE = (
+    "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(1); "
+    "s.connect('/run/kodera-media/media.sock'); s.close()"
+)
+
+
+def console_configuration_errors(environment: dict[str, str]) -> list[str]:
+    """Compose's empty-default semantics, held to the API's exact client-id grammar."""
+    oidc = environment.get("KODERA_OIDC_CLIENT_ID", "").strip("'\"") or "console"
+    console = environment.get("KODERA_CONSOLE_CLIENT_ID", "").strip("'\"") or oidc
+    if not all(CONSOLE_CLIENT_PATTERN.fullmatch(value) for value in (oidc, console)):
+        return ["Console and OIDC client identifiers must be 1 to 128 ASCII letters, digits, dot, underscore, colon or hyphen"]
+    if console != oidc:
+        return ["KODERA_CONSOLE_CLIENT_ID must match KODERA_OIDC_CLIENT_ID"]
+    return []
+
+
+def console_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
+    errors = []
+    for name in ("server", "migrate"):
+        service = services.get(name)
+        if service is None or service.environment.get("KODERA_CONSOLE_CLIENT_ID") != CONSOLE_CLIENT_EXPRESSION:
+            errors.append(f"service '{name}' must inherit the exact Console client from KODERA_OIDC_CLIENT_ID")
+    web = services.get("web")
+    if web is None or "VITE_OIDC_CLIENT_ID: ${KODERA_OIDC_CLIENT_ID:-console}" not in [line.strip() for line in web.raw_lines]:
+        errors.append("web must build the same Console client from KODERA_OIDC_CLIENT_ID")
+    server = services.get("server")
+    for key in ("KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256"):
+        if server is None or server.environment.get(key) != "${" + key + ":-}":
+            errors.append(f"server must pass through optional {key} for mobile association")
+    return errors
+
+
+def service_scalar(service: ServiceSpec, key: str) -> str | None:
+    values = [line.strip().split(":", 1)[1].strip() for line in service.raw_lines
+              if line.startswith("    " + key + ":")]
+    return values[0] if len(values) == 1 else None
+
+
+def command_matches(service: ServiceSpec, command: list[str], key: str = "command") -> bool:
+    try:
+        return json.loads(service_scalar(service, key) or "null") == command
+    except ValueError:
+        return False
+
+
+def media_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
+    """No API credential mount, ambient credentials, alternate entry point or TCP listener."""
+    errors: list[str] = []
+    server, initializer, worker = (services.get(name) for name in ("server", "media-socket-init", "media-storage-worker"))
+    if server is None or initializer is None or worker is None:
+        return ["media requires the API, socket initializer and signing worker"]
+    if server.environment.get("KODERA_MEDIA_GATEWAY_SOCKET") != MEDIA_SOCKET:
+        errors.append("media API must select the private signing socket")
+    if section_entries(server, "volumes") != ["- proximity_socket:/run/proximity:ro", "- media_socket:/run/kodera-media:ro"]:
+        errors.append("media API must mount only the read-only proximity and media socket directories")
+    if server.depends_on_conditions.get("media-storage-worker") != "service_healthy":
+        errors.append("media API must wait for the signing worker healthcheck")
+    for service in services.values():
+        if service.name in {"media-socket-init", "media-storage-worker"}:
+            continue
+        for mount in section_entries(service, "volumes"):
+            if any(part in mount for part in ("media_secrets", "KODERA_MEDIA_SECRETS_SOURCE", "/run/kodera-media-secrets")):
+                errors.append("media credentials may mount only into the signing worker and initializer")
+            if "media_socket:" in mount and service.name != "server":
+                errors.append("media socket may mount only into the API, signing worker and initializer")
+    allowed_keys = {"mem_limit", "build", "user", "read_only", "cap_drop", "security_opt", "command", "restart", "volumes"}
+    for component, memory, uid, restart, extra in (
+        (initializer, "64m", '"0:0"', '"no"', {"cap_add"}),
+        (worker, "128m", '"10001:10001"', "unless-stopped", {"depends_on", "healthcheck"}),
+    ):
+        keys = [line.strip().split(":", 1)[0] for line in component.raw_lines if len(line) - len(line.lstrip()) == 4]
+        if set(keys) != allowed_keys | extra or len(keys) != len(set(keys)):
+            errors.append("media components must retain only reviewed service keys and no environment credentials or ports")
+        if (component.mem_limit != memory or component.restart != restart or service_scalar(component, "user") != uid
+                or service_scalar(component, "read_only") != "true" or service_scalar(component, "cap_drop") != '["ALL"]'
+                or service_scalar(component, "security_opt") != '["no-new-privileges:true"]'
+                or component.dockerfile != "Dockerfile"
+                or "context: ../../apps/server" not in [line.strip() for line in component.raw_lines]):
+            errors.append("media components must retain the reviewed identity, sandbox, build and lifecycle")
+        expected_mounts = ["- media_socket:/run/kodera-media", "- " + MEDIA_SECRETS_MOUNT + (":ro" if component is worker else "")]
+        if section_entries(component, "volumes") != expected_mounts:
+            errors.append("media components must share the same socket and secrets source with worker secrets read-only")
+    if service_scalar(initializer, "cap_add") != '["CHOWN", "FOWNER", "DAC_OVERRIDE"]':
+        errors.append("media initializer must retain only ownership and private-directory cleanup capabilities")
+    if not command_matches(initializer, ["python", "-c", MEDIA_INIT_CODE]):
+        errors.append("media initializer must remove the stale socket and establish mode 0700 and owner 10001 on both directories")
+    if not command_matches(worker, MEDIA_WORKER_COMMAND):
+        errors.append("media worker must run the reviewed signing command")
+    if worker.depends_on_conditions != {"media-socket-init": "service_completed_successfully"}:
+        errors.append("media worker must wait for successful socket initialization")
+    try:
+        health = json.loads(worker.healthcheck_test or "null")
+    except ValueError:
+        health = None
+    health_lines = [line.strip() for line in worker.raw_lines if line.startswith("      ")]
+    if (not worker.has_healthcheck or health != ["CMD", "python", "-c", MEDIA_HEALTH_CODE]
+            or any(line.startswith(("disable:", "start_interval:")) for line in health_lines)):
+        errors.append("media worker requires the private Unix socket connect healthcheck")
+    return errors
+
+
+def effective_runtime_errors(compose: str, override: str) -> list[str]:
+    """The split override inherits the same media boundary and Console client binding."""
+    services = copy.deepcopy(parse_compose_services(compose))
+    for name, changed in parse_compose_services(override).items():
+        if name in services:
+            services[name].environment.update(changed.environment)
+    return console_runtime_errors(services) + media_runtime_errors(services)
+
+
+def replace_service_text(compose: str, name: str, old: str, new: str) -> str:
+    """Mutate one named block without accidentally testing a neighbouring service."""
+    pattern = re.compile(r"(?ms)^  " + re.escape(name) + r":\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:|\Z)")
+    return pattern.sub(lambda match: match.group().replace(old, new, 1), compose, count=1)
+
+
+def check_media_worker_startup() -> list[str]:
+    """Exercise the real worker with empty credentials; no containers or provider requests."""
+    test = ROOT / "deploy/community/test_media_worker_startup.py"
+    if path_problem(test) is not None:
+        return ["media worker startup suite must be a regular file inside the repository"]
+    try:
+        result = subprocess.run(
+            [sys.executable, str(test)], cwd=ROOT, capture_output=True, text=True, timeout=15,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": "/tmp"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ["media worker startup suite could not complete"]
+    if result.returncode:
+        return ["media worker startup suite failed: " + result.stderr.strip()]
+    print("OK: credential-free media worker startup and stale socket recovery, 2 runtime tests passed.")
+    return []
+
+
+def run_media_console_selftest(compose: str, env: str, caddy: str, split: str) -> int:
+    """Each refusal is exercised through the public deploy gate, in both topologies."""
+    baseline = check_community_deploy(compose, env, caddy) + effective_runtime_errors(compose, split)
+    if baseline:
+        print("[FAIL] media/Console baseline: " + "; ".join(baseline), file=sys.stderr)
+        return 1
+    cases: list[tuple[str, str, str]] = []
+
+    def mutate(label: str, service: str, old: str, new: str, expected: str) -> None:
+        cases.append((label, replace_service_text(compose, service, old, new), expected))
+
+    for name in ("server", "migrate"):
+        line = "      KODERA_CONSOLE_CLIENT_ID: " + CONSOLE_CLIENT_EXPRESSION
+        for label, replacement in (("missing", ""), ("malformed", "      KODERA_CONSOLE_CLIENT_ID: ${KODERA_CONSOLE_CLIENT_ID:-console"),
+                                   ("mismatched", "      KODERA_CONSOLE_CLIENT_ID: different-client")):
+            mutate(f"{name} Console client {label}", name, line, replacement,
+                   f"service '{name}' must inherit the exact Console client from KODERA_OIDC_CLIENT_ID")
+    mutate("web client drift", "web", "VITE_OIDC_CLIENT_ID: ${KODERA_OIDC_CLIENT_ID:-console}",
+           "VITE_OIDC_CLIENT_ID: other", "web must build the same Console client from KODERA_OIDC_CLIENT_ID")
+    for key in ("KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256"):
+        mutate(f"{key} removed", "server", "      " + key + ": ${" + key + ":-}", "",
+               f"server must pass through optional {key} for mobile association")
+    for name in ("media-socket-init", "media-storage-worker"):
+        block = re.search(r"(?ms)^  " + name + r":\n.*?(?=^  [a-z][a-z0-9-]*:|^volumes:)", compose).group()
+        cases.append((name + " absent", compose.replace(block, "", 1), "media requires the API, socket initializer and signing worker"))
+        for key, bad in (("read_only", "false"), ("cap_drop", "[]"), ("security_opt", "[]"), ("user", '\"0:1\"'),
+                         ("mem_limit", "1g"), ("restart", "always")):
+            original = next(line for line in block.splitlines() if line.startswith("    " + key + ":"))
+            mutate(f"{name} {key} changed", name, original, "    " + key + ": " + bad,
+                   "media components must retain the reviewed identity, sandbox, build and lifecycle")
+        for key, value in (("ports", "\n      - 8099:8099"), ("environment", "\n      AWS_ACCESS_KEY_ID: synthetic"),
+                           ("entrypoint", '["python", "-c", "pass"]'), ("profiles", "[optional]"), ("cap_add", '["SYS_ADMIN"]')):
+            if key == "cap_add" and name == "media-socket-init":
+                continue
+            mutate(f"{name} unreviewed {key}", name, "    mem_limit:", "    " + key + ": " + value + "\n    mem_limit:",
+                   "media components must retain only reviewed service keys and no environment credentials or ports")
+        mutate(f"{name} wrong secrets source", name, MEDIA_SECRETS_MOUNT, "other_secrets:/run/kodera-media-secrets",
+               "media components must share the same socket and secrets source with worker secrets read-only")
+    mutate("worker writable secrets", "media-storage-worker", MEDIA_SECRETS_MOUNT + ":ro", MEDIA_SECRETS_MOUNT,
+           "media components must share the same socket and secrets source with worker secrets read-only")
+    for old, new in ((".unlink(missing_ok=True)", ".exists()"), ("0o700", "0o777"), ("10001, 10001", "0, 0"),
+                     ("'/run/kodera-media-secrets')", "'/run/other-secrets')")):
+        mutate("initializer cleanup/ownership changed: " + old, "media-socket-init", old, new,
+               "media initializer must remove the stale socket and establish mode 0700 and owner 10001 on both directories")
+    mutate("initializer excess capabilities", "media-socket-init", '["CHOWN", "FOWNER", "DAC_OVERRIDE"]', '["ALL"]',
+           "media initializer must retain only ownership and private-directory cleanup capabilities")
+    mutate("worker command changed", "media-storage-worker", "apps.media.storage_worker", "other.worker",
+           "media worker must run the reviewed signing command")
+    mutate("worker init race", "media-storage-worker", "condition: service_completed_successfully", "condition: service_started",
+           "media worker must wait for successful socket initialization")
+    cases.append(("worker healthcheck removed", drop_service_key(compose, "media-storage-worker", "healthcheck"),
+                  "media worker requires the private Unix socket connect healthcheck"))
+    mutate("worker healthcheck never connects", "media-storage-worker", "s.connect('/run/kodera-media/media.sock')", "pass",
+           "media worker requires the private Unix socket connect healthcheck")
+    mutate("worker healthcheck disabled", "media-storage-worker", "    healthcheck:", "    healthcheck:\n      disable: true",
+           "media worker requires the private Unix socket connect healthcheck")
+    mutate("API socket removed", "server", "      KODERA_MEDIA_GATEWAY_SOCKET: " + MEDIA_SOCKET, "",
+           "media API must select the private signing socket")
+    mutate("API socket writable", "server", "media_socket:/run/kodera-media:ro", "media_socket:/run/kodera-media",
+           "media API must mount only the read-only proximity and media socket directories")
+    mutate("API worker race", "server", "      media-storage-worker:\n        condition: service_healthy",
+           "      media-storage-worker:\n        condition: service_started", "media API must wait for the signing worker healthcheck")
+    for name in ("server", "migrate", "web", "proximity-broker"):
+        mutate(f"{name} secret exposure", name, "    mem_limit:",
+               "    volumes:\n      - " + MEDIA_SECRETS_MOUNT + ":ro\n    mem_limit:",
+               "media credentials may mount only into the signing worker and initializer")
+    for volume in ("media_socket", "media_secrets"):
+        cases.append((volume + " undeclared", compose.replace("  " + volume + ":\n", "", 1),
+                      f"media requires the declared {volume} volume"))
+    for label, changed, expected in cases:
+        if changed == compose or expected not in check_community_deploy(changed, env, caddy):
+            print(f"[FAIL] media/Console mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
+            return 1
+        # Topology-specific runtime errors inherit every base environment mutation.
+        if expected in console_runtime_errors(parse_compose_services(changed)) + media_runtime_errors(parse_compose_services(changed)):
+            if expected not in effective_runtime_errors(changed, split):
+                print(f"[FAIL] split runtime accepted '{label}'", file=sys.stderr)
+                return 1
+    for name in ("server", "migrate"):
+        for value in ("", "bad client", "other-client"):
+            changed = split + ("\n  migrate:\n    environment:\n" if name == "migrate" else "")
+            if name == "server":
+                changed = changed.replace("      KODERA_CONSOLE_ORIGINS:", "      KODERA_CONSOLE_CLIENT_ID: " + value + "\n      KODERA_CONSOLE_ORIGINS:")
+            else:
+                changed += "      KODERA_CONSOLE_CLIENT_ID: " + value + "\n"
+            expected = f"service '{name}' must inherit the exact Console client from KODERA_OIDC_CLIENT_ID"
+            if expected not in effective_runtime_errors(compose, changed):
+                print(f"[FAIL] split {name} Console override escaped", file=sys.stderr)
+                return 1
+    for oidc, console in (("console", ""), ("custom.console:1", ""), ("custom", "custom"), ("", "")):
+        if console_configuration_errors({"KODERA_OIDC_CLIENT_ID": oidc, "KODERA_CONSOLE_CLIENT_ID": console}):
+            print("[FAIL] valid Console client inheritance refused", file=sys.stderr)
+            return 1
+    for oidc, console in (("console", "other"), ("bad client", ""), ("console", "bad client"), ("x" * 129, "")):
+        environment = "KODERA_OIDC_CLIENT_ID=" + oidc + "\nKODERA_CONSOLE_CLIENT_ID=" + console
+        if not any("client identifier" in error or "must match" in error for error in preflight_env(env, environment)):
+            print("[FAIL] unsafe Console client configuration escaped preflight", file=sys.stderr)
+            return 1
+    for valid_source in ("", "media_secrets", "/secure/kodera-media-secrets", "/var/lib/kodera/media-secrets"):
+        if any("KODERA_MEDIA_SECRETS_SOURCE" in error for error in preflight_env(env, "KODERA_MEDIA_SECRETS_SOURCE=" + valid_source)):
+            print(f"[FAIL] valid KODERA_MEDIA_SECRETS_SOURCE '{valid_source}' refused", file=sys.stderr)
+            return 1
+    for unsafe_source in ("/", "/etc", "/etc/kodera", "/run/secrets", "./secrets", "other_volume", "/srv/secrets:rw", "/srv/../etc/secrets"):
+        if not any("KODERA_MEDIA_SECRETS_SOURCE" in error for error in preflight_env(env, "KODERA_MEDIA_SECRETS_SOURCE=" + unsafe_source)):
+            print(f"[FAIL] unsafe KODERA_MEDIA_SECRETS_SOURCE '{unsafe_source}' escaped preflight", file=sys.stderr)
+            return 1
+    if effective_runtime_errors(compose, split):
+        print("[FAIL] baseline split media/Console runtime invalid", file=sys.stderr)
+        return 1
+    print(f"OK: media/Console runtime valid in both topologies, {len(cases)} base mutations, 6 split overrides and 4 preflight mutations refused.")
+    return 0
+
+
 def proximity_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
     """Hold the shared RAM-only broker and its private socket boundary to their reviewed shape."""
     errors: list[str] = []
@@ -295,7 +563,7 @@ def proximity_runtime_errors(services: dict[str, ServiceSpec]) -> list[str]:
         return ["proximity requires the API, shared broker and private socket initializer"]
     if server.environment.get("KODERA_PROXIMITY_BROKER_SOCKET") != "/run/proximity/broker.sock":
         errors.append("proximity API must select the private shared broker socket")
-    if section_entries(server, "volumes") != ["- proximity_socket:/run/proximity:ro"]:
+    if section_entries(server, "volumes") != ["- proximity_socket:/run/proximity:ro", "- media_socket:/run/kodera-media:ro"]:
         errors.append("proximity API must mount only its read-only private socket directory")
     if server.depends_on_conditions.get("proximity-broker") != "service_healthy":
         errors.append("proximity API must wait for the shared broker healthcheck")
@@ -381,10 +649,11 @@ def check_community_deploy(
                 f"{key} in .env.example must be a CHANGE_ME_ placeholder: it has no usable default"
             )
 
+    # This one public selector names a mount source; its reviewed default contains no credential.
     for key, value in env_map.items():
-        is_secret_key = key in REQUIRED_SECRET_ENV_KEYS or bool(
+        is_secret_key = key != "KODERA_MEDIA_SECRETS_SOURCE" and (key in REQUIRED_SECRET_ENV_KEYS or bool(
             SECRET_SHAPED_NAME_RE.search(key.upper())
-        )
+        ))
         if is_secret_key:
             if not value.startswith("CHANGE_ME_") or len(value) <= len("CHANGE_ME_"):
                 errors.append(
@@ -401,7 +670,7 @@ def check_community_deploy(
         if not value.startswith("CHANGE_ME_") and looks_like_secret(value):
             errors.append(f"secret-looking default in .env.example for {key}")
     for name, default in COMPOSE_DEFAULT_RE.findall(compose_text):
-        if default and (SECRET_SHAPED_NAME_RE.search(name) or looks_like_secret(default)):
+        if default and (name, default) != ("KODERA_MEDIA_SECRETS_SOURCE", "media_secrets") and (SECRET_SHAPED_NAME_RE.search(name) or looks_like_secret(default)):
             errors.append(f"secret default in docker-compose.yml for {name}: use ${{{name}:?...}} or an empty default")
 
     # 1c. Federation is closed unless the operator opens it: the template ships no allowlist.
@@ -416,6 +685,11 @@ def check_community_deploy(
 
     services = parse_compose_services(compose_text)
     errors.extend(proximity_runtime_errors(services))
+    errors.extend(console_runtime_errors(services))
+    errors.extend(media_runtime_errors(services))
+    for volume in ("media_socket", "media_secrets"):
+        if not re.search(r"(?m)^  " + volume + r":$", compose_text.split("\nvolumes:\n")[-1]):
+            errors.append(f"media requires the declared {volume} volume")
     for svc in services.values():
         for env_key, env_value in svc.environment.items():
             if SECRET_SHAPED_NAME_RE.search(env_key.upper()) and "${" not in env_value:
@@ -723,7 +997,7 @@ def check_split_topology(override_text: str, split_caddyfile_text: str, env_text
         if var not in env_map:
             errors.append(f"missing variable in .env.example: {var} (docker-compose.split.yml)")
     for name, default in COMPOSE_DEFAULT_RE.findall(override_text):
-        if default and (SECRET_SHAPED_NAME_RE.search(name) or looks_like_secret(default)):
+        if default and (name, default) != ("KODERA_MEDIA_SECRETS_SOURCE", "media_secrets") and (SECRET_SHAPED_NAME_RE.search(name) or looks_like_secret(default)):
             errors.append(f"secret default in docker-compose.split.yml for {name}")
     services = parse_compose_services(override_text)
     for name, service in services.items():
@@ -779,6 +1053,7 @@ REVIEWED_SERVICE_KEYS = frozenset({
 BLOCK_ONLY_SERVICE_KEYS = frozenset({"build", "environment", "volumes", "depends_on", "healthcheck", "ports"})
 REVIEWED_BIND_MOUNTS = frozenset({
     "proximity_socket:/run/proximity:ro",
+    "media_socket:/run/kodera-media:ro",
     "./Caddyfile:/etc/caddy/Caddyfile:ro",
     "./Caddyfile.split:/etc/caddy/Caddyfile:ro",
     "./livekit.yaml:/etc/livekit.yaml:ro",
@@ -890,7 +1165,7 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             section = key
             if key == "network_mode":
                 errors.append(f"service '{service}' must not publish a port: network_mode is refused, every service stays on the stack's own network")
-            elif key not in REVIEWED_SERVICE_KEYS and not (service == "proximity-socket-init" and key in {"read_only", "cap_drop", "cap_add", "security_opt"}):
+            elif key not in REVIEWED_SERVICE_KEYS and not (service in {"proximity-socket-init", "media-socket-init", "media-storage-worker"} and key in {"read_only", "cap_drop", "cap_add", "security_opt"}):
                 errors.append(f"service '{service}' uses an unreviewed key '{key}'")
             elif key == "ports" and service not in PUBLISHING_SERVICES:
                 errors.append(
@@ -910,7 +1185,7 @@ def compose_structure_errors(compose_text: str, file_name: str = "docker-compose
             found = re.fullmatch(r"- (\S+)", stripped)
             if not found:
                 errors.append(f"{where(number)}: service '{service}' volumes must be short 'source:target' entries")
-            elif not re.fullmatch(r"[a-z][a-z0-9_]*:/[A-Za-z0-9._/-]+", found.group(1)) and found.group(1) not in REVIEWED_BIND_MOUNTS:
+            elif not re.fullmatch(r"[a-z][a-z0-9_]*:/[A-Za-z0-9._/-]+", found.group(1)) and found.group(1) not in REVIEWED_BIND_MOUNTS and (service, found.group(1)) not in REVIEWED_MEDIA_MOUNTS:
                 errors.append(f"service '{service}' has an unreviewed bind mount (only the reviewed read-only mounts are admitted)")
         elif indent == 6 and section == "ports":
             if not re.fullmatch(r"""- ["']?[0-9][0-9:/a-z-]*["']?""", stripped):
@@ -1816,8 +2091,8 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
     synapse_issuer = actual.get(SYNAPSE_OIDC_ISSUER_ENV_NAME, "").strip("'\"")
     synapse_secret = actual.get(SYNAPSE_OIDC_ENV_NAME, "").strip("'\"")
     for key in example:
-        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME) and not actual.get(key, "").strip("'\""):
-            continue  # An .env written before the topology setting existed runs the single topology.
+        if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME, TOPOLOGY_ENV_NAME, "KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256", "KODERA_MEDIA_SECRETS_SOURCE") and not actual.get(key, "").strip("'\""):
+            continue  # Empty optional configuration retains the reviewed Compose defaults.
         if key == SYNAPSE_OIDC_ENV_NAME and not community_enabled and synapse_issuer:
             pass  # An isolated self-host may sign members in to Synapse with its own realm.
         elif key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME) and not community_enabled:
@@ -1866,6 +2141,23 @@ def preflight_env(env_example_text: str, env_text: str) -> list[str]:
             for name in value.split(",")
         ):
             errors.append(f"{FEDERATION_ENV_NAME} must list public server names, comma-separated, with no wildcard")
+        elif key == "KODERA_MEDIA_SECRETS_SOURCE" and value != "media_secrets":
+            from pathlib import PurePosixPath
+            source_path = PurePosixPath(value)
+            forbidden_roots = ("/etc", "/var/run", "/run", "/proc", "/sys", "/dev", "/usr", "/boot")
+            if (
+                ":" in value
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+                or not source_path.is_absolute()
+                or str(source_path) != value
+                or ".." in source_path.parts
+                or len(source_path.parts) < 3
+                or any(value == root or value.startswith(root + "/") for root in forbidden_roots)
+            ):
+                errors.append(
+                    "KODERA_MEDIA_SECRETS_SOURCE must be media_secrets or a dedicated normalized colon-free absolute host directory"
+                )
+    errors.extend(console_configuration_errors(actual))
     federation_environment = {key: actual.get(key, "").strip("'\"") for key in (FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME)}
     renderer = runpy.run_path(str(ROOT / "deploy/community/configure_synapse.py"))
     try:
@@ -2725,6 +3017,9 @@ def run_selftest(compose_text: str, env_text: str, caddyfile_text: str) -> int:
         f"{key}='{trust}'" if key == "KODERA_AUTH_TRUST"
         else f"{key}=https://id.example.net" if key == "KODERA_OIDC_PROVIDER_ORIGIN"
         else f"{key}=" if key in ("KODERA_STAFF_ISSUER", FEDERATION_ENV_NAME, FEDERATION_MODE_ENV_NAME, "KODERA_MATRIX_PARTNER_CHANNELS", SYNAPSE_OIDC_ISSUER_ENV_NAME)
+        else f"{key}=" if key in ("KODERA_CONSOLE_CLIENT_ID", "KODERA_IOS_APP_IDS", "KODERA_ANDROID_ASSETLINKS_SHA256")
+        else f"{key}=console" if key == "KODERA_OIDC_CLIENT_ID"
+        else f"{key}=media_secrets" if key == "KODERA_MEDIA_SECRETS_SOURCE"
         else f"{key}=single" if key == TOPOLOGY_ENV_NAME
         else f"{key}=" if key in (*COMMUNITY_KEYS, *AGENT_ENV_NAMES, SYNAPSE_OIDC_ENV_NAME)
         else f"{key}={base64.urlsafe_b64encode(bytes([i % 256]) * 32).decode('ascii')}" if "BASE64URL_32" in value
@@ -3377,8 +3672,14 @@ def main() -> int:
                 print(f"[FAIL] livekit.yaml mutation '{label}' did not trigger '{expected}'", file=sys.stderr)
                 return 1
         print(f"OK: livekit.yaml is its reviewed text byte for byte, {len(livekit_mutations)} mutations refused by name.")
+        startup_errors = check_media_worker_startup()
+        if startup_errors:
+            for error in startup_errors:
+                print("[FAIL] " + error, file=sys.stderr)
+            return 1
         return (
-            run_proximity_selftest(compose_text)
+            run_media_console_selftest(compose_text, env_text, caddyfile_text, texts["docker-compose.split.yml"])
+            or run_proximity_selftest(compose_text)
             or run_synapse_config_selftest(policy_source)
             or run_scaffolder_selftest()
             or run_split_selftest(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
@@ -3389,6 +3690,7 @@ def main() -> int:
 
     errors = check_community_deploy(compose_text, env_text, caddyfile_text)
     errors += check_split_topology(texts["docker-compose.split.yml"], texts["Caddyfile.split"], env_text)
+    errors += effective_runtime_errors(compose_text, texts["docker-compose.split.yml"])
     scaffolder_state = read_scaffolder_state()
     errors += scaffolder_state[3] + check_scaffolder_parity(*scaffolder_state[:3])
     if args.preflight is not None:
@@ -3403,6 +3705,7 @@ def main() -> int:
         errors += [f".env: {err}" for err in preflight_env(env_text, operator_env)]
     else:
         errors += check_generator_and_allowed_hosts(texts["kodera_deploy.py"], texts["test_deploy_allowed_hosts.py"])
+        errors += check_media_worker_startup()
     if errors:
         for err in errors:
             print(f"[FAIL] {err}", file=sys.stderr)

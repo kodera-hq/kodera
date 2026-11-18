@@ -44,7 +44,7 @@
 // Sizes are gzip level 9 of each emitted file, in bytes; 1 kB is 1000 bytes, as Vite reports it.
 //
 // Usage:
-//   node scripts/check-bundle-budget.mjs [--profile production|staging] [--json <file>]
+//   node scripts/check-bundle-budget.mjs [--profile production|production-telemetry|staging] [--json <file>]
 //     [--report-only <rule>]   rule: entry-size, chunk-size, entry-vendors, entry-catalogues or
 //     chunk-cycles.
 //     A reported-only rule is measured and printed as NOT MET, and does not fail the run. It
@@ -87,7 +87,11 @@ export const BUDGETS = Object.freeze({ entryGzip: 180_000, chunkGzip: 160_000 })
  *
  * About 3 kB of room each. These only ever go down.
  */
-export const ENTRY_REGRESSION_LIMITS = Object.freeze({ production: 228_000, staging: 230_000 })
+export const ENTRY_REGRESSION_LIMITS = Object.freeze({
+  production: 228_000,
+  'production-telemetry': 229_000,
+  staging: 230_000,
+})
 
 /** The budgets a profile is measured against. */
 export function budgetsFor(profile) {
@@ -399,6 +403,11 @@ function profileEnvironment(profile) {
     VITE_AUTH_MODE: 'oidc',
     VITE_ENABLE_MSW: '0',
     VITE_FIRST_OWNER_JOURNEY: profile === 'staging' ? '1' : '0',
+    VITE_POSTHOG_KEY:
+      profile === 'production-telemetry'
+        ? 'phc_9Xk4vR7mQ2pL8nW5jT3yH6fB1cZ0dG4sA8uE2wP9qM7'
+        : '',
+    VITE_POSTHOG_HOST: 'https://eu.i.posthog.com',
     VITE_CORE_API_URL: 'http://localhost:8000/api/v1',
     VITE_KEYCLOAK_URL: 'http://localhost:8080',
     VITE_OIDC_CLIENT_ID: 'console',
@@ -408,7 +417,11 @@ function profileEnvironment(profile) {
 
 /** Builds into `outDir` and describes what was emitted, sizes read back from the files on disk. */
 export async function describeBuild({ outDir, profile = 'production', mutation }) {
-  if (profile !== 'production' && profile !== 'staging') {
+  if (
+    profile !== 'production' &&
+    profile !== 'production-telemetry' &&
+    profile !== 'staging'
+  ) {
     throw new BudgetError(`unknown profile "${profile}"`)
   }
   const captured = []
@@ -556,7 +569,7 @@ async function main(argv) {
       value === undefined
     ) {
       throw new BudgetError(
-        'usage: node scripts/check-bundle-budget.mjs [--profile production|staging] [--json <file>] [--report-only <rule>] [--mutation <name>]'
+        'usage: node scripts/check-bundle-budget.mjs [--profile production|production-telemetry|staging] [--json <file>] [--report-only <rule>] [--mutation <name>]'
       )
     }
     if (flag === '--report-only') reportOnly.push(value)
