@@ -194,6 +194,25 @@ describe('R3 per-run budgets and reuse', () => {
     budget.register('A')
     return budget
   }
+  it('meters claim consumption separately from the later Matrix join and refuses an extra attempt', () => {
+    const budget = setup()
+    const context = new EventEmitter()
+    const detach = trackRateRequests(context as unknown as BrowserContext, 'A', budget, {
+      auth: AUTH,
+      api: API,
+      homeserver: HS,
+    })
+    const attempt = (url: string) =>
+      context.emit('request', { url: () => url, method: () => 'POST' })
+    attempt(`${API}/api/v1/owner-claims/actions/consume`)
+    expect(() => budget.assertExact('A', { 'local-join': 2 })).toThrow('R3_EXACT_ALLOCATION')
+    attempt(`${HS}/_matrix/client/v3/join/%21synthetic`)
+    budget.assertExact('A', { 'local-join': 2 })
+    attempt(`${HS}/_matrix/client/v3/join/%21synthetic`)
+    expect(() => budget.assertExact('A', { 'local-join': 2 })).toThrow('R3_EXACT_ALLOCATION')
+    detach()
+    expect(context.eventNames()).toEqual([])
+  })
   it('admits strictly fewer than five logins and ten local joins, including denied/seed attempts', () => {
     const budget = setup()
     budget.reserve('A', 'matrix-login', 4)

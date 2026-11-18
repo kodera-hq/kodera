@@ -45,6 +45,8 @@ Network templates must include automatic bootstrap/sync/API traffic and separate
 
 Build the first-owner entry with `VITE_FIRST_OWNER_JOURNEY=1` for Persona 1 and keep `VITE_ENABLE_MSW=0`. A tenant must expose its real messaging application through Core's configured application URL templates before the console offers its workspace link. Tenant sign-in starts with the organisation field; the shared entry may ask for an email first. Channel selection enters the connected workspace before looking for its channel links, while retaining the same page.
 
+Persona 1 waits for the selected channel's usable composer before checking its exact claim/invitation and Matrix join allocation; the workspace shell alone can precede that join. For language controls inside settings, `visual.languageSection` and `visual.languageClose` identify the actual section and close button so each visual cell measures the restored workspace.
+
 Mailpit scans use the recipient search endpoint and verify exact recipient ownership again before opening a message. Results are paginated in fifty-message pages, including older matching messages. A bounded scan that cannot finish refuses with a sanitized error instead of treating a truncated listing as an empty mailbox.
 
 ## Determinism and confidentiality
