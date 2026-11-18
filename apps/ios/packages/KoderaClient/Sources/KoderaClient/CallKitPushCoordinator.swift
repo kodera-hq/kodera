@@ -292,8 +292,8 @@ public enum PushKitPayloadExtractor {
 public final class CallKitSystemProviderAdapter: NSObject, SystemCallProviderControlling, @unchecked Sendable {
     private let provider: CXProvider
 
-    public init(localizedAppName: String) {
-        let configuration = CXProviderConfiguration(localizedName: localizedAppName)
+    public override init() {
+        let configuration = CXProviderConfiguration()
         configuration.supportsVideo = true
         configuration.maximumCallGroups = 1
         configuration.maximumCallsPerCallGroup = 1
@@ -301,6 +301,10 @@ public final class CallKitSystemProviderAdapter: NSObject, SystemCallProviderCon
         configuration.supportedHandleTypes = [.generic]
         self.provider = CXProvider(configuration: configuration)
         super.init()
+    }
+
+    public convenience init(localizedAppName _: String) {
+        self.init()
     }
 
     public func reportIncomingCall(uuid: UUID, callerLabel: String, hasVideo: Bool) async throws {

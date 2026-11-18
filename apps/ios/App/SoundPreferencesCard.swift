@@ -10,7 +10,7 @@ struct SoundPreferencesCard: View {
     @State private var context: SoundPreferencesContext?
 
     private var palette: KoderaTokens.Palette {
-        colorScheme == .dark ? KoderaTokens.dark : KoderaTokens.light
+        KoderaTokens.cielPalette(for: colorScheme)
     }
     private var preview: Bool {
         scope != nil && coordinator.state.scope == scope

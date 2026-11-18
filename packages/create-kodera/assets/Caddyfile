@@ -16,10 +16,13 @@
 
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
-		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
-		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+		defer
 	}
+	header ?X-Content-Type-Options "nosniff"
+	header ?X-Frame-Options "DENY"
+	header ?Referrer-Policy "strict-origin-when-cross-origin"
+	header ?Permissions-Policy "accelerometer=(), autoplay=(self), browsing-topics=(), camera=(self), display-capture=(self), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(self), midi=(), payment=(), picture-in-picture=(self), publickey-credentials-get=(self), screen-wake-lock=(self), serial=(), speaker-selection=(self), usb=(), xr-spatial-tracking=()"
 
 	# The agent API and staff plane are never exposed on the public Community ingress.
 	@internal path /agent /agent/* /staff /staff/*
@@ -63,6 +66,8 @@
 	handle @matrix {
 		reverse_proxy synapse:8008 {
 			import client_address
+			header_down -Server
+			header_down Access-Control-Expose-Headers "(?i)(?:,\s*server(\s*,|$)|^\s*server\s*,\s*|^\s*server\s*$)" "$1"
 		}
 	}
 

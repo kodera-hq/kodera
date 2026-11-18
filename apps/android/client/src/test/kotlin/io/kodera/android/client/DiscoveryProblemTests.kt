@@ -54,4 +54,47 @@ class DiscoveryProblemTests {
         assertEquals(DiscoveryFailure.TemporarilyUnavailable(RetryHint(5), ProblemCorrelation(Fixtures.REQUEST_ID)), decode(503, "service-unavailable", "5", "5"))
         for (hint in listOf("4", "6")) Fixtures.refused { decode(503, "service-unavailable", hint, hint) }
     }
+    @Test fun testDuplicateFramingAndSecurityHeadersRefuse() {
+        val criticalDuplicates = listOf(
+            Triple("X-Request-Id", Fixtures.REQUEST_ID, "second-request-id"),
+            Triple("Content-Type", "application/json", "application/json"),
+            Triple("Content-Encoding", "identity", "identity"),
+            Triple("Content-Length", "24", "24"),
+            Triple("Transfer-Encoding", "chunked", "chunked"),
+            Triple("Retry-After", "5", "5"),
+            Triple("WWW-Authenticate", "Bearer", "Bearer"),
+        )
+        for ((name, first, second) in criticalDuplicates) {
+            val headers = Fixtures.headers(false).filterNot { it.first.equals(name, ignoreCase = true) } +
+                listOf(name to first, name.lowercase() to second)
+            Fixtures.refused { DiscoveryProblem.validateHeaders(headers, false) }
+        }
+        val retryHeaders = Fixtures.headers(true) + listOf("Retry-After" to "2", "retry-after" to "2")
+        Fixtures.refused { DiscoveryProblem.decode(Fixtures.problem(429, "rate-limited", "2"), 429, retryHeaders) }
+    }
+    @Test fun testRepeatedReverseProxyPolicyHeadersAreTolerated() {
+        val proxyRepeated = listOf(
+            "Referrer-Policy" to "strict-origin-when-cross-origin",
+            "referrer-policy" to "same-origin",
+            "X-Content-Type-Options" to "nosniff",
+            "x-content-type-options" to "nosniff",
+        )
+        val okNormalized = DiscoveryProblem.validateHeaders(Fixtures.headers(false) + proxyRepeated, false)
+        assertEquals("strict-origin-when-cross-origin, same-origin", okNormalized["referrer-policy"])
+        assertEquals("nosniff, nosniff", okNormalized["x-content-type-options"])
+
+        assertEquals(
+            DiscoveryFailure.RejectedRequest(RequestRejection.MALFORMED_REQUEST),
+            DiscoveryProblem.decode(Fixtures.problem(400, "malformed-request"), 400, Fixtures.headers(true) + proxyRepeated),
+        )
+        WireFixture(reply = { WireReply(200, Fixtures.data("one"), Fixtures.headers(false) + proxyRepeated) }).use { wire ->
+            wire.client().use { client ->
+                val result = OutcomeProbe()
+                client.discover("atelier", result::receive)
+                wire.awaitRequests()
+                val outcome = result.await()
+                assertTrue("200 OK discovery with repeated proxy headers must succeed: $outcome", outcome is AnonymousDiscoveryOutcome.Result)
+            }
+        }
+    }
 }

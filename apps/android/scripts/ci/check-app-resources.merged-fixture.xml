@@ -15,9 +15,12 @@
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
         android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
         android:label="@string/brand_name"
         android:networkSecurityConfig="@xml/debug_loopback_cleartext"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="false">
         <activity
             android:name="io.kodera.android.MainActivity"

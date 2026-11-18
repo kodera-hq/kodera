@@ -39,8 +39,22 @@ public enum AnonymousDiscoveryOutcome: Equatable, Sendable {
     case cancelled
 }
 public enum DiscoveryProblem {
+    private static let singleValueHeaders: Set<String> = [
+        "content-type",
+        "content-encoding",
+        "content-length",
+        "transfer-encoding",
+        "x-request-id",
+        "retry-after",
+        "www-authenticate",
+    ]
+
     public static func decode(data: Data, status: Int, headers: [String: String]) throws -> DiscoveryFailure {
-        let headers = try validateHeaders(headers, problem: true)
+        try decode(data: data, status: status, headerPairs: headers.map { ($0.key, $0.value) })
+    }
+
+    public static func decode(data: Data, status: Int, headerPairs: [(String, String)]) throws -> DiscoveryFailure {
+        let headers = try validateHeaders(headerPairs, problem: true)
         guard let object = try StrictJSON.parse(data).object,
               let type = object["type"]?.string, let title = object["title"]?.string,
               title.unicodeScalars.count <= 200,
@@ -73,11 +87,24 @@ public enum DiscoveryProblem {
     }
 
     static func validateHeaders(_ input: [String: String], problem: Bool) throws -> [String: String] {
+        try validateHeaders(input.map { ($0.key, $0.value) }, problem: problem)
+    }
+
+    static func validateHeaders(_ input: [(String, String)], problem: Bool) throws -> [String: String] {
         var headers: [String: String] = [:]
         for (name, value) in input {
             let key = name.lowercased()
-            guard headers[key] == nil else { throw DiscoveryFailure.protocolViolation }
-            headers[key] = value
+            if let existing = headers[key] {
+                guard !singleValueHeaders.contains(key) else { throw DiscoveryFailure.protocolViolation }
+                headers[key] = "\(existing), \(value)"
+            } else {
+                headers[key] = value
+            }
+        }
+        if let length = headers["content-length"] {
+            guard !length.isEmpty, length.utf8.allSatisfy({ (48...57).contains($0) }) else {
+                throw DiscoveryFailure.protocolViolation
+            }
         }
         let mediaType = headers["content-type"]?.split(separator: ";", omittingEmptySubsequences: false)
             .first?.trimmingCharacters(in: .whitespaces).lowercased()
