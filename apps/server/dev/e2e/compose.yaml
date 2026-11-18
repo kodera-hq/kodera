@@ -64,7 +64,7 @@ x-operator: &operator
 services:
   # --- Core's database ---------------------------------------------------------------------------
   db:
-    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     # Thrown away with the stack, so no durability: fsync on lets disk latency hit the API's 2 s
     # statement timeout, as it did the test suite (compose.yaml, test-db).
     command: ["postgres", "-c", "fsync=off"]
@@ -184,7 +184,7 @@ services:
 
   # --- Identity ----------------------------------------------------------------------------------
   keycloak-db:
-    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     command: ["postgres", "-c", "fsync=off"]
     environment:
       POSTGRES_DB: keycloak
@@ -201,7 +201,7 @@ services:
 
   keycloak:
     # The digest dev/identity_fixture.py qualified (KEYCLOAK there); a test pins the equality.
-    image: quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     # start-dev: HTTP and dev-mode caching, never a production command. --import-realm reads the
     # rendered realms once, into the empty database.
     command: ["start-dev", "--import-realm"]
@@ -253,7 +253,7 @@ services:
   # SMTP stays inside the network; the HTTP API and UI are published for the suite. It owns the
   # namespace Keycloak and `ops` share, so it publishes Keycloak's port too.
   mailpit:
-    image: axllent/mailpit:v1.21@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a
+    image: axllent/mailpit:v1.29@sha256:757f22b56c1da03570afdb3d259effe5091018008a81bbedc8158cee7e16fdbc
     environment:
       MP_MAX_MESSAGES: "500"
       MP_SMTP_AUTH_ACCEPT_ANY: "true"

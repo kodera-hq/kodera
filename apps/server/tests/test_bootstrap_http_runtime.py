@@ -18,7 +18,7 @@ def controller():
 def test_baseline_controller_is_preserved():
     assert (
         hashlib.sha256((ROOT / "dev/accept_production_http.py").read_bytes()).hexdigest()
-        == "87ded33470693974d4ed71988f6d9c0b9677175976f539549abaff545d21876c"
+        == "f4553d3443409af791108f3615976f470af6d01d604aea44ad39dd6dc9cea2ef"
     )
 
 

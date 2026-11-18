@@ -15,7 +15,7 @@
 name: kodera-android-dev
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0.7@sha256:4388e2379b7e870a447adbe7b80bd61f5fbf04e925832b19669fda4957f05a81
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     command: ["start-dev", "--import-realm"]
     environment:
       KC_HTTP_PORT: "8080"

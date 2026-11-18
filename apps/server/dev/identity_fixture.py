@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from dev.accept_runtime import POSTGRES, docker
 
-KEYCLOAK = "quay.io/keycloak/keycloak:26.7.3@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54"
+KEYCLOAK = "quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0"
 LABEL = "kodera.token-qualification"
 REALM = "token-qualification"
 CALLBACK = "http://127.0.0.1:1/callback"  # Intercepted redirect, never requested/bound.

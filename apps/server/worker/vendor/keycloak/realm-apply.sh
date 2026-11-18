@@ -92,6 +92,10 @@ TEMPLATE_FILE="org-realm-template.json"
 SYNAPSE_CLIENT="synapse"
 DOCS_CLIENT="docs"
 WORKER_CLIENT="kodera-identity-worker"
+# Keycloak 26.8.2 answers 401 on /admin to a token without this client scope and the audience its
+# mapper (oidc-admin-api-audience-mapper) adds (AdminRoot). Keycloak makes it in every realm but
+# gives it to admin-cli and security-admin-console only, so step 3 gives it to the worker.
+ADMIN_API_SCOPE="kc-admin-api"
 # The native apps' public clients (REALMS.md, "Native clients"), organisation
 # realms only. Both apps share one bundle ID, so one redirect URI.
 NATIVE_CLIENTS='["kodera-ios","kodera-android"]'
@@ -275,7 +279,7 @@ check_rep() {
   errors="$(jq_read "realm $label" -r --arg mode "$mode" --arg groups "$groups" --arg origin "$origin" --arg from "no-reply@$domain" \
       --arg staff "$STAFF_FILE" --arg synapse "$SYNAPSE_CLIENT" --arg synapse_origin "$synapse_origin" \
       --arg docs "$DOCS_CLIENT" --arg docs_origin "$docs_origin" --arg visio "$visio_host" \
-      --arg worker "$WORKER_CLIENT" --argjson builtins "$BUILTIN_CLIENTS" \
+      --arg worker "$WORKER_CLIENT" --arg admin_api "$ADMIN_API_SCOPE" --argjson builtins "$BUILTIN_CLIENTS" \
       --argjson natives "$NATIVE_CLIENTS" --arg native_redirect "$NATIVE_REDIRECT" \
       --argjson native_mappers "$NATIVE_MAPPERS" \
       --arg admin "$ADMIN_CLIENT" --arg admin_origin "$admin_origin" --argjson admin_mappers "$ADMIN_MAPPERS" \
@@ -385,6 +389,8 @@ check_rep() {
            else empty end),
           (if .revokeRefreshToken != true or .refreshTokenMaxReuse != 0
            then "refresh tokens must rotate (revokeRefreshToken true, refreshTokenMaxReuse 0)" else empty end),
+          (if .accessCodeLifespan != 60
+           then "accessCodeLifespan must be 60 (60 s authorization code lifetime), is \(.accessCodeLifespan | tojson)" else empty end),
           # Every realm speaks French first, English on request: the login pages and the
           # mails follow the locale of the browser or of the account among the two, French by default.
           (if .internationalizationEnabled != true or .defaultLocale != "fr"
@@ -578,10 +584,10 @@ check_rep() {
               else empty end),
              # Keycloak stores redirect URIs as a set and returns them in any order: they are
              # compared sorted, duplicates kept, so a second copy or a third URI still fails.
-             # Organisation realms add the route that completes the protected owner claim, and the
-             # home of the console, exactly, where Keycloak returns a person who has just set up
-             # their account (the redirect_uri of the execute-actions-email Core sends).
-             (([$origin + "/auth/callback"] + (if $is_staff then [] else [$origin + "/auth/claim-callback", $origin + "/"] end)) as $redirects
+             # Both realms carry the console callback and the console home, where Keycloak returns a
+             # person who has just set up or reset their account (the redirect_uri of the
+             # execute-actions-email); organisation realms add the protected owner-claim route.
+             (([$origin + "/auth/callback"] + (if $is_staff then [] else [$origin + "/auth/claim-callback"] end) + [$origin + "/"]) as $redirects
               | if (if ($c.redirectUris | type) == "array" then $c.redirectUris | sort else $c.redirectUris end) != ($redirects | sort)
                 then "client console redirect URIs must be exactly \($redirects | tojson), in any order" else empty end),
              (if $c.attributes["post.logout.redirect.uris"] != $origin + "/"
@@ -835,6 +841,15 @@ check_rep() {
              # No browser ever reaches the worker: no redirect, origin or post-logout URI.
              (if ($w.redirectUris // []) != [] then "client \($worker) redirect URIs must be empty ([])" else empty end),
              (if ($w.webOrigins // []) != [] then "client \($worker) webOrigins must be empty ([])" else empty end),
+             # The realm delivery of Core calls the Admin REST API with a token of the worker,
+             # which needs the scope kc-admin-api as a default scope. The template leaves the
+             # scope lists out, so the worker keeps the default scopes of the realm, and step 3
+             # adds kc-admin-api; a file listing the default scopes of the worker must name it,
+             # and a live realm must have it.
+             (if ($mode == "live" or $w.defaultClientScopes != null)
+                 and (($w.defaultClientScopes // []) | index($admin_api)) == null
+              then "client \($worker) must have the default client scope \($admin_api): Keycloak refuses (401) an Admin REST API call whose token lacks it (step 3 adds it)"
+              else empty end),
              (if ($w.attributes["post.logout.redirect.uris"]? // "") != ""
               then "client \($worker) must have no post-logout redirect URI" else empty end),
              # It signs in with its secret, and its token carries what Keycloak gives a service
@@ -1951,6 +1966,31 @@ step_2() {
   step_record 2 "$cid" "$READ_AT" "$note"
 }
 
+# ensure_worker_admin_api_scope <client id> — gives the worker's client the client scope
+# kc-admin-api as a default scope, through the client's own scope endpoint: an update of the
+# client never changes its scope lists (Keycloak's RepresentationToModel.updateClient), so a
+# worker made before Keycloak 26.8.2 gets the scope only this way. Run again, it writes nothing.
+# Prints the note fragment. Callers add `|| exit 1`: the reads run in a command substitution.
+ensure_worker_admin_api_scope() {
+  local cid="$1" have scopes sid
+  have="$(kc_read array "the default client scopes of client $WORKER_CLIENT" "clients/$cid/default-client-scopes" -r "$REALM")" ||
+    exit 1
+  if jq_read "the default client scopes of client $WORKER_CLIENT" -e --arg s "$ADMIN_API_SCOPE" 'any(.[]; .name == $s)' \
+      <<<"$have" >/dev/null; then
+    echo "$ADMIN_API_SCOPE default scope: present"
+    return 0
+  fi
+  scopes="$(kc_read array "the client scopes of realm '$REALM'" client-scopes -r "$REALM")" || exit 1
+  sid="$(jq_read "the client scopes of realm '$REALM'" -r --arg s "$ADMIN_API_SCOPE" '[.[] | select(.name == $s)][0].id // ""' \
+    <<<"$scopes")" || exit 1
+  [[ -n "$sid" ]] ||
+    die "realm '$REALM' has no client scope $ADMIN_API_SCOPE, which Keycloak 26.8.2 makes in every realm; is the server older? The client $WORKER_CLIENT is left disabled"
+  sid="$(seg "the id of client scope $ADMIN_API_SCOPE" "$sid")" || exit 1
+  kc update "clients/$cid/default-client-scopes/$sid" -r "$REALM" >/dev/null ||
+    die "could not give client $WORKER_CLIENT the default client scope $ADMIN_API_SCOPE; the client is left disabled"
+  echo "$ADMIN_API_SCOPE default scope: added"
+}
+
 step_3() {
   require_marked_realm "$REALM" "$SOURCE"
   [[ "$SOURCE" == "$TEMPLATE_FILE" ]] ||
@@ -1964,6 +2004,8 @@ step_3() {
   # found no service-account user for the client (CI, run 41810473367). The roles are read
   # again after it.
   cid="$(create_or_update_client "$WORKER_CLIENT" '.enabled = false')"
+  local scope_note
+  scope_note="$(ensure_worker_admin_api_scope "$cid")" || exit 1
   kc add-roles -r "$REALM" --uusername "service-account-$WORKER_CLIENT" --cclientid realm-management \
     --rolename manage-users --rolename view-users >/dev/null ||
     die "could not give the service account of $WORKER_CLIENT its roles; the client is left disabled"
@@ -1976,7 +2018,7 @@ step_3() {
     die "the roles of $WORKER_CLIENT changed when it was enabled; the client is disabled again"
   fi
   read_live "$REALM" worker,offline "$SOURCE after step 3"
-  step_record 3 "$cid" "$READ_AT" "client $WORKER_CLIENT: service account, manage-users and view-users, enabled; its secret is never read"
+  step_record 3 "$cid" "$READ_AT" "client $WORKER_CLIENT: service account, manage-users and view-users, $scope_note, enabled; its secret is never read"
   DISABLE_WORKER_ON_EXIT=0
 }
 
@@ -2085,12 +2127,43 @@ step_6() {
   step_record 6 "$(issuer "$REALM")" "$READ_AT" "theme kodera; the whole realm read back against $SOURCE"
 }
 
+# Warn when an account already holds active credentials (password plus OTP or
+# WebAuthn) while still carrying pending requiredActions left dormant from a
+# pre-registration realm. Reads only; emits user UUIDs and credential types,
+# never addresses.
+warn_dormant_required_actions() {
+  local first=0 page size candidates uid pending creds types
+  while :; do
+    page="$(kc_read array "the users of realm '$REALM'" users -r "$REALM" -q first="$first" -q max=100 \
+      -q briefRepresentation=false)" || exit 1
+    candidates="$(jq_read "the users of realm '$REALM'" -r '
+      .[] | select(((.requiredActions // []) | length) > 0)
+      | select((.username // "") | startswith("service-account-") | not)
+      | [.id, ((.requiredActions // []) | join(","))] | @tsv' <<<"$page")" || exit 1
+    while IFS=$'\t' read -r uid pending <&3; do
+      [[ -n "$uid" ]] || continue
+      uid="$(seg "the id of an account in realm '$REALM'" "$uid")" || exit 1
+      creds="$(kc_read array "the credentials of account $uid" "users/$uid/credentials" -r "$REALM")" || exit 1
+      if jq_read "the credentials of account $uid" -e \
+          '[.[].type] | index("password") != null and (index("otp") != null or index("webauthn") != null)' \
+          <<<"$creds" >/dev/null; then
+        types="$(jq_read "the credentials of account $uid" -r '[.[].type] | unique | sort | join(",")' <<<"$creds")" || exit 1
+        say "warning: realm '$REALM': account $uid holds active credentials ($types) with dormant requiredActions [$pending]"
+      fi
+    done 3<<<"$candidates"
+    size="$(jq_read "the users of realm '$REALM'" length <<<"$page")" || exit 1
+    (( size < 100 )) && return 0
+    first=$((first + 100))
+  done
+}
+
 # 7, `verify`: step 6's read-back, writing nothing (a partial export is a POST that changes
 # nothing). Core's catalogue runs it after step 6.
 step_7() {
   require_marked_realm "$REALM" "$SOURCE"
   read_live "$REALM" all "$SOURCE at verify"
   if [[ "$SOURCE" == "$TEMPLATE_FILE" ]]; then check_worker_roles; check_email_admin_only; fi
+  warn_dormant_required_actions
   step_record 7 "$(issuer "$REALM")" "$READ_AT" "nothing written; the whole realm read back against $SOURCE"
 }
 cmd_verify() {
@@ -2182,7 +2255,8 @@ send_actions() {  # send_actions <user-id> <actions-json> <hours: default and ce
   # ends the account's sessions, which a reset means to do anyway.
   kc create "users/$1/logout" -r "$REALM" >/dev/null ||
     die "could not log account $1 out, so its older links would still work; nothing was sent"
-  kc update "users/$1/execute-actions-email" -r "$REALM" -q lifespan="$seconds" -b "$2" >/dev/null ||
+  kc update "users/$1/execute-actions-email" -r "$REALM" \
+    -q client_id=console -q redirect_uri="${ORIGIN}/" -q lifespan="$seconds" -b "$2" >/dev/null ||
     die "Keycloak could not send the required-actions email (check the realm's SMTP settings)"
   account_record send_actions_email completed "$1" "link expires in $((seconds / 3600)) h"
 }
@@ -2297,6 +2371,7 @@ cmd_holders() {
   require_marked_realm "$REALM" "$SOURCE"
   check_worker_roles
   check_admin_holders
+  warn_dormant_required_actions
   say "realm '$REALM': only service-account-$WORKER_CLIENT holds a realm-management role (manage-users, view-users)"
 }
 

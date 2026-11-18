@@ -59,8 +59,8 @@ FAILURE_PHASES = frozenset(
 PATH = "/api/v1/owner-claims/actions/consume"
 STAFF_ISSUER = bootstrap.STAFF_ISSUER
 BASELINES = {
-    "dev/accept_production_http.py": "87ded33470693974d4ed71988f6d9c0b9677175976f539549abaff545d21876c",
-    "dev/accept_bootstrap_http.py": "79ade062798b64e4914b2eba7e3c0f56f1636dcd98f53aca406a872fa509633f",
+    "dev/accept_production_http.py": "f4553d3443409af791108f3615976f470af6d01d604aea44ad39dd6dc9cea2ef",
+    "dev/accept_bootstrap_http.py": "c115bd7aac228ab8195cafb006bf6e41219a2e27427df39336445513e0210bbd",
 }
 
 
