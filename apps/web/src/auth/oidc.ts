@@ -439,7 +439,15 @@ export class OidcAuthAdapter implements AuthAdapter {
       [...subject].some((character) => character.charCodeAt(0) > 127)
     )
       return undefined
-    return Object.freeze({ issuer, subject })
+    const rawAmr = (user.profile as { amr?: unknown } | undefined)?.amr
+    const amr =
+      Array.isArray(rawAmr) &&
+      rawAmr.length > 0 &&
+      rawAmr.length <= 32 &&
+      rawAmr.every((item): item is string => typeof item === 'string' && /^[\x21-\x7e]{1,128}$/.test(item))
+        ? Object.freeze([...rawAmr])
+        : undefined
+    return Object.freeze({ issuer, subject, ...(amr === undefined ? {} : { amr }) })
   }
 
   async signIn(realm: string, options?: SignInOptions): Promise<void> {

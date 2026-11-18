@@ -36,7 +36,7 @@ export const APPROVED_CONNECT_SOURCES = Object.freeze([
   'wss://*.kodera.io/rtc/v1',
   'wss://*.kodera.io/rtc/validate',
   'wss://*.kodera.io/rtc/v1/validate',
-  'wss://*.kodera.io/ws/collab/',
+  'wss://*.kodera.io/documents/collab',
 ]);
 
 export const REQUIRED_BUNDLE_ICONS = Object.freeze([
