@@ -33,6 +33,7 @@
     "playwright.visual.config.ts",
     "playwright.espace.config.ts",
     "playwright.smoke.config.ts",
+    "playwright.wave2.config.ts",
     "tailwind.config.ts",
     "scripts",
     "tests/unit",
@@ -40,6 +41,7 @@
     "tests/visual",
     "tests/espace",
     "tests/smoke",
+    "tests/wave2",
     "e2e/staging"
   ],
   // The layout harness draws the live view, so it is type-checked with the browser project.
