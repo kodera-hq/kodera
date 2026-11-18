@@ -1042,7 +1042,7 @@ def main(scenario=None):
             POSTGRES,
             KEYCLOAK,
             "ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500",
-            "python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254",
+            "python:3.12.16-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df",
         ):
             docker("image", "inspect", reference)
         if not (ROOT / "dev/customer_http_image_acceptance.py").is_file():
