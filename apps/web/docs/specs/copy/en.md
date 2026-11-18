@@ -1522,6 +1522,11 @@ The Appearance page (`docs/specs/10-appearance.md`): the theme choice, reached f
 | `console.docs.collab.error-delete-has-children` | This page still has subpages. Move or delete its subpages first. |
 | `console.docs.collab.error-save` | Your changes could not be saved to the server. Try again in a moment. |
 | `console.docs.collab.empty-workspace` | No pages in this workspace yet. Choose a template to create the first one. |
+| `console.docs.collab.error-version-conflict` | Another member saved this page while you were writing. Your draft is untouched here: reload the latest version to read it, or save your draft as a new page. |
+| `console.docs.collab.error-version-required` | Your change was sent without the page’s version, so it was not saved and your draft is untouched here. Reload the latest version — the next save will carry the current version. |
+| `console.docs.collab.action-reload-latest` | Reload the latest version |
+| `console.docs.collab.action-save-draft-as-page` | Save my draft as a new page |
+| `console.docs.collab.notice-draft-saved-as-page` | Your draft is kept in a new page: {title}. |
 | `console.docs.collection.error-version-conflict` | Another member changed this entry while you were editing it. Reload the collection to get its current version, then re-apply your change. |
 | `console.docs.collection.error-version-required` | Your change was sent without the entry’s version, so it was not saved. Reload the collection, then re-apply your change — it will be sent with the current version. |
 | `console.docs.collection.action-reload` | Reload collection |

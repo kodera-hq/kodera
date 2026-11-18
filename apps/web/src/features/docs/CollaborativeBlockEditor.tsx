@@ -1,6 +1,6 @@
 import Collaboration from '@tiptap/extension-collaboration'
 import { Placeholder } from '@tiptap/extensions'
-import { EditorContent, useEditor, type Editor } from '@tiptap/react'
+import { EditorContent, useEditor, type Editor, type EditorEvents } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -54,6 +54,13 @@ export interface CollaborativeBlockEditorProps {
    * Never mutates `ydoc` when `role === 'viewer'`.
    */
   readonly seedMarkdown?: boolean | undefined
+  /**
+   * When `true`, this mount replaces the body rather than resuming it: the `ydoc` still holds the
+   * fragment from before a deliberate re-read of the page, and `markdown` is the body that has to
+   * take its place. Resuming is the default, and has to be — a fragment that already has content
+   * *is* the document, and seeding over it would duplicate it.
+   */
+  readonly replacesSeededBody?: boolean | undefined
   readonly peers?: readonly CollaboratorPeer[] | undefined
   readonly onSelectionChange?: ((selection: CollaboratorSelectionState | null) => void) | undefined
   readonly availablePages?: readonly WikilinkDocumentTarget[] | undefined
@@ -80,6 +87,7 @@ export function CollaborativeBlockEditor({
   role = 'editor',
   ydoc,
   seedMarkdown = true,
+  replacesSeededBody = false,
   peers = [],
   onSelectionChange,
   availablePages = [],
@@ -271,8 +279,16 @@ export function CollaborativeBlockEditor({
       setWikilinkMenu(null)
     }
 
-    const handleUpdate = ({ editor: ed }: { editor: Editor }) => {
+    const handleUpdate = ({ editor: ed, transaction }: EditorEvents['update']) => {
       syncMenusFromEditorState(ed)
+      // An `update` that changed no part of the document, which cannot have changed the Markdown
+      // either. `setEditable` emits one with an empty transaction, from the effect that aligns the
+      // editable flag with the role — and in a freshly built editor that effect runs before the
+      // one that seeds the fragment, so what the empty transaction serializes is an empty page.
+      // Reported as the body, it replaces the page in state with nothing and schedules a write of
+      // it; the re-read a refused write offers is exactly where that is reachable, because the
+      // editor is rebuilt there around a body the member has just asked for.
+      if (!transaction.docChanged) return
       if (ed.isEditable) {
         const serialized = tiptapDocToMarkdown(ed.getJSON())
         if (serialized !== lastEmittedMarkdownRef.current) {
@@ -322,10 +338,7 @@ export function CollaborativeBlockEditor({
     }
   }
 
-  const applyWikilinkSelection = (
-    page: WikilinkDocumentTarget,
-    range: ActiveWikilinkMenuState
-  ) => {
+  const applyWikilinkSelection = (page: WikilinkDocumentTarget, range: ActiveWikilinkMenuState) => {
     if (!editor.isEditable) return
     editor
       .chain()
@@ -445,18 +458,23 @@ export function CollaborativeBlockEditor({
     editor.view.dom.setAttribute('aria-label', editorAriaLabel)
   }, [editor, editorAriaLabel, isEditable])
 
-  // Seed empty Y.Doc fragment once in editor mode; never mutate Y.Doc in viewer mode.
+  // Seed empty Y.Doc fragment once in editor mode; never mutate Y.Doc in viewer mode. A mount
+  // that `replacesSeededBody` seeds over a fragment that has content too: the page was re-read
+  // behind this editor, and the fragment it would otherwise adopt is the body from before that
+  // — which the next keystroke would serialize and write back over what the re-read brought.
   useEffect(() => {
     if (!ydoc || !isEditable || !seedMarkdown || editor.isDestroyed) return
     if (seededYdocRef.current === ydoc) return
     const fragment = ydoc.getXmlFragment('content')
-    if (fragment.length === 0 && markdown.trim().length > 0) {
+    const replacing = replacesSeededBody && fragment.length > 0
+    if (replacing || (fragment.length === 0 && markdown.trim().length > 0)) {
       seededYdocRef.current = ydoc
       editor.commands.setContent(markdownToTiptapDoc(markdown), { emitUpdate: false })
+      lastEmittedMarkdownRef.current = markdown
     } else if (fragment.length > 0) {
       seededYdocRef.current = ydoc
     }
-  }, [editor, isEditable, markdown, seedMarkdown, ydoc])
+  }, [editor, isEditable, markdown, replacesSeededBody, seedMarkdown, ydoc])
 
   // Propagate remote/offline Yjs updates into serialized Markdown state without re-seeding.
   useEffect(() => {
@@ -578,9 +596,7 @@ export function CollaborativeBlockEditor({
           className="flex max-h-[256px] flex-col gap-1 overflow-y-auto rounded-md border border-c-border bg-c-elevated p-2 shadow-sm"
         >
           {filteredSlashCommands.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-c-ink-3">
-              {t('console.docs.collab.slash-empty')}
-            </p>
+            <p className="px-2 py-1 text-xs text-c-ink-3">{t('console.docs.collab.slash-empty')}</p>
           ) : (
             filteredSlashCommands.map((cmd, idx) => {
               const active = idx === slashIndex
@@ -599,9 +615,7 @@ export function CollaborativeBlockEditor({
                   className={cx(
                     'flex w-full items-center justify-between gap-3 rounded-sm px-3 py-1 text-left text-xs font-medium focus-visible:ring focus-visible:outline-hidden',
                     TOUCH_TARGET,
-                    active
-                      ? 'bg-c-accent-soft text-c-accent-ink'
-                      : 'text-c-ink hover:bg-c-muted'
+                    active ? 'bg-c-accent-soft text-c-accent-ink' : 'text-c-ink hover:bg-c-muted'
                   )}
                 >
                   <span>{cmd.label}</span>
@@ -641,9 +655,7 @@ export function CollaborativeBlockEditor({
                   className={cx(
                     'flex w-full items-center justify-between gap-2 rounded-sm px-3 py-1 text-left text-xs font-medium focus-visible:ring focus-visible:outline-hidden',
                     TOUCH_TARGET,
-                    active
-                      ? 'bg-c-accent-soft text-c-accent-ink'
-                      : 'text-c-ink hover:bg-c-muted'
+                    active ? 'bg-c-accent-soft text-c-accent-ink' : 'text-c-ink hover:bg-c-muted'
                   )}
                 >
                   <span className="truncate">{page.title}</span>

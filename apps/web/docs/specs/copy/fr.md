@@ -1536,6 +1536,11 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.docs.collab.error-delete-has-children` | Cette page contient des sous-pages. Déplacez ou supprimez d’abord ses sous-pages. |
 | `console.docs.collab.error-save` | Vos modifications n’ont pas pu être enregistrées sur le serveur. Réessayez dans un instant. |
 | `console.docs.collab.empty-workspace` | Aucune page dans cet espace pour l’instant. Choisissez un modèle pour créer la première. |
+| `console.docs.collab.error-version-conflict` | Un autre membre a enregistré cette page pendant votre saisie. Votre brouillon est intact ici : rechargez la dernière version pour la lire, ou enregistrez votre brouillon comme nouvelle page. |
+| `console.docs.collab.error-version-required` | Votre modification est partie sans la version de la page : elle n’a pas été enregistrée et votre brouillon est intact ici. Rechargez la dernière version — le prochain enregistrement partira avec la version à jour. |
+| `console.docs.collab.action-reload-latest` | Recharger la dernière version |
+| `console.docs.collab.action-save-draft-as-page` | Enregistrer mon brouillon comme nouvelle page |
+| `console.docs.collab.notice-draft-saved-as-page` | Votre brouillon est conservé dans une nouvelle page : {title}. |
 | `console.docs.collection.error-version-conflict` | Un autre membre a modifié cette entrée pendant votre saisie. Rechargez la collection pour récupérer sa version actuelle, puis réappliquez votre changement. |
 | `console.docs.collection.error-version-required` | Votre modification est partie sans la version de l’entrée : elle n’a pas été enregistrée. Rechargez la collection, puis réappliquez votre changement — il sera envoyé avec la version à jour. |
 | `console.docs.collection.action-reload` | Recharger la collection |

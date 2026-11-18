@@ -203,7 +203,13 @@ export function isNonEmptyParentDeleteError(error: unknown): boolean {
   return error instanceof ApiProblem && error.status === 409
 }
 
-export function isCollectionPreconditionFailedError(error: unknown): error is ApiProblem {
+/**
+ * `precondition-failed` (412): the version the write carried is not the one on the server, so
+ * somebody else wrote first and nothing of this write was applied. Both the structured
+ * collection's rows (`DocsCollectionView.tsx`) and the workspace pages
+ * (`WorkspaceCollaborativeDocs.tsx`) read it, which is why neither surface is in the name.
+ */
+export function isPreconditionFailedError(error: unknown): error is ApiProblem {
   return error instanceof ApiProblem && error.status === 412
 }
 
@@ -211,10 +217,11 @@ export function isCollectionPreconditionFailedError(error: unknown): error is Ap
  * `precondition-required` (428): the write reached Core with no `If-Match` at all, so there was
  * nothing to compare and nothing was saved. Distinct from 412 on purpose — the stale-tag case
  * carries `currentEtag` and this one carries nothing (`src/api/client.ts`) — and the person is
- * told something different (`console.docs.collection.error-version-required`): a plain retry
- * would send the same version-less write again.
+ * told something different (`console.docs.collection.error-version-required` for a row,
+ * `console.docs.collab.error-version-required` for a page): a plain retry would send the same
+ * version-less write again.
  */
-export function isCollectionPreconditionRequiredError(error: unknown): error is ApiProblem {
+export function isPreconditionRequiredError(error: unknown): error is ApiProblem {
   return error instanceof ApiProblem && error.status === 428
 }
 

@@ -39,8 +39,8 @@ import type { DocumentAccessRole } from './pageTree'
 import {
   getWorkspaceCollection,
   getWorkspaceCollectionRow,
-  isCollectionPreconditionFailedError,
-  isCollectionPreconditionRequiredError,
+  isPreconditionFailedError,
+  isPreconditionRequiredError,
   listWorkspaceCollections,
   putWorkspaceCollectionRow,
   queryWorkspaceCollection,
@@ -491,8 +491,8 @@ export function DocsCollectionView({
         }
       } catch (err) {
         if (
-          isCollectionPreconditionFailedError(err) ||
-          isCollectionPreconditionRequiredError(err)
+          isPreconditionFailedError(err) ||
+          isPreconditionRequiredError(err)
         ) {
           // Roll back the stale optimistic write, forget the refused version so no stale sibling
           // values can be paired with a newer ETag before reload, and prompt reload.
@@ -500,7 +500,7 @@ export function DocsCollectionView({
           rowEtagsRef.current.delete(documentId)
           setConflict({
             documentId,
-            kind: isCollectionPreconditionRequiredError(err)
+            kind: isPreconditionRequiredError(err)
               ? 'version-required'
               : 'version-conflict',
           })

@@ -3,7 +3,7 @@ import * as apiClient from '@/api/client'
 import { ApiProblem } from '@/api/client'
 import { maySeedFromMarkdown } from './collabSession'
 import {
-  isCollectionPreconditionFailedError,
+  isPreconditionFailedError,
   putWorkspaceCollectionRow,
   updateWorkspaceDocumentMetadata,
 } from './workspaceDocumentsApi'
@@ -155,8 +155,8 @@ describe('Core 0.44.0 conditional collection row writes', () => {
       title: 'Conflict',
     } as never)
 
-    expect(isCollectionPreconditionFailedError(err412)).toBe(true)
-    expect(isCollectionPreconditionFailedError(err409)).toBe(false)
-    expect(isCollectionPreconditionFailedError(new Error('network'))).toBe(false)
+    expect(isPreconditionFailedError(err412)).toBe(true)
+    expect(isPreconditionFailedError(err409)).toBe(false)
+    expect(isPreconditionFailedError(new Error('network'))).toBe(false)
   })
 })
