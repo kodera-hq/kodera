@@ -24,7 +24,7 @@ services:
       retries: 60
 
   synapse:
-    image: matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6
+    image: matrixdotorg/synapse:v1.165.0@sha256:673b4223c81a7634fd07d832b939a58f97081cfdaae7cdd2d1664cdcf7611b62
     entrypoint: ['/bin/sh', '/config/start.sh']
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -49,13 +49,13 @@ services:
       postgres: { condition: service_healthy }
 
   keycloak:
-    # The organisation's realm (Core ADR-0006), as identity realm tooling runs it (26.0.7), with
+    # The organisation's realm (Core ADR-0006), as identity realm tooling runs it (26.8.2), with
     # Synapse's confidential client (DESIGN §2.4). Imported from keycloak/, whose placeholders
     # Keycloak fills from this environment. Tests create their members through the admin API,
     # each a new person, so that Synapse's mapping of a first sign-in is tested every run.
     # Synapse does not wait for it: it reads Keycloak only when a member signs in, and
     # `up -d --wait` waits for both before any test runs.
-    image: quay.io/keycloak/keycloak:26.0.7@sha256:4388e2379b7e870a447adbe7b80bd61f5fbf04e925832b19669fda4957f05a81
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     command: ['start-dev', '--import-realm']
     environment:
       # The browser reaches Keycloak on the host; Synapse, in its container, by its service name.
@@ -82,7 +82,7 @@ services:
       retries: 100
 
   livekit:
-    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
+    image: livekit/livekit-server:v1.13.11@sha256:25cd902de7cacbd5f1f779f6a6ac1eae20ba8f56b0935934ce6b0ab80d1e3d20
     environment:
       LIVEKIT_KEYS: '${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}'
       LIVEKIT_CONFIG: |
