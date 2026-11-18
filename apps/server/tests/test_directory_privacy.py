@@ -19,6 +19,7 @@ import hashlib
 import inspect
 import json
 import textwrap
+from urllib.parse import urlencode
 
 import pytest
 from customer_http_fixtures import http_signer as http_signer
@@ -204,7 +205,6 @@ def test_a_colleague_in_any_listed_state_is_withheld_from_a_member(d, state):
     "query",
     [
         "?email=alpha-colleague@customer.test",
-        "?q=alpha-colleague",
         "?search=colleague",
         "?sort=email",
         "?order_by=email",
@@ -215,7 +215,7 @@ def test_a_colleague_in_any_listed_state_is_withheld_from_a_member(d, state):
     ],
 )
 @pytest.mark.parametrize("who", ["member", "owner"])
-def test_no_filter_search_or_ordering_reads_a_private_fact(d, who, query):
+def test_no_unsupported_filter_or_ordering_reads_a_private_fact(d, who, query):
     """An answer that depended on the value would be an oracle for it: every such input is refused
     the same way whatever it names, for an administrator as for a member."""
     response = d.client.get(
@@ -231,6 +231,35 @@ def test_the_public_filters_do_not_widen_what_a_member_reads(d):
     for query in ("?role=org_member", "?state=active", "?role=org_admin&state=active", "?limit=2"):
         for row in listed(d, d.member, query).values():
             assert ("email" in row) is (row["id"] == str(d.member.member.id))
+
+
+@pytest.mark.parametrize("who", ["member", "colleague", "admin", "owner"])
+def test_search_reads_only_disclosed_email_and_public_names(d, who):
+    """A successful email probe must never enumerate a colleague's withheld address."""
+    caller = getattr(d, who)
+    for index, target in enumerate(people(d)):
+        raw_update(target.user, email=f"private-address-{index}@example.test")
+        target.user.refresh_from_db()
+    for target in people(d):
+        query = "?" + urlencode({"q": "  " + target.user.email.upper() + "  "})
+        rows = listed(d, caller, query)
+        expected = (
+            {str(target.member.id)} if caller == target or who in ("owner", "admin") else set()
+        )
+        assert set(rows) == expected, "search matched a withheld colleague email"
+        # A substring is just as revealing as an exact address.
+        local_part = target.user.email.split("@")[0]
+        assert set(listed(d, caller, "?" + urlencode({"q": local_part}))) == expected
+    assert set(listed(d, caller, "?q=NAME+OF")) == {str(target.member.id) for target in people(d)}
+
+
+def test_changing_a_withheld_email_cannot_change_search_results(d):
+    raw_update(d.colleague.user, email="private-probe@example.test")
+    assert listed(d, d.member, "?q=private-probe") == {}
+    raw_update(d.colleague.user, email="different-probe@example.test")
+    assert listed(d, d.member, "?q=private-probe") == {}
+    assert listed(d, d.member, "?q=different-probe") == {}
+    assert set(listed(d, d.member, "?q=alpha-colleague")) == {str(d.colleague.member.id)}
 
 
 # --- countMemberships -------------------------------------------------------------------------
@@ -495,3 +524,35 @@ def test_each_read_has_a_mutant_and_each_mutant_a_check():
     assert owners == set(CHECKS)
     mutated_modules = {function.__module__ for function, _, _, _ in MUTANTS.values()}
     assert {"apps.orgs.membership_services", "apps.orgs.membership_lifecycle"} <= mutated_modules
+
+
+@pytest.mark.parametrize("caller_role", ["org_owner", "org_admin"])
+def test_authorized_directory_search_matches_disclosed_emails(d, caller_role):
+    """Only the directory's disclosing roles may search a colleague's email."""
+    from apps.orgs.membership_pagination import DirectoryQuery
+
+    raw_update(d.colleague.user, email="private-probe@example.test")
+    rows, _ = directory_privacy.directory_memberships(
+        organisation_id=d.alpha.id,
+        query=DirectoryQuery(limit=25, role=None, state=None, cursor=None, q="private-probe"),
+        continuation=None,
+        caller_person_id=d.member.user.id,
+        caller_role=caller_role,
+    )
+    assert [row.id for row in rows] == [d.colleague.member.id]
+
+
+@pytest.mark.parametrize("caller_role", ["staff_operator", "staff_support", "org_billing", ""])
+def test_other_roles_cannot_search_a_withheld_email(d, caller_role):
+    """Even behind the HTTP role fence, the selector follows the disclosure rule."""
+    from apps.orgs.membership_pagination import DirectoryQuery
+
+    raw_update(d.colleague.user, email="private-probe@example.test")
+    rows, _ = directory_privacy.directory_memberships(
+        organisation_id=d.alpha.id,
+        query=DirectoryQuery(limit=25, role=None, state=None, cursor=None, q="private-probe"),
+        continuation=None,
+        caller_person_id=d.member.user.id,
+        caller_role=caller_role,
+    )
+    assert rows == ()

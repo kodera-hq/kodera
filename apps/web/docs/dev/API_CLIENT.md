@@ -4,13 +4,13 @@ Every capability the console needs is an endpoint in `kodera-core`, authorised s
 
 ## Contract first
 
-The contract is hand-authored and version-tagged in `kodera-core`:
+The contract is hand-authored in the monorepo:
 
 ```
-kodera-server/contracts/core-api.openapi.yaml
+packages/api-contract/core-api.openapi.yaml
 ```
 
-Core's own CI diffs its generated spec against that file and fails on divergence, and `oasdiff` gates breaking changes. The console consumes the published spec; it never writes it. A console feature that needs a field starts as a spec change in `kodera-core`, not as a richer mock here.
+Contract parity checks keep the server and web copies byte-identical to that canonical source, and `oasdiff` gates breaking changes. A console feature that needs a field starts as a canonical contract change before its client or mocks change.
 
 ## Generation
 
@@ -36,9 +36,12 @@ Generated files are committed, and are:
 
 ## Pinning, and the drift check
 
-The contract is **vendored, not fetched**: `contracts/core-api.openapi.yaml` is a verbatim copy of the file in `kodera-core`, and `contracts/contract.lock.json` records where it came from, its `info.version`, and its `sha256`. The copy is never edited here; the hash check is what makes that enforceable rather than a convention.
-
-The pin is contract 0.28.0 at the immutable annotated tag `contracts/v0.28.0`, which points at `dda01115f7683c07e9ff33c967dfae95ef8379af` in `kodera-core`. The annotated tag object is `7fd004090806125f1788f9cb0dba3d199ce34781`; the verbatim contract SHA-256 is `d2f92b7be023bca8c4a3d287e9564087cf92116b5090c4d2bfa2e708fd3e4e2e`. For contracts 0.12.0 and 0.13.0, `ref` was briefly a commit SHA until Core tagged them; it has been a tag since, as it was up to `contracts/v0.11.0`. `contracts/README.md` says how to bump it.
+The contract is vendored from `packages/api-contract/core-api.openapi.yaml`.
+`contracts/contract.lock.json` records the canonical repository and path, immutable Git blob ID,
+`info.version` and SHA256. The hash check rejects a modified consumer copy. The blob pin keeps
+source and consumer in one commit and survives squashing and shallow checkouts; consumer
+alignment tests verify the pinned blob offline and refuse missing or changed objects.
+See [`contracts/README.md`](../../contracts/README.md) for the update procedure.
 
 Two CI checks keep the pin honest, both guarding failures that are otherwise silent:
 

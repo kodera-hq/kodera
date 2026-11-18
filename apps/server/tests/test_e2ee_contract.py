@@ -42,7 +42,7 @@ def document():
 
 
 def guard(value):
-    assert value["info"]["version"] == "0.48.0"
+    assert value["info"]["version"] == "0.49.0"
     for (path, method), (name, scope) in OPERATIONS.items():
         operation = value["paths"][path][method]
         assert operation["operationId"] == name and operation["x-kodera-scope"] == scope

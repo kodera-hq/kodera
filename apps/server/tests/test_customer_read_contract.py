@@ -984,7 +984,8 @@ N4_PATH = "/organisations/{organisation_id}/bootstrap"
 # Rebound at 0.42.0: directory privacy, proximity and the theme vocabulary; N4 remains unchanged.
 # Rebound for additive workspace surfaces; existing assurance guards are unchanged.
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; assurance guards unchanged.
-N4_VERSION = "0.48.0"
+# Rebound at 0.49.0: listMemberships optional q filter; assurance guards unchanged.
+N4_VERSION = "0.49.0"
 # Rebound at 0.19.0 (2026-10-21, on top of 0.18.1): the notice-contacts delta and the Plan example's EU hosting.
 # Rebound at 0.22.0: the ten structure operations, their schemas and Problem.reason's first value;
 # then room_state on WorkspaceChannel, the starter's lounge (template version 2) and AppCode messaging;
@@ -1034,7 +1035,8 @@ N4_VERSION = "0.48.0"
 # Rebound for frozen PR132 canonical507 at 6194653b: three Passport conflict responses.
 # Rebound after shared replay-header normalization; all prior wire definitions remain exact.
 # Rebound at 0.48.0: keycloakTenant securityScheme host aligned with auth.kodera.io; no N4 bytes changed.
-N4_OLD_CONTRACT = "75c7b323e2abf545e9c9f8632b13a0b13069d0bd0313178849611e4e0ee4013f"
+# Rebound at 0.49.0: listMemberships optional q filter; no N4 bytes changed.
+N4_OLD_CONTRACT = "29cba0e1926504b93787c37220fe7c657f4523c66165386c2e1fa4ee6d28b76c"
 # Rebound at 0.20.0 (2026-10-22): CONVENTIONS.md §6 gains the order-in-progress and invoice-issued rows and a changelog line.
 # Rebound at 0.24.0 (2026-10-22): CONVENTIONS.md §6's invoice-issued row narrowed, and a changelog line.
 # Rebound at 0.28.0: CONVENTIONS.md §6 gains the identity-unknown row and a changelog line.

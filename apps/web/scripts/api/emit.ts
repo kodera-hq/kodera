@@ -144,6 +144,9 @@ export function emitHandlers(ops: Operation[], problemTypes: readonly string[]):
     "import type { HttpHandler } from 'msw/http'",
     "import type { components } from '@/api/schema'",
     "import { bindCurrentUserToMockRequest } from '../currentUserIdentity'",
+    ...(ops.some((op) => op.operationId === 'listMemberships')
+      ? ["import { membershipDirectoryResponse } from '../membershipDirectory'"]
+      : []),
     "import { EXAMPLES, type OperationExample } from './examples'",
     "import { PROBLEM_STATUS, PROBLEM_TITLES } from './problems'",
     '',
@@ -261,6 +264,10 @@ export function emitHandlers(ops: Operation[], problemTypes: readonly string[]):
     if (op.operationId === 'getMe') {
       lines.push(
         `  http.${op.method}(${url}, ({ request }) => answer({ ...${example}, body: bindCurrentUserToMockRequest(${example}.body as components['schemas']['Me'], request) })),`
+      )
+    } else if (op.operationId === 'listMemberships') {
+      lines.push(
+        `  http.${op.method}(${url}, ({ request }) => membershipDirectoryResponse((${example}.body as { data: components['schemas']['Membership'][] }).data, request, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.role, (EXAMPLES.getMe.body as components['schemas']['Me']).organisations[0]!.membership_id, { 'X-Request-Id': requestId() })),`
       )
     } else if (op.idempotent) {
       lines.push(

@@ -3,7 +3,7 @@
 // POST, If-Match on a PATCH, `ApiProblem` on a refusal); the CSV upload is
 // the contract's only multipart body and posts through the client directly.
 
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { coreApi } from '../../api/client'
 import { offers } from '../../app/capabilities'
 import { mutate } from '../../api/mutations'
@@ -50,8 +50,8 @@ const FILTER_QUERY: Record<MemberFilter, { role?: OrganisationRole; state?: Memb
 
 export const peopleKeys = {
   all: (organisationId: string) => ['people', organisationId] as const,
-  members: (organisationId: string, filter: MemberFilter) =>
-    ['people', organisationId, 'members', filter] as const,
+  members: (organisationId: string, filter: MemberFilter, query = '') =>
+    ['people', organisationId, 'members', filter, query.trim().toLowerCase()] as const,
   count: (organisationId: string, group: string) =>
     ['people', organisationId, 'count', group] as const,
   member: (organisationId: string, membershipId: string) =>
@@ -61,17 +61,21 @@ export const peopleKeys = {
   memberImport: (importId: string) => ['people', 'member-import', importId] as const,
 }
 
-export function useMembershipsQuery(organisationId: string, filter: MemberFilter) {
+export function useMembershipsQuery(organisationId: string, filter: MemberFilter, query = '') {
+  const queryKey = peopleKeys.members(organisationId, filter, query)
+  const q = queryKey[4]
   return useInfiniteQuery({
-    queryKey: peopleKeys.members(organisationId, filter),
+    queryKey,
     initialPageParam: undefined as string | undefined,
-    queryFn: async ({ pageParam }): Promise<CursorPage<Membership>> => {
+    queryFn: async ({ pageParam, signal }): Promise<CursorPage<Membership>> => {
       const { data } = await coreApi().GET('/organisations/{organisation_id}/memberships', {
+        signal,
         params: {
           path: { organisation_id: organisationId },
           query: {
             limit: PAGE_SIZE,
             ...FILTER_QUERY[filter],
+            ...(q.length === 0 ? {} : { q }),
             ...(pageParam === undefined ? {} : { cursor: pageParam }),
           },
         },
@@ -79,6 +83,8 @@ export function useMembershipsQuery(organisationId: string, filter: MemberFilter
       return page(required(data, 'GET /organisations/{id}/memberships'))
     },
     getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? undefined) : undefined),
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === organisationId ? keepPreviousData(previousData) : undefined,
   })
 }
 

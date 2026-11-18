@@ -6,8 +6,9 @@
 // people (owner, administrator) reads the directory: every address, every last sign-in, and the
 // row menus. Any other caller reads their colleagues: names, roles and each membership's state.
 // Core withholds a colleague's address and sign-in from them, so that projection draws no column
-// for either, searches names only, and offers nothing that needs an address to work. Which one is
-// drawn is decided by who is asking (`managesPeople`), never by a fact being absent from a row.
+// for either and offers nothing that needs an address to work. Server search matches stored names
+// and disclosed emails, including the caller's own email. The projection is decided by who is
+// asking (`managesPeople`), never by a fact being absent from a row.
 
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -114,7 +115,7 @@ export function MembersPanel({
   const resendInvitation = useResendInvitation(organisationId)
   const [filter, setFilter] = useState<MemberFilter>('all')
   const [search, setSearch] = useState('')
-  const query = useDebounced(search.trim().toLowerCase(), 300)
+  const query = useDebounced(search, 300)
   const [pending, setPending] = useState<Pending>(null)
   // "Dernière connexion" is relative to when the list was opened.
   const [now] = useState(Date.now)
@@ -133,21 +134,15 @@ export function MembersPanel({
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [])
-  const memberships = useMembershipsQuery(organisationId, filter)
+  const memberships = useMembershipsQuery(organisationId, filter, query)
 
   const rows = (memberships.data?.pages ?? []).flatMap((page) => page.data)
-  // No search parameter in the contract: the search narrows the rows loaded, by the words each
-  // row is listed under, and by its address only where addresses are shown at all.
-  const visible =
-    query.length === 0
-      ? rows
-      : rows.filter((m) =>
-          `${personLabel(m, t)} ${directory ? (disclosedEmail(m) ?? '') : ''}`
-            .toLowerCase()
-            .includes(query)
-        )
   const alone =
-    filter === 'all' && query.length === 0 && !memberships.hasNextPage && rows.length <= 1
+    filter === 'all' &&
+    query.trim().length === 0 &&
+    !memberships.isPlaceholderData &&
+    !memberships.hasNextPage &&
+    rows.length <= 1
 
   /** A refusal; when the row moved or went meanwhile, the list shows it as the server holds it. */
   const refused = (error: unknown, otherwise: MessageKey) => {
@@ -333,6 +328,7 @@ export function MembersPanel({
           <TextField
             ref={searchRef}
             type="search"
+            maxLength={200}
             label={searchLabel}
             placeholder={searchLabel}
             value={search}
@@ -412,7 +408,7 @@ export function MembersPanel({
                   />
                 </TableCell>
               </TableRow>
-            ) : visible.length === 0 ? (
+            ) : rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={columns} className="py-8 text-center">
                   <div className="flex flex-col items-center gap-3">
@@ -424,7 +420,7 @@ export function MembersPanel({
                 </TableCell>
               </TableRow>
             ) : (
-              visible.map((member) => {
+              rows.map((member) => {
                 const name = personLabel(member, t)
                 const email = disclosedEmail(member)
                 const menu = menuFor(member)
@@ -536,6 +532,7 @@ export function MembersPanel({
           <Button
             variant="secondary"
             loading={memberships.isFetchingNextPage}
+            disabled={memberships.isPlaceholderData}
             onClick={() => void memberships.fetchNextPage()}
           >
             {t('console.common.action-load-more', { count: PAGE_SIZE })}

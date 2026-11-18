@@ -52,6 +52,7 @@ import { http, HttpResponse, type HttpHandler } from 'msw/http'
 import type { components } from '@/api/schema'
 import { isTenantSlug } from '@/api/tenantSlug'
 import * as seed from '../demo/seed'
+import { membershipDirectoryResponse } from '../membershipDirectory'
 import {
   demoStatusSummary,
   demoTenantStatus,
@@ -363,9 +364,18 @@ export const handlers: HttpHandler[] = [
       { headers: headers() }
     )
   ),
-  http.get(`${BASE}/organisations/:organisation_id/memberships`, ({ params }) =>
-    HttpResponse.json(page(membershipsFor(params.organisation_id)), { headers: headers() })
-  ),
+  http.get(`${BASE}/organisations/:organisation_id/memberships`, ({ params, request }) => {
+    const rows = membershipsFor(params.organisation_id)
+    // Every demo workspace is opened by its owner; explicit limits still page the directory.
+    return membershipDirectoryResponse(
+      rows,
+      request,
+      'org_owner',
+      rows[0]?.id ?? '',
+      headers(),
+      Math.min(rows.length || 50, 200)
+    )
+  }),
   http.get(`${BASE}/organisations/:organisation_id/memberships/count`, ({ params }) =>
     HttpResponse.json(
       {

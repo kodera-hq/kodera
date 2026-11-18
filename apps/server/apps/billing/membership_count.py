@@ -1,10 +1,10 @@
 """countMemberships' query and count, for apps/billing/api/membership_count.py.
 
-The count is of exactly the population `listMemberships` pages through
-(apps/orgs/membership_selectors.py), so `state=removed` counts 0. `role` and `state` take the
-contract's values, once each. `account_kind` is refused with `400`, whatever its value: Core does
-not store how an account signs in (`listMemberships` omits it too), and a count that ignored the
-filter would be a wrong number on the federation screen.
+The count is of the directory's role/state population (apps/orgs/membership_selectors.py),
+independent of search: countMemberships does not accept `q`. `state=removed` counts 0.
+`role` and `state` take the contract's values, once each. `account_kind` is refused with `400`,
+whatever its value: Core does not store how an account signs in (`listMemberships` omits it too),
+and a count that ignored the filter would be a wrong number on the federation screen.
 """
 
 from typing import Any

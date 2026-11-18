@@ -13722,6 +13722,14 @@ export interface operations {
                 limit?: components["parameters"]["Limit"];
                 role?: components["schemas"]["OrganisationRole"];
                 state?: components["schemas"]["MembershipState"];
+                /**
+                 * @description Case-insensitive substring search of person display names or disclosed email addresses,
+                 *     applied before pagination. Only org_owner and org_admin may match any email.
+                 *     An org_member may match email only on their own person row; a colleague's withheld email never affects results. Trim surrounding
+                 *     whitespace and lowercase before matching and cursor binding. Empty and omitted values
+                 *     are identical. Cursors bind q, role, state and limit; changing them returns 400.
+                 */
+                q?: string;
             };
             header?: never;
             path: {

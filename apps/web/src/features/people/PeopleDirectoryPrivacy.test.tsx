@@ -375,17 +375,15 @@ describe('the colleagues’ list, read by a member', () => {
       expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
       expect(within(table).getByRole('row', { name: /Nadia Haddad/ })).toBeVisible()
     })
-    // The search reads the words a person is listed under, not their state or their role's badge;
-    // a colleague with no name is listed under the words kept for that case, and found under them.
+    // Core searches stored display names, not translated state, role or fallback labels.
     await userEvent.clear(search)
     await userEvent.type(search, 'en attente')
     expect(await screen.findByText('Aucune personne ne correspond à « en attente ».')).toBeVisible()
     await userEvent.clear(search)
     await userEvent.type(search, 'sans nom')
-    await waitFor(() => {
-      expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
-      expect(within(table).getByRole('rowheader')).toHaveTextContent(/^Personne sans nom affiché$/)
-    })
+    expect(await screen.findByText('Aucune personne ne correspond à « sans nom ».')).toBeVisible()
+    await userEvent.clear(search)
+    await within(table).findByRole('row', { name: /Marc Petit/ })
     assertColleaguesList(table)
   })
 

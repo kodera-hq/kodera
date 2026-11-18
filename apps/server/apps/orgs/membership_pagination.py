@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from django.core.exceptions import TooManyFieldsSent
@@ -28,6 +28,7 @@ class DirectoryQuery:
     role: str | None
     state: str | None
     cursor: str | None
+    q: str = field(default="", repr=False)
 
 
 def parse_target(value: str) -> UUID:
@@ -43,14 +44,16 @@ def parse_target(value: str) -> UUID:
 
 
 def parse_query(raw_query: str) -> DirectoryQuery:
-    if len(raw_query) > 2048:
+    if len(raw_query) > 4096:
         raise InvalidDirectoryInputError()
     try:
         query = QueryDict(raw_query)
     except TooManyFieldsSent:
         raise InvalidDirectoryInputError() from None
     if any(
-        key not in {"limit", "role", "state", "cursor"} or len(values) != 1 or not values[0]
+        key not in {"limit", "role", "state", "cursor", "q"}
+        or len(values) != 1
+        or (key != "q" and not values[0])
         for key, values in query.lists()
     ):
         raise InvalidDirectoryInputError()
@@ -62,7 +65,10 @@ def parse_query(raw_query: str) -> DirectoryQuery:
         raise InvalidDirectoryInputError()
     if cursor is not None and (len(cursor) > 512 or not cursor.isascii()):
         raise InvalidDirectoryInputError()
-    return DirectoryQuery(int(limit), role, state, cursor)
+    search = query.get("q", "")
+    if len(search) > 200 or "\x00" in search:
+        raise InvalidDirectoryInputError()
+    return DirectoryQuery(int(limit), role, state, cursor, search.strip().lower())
 
 
 def cursor_key(value: object) -> bytes:
@@ -90,7 +96,8 @@ def encode_cursor(
         after.bytes,
         ceiling.bytes,
     )
-    signature = hmac.digest(key, DOMAIN + payload, hashlib.sha256)
+    # Authenticate the normalized search without carrying contact probes in the cursor.
+    signature = hmac.digest(key, DOMAIN + payload + query.q.encode("utf-8"), hashlib.sha256)
     return base64.urlsafe_b64encode(payload + signature).decode("ascii").rstrip("=")
 
 
@@ -110,7 +117,9 @@ def decode_cursor(
         ):
             raise ValueError()
         payload, signature = raw[:-32], raw[-32:]
-        if not hmac.compare_digest(signature, hmac.digest(key, DOMAIN + payload, hashlib.sha256)):
+        if not hmac.compare_digest(
+            signature, hmac.digest(key, DOMAIN + payload + query.q.encode("utf-8"), hashlib.sha256)
+        ):
             raise ValueError()
         version, person, organisation, role, state, limit, after, ceiling = FORMAT.unpack(payload)
         binding = (person, organisation, role, state, limit)

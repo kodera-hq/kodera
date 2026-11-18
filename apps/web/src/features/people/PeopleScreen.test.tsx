@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw/http'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,7 +19,7 @@ import {
 import { ORG_ID, renderWithApi, signInSynthetic } from './test-support'
 import { QueryClient, QueryClientProvider, type InfiniteData } from '@tanstack/react-query'
 import { ToastProvider } from '../../ui/Toast/Toast'
-import { peopleKeys, type Invitation } from './queries'
+import { peopleKeys, useMembershipsQuery, type Invitation } from './queries'
 
 beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
 afterEach(() => server.resetHandlers())
@@ -90,7 +90,7 @@ describe('People list (03-people.md §4.1)', () => {
     await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(50))
   })
 
-  it('filters the loaded rows by name or address, and offers to clear a search with no result', async () => {
+  it('searches the directory by name or address, and offers to clear a search with no result', async () => {
     renderScreen([defaultPeople()])
     const table = await screen.findByRole('table', { name: 'Personnes' })
     await within(table).findByRole('row', { name: /Marc Petit/ })
@@ -103,6 +103,156 @@ describe('People list (03-people.md §4.1)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Effacer la recherche' }))
     // Five active people and two pending invitations.
     await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(7))
+  })
+
+  it('searches beyond the first page and starts a fresh cursor sequence for each query', async () => {
+    const calls: URLSearchParams[] = []
+    const observe = ({ request }: { request: Request }) => {
+      const url = new URL(request.url)
+      if (url.pathname.endsWith('/memberships')) calls.push(url.searchParams)
+    }
+    server.events.on('request:start', observe)
+    try {
+      renderScreen([largeList()], { callerRole: 'org_owner' })
+      const table = await screen.findByRole('table', { name: 'Personnes' })
+      await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(25))
+      expect(within(table).queryByRole('row', { name: /Personne 117/ })).toBeNull()
+      const search = screen.getByRole('searchbox', { name: 'Rechercher un nom ou un e-mail' })
+      await userEvent.type(search, 'personne')
+      await waitFor(() => expect(calls.at(-1)?.get('q')).toBe('personne'))
+      await within(table).findByRole('row', { name: /Personne 001/ })
+      await userEvent.click(screen.getByRole('button', { name: 'Afficher 25 de plus' }))
+      await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(50))
+      expect(calls.at(-1)?.get('cursor')).toBeTruthy()
+      expect(calls.at(-1)?.get('q')).toBe('personne')
+      await userEvent.clear(search)
+      await userEvent.type(search, 'PERSONNE 117')
+      await waitFor(() => {
+        expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+        expect(within(table).getByRole('row', { name: /Personne 117/ })).toBeVisible()
+      })
+      expect(calls.at(-1)?.get('q')).toBe('personne 117')
+      expect(calls.at(-1)?.has('cursor')).toBe(false)
+      expect(screen.queryByRole('button', { name: 'Afficher 25 de plus' })).toBeNull()
+      expect(search).toHaveAttribute('maxlength', '200')
+    } finally {
+      server.events.removeListener('request:start', observe)
+    }
+  })
+
+  it('keeps loaded rows while searching and cannot reuse their cursor before the response', async () => {
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let requested = false
+    const match = member('Search result', 'result@example.test', 'org_member')
+    renderScreen(
+      [
+        largeList(),
+        [
+          http.get('*/api/v1/organisations/:org/memberships', async ({ request }) => {
+            if (new URL(request.url).searchParams.get('q') !== 'search result') return
+            requested = true
+            await pending
+            return HttpResponse.json({ data: [match], has_more: false, next_cursor: null })
+          }),
+        ],
+      ],
+      { callerRole: 'org_owner' }
+    )
+    try {
+      const table = await screen.findByRole('table', { name: 'Personnes' })
+      await waitFor(() => expect(within(table).getAllByRole('rowheader')).toHaveLength(25))
+      await userEvent.type(screen.getByRole('searchbox'), '  SEARCH RESULT  ')
+      await waitFor(() => expect(requested).toBe(true))
+      expect(within(table).getAllByRole('rowheader')).toHaveLength(25)
+      const loadMore = screen.queryByRole('button', { name: 'Afficher 25 de plus' })
+      if (loadMore !== null) expect(loadMore).toBeDisabled()
+      await act(async () => {
+        release()
+      })
+      await waitFor(() => {
+        expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+        expect(within(table).getByRole('row', { name: /Search result/ })).toBeVisible()
+      })
+      expect(screen.queryByRole('button', { name: 'Afficher 25 de plus' })).toBeNull()
+    } finally {
+      release()
+    }
+  })
+
+  it('does not retain another organisation’s rows while its first page loads', async () => {
+    const first = caller('org_owner')
+    const other = member('Other organisation', 'other@example.test', 'org_member')
+    const otherOrg = '00000000-0000-4000-8000-000000000002'
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      http.get('*/api/v1/organisations/:org/memberships', async ({ params }) => {
+        if (params['org'] === otherOrg) await pending
+        return HttpResponse.json({
+          data: [params['org'] === otherOrg ? { ...other, organisation_id: otherOrg } : first],
+          has_more: false,
+          next_cursor: null,
+        })
+      })
+    )
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { result, rerender } = renderHook(
+      ({ organisationId }) => useMembershipsQuery(organisationId, 'all'),
+      {
+        initialProps: { organisationId: ORG_ID },
+        wrapper: ({ children }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      }
+    )
+    try {
+      await waitFor(() => expect(result.current.data?.pages[0]?.data).toEqual([first]))
+      rerender({ organisationId: otherOrg })
+      expect(result.current.data).toBeUndefined()
+      expect(result.current.isPending).toBe(true)
+      await act(async () => {
+        release()
+      })
+      await waitFor(() => expect(result.current.data?.pages[0]?.data[0]?.id).toBe(other.id))
+    } finally {
+      release()
+      client.clear()
+    }
+  })
+
+  it('searches only disclosed emails even when the mock stores every private fact', async () => {
+    const me = caller('org_member')
+    renderScreen(
+      [
+        peopleHandlers({
+          callerRole: 'org_member',
+          members: [me, member('Colleague', 'private-colleague@example.test', 'org_member')],
+        }),
+      ],
+      { callerRole: 'org_member' }
+    )
+    const table = await screen.findByRole('table', { name: 'Personnes' })
+    await within(table).findByRole('row', { name: /Colleague/ })
+    expect(table).not.toHaveTextContent('private-colleague@example.test')
+    const search = screen.getByRole('searchbox', { name: 'Rechercher un nom' })
+    await userEvent.type(search, 'private-colleague')
+    expect(
+      await screen.findByText('Aucune personne ne correspond à « private-colleague ».')
+    ).toBeVisible()
+    await userEvent.clear(search)
+    await userEvent.type(search, me.email!)
+    await waitFor(() => {
+      expect(within(table).getAllByRole('rowheader')).toHaveLength(1)
+      expect(within(table).getByRole('row', { name: /Julie Marchand/ })).toBeVisible()
+    })
+    await userEvent.clear(search)
+    await userEvent.type(search, 'COLLEAGUE')
+    expect(await within(table).findByRole('row', { name: /Colleague/ })).toBeVisible()
   })
 
   it('keeps the tabs usable and offers a retry when the list fails', async () => {
