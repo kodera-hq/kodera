@@ -31,7 +31,7 @@ sys.path.insert(
     if sys.argv[1:] in (["--scenario"], ["--bootstrap-agent"])
     else str(ROOT / "apps/server"),
 )
-IMAGE = "matrixdotorg/synapse:v1.163.0@sha256:e98ab72138d90fa8b8876c6421fe78a9fdb181c0d7cc690ad740e5173e0c65e6"
+IMAGE = "matrixdotorg/synapse:v1.165.0@sha256:673b4223c81a7634fd07d832b939a58f97081cfdaae7cdd2d1664cdcf7611b62"
 HOME, PEER = "home.example.org", "partner.example.org"
 AGENT, ALICE, BOB = f"@kodera-agent:{HOME}", f"@alice:{HOME}", f"@bob:{PEER}"
 POLICY, MODE = "io.kodera.room.policy", "io.kodera.room.federation"
