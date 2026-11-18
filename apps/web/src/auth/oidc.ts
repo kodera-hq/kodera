@@ -66,13 +66,17 @@ export function isProtectedCallbackError(error: unknown): boolean {
 // sign-ins reuse the SSO session.
 export const OWNER_CLAIM_MAX_AGE_S = 0
 
+const fail = (message: string): never => {
+  throw new Error(message)
+}
+
 function claimRedirectUri(): string {
   const base = import.meta.env.BASE_URL
   if (typeof base !== 'string' || !base.startsWith('/') || !base.endsWith('/'))
-    throw new Error('Invalid protected callback base.')
+    fail('Invalid protected callback base.')
   const url = new URL(`${base}auth/claim-callback`, window.location.origin)
   if (url.origin !== window.location.origin || url.search || url.hash)
-    throw new Error('Invalid protected callback location.')
+    fail('Invalid protected callback location.')
   return url.href
 }
 
@@ -85,12 +89,16 @@ function isOwnerClaimPurpose(value: unknown): boolean {
 }
 
 const INVALID_CLAIM_CONTEXT = 'Invalid owner-claim context.'
+const CLAIM_KEYS = ['purpose', 'intentId', 'organisationId', 'organisationSlug', 'realm'] as const
 
 function claimContext(value: unknown): OwnerClaimAuthContext {
-  const keys = ['purpose', 'intentId', 'organisationId', 'organisationSlug', 'realm'] as const
-  if (typeof value !== 'object' || value === null || Reflect.ownKeys(value).length !== keys.length)
-    throw new Error(INVALID_CLAIM_CONTEXT)
-  for (const key of keys) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Reflect.ownKeys(value).length !== CLAIM_KEYS.length
+  )
+    fail(INVALID_CLAIM_CONTEXT)
+  for (const key of CLAIM_KEYS) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (
       !descriptor ||
@@ -98,7 +106,7 @@ function claimContext(value: unknown): OwnerClaimAuthContext {
       typeof descriptor.value !== 'string' ||
       /[\r\n]/.test(descriptor.value)
     )
-      throw new Error(INVALID_CLAIM_CONTEXT)
+      fail(INVALID_CLAIM_CONTEXT)
   }
   const context = value as OwnerClaimAuthContext
   if (
@@ -111,7 +119,7 @@ function claimContext(value: unknown): OwnerClaimAuthContext {
     !isRealmHint(context.organisationSlug) ||
     !isRealmHint(context.realm)
   )
-    throw new Error(INVALID_CLAIM_CONTEXT)
+    fail(INVALID_CLAIM_CONTEXT)
   return Object.freeze({
     purpose: context.purpose,
     intentId: context.intentId,
@@ -121,15 +129,23 @@ function claimContext(value: unknown): OwnerClaimAuthContext {
   })
 }
 
-function sameClaim(left: OwnerClaimAuthContext | undefined, right: OwnerClaimAuthContext): boolean {
-  return (
-    left !== undefined &&
-    left.purpose === right.purpose &&
-    left.intentId === right.intentId &&
-    left.organisationId === right.organisationId &&
-    left.organisationSlug === right.organisationSlug &&
-    left.realm === right.realm
-  )
+const sameClaim = (
+  left: OwnerClaimAuthContext | undefined,
+  right: OwnerClaimAuthContext
+): boolean => left !== undefined && CLAIM_KEYS.every((key) => left[key] === right[key])
+
+const hasLiveToken = (user: User | null): user is User =>
+  user !== null &&
+  Boolean(user.access_token) &&
+  user.expires_at !== undefined &&
+  Number.isFinite(user.expires_at) &&
+  user.expires_at * 1000 > Date.now()
+
+function clearClaimState(operation: ClaimOperation): void {
+  operation.pending = false
+  operation.context = undefined
+  operation.manager = undefined
+  operation.controller = undefined
 }
 
 // The provider answered and refused, and no retry can succeed: an expired or
@@ -386,14 +402,7 @@ export class OidcAuthAdapter implements AuthAdapter {
   }
 
   #acceptRenewedUser(user: User | null): boolean {
-    if (
-      user === null ||
-      !user.access_token ||
-      user.expires_at === undefined ||
-      !Number.isFinite(user.expires_at) ||
-      user.expires_at * 1000 <= Date.now()
-    )
-      return false
+    if (!hasLiveToken(user)) return false
     const nextIdentity = this.#processedIdentity(user)
     const changed = this.#user !== user
     const identityChanged =
@@ -458,11 +467,10 @@ export class OidcAuthAdapter implements AuthAdapter {
     const registration = options?.registration === true
     const kcAction = options?.kcAction
     const prompt = options?.prompt
-    if (!isRealmHint(realm)) throw new Error('Invalid realm identifier.')
+    if (!isRealmHint(realm)) fail('Invalid realm identifier.')
     if (kcAction !== undefined && kcAction !== 'CONFIGURE_TOTP')
-      throw new Error('Invalid authentication action.')
-    if (prompt !== undefined && prompt !== 'login')
-      throw new Error('Invalid authentication prompt.')
+      fail('Invalid authentication action.')
+    if (prompt !== undefined && prompt !== 'login') fail('Invalid authentication prompt.')
     const key = `${realm}:${registration}:${kcAction ?? ''}:${prompt ?? ''}`
     if (this.#signIn?.key === key && this.#snapshot.status === 'pending')
       return this.#signIn.request
@@ -549,14 +557,14 @@ export class OidcAuthAdapter implements AuthAdapter {
         const user = await manager.signinCallback(url)
         if (this.#manager !== manager) {
           void manager.removeUser().catch(() => {})
-          throw new Error('The sign-in was cancelled before its callback completed.')
+          fail('The sign-in was cancelled before its callback completed.')
         }
         if (user === undefined) return 'silent'
         const identity = this.#processedIdentity(user)
         if (identity === undefined) {
           // signOut clears storage and publishes the closed boundary even if SDK cleanup fails.
           await this.signOut()
-          throw new Error('Invalid sign-in identity.')
+          fail('Invalid sign-in identity.')
         }
         this.#user = user
         this.#identity = identity
@@ -708,20 +716,14 @@ export class OidcAuthAdapter implements AuthAdapter {
           manager.settings.client_id !== clientId ||
           manager.settings.popup_redirect_uri !== callbackUri ||
           !sameClaim(claimContext(user.state), context) ||
-          !user.access_token ||
-          user.expires_at === undefined ||
-          !Number.isFinite(user.expires_at) ||
-          user.expires_at * 1000 <= Date.now()
+          !hasLiveToken(user)
         )
-          throw new Error('Invalid protected sign-in result.')
+          fail('Invalid protected sign-in result.')
         if (!this.#isCurrentClaim(operation)) throw new Error('Owner-claim sign-in cancelled.')
         this.#user = user
         this.#identity = identity
         this.#realm = context.realm
-        operation.pending = false
-        operation.context = undefined
-        operation.manager = undefined
-        operation.controller = undefined
+        clearClaimState(operation)
         this.#claim = undefined
         this.#publish('ready')
       } catch (error: unknown) {
@@ -756,10 +758,7 @@ export class OidcAuthAdapter implements AuthAdapter {
           }
         }
       }
-      operation.pending = false
-      operation.context = undefined
-      operation.manager = undefined
-      operation.controller = undefined
+      clearClaimState(operation)
       if (failed && cleanup.length) {
         const secondary =
           cleanup.length === 1
