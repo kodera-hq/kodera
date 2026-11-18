@@ -39,7 +39,7 @@ Deployment values reach the app only as Gradle properties (see [native-auth.md](
 
 ```sh
 cat config/local.properties.example >> local.properties   # untracked; next to sdk.dir
-docker compose -f dev/keycloak/compose.yml up -d --wait   # Keycloak 26.0.7 on localhost:8080
+docker compose -f dev/keycloak/compose.yml up -d --wait   # Keycloak 26.8.2 on localhost:8080
 curl http://localhost:8080/realms/kodera-dev/.well-known/openid-configuration
 emulator -avd kodera-api36 &                              # or start it from Android Studio
 adb wait-for-device

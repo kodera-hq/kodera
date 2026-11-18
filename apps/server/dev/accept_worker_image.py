@@ -47,7 +47,7 @@ from dev.worker_boundary import (  # noqa: E402
     worker_image_refusals,
 )
 
-POSTGRES = "postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94"
+POSTGRES = "postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f"
 OWNER = f"core-worker-{uuid.uuid4().hex[:12]}"
 LABEL = "kodera.worker-image"
 DOCKER = shutil.which("docker")

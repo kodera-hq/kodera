@@ -1,7 +1,7 @@
 """The realm_create provider (worker/providers/keycloak.py), against a stub realm-apply.sh.
 
 The stub records its argv and environment, prints what the test hands it and exits as told. The
-live run against Keycloak 26.0.7 is not here: it needs a Keycloak and kcadm (see the PR's evidence).
+live provider qualification needs Keycloak and kcadm and is separate from these stub tests.
 """
 
 from __future__ import annotations

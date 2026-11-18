@@ -31,7 +31,7 @@ STAFF_ISSUER = "https://identity.staff.synthetic.test/realms/kodera-staff"
 PASSWORD = "synthetic-bootstrap-only"  # noqa: S105 - disposable fixture credential
 PRIVATE = ("synthetic-unsealed-contact", "synthetic-sealed-payload", "synthetic-claim-secret")
 PHASE = "admission"
-BASELINE_SHA256 = "87ded33470693974d4ed71988f6d9c0b9677175976f539549abaff545d21876c"
+BASELINE_SHA256 = "f4553d3443409af791108f3615976f470af6d01d604aea44ad39dd6dc9cea2ef"
 
 BOOTSTRAP_SELECT_COLUMNS = {
     "identity_user": ("id", "enabled", "deleted_at"),

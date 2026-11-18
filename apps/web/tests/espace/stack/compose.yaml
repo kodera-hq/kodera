@@ -9,7 +9,7 @@ name: kodera-espace
 services:
   postgres:
     # Pinned by digest, as the spike measured them (engine-spike/rooms/README.md).
-    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    image: postgres:16.16-alpine@sha256:81e77a4833487b8132fe4b00bedd39dc3f74b8641e387f19312a48f7de218c2e
     environment:
       POSTGRES_USER: synapse
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -111,7 +111,7 @@ services:
   # token call on the homeserver's origin. Only with `--profile audio`, which bin/up.sh starts using the monorepo server source by default.
   room-access:
     profiles: [audio]
-    image: python:3.13-slim@sha256:2d44738ebf4ce5f63b9d9ea871e9c7cfdc0426f7b0c97cac915fd88ded1d86bb
+    image: python:3.13.18-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
     working_dir: /srv
     # Its one dependency outside the standard library, at Core's pin (pyproject.toml) and its
     # wheel's hash (uv.lock), the line closure.mjs installs for the agent.
@@ -158,7 +158,7 @@ services:
 
   edge:
     profiles: [audio]
-    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    image: nginx:1.30.6-alpine@sha256:901e593c95dc85f5a729f5765516321366ef4ac401821431d408897e95287d0a
     ports:
       - '127.0.0.1:${EDGE_PORT:-8009}:8080'
     volumes:

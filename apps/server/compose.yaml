@@ -19,7 +19,7 @@ name: kodera-server
 services:
   # --- Application database ---------------------------------------------------
   db:
-    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-kodera_server}
@@ -53,7 +53,7 @@ services:
   # tmpfs and there is no volume, so stopping the service discards its data.
   # tests/test_runtime.py fails on a test server that fsyncs.
   test-db:
-    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     profiles: ["test"]
     command: ["postgres", "-c", "fsync=off"]
     environment:
@@ -80,7 +80,7 @@ services:
   # application state have different backup, restore and blast-radius
   # properties, and the split is the same one production uses.
   keycloak-db:
-    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    image: postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     restart: unless-stopped
     environment:
       POSTGRES_DB: keycloak
@@ -97,7 +97,7 @@ services:
 
   # --- Identity ---------------------------------------------------------------
   keycloak:
-    image: quay.io/keycloak/keycloak:26.0
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     restart: unless-stopped
     # start-dev: HTTP, no hostname strictness, dev-mode caching. Never a
     # production command. --import-realm reads /opt/keycloak/data/import once
@@ -144,7 +144,7 @@ services:
 
   # --- Mail -------------------------------------------------------------------
   mailpit:
-    image: axllent/mailpit:v1.21
+    image: axllent/mailpit:v1.29@sha256:757f22b56c1da03570afdb3d259effe5091018008a81bbedc8158cee7e16fdbc
     restart: unless-stopped
     ports:
       - "127.0.0.1:1025:1025" # SMTP

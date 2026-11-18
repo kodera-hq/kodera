@@ -393,6 +393,41 @@ def test_the_rendered_realm_worker_secret_is_the_imported_clients(tmp_path):
     assert [c["clientId"] for c in staff["clients"]] == ["console"]
 
 
+@pytest.mark.parametrize("owner_mode", make_trust.OWNER_MODES)
+def test_imported_worker_has_admin_api_scope_and_console_keeps_default_scopes(tmp_path, owner_mode):
+    make_trust.render(tmp_path, owner_mode=owner_mode)
+    org = json.loads((tmp_path / "realms/e2e-pilot.json").read_text())
+    assert org["attributes"]["CreateDefaultClientScopes"] == "true"
+    [scope] = [s for s in org["clientScopes"] if s["name"] == "kc-admin-api"]
+    assert scope["protocol"] == "openid-connect"
+    assert scope["attributes"]["include.in.token.scope"] == "true"
+    [mapper] = scope["protocolMappers"]
+    assert mapper == {
+        "name": "admin-api-audience",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-admin-api-audience-mapper",
+        "consentRequired": False,
+        "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "true",
+        },
+    }
+    [worker] = [c for c in org["clients"] if c["clientId"] == make_trust.WORKER_CLIENT]
+    assert worker["defaultClientScopes"] == [
+        "acr",
+        "basic",
+        "email",
+        "kc-admin-api",
+        "profile",
+        "roles",
+        "web-origins",
+    ]
+    assert worker["optionalClientScopes"] == []
+    [console] = [c for c in org["clients"] if c["clientId"] == "console"]
+    assert "defaultClientScopes" not in console
+
+
 def assert_shared_loopback(services):
     """`ops` reaches the issuer the browser sees, and Mailpit, on its own loopback."""
     keycloak, mailpit, ops = (services["services"][n] for n in ("keycloak", "mailpit", "ops"))

@@ -29,6 +29,7 @@
   "supportedLocales": ["en", "fr"],
   "defaultLocale": "fr",
   "defaultSignatureAlgorithm": "ES256",
+  "accessCodeLifespan": 60,
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,

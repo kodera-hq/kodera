@@ -18,7 +18,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
-POSTGRES = "postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94"
+POSTGRES = "postgres:16.16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f"
 LABEL = "kodera.production-qualification"
 OWNER = "production-http-" + uuid.uuid4().hex[:12]
 ISSUER = "https://identity.synthetic.test/realms/alpha"

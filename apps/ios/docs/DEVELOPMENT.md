@@ -34,7 +34,7 @@ Deployment values reach the app only as build settings (see [native-auth.md](nat
 
 ```sh
 cp Config/Local.xcconfig.example Config/Local.xcconfig   # untracked; Debug builds admit loopback origins
-docker compose -f dev/keycloak/compose.yml up -d --wait  # Keycloak 26.0.7 on 127.0.0.1 and [::1], port 8080
+docker compose -f dev/keycloak/compose.yml up -d --wait  # Keycloak 26.8.2 on 127.0.0.1 and [::1], port 8080
 curl http://localhost:8080/realms/kodera-dev/.well-known/openid-configuration
 xcodegen generate
 ```

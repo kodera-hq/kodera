@@ -288,6 +288,34 @@ def render_realm(
         else:
             require(not user.get("credentials"), "template account must be credential-free")
     if realm == ORG_REALM:
+        # Import resolves client scopes before Keycloak creates kc-admin-api. Declare it
+        # here so the worker receives its admin audience, and keep the built-in scopes
+        # (RealmManager.CREATE_DEFAULT_CLIENT_SCOPES = "CreateDefaultClientScopes")
+        # that clients without an explicit defaultClientScopes list (console) inherit.
+        value["attributes"] = {
+            **value.get("attributes", {}),
+            "CreateDefaultClientScopes": "true",
+        }
+        value.setdefault("clientScopes", []).append(
+            {
+                "name": "kc-admin-api",
+                "protocol": "openid-connect",
+                "attributes": {"include.in.token.scope": "true"},
+                "protocolMappers": [
+                    {
+                        "name": "admin-api-audience",
+                        "protocol": "openid-connect",
+                        "protocolMapper": "oidc-admin-api-audience-mapper",
+                        "consentRequired": False,
+                        "config": {
+                            "access.token.claim": "true",
+                            "introspection.token.claim": "true",
+                            "lightweight.claim": "true",
+                        },
+                    }
+                ],
+            }
+        )
         client, account = worker_client(realm, seed)
         clients.append(client)
         users.append(account)
@@ -315,6 +343,16 @@ def worker_client(realm: str, seed: bytes = SEED) -> tuple[dict[str, Any], dict[
         "implicitFlowEnabled": False,
         "directAccessGrantsEnabled": False,
         "protocol": "openid-connect",
+        "defaultClientScopes": [
+            "acr",
+            "basic",
+            "email",
+            "kc-admin-api",
+            "profile",
+            "roles",
+            "web-origins",
+        ],
+        "optionalClientScopes": [],
     }
     user = {
         "username": f"service-account-{WORKER_CLIENT}",
@@ -614,8 +652,14 @@ def check_realm(rendered: dict[str, Any], realm: str, owner_mode: str) -> None:
             and workers[0]["publicClient"] is False
             and workers[0]["serviceAccountsEnabled"] is True
             and workers[0]["standardFlowEnabled"] is False
-            and workers[0]["directAccessGrantsEnabled"] is False,
-            "the realm worker must be a confidential client-credentials client",
+            and workers[0]["directAccessGrantsEnabled"] is False
+            and "kc-admin-api" in workers[0].get("defaultClientScopes", []),
+            "the realm worker must be a confidential client-credentials client with kc-admin-api",
+        )
+        require(
+            rendered.get("attributes", {}).get("CreateDefaultClientScopes") == "true"
+            and any(s.get("name") == "kc-admin-api" for s in rendered.get("clientScopes", [])),
+            "the organisation realm must create default scopes and declare kc-admin-api",
         )
         accounts = [u for u in rendered["users"] if u.get("serviceAccountClientId")]
         require(
