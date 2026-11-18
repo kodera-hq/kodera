@@ -412,6 +412,19 @@ describe('CallController', () => {
     expect(call.getSnapshot()).toMatchObject({ status: 'idle', roomId: null })
   })
 
+  it('leaves no hidden container in the page when a setup step throws mid-join', async () => {
+    // A subscriber that refuses, after the session has been stored and its container built.
+    const { call, mount } = setup({
+      protection: {
+        subscribeRoomBoundary: () => {
+          throw new Error('boundary subscription refused')
+        },
+      },
+    })
+    await expect(call.join(STANDUP)).rejects.toThrow('boundary subscription refused')
+    expect(mount.children).toHaveLength(0)
+  })
+
   it('leaves the current room before joining another, on the same LiveKit room', async () => {
     const { call, room, rooms } = setup()
     await call.join(STANDUP)

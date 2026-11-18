@@ -4338,16 +4338,20 @@ it.each(['docs', 'files'] as const)(
     const change = vi.fn()
     const navigate = vi.fn()
     render(
-      <EspaceLiveView
-        org="acme"
-        organisationName="Acme"
-        workspace={WORKSPACE}
-        channelId={GENERAL}
-        store={makeFakeStore()}
-        activeCanvasMode={canvas}
-        onChangeCanvasMode={change}
-        onNavigateChannel={navigate}
-      />
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <EspaceLiveView
+          org="acme"
+          organisationName="Acme"
+          workspace={WORKSPACE}
+          channelId={GENERAL}
+          store={makeFakeStore()}
+          activeCanvasMode={canvas}
+          onChangeCanvasMode={change}
+          onNavigateChannel={navigate}
+        />
+      </QueryClientProvider>
     )
     await userEvent.setup().click(screen.getByRole('link', { name: /^général/ }))
     expect(change).toHaveBeenCalledWith('chat')

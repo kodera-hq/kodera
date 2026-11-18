@@ -18,7 +18,8 @@ export function firstLink(body: string): string | null {
 
 type Entry = { state: 'loading' } | { state: 'done'; card: SafeUnfurl | null }
 
-const MAX_ENTRIES = 300
+/** The most addresses kept at once; asking for one more evicts the oldest. */
+export const MAX_ENTRIES = 300
 
 export class UnfurlCache {
   readonly #entries = new Map<string, Entry>()
@@ -55,6 +56,9 @@ export class UnfurlCache {
   }
 
   #settle(key: string, card: SafeUnfurl | null) {
+    // An entry evicted while its fetch was in flight stays out: its late settlement must not
+    // put it back above the cap.
+    if (!this.#entries.has(key)) return
     this.#entries.set(key, { state: 'done', card })
     for (const listener of this.#listeners) listener()
   }

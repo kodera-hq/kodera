@@ -9,7 +9,14 @@
 // the others' place (`timelineVirtualizer.ts`). Each row carries its own top gap, so a row's
 // measured height is all the room it takes.
 
-import { memo, useCallback, useImperativeHandle, useSyncExternalStore } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useSyncExternalStore,
+} from 'react'
 import type { ReactNode, Ref, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { demoMessages } from '../../app/demoMessages'
@@ -218,6 +225,15 @@ function MessageTimelineView({
     estimate,
     scrollRef: logRef,
   })
+  /** The « shown » marks still counting down: none outlives the log. */
+  const shownTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+  useEffect(
+    () => () => {
+      for (const timer of shownTimers.current) clearTimeout(timer)
+      shownTimers.current.clear()
+    },
+    []
+  )
   useImperativeHandle(
     handleRef,
     () => ({
@@ -229,7 +245,11 @@ function MessageTimelineView({
         const element = layout.rowElement(message.key)
         if (element !== undefined) {
           element.dataset.shown = 'true'
-          setTimeout(() => delete element.dataset.shown, SHOWN_MARK_MS)
+          const timer = setTimeout(() => {
+            shownTimers.current.delete(timer)
+            delete element.dataset.shown
+          }, SHOWN_MARK_MS)
+          shownTimers.current.add(timer)
           // The row itself takes the focus, out of the tab order: the next Tab reaches its controls.
           element.tabIndex = -1
           element.focus({ preventScroll: true })

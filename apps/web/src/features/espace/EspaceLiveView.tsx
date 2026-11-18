@@ -724,39 +724,52 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
   const [rightSidebarWidth, setRightSidebarWidth] = useState<number>(280)
   const membersPanelId = useId()
   const membersTrigger = useRef<HTMLButtonElement>(null)
+  // The sidebar drag in progress, and the route-focus releases still waiting their task: neither
+  // outlives the view.
+  const sidebarDrag = useRef<AbortController | null>(null)
+  const routeFocusTimers = useRef<Map<ReturnType<typeof setTimeout>, string>>(new Map())
+  useEffect(
+    () => () => {
+      sidebarDrag.current?.abort()
+      for (const [timer, path] of routeFocusTimers.current) {
+        clearTimeout(timer)
+        // The hold is the view's to let go: the timer going away must not keep it.
+        releaseRouteFocus(path)
+      }
+      routeFocusTimers.current.clear()
+    },
+    []
+  )
   function closeMembers() {
     setMembersOpen(false)
     membersTrigger.current?.focus()
   }
-  function startLeftSidebarResize(event: MouseEvent<HTMLDivElement>) {
+  /**
+   * One drag at a time: its window listeners end on its mouseup, on a blur, when a newer drag
+   * starts, or when the view goes away, so a drag never leaks them.
+   */
+  function startSidebarResize(event: MouseEvent<HTMLDivElement>, resize: (delta: number) => void) {
     event.preventDefault()
+    sidebarDrag.current?.abort()
+    const drag = new AbortController()
+    sidebarDrag.current = drag
     const startX = event.clientX
-    const startWidth = leftSidebarWidth
-    const handleMove = (moveEvent: globalThis.MouseEvent) => {
-      const delta = moveEvent.clientX - startX
-      setLeftSidebarWidth(Math.max(180, Math.min(420, startWidth + delta)))
-    }
-    const handleUp = () => {
-      window.removeEventListener('mousemove', handleMove)
-      window.removeEventListener('mouseup', handleUp)
-    }
-    window.addEventListener('mousemove', handleMove)
-    window.addEventListener('mouseup', handleUp)
+    window.addEventListener('mousemove', (moveEvent) => resize(moveEvent.clientX - startX), {
+      signal: drag.signal,
+    })
+    const end = () => drag.abort()
+    window.addEventListener('mouseup', end, { once: true, signal: drag.signal })
+    window.addEventListener('blur', end, { once: true, signal: drag.signal })
+  }
+  function startLeftSidebarResize(event: MouseEvent<HTMLDivElement>) {
+    startSidebarResize(event, (delta) =>
+      setLeftSidebarWidth(Math.max(180, Math.min(420, leftSidebarWidth + delta)))
+    )
   }
   function startRightSidebarResize(event: MouseEvent<HTMLDivElement>) {
-    event.preventDefault()
-    const startX = event.clientX
-    const startWidth = rightSidebarWidth
-    const handleMove = (moveEvent: globalThis.MouseEvent) => {
-      const delta = startX - moveEvent.clientX
-      setRightSidebarWidth(Math.max(220, Math.min(560, startWidth + delta)))
-    }
-    const handleUp = () => {
-      window.removeEventListener('mousemove', handleMove)
-      window.removeEventListener('mouseup', handleUp)
-    }
-    window.addEventListener('mousemove', handleMove)
-    window.addEventListener('mouseup', handleUp)
+    startSidebarResize(event, (delta) =>
+      setRightSidebarWidth(Math.max(220, Math.min(560, rightSidebarWidth - delta)))
+    )
   }
   const viewerId = activeStore.getUserId()
   const { profile: localProfile, hasProfile } = useLocalProfile(viewerId)
@@ -1117,7 +1130,13 @@ const MountedEspaceLiveView = memo(function MountedEspaceLiveView({
       setRequestedChannelId((current) => (current === nextChannelId ? null : current))
       // Once the navigation is over, the address it reached has been drawn, and one it never
       // reached (superseded, refused) holds nothing. A task later, after that draw.
-      if (keepFocus) setTimeout(() => releaseRouteFocus(path), 0)
+      if (keepFocus) {
+        const timer = setTimeout(() => {
+          routeFocusTimers.current.delete(timer)
+          releaseRouteFocus(path)
+        }, 0)
+        routeFocusTimers.current.set(timer, path)
+      }
     }
     void Promise.resolve(onNavigateChannel(nextChannelId)).then(settled, settled)
   })
