@@ -106,12 +106,33 @@ function verifyConfiguration(config, availableFiles, defaultCapability) {
   }
 }
 
+function verifyManifestVersionParity(expectedVersion, pkgJsonText, cargoTomlText) {
+  const pkg = JSON.parse(pkgJsonText);
+  assert.equal(pkg.version, expectedVersion, 'apps/desktop/package.json version must match tauri.conf.json');
+  const cargoMatch = /^version\s*=\s*"([^"]+)"/mu.exec(cargoTomlText);
+  assert.equal(cargoMatch?.[1], expectedVersion, 'apps/desktop/src-tauri/Cargo.toml version must match tauri.conf.json');
+}
+
 function selftest() {
   verifyConfiguration(conf, files, capability);
+  verifyManifestVersionParity(
+    conf.version,
+    readFileSync(join(desktopDir, 'package.json'), 'utf8'),
+    readFileSync(join(tauriDir, 'Cargo.toml'), 'utf8'),
+  );
+  assert.throws(
+    () => verifyManifestVersionParity(conf.version, '{"version":"0.0.0"}', `version = "${conf.version}"`),
+    /package\.json version must match/u,
+  );
+  assert.throws(
+    () => verifyManifestVersionParity(conf.version, JSON.stringify({ version: conf.version }), 'version = "0.0.0"'),
+    /Cargo\.toml version must match/u,
+  );
   verifyBundleIconBinaries();
   const connectFirst = APPROVED_CONNECT_SOURCES[0];
   const mutations = [
     ['wrong identifier', /identifier must match/u, (config) => { config.identifier = 'io.invalid.desktop'; }],
+    ['wrong version', /version must match/u, (config) => { config.version = '0.0.0'; }],
     ['missing tray icon', /trayIcon must configure kodera-tray/u, (config) => { delete config.app.trayIcon; }],
     ['wrong tray icon path', /trayIcon must configure kodera-tray/u, (config) => { config.app.trayIcon.iconPath = 'icons/missing.png'; }],
     ['missing media directive', /media-src must be present/u, (config) => {
@@ -322,6 +343,11 @@ if (isDirectExecution(import.meta.url)) {
   assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--selftest'), 'usage: verify-config.mjs [--selftest]');
   if (args[0] === '--selftest') selftest();
   verifyConfiguration(conf, files, capability);
+  verifyManifestVersionParity(
+    conf.version,
+    readFileSync(join(desktopDir, 'package.json'), 'utf8'),
+    readFileSync(join(tauriDir, 'Cargo.toml'), 'utf8'),
+  );
   verifyBundleIconBinaries();
   verifyCompanionSurface(companionSurface());
   console.log('OK — @kodera/desktop Tauri v2 configuration, capabilities, and icons verified; no commercial wording or billing destination.');

@@ -385,7 +385,7 @@ const IPC_INIT_SCRIPT: &str = r#"(function () {
   const koderaDesktop = Object.freeze({
     identifier: 'io.kodera.desktop',
     productName: 'Kodera',
-    version: '0.1.0',
+    version: '0.1.1',
     invoke: invoke,
     onEvent: onEvent
   });
@@ -2326,6 +2326,7 @@ mod tests {
                 &payload
             )]
         );
+        assert!(IPC_INIT_SCRIPT.contains(&format!("version: '{DESKTOP_APP_VERSION}',")));
     }
 
     #[test]
