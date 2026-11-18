@@ -40,6 +40,7 @@ import {
   getWorkspaceCollection,
   getWorkspaceCollectionRow,
   isCollectionPreconditionFailedError,
+  isCollectionPreconditionRequiredError,
   listWorkspaceCollections,
   putWorkspaceCollectionRow,
   queryWorkspaceCollection,
@@ -120,6 +121,20 @@ function buildCompleteRowValues(
 
 const VIEW_ORDER: readonly CollectionViewKind[] = ['table', 'board', 'list']
 
+/**
+ * A write Core refused on its precondition, and which of the two it was. The pair is the
+ * contract's (`src/api/generated/problems.ts`) and the person is told something different for
+ * each: `version-conflict` is `precondition-failed` (the tag sent was stale — somebody else
+ * wrote first), `version-required` is `precondition-required` (no tag was sent at all, so
+ * nothing was compared). Both recover by re-reading; only the first is a conflict with a
+ * colleague, and neither recovers by retrying the same write — which is why the generic
+ * « réessayez » fallback must never answer for either.
+ */
+interface CollectionWriteConflict {
+  readonly documentId: string
+  readonly kind: 'version-conflict' | 'version-required'
+}
+
 export function DocsCollectionView({
   organisationId,
   documents,
@@ -135,7 +150,7 @@ export function DocsCollectionView({
   onExport,
   onRowsChange,
 }: DocsCollectionViewProps) {
-  const { i18n } = useTranslation()
+  const { t, i18n } = useTranslation()
   const copy = getCollectionCopy(i18n.resolvedLanguage)
   const searchInputId = useId()
   const statusFilterId = useId()
@@ -199,7 +214,7 @@ export function DocsCollectionView({
     direction: 'asc',
   })
 
-  const [conflictDocId, setConflictDocId] = useState<string | null>(null)
+  const [conflict, setConflict] = useState<CollectionWriteConflict | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
   const [newEntryTitle, setNewEntryTitle] = useState('')
@@ -396,12 +411,22 @@ export function DocsCollectionView({
       Boolean(organisationId) && (!isControlledLocal || initialRowEtags !== undefined) && !remoteFallbackLocal
 
     if (shouldSyncRemote && organisationId) {
+      const rollbackOptimisticRow = () => {
+        commitRowMap((prev) => {
+          const copyMap = { ...prev }
+          if (previousRow) copyMap[documentId] = previousRow
+          else delete copyMap[documentId]
+          return copyMap
+        })
+      }
+
       try {
         const hasExistingRow =
           knownRemoteRowsRef.current.has(documentId) || rowEtagsRef.current.has(documentId)
 
         if (hasExistingRow) {
           let etag = rowEtagsRef.current.get(documentId) ?? null
+          let payloadValues = nextValues
           if (!etag) {
             const fetched = await getWorkspaceCollectionRow(
               organisationId,
@@ -410,17 +435,27 @@ export function DocsCollectionView({
               collection.properties
             )
             etag = fetched.etag
-            if (etag) rowEtagsRef.current.set(documentId, etag)
+            if (etag) {
+              rowEtagsRef.current.set(documentId, etag)
+              payloadValues = {
+                ...buildCompleteRowValues(collection.properties, fetched.row.values),
+                [property.id]: validated.cell,
+              }
+            }
           }
           if (!etag) {
-            setConflictDocId(documentId)
+            // The row is there and its version is not: a write would have to go out with no
+            // `If-Match`, which is the client-side half of `precondition-required`. Roll back the
+            // unsaved optimistic value, refuse before sending, and report the same governed state.
+            rollbackOptimisticRow()
+            setConflict({ documentId, kind: 'version-required' })
             return false
           }
           const saved = await putWorkspaceCollectionRow(
             organisationId,
             collection.id,
             documentId,
-            nextValues,
+            payloadValues,
             { mode: 'update', ifMatch: etag },
             collection.properties
           )
@@ -430,6 +465,7 @@ export function DocsCollectionView({
           } else {
             rowEtagsRef.current.delete(documentId)
           }
+          setConflict((prev) => (prev?.documentId === documentId ? null : prev))
           commitRowMap((prev) => ({
             ...prev,
             [documentId]: saved.row,
@@ -447,26 +483,27 @@ export function DocsCollectionView({
           if (created.etag) {
             rowEtagsRef.current.set(documentId, created.etag)
           }
+          setConflict((prev) => (prev?.documentId === documentId ? null : prev))
           commitRowMap((prev) => ({
             ...prev,
             [documentId]: created.row,
           }))
         }
       } catch (err) {
-        if (isCollectionPreconditionFailedError(err)) {
-          // Roll back the stale optimistic write and prompt reload.
-          commitRowMap((prev) => {
-            const copyMap = { ...prev }
-            if (previousRow) copyMap[documentId] = previousRow
-            else delete copyMap[documentId]
-            return copyMap
+        if (
+          isCollectionPreconditionFailedError(err) ||
+          isCollectionPreconditionRequiredError(err)
+        ) {
+          // Roll back the stale optimistic write, forget the refused version so no stale sibling
+          // values can be paired with a newer ETag before reload, and prompt reload.
+          rollbackOptimisticRow()
+          rowEtagsRef.current.delete(documentId)
+          setConflict({
+            documentId,
+            kind: isCollectionPreconditionRequiredError(err)
+              ? 'version-required'
+              : 'version-conflict',
           })
-          if (err.currentEtag) {
-            rowEtagsRef.current.set(documentId, err.currentEtag)
-          } else {
-            rowEtagsRef.current.delete(documentId)
-          }
-          setConflictDocId(documentId)
           return false
         }
         setValidationError(copy.validation.invalidValue)
@@ -478,8 +515,8 @@ export function DocsCollectionView({
   }
 
   const handleReloadAfterConflict = async () => {
-    const targetDocId = conflictDocId
-    setConflictDocId(null)
+    const refused = conflict
+    setConflict(null)
     if (!organisationId) return
 
     try {
@@ -494,20 +531,20 @@ export function DocsCollectionView({
         }
       }
 
-      if (targetDocId) {
+      if (refused) {
         const freshRow = await getWorkspaceCollectionRow(
           organisationId,
           collection.id,
-          targetDocId,
+          refused.documentId,
           activeProps
         )
-        knownRemoteRowsRef.current.add(targetDocId)
+        knownRemoteRowsRef.current.add(refused.documentId)
         if (freshRow.etag) {
-          rowEtagsRef.current.set(targetDocId, freshRow.etag)
+          rowEtagsRef.current.set(refused.documentId, freshRow.etag)
         }
         commitRowMap((prev) => ({
           ...prev,
-          [targetDocId]: freshRow.row,
+          [refused.documentId]: freshRow.row,
         }))
       }
 
@@ -529,7 +566,7 @@ export function DocsCollectionView({
       }
     } catch {
       // Keep banner dismissed only when reload succeeded; re-surface if still unreachable.
-      setConflictDocId(targetDocId)
+      setConflict(refused)
     }
   }
 
@@ -1209,21 +1246,32 @@ export function DocsCollectionView({
         </div>
       </div>
 
-      {/* 412 Concurrency Conflict Banner */}
-      {conflictDocId !== null ? (
+      {/*
+        The refused write, announced assertively: `role="alert"` is implicitly
+        `aria-live="assertive"`, which is what a refusal needs — a `polite` announcement can be
+        queued behind a sync update and reach the person after they have already retried. The two
+        sentences are governed catalogue copy, one per precondition, and neither names a status
+        number.
+      */}
+      {conflict !== null ? (
         <div
           role="alert"
           data-testid="collection-conflict-banner"
+          data-conflict-kind={conflict.kind}
           className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-c-bad bg-c-bad-soft px-3 py-2 text-sm font-medium text-c-bad-ink"
         >
-          <span>{copy.conflict.message}</span>
+          <span>
+            {conflict.kind === 'version-required'
+              ? t('console.docs.collection.error-version-required')
+              : t('console.docs.collection.error-version-conflict')}
+          </span>
           <Button
             size="sm"
             variant="secondary"
             data-testid="collection-conflict-reload"
             onClick={() => void handleReloadAfterConflict()}
           >
-            {copy.conflict.reloadAction}
+            {t('console.docs.collection.action-reload')}
           </Button>
         </div>
       ) : null}

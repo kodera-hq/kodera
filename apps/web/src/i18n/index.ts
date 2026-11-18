@@ -79,6 +79,23 @@ const loaded: Record<Language, Set<MessageNamespace>> = {
 // one catalogue share one request.
 const inFlight = new Map<string, Promise<void>>()
 
+// WCAG 2.2 SC 3.1.1 Language of Page, level A. A screen reader picks its
+// pronunciation rules from `<html lang>`, so the attribute has to name the
+// language the page is actually rendered in. `index.html` ships
+// `lang="fr"`, which is right for the default language and wrong for every
+// English page and every page whose language is switched while it is open:
+// axe-core's `html-has-lang` and `html-lang-valid` both pass on a present,
+// valid, wrong value, so nothing else catches it.
+//
+// The `document` guard is not load-bearing today — every consumer of this
+// module is a browser or jsdom — it is what keeps the module evaluable where
+// there is no DOM, so that a Node-side import (a prerender, a script reading
+// the runtime) cannot be brought down by a language setting.
+function applyDocumentLanguage(language: string): void {
+  if (typeof document === 'undefined' || !document.documentElement) return
+  document.documentElement.lang = language === 'en' ? 'en' : 'fr'
+}
+
 void i18n.use(initReactI18next).init({
   lng: readLanguagePreference(),
   fallbackLng: 'fr',
@@ -114,6 +131,14 @@ void i18n.use(initReactI18next).init({
 function activeLanguage(): Language {
   return i18n.language === 'en' ? 'en' : 'fr'
 }
+
+// The language this page opened in, named on the document before anything renders: `init`
+// settles `i18n.language` synchronously here (the default language's resources are passed to it,
+// so it has nothing to fetch first), and it may have emitted `languageChanged` already.
+applyDocumentLanguage(activeLanguage())
+// And every change from here on, at the moment i18next announces it — which is the moment every
+// mounted screen re-renders in the new language.
+i18n.on('languageChanged', applyDocumentLanguage)
 
 function loadCatalogue(language: Language, namespace: MessageNamespace): Promise<void> | undefined {
   if (loaded[language].has(namespace)) return undefined

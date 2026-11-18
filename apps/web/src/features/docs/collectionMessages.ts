@@ -1,3 +1,8 @@
+// The collection's own two-language copy. One thing is deliberately NOT here: the version-conflict
+// banner. Its wording is a governed catalogue key (`console.docs.collection.*`, FR and EN), because
+// it is the one sentence on this screen that reports a refused write — it needs the generator's
+// parity check, the missing-key handler and language-switch coverage that this object has none of.
+// Nothing new goes in here; new copy goes in `docs/specs/copy/{fr,en}.md`.
 export interface CollectionCopy {
   readonly regionLabel: string
   readonly heading: string
@@ -95,10 +100,6 @@ export interface CollectionCopy {
     readonly markdown: string
     readonly exportedNotice: (format: string) => string
     readonly exportFailed: string
-  }
-  readonly conflict: {
-    readonly message: string
-    readonly reloadAction: string
   }
   readonly validation: {
     readonly invalidUrl: string
@@ -217,11 +218,6 @@ export const collectionMessages: Readonly<Record<'fr' | 'en', CollectionCopy>> =
       exportedNotice: (format) => `Export ${format} prêt.`,
       exportFailed: 'Impossible de copier l’export.',
     },
-    conflict: {
-      message:
-        'Conflit de version détecté (412) : cette entrée a été modifiée par un autre membre. Rechargez les données avant de réappliquer votre changement.',
-      reloadAction: 'Recharger la collection',
-    },
     validation: {
       invalidUrl:
         'Lien refusé : seules les adresses commençant par https:// ou http:// sans identifiants sont autorisées.',
@@ -338,11 +334,6 @@ export const collectionMessages: Readonly<Record<'fr' | 'en', CollectionCopy>> =
       markdown: 'Export Markdown',
       exportedNotice: (format) => `${format} export ready.`,
       exportFailed: 'Could not copy export.',
-    },
-    conflict: {
-      message:
-        'Version conflict detected (412): this entry was updated by another member. Reload the collection before re-applying your change.',
-      reloadAction: 'Reload collection',
     },
     validation: {
       invalidUrl:
