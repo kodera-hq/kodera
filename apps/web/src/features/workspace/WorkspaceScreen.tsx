@@ -624,6 +624,7 @@ function LiveWorkspace({
             }))
             setCreateCategory(null)
             setCanvas('chat')
+            track('workspace_channel_created', { kind, access: options.access })
             void navigation.onNavigateChannel(created.id)
           }}
         />

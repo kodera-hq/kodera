@@ -1,13 +1,6 @@
-import {
-  lazy,
-  Suspense,
-  useId,
-  useMemo,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from 'react'
+import { lazy, Suspense, useId, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
+import { track } from '../../analytics/track'
 import { Button } from '../../ui/Button/Button'
 import { InlineAlert } from '../../ui/InlineAlert/InlineAlert'
 import { cx } from '../../ui/cx'
@@ -32,11 +25,7 @@ import { computeLocalBacklinks, resolveWikilinkTarget } from './wikilinks'
 
 const LazyCollaborativeBlockEditor = lazy(() => import('./CollaborativeBlockEditor'))
 
-export type ChannelDocTemplateChoice =
-  | 'blank'
-  | 'meeting'
-  | 'decision'
-  | WorkspaceCoreTemplateKey
+export type ChannelDocTemplateChoice = 'blank' | 'meeting' | 'decision' | WorkspaceCoreTemplateKey
 
 export interface ChannelDoc {
   readonly id: string
@@ -103,8 +92,7 @@ export function ChannelDocsEditor({
   )
   const treeNodes = useMemo(() => buildDocumentTree(docs), [docs])
   const selectedId = workspace.selectedByChannel[channelId]
-  const currentNode =
-    treeNodes.find((node) => node.doc.id === selectedId) ?? treeNodes[0]
+  const currentNode = treeNodes.find((node) => node.doc.id === selectedId) ?? treeNodes[0]
   const current = currentNode?.doc
   const currentRole: DocumentAccessRole = current?.role === 'viewer' ? 'viewer' : 'editor'
 
@@ -219,6 +207,7 @@ export function ChannelDocsEditor({
     setPublishing(true)
     try {
       await onPublish(current.title, current.content, current.id)
+      track('workspace_document_published', { editor_mode: editorMode })
       setStatus(copy.published)
     } catch {
       setStatus(copy.failed)
@@ -297,7 +286,7 @@ export function ChannelDocsEditor({
                       setStatus(null)
                     }}
                     className={cx(
-                      'min-h-10 rounded-md border pr-3 py-2 text-sm focus-visible:ring',
+                      'min-h-10 rounded-md border py-2 pr-3 text-sm focus-visible:ring',
                       padClass,
                       node.doc.id === current.id
                         ? 'border-c-border bg-c-ok-soft font-bold text-c-ink'
@@ -318,7 +307,7 @@ export function ChannelDocsEditor({
                 maxLength={120}
                 readOnly={currentRole === 'viewer'}
                 onChange={(event) => update({ title: event.target.value })}
-                className="h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-c-ink focus-visible:ring read-only:bg-c-sunken"
+                className="h-10 rounded-md border border-c-border-input bg-c-surface px-3 text-c-ink read-only:bg-c-sunken focus-visible:ring"
               />
             </label>
 

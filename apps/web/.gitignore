@@ -44,3 +44,4 @@ Thumbs.db
 # Scratch trees written by scripts/check-e2e-specs.selftest.sh. It cleans up after
 # itself; this catches the run that was interrupted before it could.
 .e2e-selftest-*/
+.env.local

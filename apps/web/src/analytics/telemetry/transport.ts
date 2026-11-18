@@ -2,15 +2,15 @@ import type { AnalyticsEvent } from '../track'
 import { EU_INGESTION_HOST, sanitizeTelemetryEvent } from './privacy'
 
 /** Minimal capture API adapter: no SDK, cookies, URL enrichment, DOM readers or queue. */
-export function createTelemetryTransport(key: string, host: string) {
-  if (!key.trim() || host !== EU_INGESTION_HOST) return undefined
-  let session: string | undefined = crypto.randomUUID()
+export function createTelemetryTransport(key: string, host: string, personId: string) {
+  if (!key.trim() || !personId.trim() || host !== EU_INGESTION_HOST) return undefined
+  let distinctId: string | undefined = personId
   const pending = new Set<AbortController>()
   let windowStart = performance.now()
   let deliveries = 0
   return {
     capture(input: AnalyticsEvent): void {
-      if (!session) return
+      if (!distinctId) return
       let event: AnalyticsEvent | undefined
       try {
         event = sanitizeTelemetryEvent(input)
@@ -42,7 +42,7 @@ export function createTelemetryTransport(key: string, host: string) {
           body: JSON.stringify({
             api_key: key,
             event: event.name,
-            distinct_id: session,
+            distinct_id: distinctId,
             properties: {
               ...event.properties,
               $process_person_profile: false,
@@ -57,7 +57,7 @@ export function createTelemetryTransport(key: string, host: string) {
       }
     },
     stop(): void {
-      session = undefined
+      distinctId = undefined
       for (const controller of pending) controller.abort()
       pending.clear()
     },

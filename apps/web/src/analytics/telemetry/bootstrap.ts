@@ -27,7 +27,9 @@ export async function startTelemetry(
     void loadTransport()
       .then(({ createTelemetryTransport }) => {
         if (current !== epoch || !hasTelemetryConsent()) return
-        const transport = createTelemetryTransport(key, host)
+        const scope = getTelemetryScope()
+        if (!scope) return
+        const transport = createTelemetryTransport(key, host, scope.person)
         if (!transport) return
         const untrack = onTrack((event) => transport.capture(event))
         const error = (event: ErrorEvent) => reportTelemetryError(event.error, 'error')

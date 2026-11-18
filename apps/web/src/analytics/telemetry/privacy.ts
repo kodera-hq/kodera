@@ -23,9 +23,41 @@ const AREAS = [
   'other',
 ] as const
 const OPERATIONS = ['chat_send', 'docs_load', 'docs_save', 'file_upload', 'file_download'] as const
+const EXTENSION_IDS = [
+  'io.kodera.ext.frameio-review-bridge',
+  'io.kodera.ext.frameio',
+  'io.kodera.ext.renderfarm',
+  'io.kodera.ext.hello-webhook',
+  'io.kodera.ext.github',
+  'io.kodera.ext.gitlab',
+  'io.kodera.ext.linear',
+  'io.kodera.ext.sentry',
+  'io.kodera.ext.alertmanager',
+  'io.kodera.ext.rss-advisories',
+  'io.kodera.ext.release-assistant',
+  'io.kodera.ext.github-release-notifier',
+  'io.kodera.ext.uptime-incident-bridge',
+  'io.kodera.ext.docs-collab-announcer',
+  'io.kodera.ext.openproject',
+  'io.kodera.ext.calcom',
+  'io.kodera.ext.github-repo-tracker',
+  'io.kodera.ext.qonto-treasury-feed',
+  'io.kodera.ext.billing-webhooks',
+  'io.kodera.ext.notion-workspace-bridge',
+  'io.kodera.ext.gdrive-document-share',
+  'io.kodera.ext.social-pulse-bridge',
+] as const
 export type TelemetryOperation = (typeof OPERATIONS)[number]
 type Rule = readonly string[] | 'number' | 'boolean'
 const RULES: Record<string, Record<string, Rule>> = {
+  workspace_created: {},
+  workspace_channel_created: { kind: ['text', 'audio'], access: ['members', 'invite'] },
+  workspace_message_sent: {
+    kind: ['message', 'message_with_files', 'reply', 'thread_reply'],
+  },
+  workspace_files_uploaded: { file_count: 'number' },
+  workspace_document_published: { editor_mode: ['markdown', 'blocks'] },
+  extension_setup_opened: { extension_id: EXTENSION_IDS },
   navigation_completed: { area: AREAS, duration_ms: 'number' },
   web_vital: { metric: ['LCP', 'CLS', 'interaction_latency'], value: 'number' },
   resource_latency: { operation: [...OPERATIONS, 'docs_request'], duration_ms: 'number' },

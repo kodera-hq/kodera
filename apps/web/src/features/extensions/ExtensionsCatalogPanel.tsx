@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useId, useMemo, useState } from 'react'
+import { track } from '@/analytics/track'
 import { Button } from '@/ui/Button/Button'
 import { Card, CardBody } from '@/ui/Card/Card'
 import { StatusPill } from '@/ui/StatusPill/StatusPill'
@@ -142,6 +143,7 @@ export function ExtensionsCatalogPanel({
   }
 
   const handleSelect = (extension: OfficialExtensionDescriptor) => {
+    track('extension_setup_opened', { extension_id: extension.id })
     setSelectedId(extension.id)
     setValidationResult(null)
     onSelectExtension?.(extension)

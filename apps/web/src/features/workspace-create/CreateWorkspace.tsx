@@ -10,6 +10,7 @@ import type { FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
+import { track } from '../../analytics/track'
 import { ApiProblem } from '../../api/client'
 import { isTenantSlug } from '../../api/tenantSlug'
 import { Button } from '../../ui/Button/Button'
@@ -171,6 +172,7 @@ export function CreateWorkspace({
       refused(error)
       return
     }
+    track('workspace_created', {})
     forgetCreation(organisationId)
     await showTenant()
   }

@@ -63,7 +63,7 @@ it('makes consent explicit and immediately stops and wipes the diagnostic sessio
   expect(request).toHaveBeenCalledOnce()
   await user.click(toggle)
   track('channel_joined', { kind: 'chat' })
-  expect(JSON.parse(request.mock.calls[1]![1].body).distinct_id).not.toBe(
+  expect(JSON.parse(request.mock.calls[1]![1].body).distinct_id).toBe(
     JSON.parse(first.body).distinct_id
   )
   expect(container.querySelectorAll('[style]')).toHaveLength(0)

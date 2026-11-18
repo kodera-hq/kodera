@@ -8,6 +8,7 @@ import type { FormEvent, KeyboardEvent, RefObject } from 'react'
 import type { TFunction } from 'i18next'
 import { Trans, useTranslation } from 'react-i18next'
 import { demoMessages } from '../../app/demoMessages'
+import { track } from '../../analytics/track'
 import { Button } from '../../ui/Button/Button'
 import { cx } from '../../ui/cx'
 import { MentionIcon, SendIcon } from '../../ui/icons/Composer'
@@ -241,6 +242,14 @@ function MessageComposerView({
     }
     draft.command(
       () => {
+        track('workspace_message_sent', {
+          kind:
+            replyBannerTarget === undefined
+              ? filesReady.length === 0
+                ? 'message'
+                : 'message_with_files'
+              : 'reply',
+        })
         void store.send(roomId, trimmed, options)
       },
       { replyTo: null, text: '' }
@@ -459,6 +468,7 @@ export const ThreadComposer = memo(function ThreadComposer({
     if (navigationUnsettled) return
     draft.command(
       () => {
+        track('workspace_message_sent', { kind: 'thread_reply' })
         void store.send(roomId, trimmed, {
           ...mentioning(typed, members),
           threadRootId: rootEventId,

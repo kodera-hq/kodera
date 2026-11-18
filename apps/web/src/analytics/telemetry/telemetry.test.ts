@@ -140,13 +140,13 @@ describe('transport', () => {
   ])('refuses host %s before network', (host) => {
     const request = vi.fn()
     vi.stubGlobal('fetch', request)
-    expect(createTelemetryTransport('public-project-key', host)).toBeUndefined()
+    expect(createTelemetryTransport('public-project-key', host, 'person-a')).toBeUndefined()
     expect(request).not.toHaveBeenCalled()
   })
-  it('sends allowlisted anonymous data without cookies, referrer, URL enrichment or redirects', async () => {
+  it('sends allowlisted data under the stable authenticated id without cookies, referrer, URL enrichment or redirects', async () => {
     const request = vi.fn().mockResolvedValue({})
     vi.stubGlobal('fetch', request)
-    const transport = createTelemetryTransport('public-project-key', EU_INGESTION_HOST)!
+    const transport = createTelemetryTransport('public-project-key', EU_INGESTION_HOST, 'person-a')!
     transport.capture({
       name: 'channel_joined',
       properties: {
@@ -166,7 +166,7 @@ describe('transport', () => {
       cache: 'no-store',
     })
     const body = JSON.parse(init.body)
-    expect(body.distinct_id).toEqual(expect.any(String))
+    expect(body.distinct_id).toBe('person-a')
     expect(body.properties).toEqual({
       kind: 'chat',
       $process_person_profile: false,
@@ -176,10 +176,10 @@ describe('transport', () => {
     transport.stop()
     await settle()
   })
-  it('wipes session, aborts pending requests and sends nothing after stop', () => {
+  it('wipes identity, aborts pending requests and sends nothing after stop', () => {
     const request = vi.fn().mockImplementation(() => new Promise(() => {}))
     vi.stubGlobal('fetch', request)
-    const transport = createTelemetryTransport('public-project-key', EU_INGESTION_HOST)!
+    const transport = createTelemetryTransport('public-project-key', EU_INGESTION_HOST, 'person-a')!
     const event = { name: 'channel_joined', properties: { kind: 'chat' } }
     transport.capture(event)
     const signal = request.mock.calls[0]![1].signal as AbortSignal
@@ -192,7 +192,7 @@ describe('transport', () => {
     const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
     const request = vi.fn().mockResolvedValue({})
     vi.stubGlobal('fetch', request)
-    const transport = createTelemetryTransport('key', EU_INGESTION_HOST)!
+    const transport = createTelemetryTransport('key', EU_INGESTION_HOST, 'person-a')!
     for (let index = 0; index < 100; index++)
       transport.capture({ name: 'channel_joined', properties: { kind: 'chat' } })
     expect(request).toHaveBeenCalledTimes(60)
@@ -206,7 +206,7 @@ describe('transport', () => {
       throw new Error('offline')
     })
     vi.stubGlobal('fetch', request)
-    const transport = createTelemetryTransport('public-project-key', EU_INGESTION_HOST)!
+    const transport = createTelemetryTransport('public-project-key', EU_INGESTION_HOST, 'person-a')!
     const hostile = {
       name: 'channel_joined',
       get properties() {

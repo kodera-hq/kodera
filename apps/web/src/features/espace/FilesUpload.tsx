@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
+import { track } from '../../analytics/track'
 import { Button } from '../../ui/Button/Button'
 import { cleanText } from '../../ui/safeText'
 import { useMessagingOrganisation } from '../messaging/organisationContext'
@@ -97,6 +98,7 @@ function LiveFilesUpload({
     setProblem(null)
     try {
       await store.send(roomId, '', { attachments: ready })
+      track('workspace_files_uploaded', { file_count: ready.length })
       queue.clear(roomId)
       void quota.refetch()
     } catch {
