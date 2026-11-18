@@ -5,7 +5,7 @@
 
 export const DESKTOP_APP_IDENTIFIER = 'io.kodera.desktop';
 export const DESKTOP_PRODUCT_NAME = 'Kodera';
-export const DESKTOP_APP_VERSION = '0.1.0';
+export const DESKTOP_APP_VERSION = '0.1.1';
 
 export const APPROVED_DEEP_LINK_SCHEMES = Object.freeze(['kodera', 'matrix']);
 
@@ -196,6 +196,9 @@ export function validateTauriSecurityInvariants(config, defaultCapability) {
   }
   if (config?.productName !== DESKTOP_PRODUCT_NAME) {
     throw new Error('productName must be Kodera');
+  }
+  if (config?.version !== DESKTOP_APP_VERSION) {
+    throw new Error('version must match the desktop app');
   }
   if (config?.build?.frontendDist !== '../../web/dist') {
     throw new Error('frontendDist must use the web bundle');

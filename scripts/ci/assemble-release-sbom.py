@@ -28,6 +28,7 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import stat
@@ -37,6 +38,8 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 PERMISSIVE = frozenset(
@@ -525,6 +528,52 @@ def collect_npm_components(
     return sorted(components, key=lambda item: str(item["bom-ref"])), edges
 
 
+def read_release_app_version(root: Path = ROOT) -> str:
+    json_manifests = (
+        ("package.json", root / "package.json"),
+        ("apps/web/package.json", root / "apps" / "web" / "package.json"),
+        ("apps/desktop/package.json", root / "apps" / "desktop" / "package.json"),
+        (
+            "apps/desktop/src-tauri/tauri.conf.json",
+            root / "apps" / "desktop" / "src-tauri" / "tauri.conf.json",
+        ),
+    )
+    versions: dict[str, str] = {}
+    for label, path in json_manifests:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        ver = str(doc.get("version") or "").strip()
+        if not SEMVER_RE.fullmatch(ver):
+            raise ValueError(f"{label} lacks canonical X.Y.Z version: {ver!r}")
+        versions[label] = ver
+
+    gradle_text = (root / "apps" / "android" / "app" / "build.gradle.kts").read_text(
+        encoding="utf-8"
+    )
+    gradle_match = re.search(r'versionName\s*=\s*"([^"]+)"', gradle_text)
+    android_ver = gradle_match.group(1).strip() if gradle_match else ""
+    if not SEMVER_RE.fullmatch(android_ver):
+        raise ValueError(
+            f"apps/android/app/build.gradle.kts lacks canonical versionName: {android_ver!r}"
+        )
+    versions["apps/android/app/build.gradle.kts"] = android_ver
+
+    plist_doc = plistlib.loads((root / "apps" / "ios" / "App" / "Info.plist").read_bytes())
+    ios_ver = str(plist_doc.get("CFBundleShortVersionString") or "").strip()
+    if not SEMVER_RE.fullmatch(ios_ver):
+        raise ValueError(
+            f"apps/ios/App/Info.plist lacks canonical CFBundleShortVersionString: {ios_ver!r}"
+        )
+    versions["apps/ios/App/Info.plist"] = ios_ver
+
+    expected = versions["package.json"]
+    drifted = {label: ver for label, ver in versions.items() if ver != expected}
+    if drifted:
+        raise ValueError(
+            f"release manifest version drift against package.json ({expected!r}): {drifted}"
+        )
+    return expected
+
+
 def assemble_release_sbom(
     npm_sbom_path: Path,
     cargo_lock_path: Path,
@@ -532,10 +581,12 @@ def assemble_release_sbom(
     android_sbom_path: Path,
     revision: str,
     out_path: Path,
+    root: Path = ROOT,
 ) -> dict[str, int]:
     if not REVISION_RE.fullmatch(revision):
         raise ValueError("revision must be a 40-character lowercase hex commit SHA")
 
+    app_version = read_release_app_version(root)
     npm_components, npm_edges = collect_npm_components(npm_sbom_path)
     cargo_components = collect_cargo_components(cargo_lock_path, cargo_metadata_path)
     android_components = collect_android_components(android_sbom_path)
@@ -567,7 +618,7 @@ def assemble_release_sbom(
                 "type": "application",
                 "bom-ref": subject_ref,
                 "name": "Kodera",
-                "version": "0.1.0",
+                "version": app_version,
                 "licenses": [{"license": {"id": "Apache-2.0"}}],
                 "properties": [
                     {"name": "kodera:source-revision", "value": revision},
@@ -739,6 +790,31 @@ checksum = "{cargo_sha}"
             return 1
 
         merged = json.loads(out_sbom.read_text(encoding="utf-8"))
+        if merged["metadata"]["component"]["version"] != read_release_app_version(ROOT):
+            print("[FAIL] unified SBOM metadata.component.version drifted from manifests", file=sys.stderr)
+            return 1
+        drift_root = scratch / "drift-manifests"
+        for rel in ("apps/web", "apps/desktop/src-tauri", "apps/android/app", "apps/ios/App"):
+            (drift_root / rel).mkdir(parents=True, exist_ok=True)
+        for rel in (
+            "package.json",
+            "apps/web/package.json",
+            "apps/desktop/package.json",
+            "apps/desktop/src-tauri/tauri.conf.json",
+        ):
+            (drift_root / rel).write_text('{"version": "0.1.1"}\n', encoding="utf-8")
+        (drift_root / "apps/android/app/build.gradle.kts").write_text(
+            'versionName = "0.1.1"\n', encoding="utf-8"
+        )
+        (drift_root / "apps/ios/App/Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleShortVersionString": "0.1.0"})
+        )
+        try:
+            read_release_app_version(drift_root)
+            print("[FAIL] read_release_app_version accepted drifted iOS Info.plist", file=sys.stderr)
+            return 1
+        except ValueError:
+            pass
         by_ref = {c["bom-ref"]: c for c in merged["components"]}
         if by_ref["pkg:cargo/serde@1.0.219"]["hashes"][0]["content"] != cargo_sha:
             print("[FAIL] Cargo crate SHA-256 checksum not preserved", file=sys.stderr)

@@ -390,6 +390,23 @@ def detect_java_version() -> str:
     return "21.0.0"
 
 
+def read_android_app_version(root: Path = ROOT) -> str:
+    app_gradle = (root / "apps" / "android" / "app" / "build.gradle.kts").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r'versionName\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', app_gradle)
+    if not match:
+        raise ValueError("unable to extract semver versionName from apps/android/app/build.gradle.kts")
+    android_version = match.group(1)
+    pkg_doc = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    root_version = str(pkg_doc.get("version") or "").strip()
+    if android_version != root_version:
+        raise ValueError(
+            f"Android versionName {android_version!r} drifted from root package.json version {root_version!r}"
+        )
+    return android_version
+
+
 def read_android_toolchain_versions(
     root: Path = ROOT, java_version_override: str | None = None
 ) -> list[dict[str, str]]:
@@ -942,6 +959,7 @@ def stage_android_release_bundle(
     first_sha, first_size = canonicalize_apk_zip(first_raw, first_pkg)
     second_sha, second_size = canonicalize_apk_zip(second_raw, second_pkg)
 
+    app_version = read_android_app_version(root)
     tools = read_android_toolchain_versions(root, java_version_override=java_version_override)
     env_hash = hashlib.sha256(json.dumps(tools, sort_keys=True).encode("utf-8")).hexdigest()
     toolchain_doc = {
@@ -985,7 +1003,7 @@ def stage_android_release_bundle(
                 "type": "application",
                 "bom-ref": subject_ref,
                 "name": "Kodera",
-                "version": "0.1.0",
+                "version": app_version,
                 "hashes": [{"alg": "SHA-256", "content": first_sha}],
                 "licenses": [{"license": {"id": "Apache-2.0"}}],
                 "properties": [
@@ -1324,6 +1342,21 @@ def run_selftest() -> int:
         )
 
         sbom_loaded = json.loads((candidate_dir / "sbom.cdx.json").read_text(encoding="utf-8"))
+        if sbom_loaded["metadata"]["component"]["version"] != read_android_app_version(ROOT):
+            print("[FAIL] Android SBOM metadata.component.version drifted from app manifest", file=sys.stderr)
+            return 1
+        drift_root = scratch / "drift-root"
+        (drift_root / "apps" / "android" / "app").mkdir(parents=True, exist_ok=True)
+        (drift_root / "apps" / "android" / "app" / "build.gradle.kts").write_text(
+            'versionName = "0.1.1"\n', encoding="utf-8"
+        )
+        (drift_root / "package.json").write_text('{"version": "0.1.0"}\n', encoding="utf-8")
+        try:
+            read_android_app_version(drift_root)
+            print("[FAIL] read_android_app_version accepted drifted versionName", file=sys.stderr)
+            return 1
+        except ValueError:
+            pass
         by_ref = {comp["bom-ref"]: comp for comp in sbom_loaded["components"]}
         expected_hashes = {
             "pkg:maven/net.openid/appauth@0.11.1": (
