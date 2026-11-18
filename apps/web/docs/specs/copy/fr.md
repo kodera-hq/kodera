@@ -1536,6 +1536,9 @@ The Apparence page (`docs/specs/10-appearance.md`): the theme choice, reached fr
 | `console.docs.collab.error-delete-has-children` | Cette page contient des sous-pages. Déplacez ou supprimez d’abord ses sous-pages. |
 | `console.docs.collab.error-save` | Vos modifications n’ont pas pu être enregistrées sur le serveur. Réessayez dans un instant. |
 | `console.docs.collab.empty-workspace` | Aucune page dans cet espace pour l’instant. Choisissez un modèle pour créer la première. |
+| `console.docs.collection.error-version-conflict` | Un autre membre a modifié cette entrée pendant votre saisie. Rechargez la collection pour récupérer sa version actuelle, puis réappliquez votre changement. |
+| `console.docs.collection.error-version-required` | Votre modification est partie sans la version de l’entrée : elle n’a pas été enregistrée. Rechargez la collection, puis réappliquez votre changement — il sera envoyé avec la version à jour. |
+| `console.docs.collection.action-reload` | Recharger la collection |
 
 ## Workspace
 

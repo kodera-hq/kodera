@@ -35,6 +35,7 @@ beforeEach(() => sessionStorage.clear())
 afterEach(() => {
   vi.doUnmock('i18next')
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   sessionStorage.clear()
 })
 
@@ -149,6 +150,74 @@ describe('a change of language', () => {
     await i18n.changeLanguage('en')
     await ensureNamespaces(['people'])
     expect(i18n.t(PEOPLE_KEY)).toBe(wholeEn[PEOPLE_KEY])
+  })
+})
+
+// WCAG 2.2 SC 3.1.1 Language of Page, level A: `<html lang>` must name the language the page is
+// rendered in, at the first paint and after every switch. `index.html` ships `lang="fr"`, so the
+// attribute is only right by accident in the default language — these tests are what keeps the
+// English console from being announced with French pronunciation rules.
+describe('the document language', () => {
+  beforeEach(() => {
+    // jsdom carries one document across the file: a stale attribute would let an assertion pass
+    // on the previous test's work rather than on this runtime's initialisation.
+    document.documentElement.removeAttribute('lang')
+  })
+
+  it('names the default language from initialisation', async () => {
+    const { entryCataloguesReady } = await asABuildRunsIt()
+    expect(document.documentElement.lang).toBe('fr')
+    await entryCataloguesReady
+    expect(document.documentElement.lang).toBe('fr')
+  })
+
+  it('names English on a page opened in English, before and after its catalogues arrive', async () => {
+    const { entryCataloguesReady } = await asABuildRunsIt('en')
+    expect(document.documentElement.lang).toBe('en')
+    await entryCataloguesReady
+    expect(document.documentElement.lang).toBe('en')
+  })
+
+  it('follows every change of language, at the moment the screens re-render', async () => {
+    const { default: i18n, entryCataloguesReady } = await asABuildRunsIt()
+    await entryCataloguesReady
+    expect(document.documentElement.lang).toBe('fr')
+
+    // Read inside the listener, not after the promise: this is the moment every mounted screen
+    // re-renders, so the document must already agree with the text about to be painted.
+    const whenAnnounced: string[] = []
+    i18n.on('languageChanged', () => whenAnnounced.push(document.documentElement.lang))
+
+    await i18n.changeLanguage('en')
+    expect(document.documentElement.lang).toBe('en')
+    await i18n.changeLanguage('fr')
+    expect(document.documentElement.lang).toBe('fr')
+    expect(whenAnnounced).toEqual(['en', 'fr'])
+  })
+
+  it('is set by the runtime and not read back from the preference', async () => {
+    // The preference is tab-scoped `sessionStorage` (`./languagePreference.ts`), which a restored
+    // browser context does not carry. The attribute has to come from the live i18next language,
+    // so that a context opened without the preference still describes itself correctly.
+    const { default: i18n, entryCataloguesReady } = await asABuildRunsIt('en')
+    await entryCataloguesReady
+    sessionStorage.removeItem('console:language')
+    await i18n.changeLanguage('fr')
+    expect(document.documentElement.lang).toBe('fr')
+    await i18n.changeLanguage('en')
+    expect(document.documentElement.lang).toBe('en')
+  })
+
+  it('evaluates and switches language safely when document or documentElement is absent', async () => {
+    vi.stubGlobal('document', undefined)
+    const { default: noDomI18n, entryCataloguesReady } = await asABuildRunsIt('en')
+    await entryCataloguesReady
+    await expect(noDomI18n.changeLanguage('fr')).resolves.toBeDefined()
+
+    vi.stubGlobal('document', { documentElement: null })
+    const { default: bareDocI18n, entryCataloguesReady: bareReady } = await asABuildRunsIt()
+    await bareReady
+    await expect(bareDocI18n.changeLanguage('en')).resolves.toBeDefined()
   })
 })
 
