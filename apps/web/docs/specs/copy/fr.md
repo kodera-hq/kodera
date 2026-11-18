@@ -95,6 +95,8 @@ when a key is present here and missing there, or present in one language and not
 | `console.shell.account.action-security` | Sécurité et connexion |
 | `console.shell.account.action-appearance` | Apparence |
 | `console.shell.account.action-language` | Langue |
+| `console.shell.account.language-fr` | Français |
+| `console.shell.account.language-en` | English |
 | `console.shell.account.action-sign-out` | Se déconnecter |
 | `console.shell.account.status-role-owner` | Propriétaire |
 | `console.shell.account.status-role-admin` | Administratrice / Administrateur |

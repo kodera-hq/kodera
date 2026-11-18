@@ -1,3 +1,4 @@
+import { LanguageSwitch } from './LanguageSwitch'
 // `/{org}/appearance` — « Apparence » (docs/specs/10-appearance.md), the start
 // of the delivered design's Réglages › Vous › Apparence pane: one line saying
 // how a choice applies, then one preview card per theme. « Automatique » comes
@@ -104,6 +105,8 @@ export function AppearanceScreen() {
         <h1 className={PAGE_TITLE}>{t('console.shell.appearance.title')}</h1>
         <p className="text-sm text-c-ink-2">{t('console.shell.appearance.subtitle')}</p>
       </div>
+
+      <LanguageSwitch />
 
       <div className="flex flex-col gap-3">
         <p id={hintId} className="text-xs text-c-ink-3">

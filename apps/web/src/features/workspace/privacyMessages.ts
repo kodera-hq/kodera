@@ -2,12 +2,9 @@
 // including explicit statutory ten-year accounting retention (`Code de commerce L123-22`)
 // and 0.44.0 held / proof-unavailable lifecycle states.
 
+import { SUPPORT_EMAIL } from '../../app/supportContact'
 import { resolveBillingLocale } from '../billing/billingMessages'
-import type {
-  PrivacyDeletionStatus,
-  PrivacyExportStatus,
-  PrivacyFailureCode,
-} from './privacyApi'
+import type { PrivacyDeletionStatus, PrivacyExportStatus, PrivacyFailureCode } from './privacyApi'
 
 const messages = {
   fr: {
@@ -53,8 +50,7 @@ const messages = {
       build_failed:
         'La génération ou la preuve d’exécution a échoué. Relancez une nouvelle demande.',
     } satisfies Record<PrivacyFailureCode, string>,
-    proofUnavailableHoldBanner:
-      'En attente (HTTP 503 — preuve ou stockage indisponible) : une source requise, le stockage privé, la signature ou la preuve durable de cycle de vie est momentanément indisponible. Aucune archive partielle ni suppression non prouvée n’est validée.',
+    proofUnavailableHoldBanner: `En attente (HTTP 503 — preuve ou stockage indisponible) : les archives et les preuves d’effacement automatisées entre services sont actuellement suspendues. Pour exercer vos droits RGPD, contactez directement ${SUPPORT_EMAIL}. Aucune archive partielle ni suppression non prouvée n’est validée.`,
     conflictLastOwnerError:
       'Suppression refusée (HTTP 409) : en tant que dernier propriétaire de l’organisation, transférez la propriété ou supprimez d’abord l’espace.',
     reauthRequiredError:
@@ -126,8 +122,7 @@ const messages = {
         'Ownership or identity conflict: transfer organisation ownership before deleting the last owner account.',
       build_failed: 'Archive build or purge verification failed. Submit a new request to retry.',
     } satisfies Record<PrivacyFailureCode, string>,
-    proofUnavailableHoldBanner:
-      'Held (HTTP 503 — proof or private storage unavailable): a required data source, private storage, signing service, or durable lifecycle proof is currently unavailable. No incomplete export or unproved deletion is marked complete.',
+    proofUnavailableHoldBanner: `Held (HTTP 503 — proof or private storage unavailable): automated multi-service archives and erasure proofs are currently on hold. To exercise your GDPR rights, contact ${SUPPORT_EMAIL} directly. No incomplete export or unproved deletion is marked complete.`,
     conflictLastOwnerError:
       'Deletion refused (HTTP 409): as the last organisation owner, transfer ownership or delete the workspace first.',
     reauthRequiredError:
@@ -142,8 +137,7 @@ const messages = {
     purgeAfterLabel: 'Statutory accounting retention (`purge_after`)',
     requestIdLabel: 'Request reference',
     erasureSectionTitle: 'Right to erasure (GDPR Art. 17)',
-    statutoryRetentionTitle:
-      'Mandatory statutory accounting retention (Code de commerce L123-22)',
+    statutoryRetentionTitle: 'Mandatory statutory accounting retention (Code de commerce L123-22)',
     statutoryRetentionBody:
       'When a workspace or account is deleted, active sessions, tickets, and pending uploads are revoked first, then workspace documents, collections, media attachments, and messages are irreversibly purged. Detached statutory accounting and contractual snapshots (`Invoice`, `CreditNote`, `Payment`, and accepted `LegalDocument` / `Dpa`) remain immutable and access-restricted for 10 years until their legal `purge_after` retention date under French commercial law (`Code de commerce L123-22`).',
     workspaceErasureTitle: 'Permanently delete workspace',

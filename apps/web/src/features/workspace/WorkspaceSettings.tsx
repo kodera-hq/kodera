@@ -1,3 +1,4 @@
+import { LanguageSwitch } from '../appearance/LanguageSwitch'
 import * as Modal from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
 import { Link } from '@tanstack/react-router'
@@ -636,6 +637,7 @@ export default function WorkspaceSettings({
                   ) : null}
                   {item === 'appearance' ? (
                     <>
+                      <LanguageSwitch />
                       <p className="text-sm text-c-ink-2">{copy.appearanceHint}</p>
                       <div
                         className="grid grid-cols-3 gap-4 narrow:grid-cols-1"

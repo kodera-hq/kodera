@@ -104,7 +104,10 @@ it('keeps appearance and audio available to a member while filtering admin desti
   ).toBeVisible()
   await user.click(screen.getByRole('tab', { name: 'Hébergement & administration' }))
   // Security settings now has a real local verification/archive screen; federation remains a stub.
-  expect(screen.getByRole('link', { name: 'Sécurité & MFA' })).toHaveAttribute('href', '/community/security')
+  expect(screen.getByRole('link', { name: 'Sécurité & MFA' })).toHaveAttribute(
+    'href',
+    '/community/security'
+  )
   expect(screen.queryByRole('link', { name: 'Fédération' })).toBeNull()
   expect(screen.getByRole('link', { name: 'Statut' })).toBeVisible()
   expect(screen.queryByRole('link', { name: 'Facturation' })).toBeNull()
@@ -194,4 +197,18 @@ it('sanitizes member display names, isolates MXIDs with bdi, and holds busy unti
     createUrlSpy.mockRestore()
     revokeUrlSpy.mockRestore()
   }
+})
+
+it('switches the open settings dialog between French and English', async () => {
+  const user = userEvent.setup()
+  render(<WorkspaceSettings {...props} />)
+  await user.click(screen.getByRole('tab', { name: 'Apparence & thèmes' }))
+  expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(screen.getByRole('button', { name: 'English' }))
+  expect(screen.getByRole('group', { name: 'Language' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'false')
+  await user.click(screen.getByRole('button', { name: 'Français' }))
+  expect(screen.getByRole('group', { name: 'Langue' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Français' })).toHaveAttribute('aria-pressed', 'true')
 })

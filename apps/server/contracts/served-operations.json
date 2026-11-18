@@ -172,6 +172,21 @@
       "path": "/organisations/{organisation_id}/dpa"
     },
     {
+      "operation_id": "getAccountDeletion",
+      "method": "GET",
+      "path": "/me/privacy/deletions/{request_id}"
+    },
+    {
+      "operation_id": "getAccountExport",
+      "method": "GET",
+      "path": "/me/privacy/exports/{request_id}"
+    },
+    {
+      "operation_id": "getAccountExportDownloadLink",
+      "method": "GET",
+      "path": "/me/privacy/exports/{request_id}/download"
+    },
+    {
       "operation_id": "getAttachment",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/attachments/{attachment_id}"
@@ -312,9 +327,24 @@
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}/rows/{document_id}"
     },
     {
+      "operation_id": "getWorkspaceDeletion",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/privacy/deletions/{request_id}"
+    },
+    {
       "operation_id": "getWorkspaceDocument",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
+      "operation_id": "getWorkspaceExport",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}"
+    },
+    {
+      "operation_id": "getWorkspaceExportDownloadLink",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download"
     },
     {
       "operation_id": "getWorkspaceQuotaLimits",
@@ -527,9 +557,29 @@
       "path": "/organisations/{organisation_id}/memberships/{membership_id}"
     },
     {
+      "operation_id": "requestAccountDeletion",
+      "method": "POST",
+      "path": "/me/privacy/deletions"
+    },
+    {
+      "operation_id": "requestAccountExport",
+      "method": "POST",
+      "path": "/me/privacy/exports"
+    },
+    {
       "operation_id": "requestPassportMagicLink",
       "method": "POST",
       "path": "/auth/passport/magic-link/request"
+    },
+    {
+      "operation_id": "requestWorkspaceDeletion",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/privacy/deletions"
+    },
+    {
+      "operation_id": "requestWorkspaceExport",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/privacy/exports"
     },
     {
       "operation_id": "resendInvitation",

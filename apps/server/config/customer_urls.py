@@ -22,6 +22,7 @@ from apps.identity.api.passport import (
 )
 from apps.identity.api.views import me
 from apps.legal.api import views as legal
+from apps.orgs.api import privacy
 from apps.orgs.api.bootstrap import organisation_bootstrap
 from apps.orgs.api.detail import organisation_detail
 from apps.orgs.api.intake import organisations
@@ -60,6 +61,31 @@ urlpatterns = [
     path("", include("apps.e2ee.api.urls")),
     path("", include("apps.docs.api.urls")),
     path("api/v1/me", me),
+    path("api/v1/me/privacy/exports", privacy.account_exports),
+    path("api/v1/me/privacy/exports/<uuid:request_id>", privacy.account_export),
+    path("api/v1/me/privacy/exports/<uuid:request_id>/download", privacy.account_download),
+    path("api/v1/me/privacy/deletions", privacy.account_deletions),
+    path("api/v1/me/privacy/deletions/<uuid:request_id>", privacy.account_deletion),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/privacy/exports",
+        privacy.workspace_exports,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/privacy/exports/<uuid:request_id>",
+        privacy.workspace_export,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/privacy/exports/<uuid:request_id>/download",
+        privacy.workspace_download,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/privacy/deletions",
+        privacy.workspace_deletions,
+    ),
+    path(
+        "api/v1/organisations/<uuid:organisation_id>/workspace/privacy/deletions/<uuid:request_id>",
+        privacy.workspace_deletion,
+    ),
     path("api/v1/workspaces/instant-claim", instant_claim),
     path("api/v1/auth/discover", discovery),
     path("api/v1/auth/passport/magic-link/request", passport_magic_link_request),

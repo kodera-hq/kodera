@@ -323,3 +323,31 @@ describe('WorkspacePrivacyPanel GDPR Art. 20 exports & Art. 17 erasure', () => {
     expect(localStorage.getItem('kodera.telemetry.consent.v1:["person-2","org-2"]')).toBe('yes')
   })
 })
+
+it.each(['fr', 'en'])('gives a direct GDPR contact for held requests in %s', async (locale) => {
+  await i18n.changeLanguage(locale)
+  apiMocks.requestAccountExport.mockRejectedValueOnce(
+    new ApiProblem({
+      type: 'https://kodera.io/problems/service-unavailable',
+      title: 'Service unavailable',
+      status: 503,
+      requestId: 'privacy-hold-test',
+    })
+  )
+  const user = userEvent.setup()
+  render(
+    <WorkspacePrivacyPanel
+      organisationId="00000000-0000-7000-8000-000000000001"
+      org="example"
+      role={memberRole}
+    />
+  )
+  await user.click(
+    screen.getByRole('button', {
+      name: locale === 'fr' ? 'Préparer mon export personnel' : 'Request my account export',
+    })
+  )
+  expect(await screen.findByText(/support@kodera.io/)).toHaveTextContent(
+    locale === 'fr' ? /actuellement suspendues/ : /currently on hold/
+  )
+})

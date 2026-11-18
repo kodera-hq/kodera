@@ -90,6 +90,8 @@ translates it key for key. CI fails when a key exists in one file and not the ot
 | `console.shell.account.action-security` | Security and sign-in |
 | `console.shell.account.action-appearance` | Appearance |
 | `console.shell.account.action-language` | Language |
+| `console.shell.account.language-fr` | Français |
+| `console.shell.account.language-en` | English |
 | `console.shell.account.action-sign-out` | Sign out |
 | `console.shell.account.status-role-owner` | Owner |
 | `console.shell.account.status-role-admin` | Administrator |

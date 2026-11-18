@@ -364,6 +364,8 @@ def assert_image_boundary(ignore):
         "!apps/support/api/permissions.py",
         "!apps/support/api/views.py",
         "!apps/orgs/workspace_members.py",
+        "!apps/orgs/privacy_selectors.py",
+        "!apps/orgs/api/privacy.py",
         "!apps/workspaces/moderation.py",
         "!apps/workspaces/moderation_policy.py",
         "!apps/workspaces/moderation_wire.py",
