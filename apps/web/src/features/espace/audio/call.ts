@@ -601,19 +601,22 @@ export class CallController {
     const previous = this.#session
     const closing = previous === null ? undefined : this.#prepareClose(previous)
     const captured = [...this.#retirements].map((retirement) => retirement.settled)
-    let session!: Session
+    let session: Session | undefined
     try {
       try {
-        session = this.#open(roomId, protectedOptions)
-        session.media = media
-        session.mediaEpoch = media?.epoch ?? null
-        session.mediaBoundary = media === null ? null : boundary
-        this.#session = session
-        if (media) session.detach.push(media.subscribeRevocation(() => this.#revokeMedia(session)))
+        // Named once it exists, so the subscribers below close over a session, never over the
+        // `undefined` the catch below has to allow for.
+        const opened = this.#open(roomId, protectedOptions)
+        session = opened
+        opened.media = media
+        opened.mediaEpoch = media?.epoch ?? null
+        opened.mediaBoundary = media === null ? null : boundary
+        this.#session = opened
+        if (media) opened.detach.push(media.subscribeRevocation(() => this.#revokeMedia(opened)))
         if (this.#subscribeRoomBoundary)
-          session.detach.push(
+          opened.detach.push(
             this.#subscribeRoomBoundary(() => {
-              if (!this.#mediaAuthorized(session)) this.#revokeMedia(session)
+              if (!this.#mediaAuthorized(opened)) this.#revokeMedia(opened)
             })
           )
         this.#mutedBeforeDeafen = this.#chosenMuted
@@ -623,12 +626,18 @@ export class CallController {
         if (this.#preferences.getSnapshot().inputMode === 'push-to-talk') choices.muted = true
         this.#reset({ status: 'connecting', roomId, ...choices })
         // Autoplay policies: playback is allowed once started from a user gesture, which is now.
-        void session.room.startAudio().catch(() => undefined)
+        void opened.room.startAudio().catch(() => undefined)
       } finally {
         // A subscriber or the gesture call can throw; the reserved teardown still starts now.
         if (previous !== null) this.#startClose(previous)
       }
     } catch (error) {
+      // Setup threw before the join's own failure handling: a session of ours that was stored
+      // still goes through the teardown, so its hidden container never stays in the page.
+      if (session !== undefined && this.#session === session) {
+        this.#session = null
+        await this.#close(session)
+      }
       await Promise.all(captured)
       throw error
     }
@@ -1255,7 +1264,6 @@ export class CallController {
     const container = document.createElement('div')
     container.hidden = true
     container.dataset['espaceAudio'] = ''
-    this.#mount().append(container)
     const session: Session = {
       scopeRoomId: roomId,
       protectionRevoked: false,
@@ -1423,6 +1431,11 @@ export class CallController {
       }
       this.#reset({ status: 'ended', roomId, problem: endedBy(reason), ...this.#choices() })
     })
+    // Appended last: nothing above can throw with the container already in the page. The trade is
+    // that a throw from `#mount()` itself leaves the `room.on(...)` handlers attached to the
+    // shared `this.#room` with `session.detach` never run; acceptable only because the default
+    // mount is `() => document.body`.
+    this.#mount().append(container)
     return session
   }
 

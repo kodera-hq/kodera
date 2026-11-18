@@ -277,6 +277,36 @@ describe('Alt and the arrows', () => {
     expect(keepsFocus(projets)).toBe(false)
   })
 
+  it('let a release still pending go when the view goes away', async () => {
+    // Fake timers so the release task stays queued: the unmount is what has to let the hold go.
+    vi.useFakeTimers()
+    try {
+      let finish: (() => void) | undefined
+      const navigate = vi.fn<(channelId: string) => Promise<void>>(
+        () => new Promise((resolve) => (finish = resolve))
+      )
+      const view = renderView(makeStore(), navigate)
+      fireEvent.keyDown(window, { key: 'ArrowDown', altKey: true })
+      const annonces = `/acme/workspace/${ANNONCES}`
+      expect(navigate).toHaveBeenLastCalledWith(ANNONCES)
+      expect(keepsFocus(annonces)).toBe(true)
+      // The navigation is over, so the release is queued a task later; that task has not run.
+      await act(async () => {
+        finish!()
+      })
+      expect(keepsFocus(annonces)).toBe(true)
+      view.unmount()
+      expect(keepsFocus(annonces)).toBe(false)
+      // And the cancelled task never comes back to release a hold taken since.
+      await act(async () => {
+        vi.runAllTimers()
+      })
+      expect(keepsFocus(annonces)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('leave the keys to the thread panel and to an open popover', async () => {
     const user = userEvent.setup()
     const store = makeStore({
