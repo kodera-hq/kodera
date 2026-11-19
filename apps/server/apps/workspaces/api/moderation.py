@@ -20,11 +20,13 @@ from services.identity.trusted_issuers import verify_configured_token
 from . import responses
 
 
-def _json(body: Any, status: int = 200, *, etag: bool = False) -> HttpResponse:
+def _json(body: Any, status: int = 200, *, etag: bool | str = False) -> HttpResponse:
     response = HttpResponse(
         json.dumps(body, separators=(",", ":")), status=status, content_type="application/json"
     )
-    if etag:
+    if isinstance(etag, str):
+        response["ETag"] = etag
+    elif etag:
         response["ETag"] = tag(body)
     return response
 

@@ -11,13 +11,15 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
 
-from apps.audit.models import AuditEvent
+from apps.audit.selectors import list_workspace_audit_events
+from apps.orgs.actor_selectors import TenantCaller
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .iam import authorize, check_manage, mutation_context, resolve_roles
 from .iam_validation import validate_permissions
 from .models import Channel, Workspace, WorkspaceChannelRoleOverride, WorkspaceMemberRestriction
 from .moderation import ADMINS, RefusalError, _audit, _storable_text, _text
+from .moderation_wire import tag
 
 _UNSET = object()
 
@@ -38,22 +40,37 @@ def profile_wire(workspace: Workspace) -> dict[str, Any]:
     }
 
 
+def profile_etag(workspace: Workspace) -> str:
+    return tag(
+        {
+            "id": str(workspace.id),
+            **profile_wire(workspace),
+            "updated_at": workspace.updated_at.isoformat(),
+        }
+    )
+
+
 @transaction.atomic
-def profile(
+def profile_with_etag(
     *,
     verified: VerifiedAccessToken,
     organisation_id: UUID,
     data: dict[str, Any] | None = None,
+    if_match: str = "",
     request_id: str = "",
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     workspace, caller = (
         authorize(verified, organisation_id)
         if data is None
-        else mutation_context(verified, organisation_id)
+        else mutation_context(verified, organisation_id, admin=True)
     )
     if data is not None:
-        if caller.role not in ADMINS:
-            raise RefusalError(403)
+        token = if_match.strip()
+        if not token:
+            raise RefusalError(428)
+        current = profile_etag(workspace)
+        if token not in {"*", current}:
+            raise RefusalError(412, current_etag=current)
         if not data or data.keys() - PROFILE_FIELDS:
             raise RefusalError(422)
         for field, value in data.items():
@@ -106,7 +123,46 @@ def profile(
             setattr(workspace, field, value)
         workspace.save(update_fields=[*data, "updated_at"])
         _audit(workspace, caller.identity_id, "workspace.profile.updated", workspace.id, request_id)
-    return profile_wire(workspace)
+    return profile_wire(workspace), profile_etag(workspace)
+
+
+def profile(
+    *,
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    data: dict[str, Any] | None = None,
+    if_match: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    return profile_with_etag(
+        verified=verified,
+        organisation_id=organisation_id,
+        data=data,
+        if_match=if_match,
+        request_id=request_id,
+    )[0]
+
+
+def _check_channel_visible(workspace: Workspace, caller: TenantCaller, channel_id: UUID) -> None:
+    if not Channel.objects.filter(
+        id=channel_id, workspace=workspace, lifecycle__in=["active", "provisioning"]
+    ).exists():
+        raise RefusalError(404)
+    if caller.role not in ADMINS:
+        from .channel_access import may_view, resolve
+        from .structure import WorkspaceUnavailableError
+
+        try:
+            access = resolve(channel_id)
+        except WorkspaceUnavailableError:
+            raise RefusalError(404) from None
+        if not may_view(
+            access,
+            organisation_id=workspace.organisation_id,
+            membership_id=caller.membership_id,
+            authority_revision=caller.authority_revision,
+        ):
+            raise RefusalError(404)
 
 
 @transaction.atomic
@@ -118,15 +174,14 @@ def overrides(
     data: Any = _UNSET,
     request_id: str = "",
 ) -> dict[str, Any]:
-    workspace, caller = (
-        authorize(verified, organisation_id)
-        if data is _UNSET
-        else mutation_context(verified, organisation_id, "manage_roles")
-    )
-    if not Channel.objects.filter(
-        id=channel_id, workspace=workspace, lifecycle__in=["active", "provisioning"]
-    ).exists():
-        raise RefusalError(404)
+    if data is _UNSET:
+        workspace, caller = authorize(verified, organisation_id)
+        _check_channel_visible(workspace, caller, channel_id)
+    else:
+        initial_workspace, initial_caller = authorize(verified, organisation_id, "manage_roles")
+        _check_channel_visible(initial_workspace, initial_caller, channel_id)
+        workspace, caller = mutation_context(verified, organisation_id, "manage_roles")
+        _check_channel_visible(workspace, caller, channel_id)
     rows = WorkspaceChannelRoleOverride.objects.filter(workspace=workspace, channel_id=channel_id)
     if data is not _UNSET:
         if not isinstance(data, list) or len(data) > 100:
@@ -144,10 +199,13 @@ def overrides(
                 raise RefusalError(422)
             normalized.append(entry["role_id"])
         roles = resolve_roles(workspace, normalized)
-        check_manage(workspace, caller, [row.role for row in rows.select_related("role")] + roles)
+        existing = list(rows.select_related("role"))
+        check_manage(workspace, caller, [row.role for row in existing] + roles)
+        for row in existing:
+            check_manage(workspace, caller, [], permissions=[*row.allow, *row.deny])
         by_id = {str(role.id): role for role in roles}
         for entry in data:
-            check_manage(workspace, caller, [], permissions=entry["allow"] + entry["deny"])
+            check_manage(workspace, caller, [], permissions=[*entry["allow"], *entry["deny"]])
         rows.delete()
         WorkspaceChannelRoleOverride.objects.bulk_create(
             [
@@ -230,26 +288,33 @@ def admin_page(
             limit,
             salt,
         )
-    events = AuditEvent.objects.filter(organisation_id=organisation_id)
+    actor_id: UUID | None = None
     if "actor_id" in query:
         try:
-            events = events.filter(actor_id=UUID(query["actor_id"]))
+            actor_id = UUID(query["actor_id"])
         except ValueError:
             raise RefusalError(400) from None
+    action: str | None = None
     if "action" in query:
         if not re.fullmatch(r"[a-z][a-z0-9_.]{0,99}", query["action"]):
             raise RefusalError(400)
-        events = events.filter(action=query["action"])
+        action = query["action"]
+    anchor: UUID | None = None
     cursor = query.get("cursor")
     if cursor is not None:
-        if not cursor or len(cursor) > 1024:
+        if not cursor or len(cursor) > 512:
             raise RefusalError(400)
         try:
             anchor = UUID(signing.loads(cursor, salt=salt, max_age=3600))
         except (signing.BadSignature, ValueError, TypeError):
             raise RefusalError(400) from None
-        events = events.filter(id__lt=anchor)
-    selected = list(events.order_by("-id")[: limit + 1])
+    selected = list_workspace_audit_events(
+        organisation_id=organisation_id,
+        limit=limit,
+        actor_id=actor_id,
+        action=action,
+        before_id=anchor,
+    )
     more = len(selected) > limit
     selected = selected[:limit]
     # Audit payloads may contain sensitive evidence; the admin table exposes identifiers only.

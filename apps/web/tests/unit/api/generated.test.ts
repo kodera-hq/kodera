@@ -34,7 +34,7 @@ const collections = operations.filter((op) => op.isList)
 describe('the generated handlers', () => {
   it('cover every operation in the contract', () => {
     // A count that silently drops to zero would make every assertion below vacuous.
-    expect(operations.length).toBe(185)
+    expect(operations.length).toBe(196)
     expect(collections.length).toBeGreaterThan(20)
   })
 
@@ -132,7 +132,7 @@ describe('If-Match on PATCH', () => {
 
   it('every PATCH the contract declares requires If-Match', () => {
     // A fixed inventory prevents the conditional-write assertions becoming vacuous.
-    expect(patchOps.length).toBe(14)
+    expect(patchOps.length).toBe(16)
     expect(patchOps.every((op) => op.requiresIfMatch)).toBe(true)
   })
 

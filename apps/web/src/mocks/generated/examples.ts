@@ -25,6 +25,311 @@ export interface OperationExample {
 }
 
 export const EXAMPLES = {
+  "listWorkspaceRoles": {
+    operationId: "listWorkspaceRoles",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/roles",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000011",
+          "workspace_id": "00000000-0000-7000-8000-000000000012",
+          "organisation_id": "00000000-0000-7000-8000-000000000013",
+          "name": "Builders",
+          "slug": "builders",
+          "kind": "role",
+          "color": "#2563eb",
+          "icon": "wrench",
+          "position": 10,
+          "is_hoisted": true,
+          "is_mentionable": true,
+          "permissions": [
+            "channel.view",
+            "message.post"
+          ],
+          "member_count": 1,
+          "etag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+          "created_at": "2026-01-02T12:00:00Z",
+          "updated_at": "2026-01-02T12:00:00Z"
+        }
+      ],
+      "assignments": [
+        {
+          "membership_id": "00000000-0000-7000-8000-000000000014",
+          "role_ids": [
+            "00000000-0000-7000-8000-000000000011"
+          ]
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "createWorkspaceRole": {
+    operationId: "createWorkspaceRole",
+    method: "post",
+    path: "/organisations/{organisation_id}/workspace/roles",
+    status: 201,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000011",
+      "workspace_id": "00000000-0000-7000-8000-000000000012",
+      "organisation_id": "00000000-0000-7000-8000-000000000013",
+      "name": "Builders",
+      "slug": "builders",
+      "kind": "role",
+      "color": "#2563eb",
+      "icon": "wrench",
+      "position": 10,
+      "is_hoisted": true,
+      "is_mentionable": true,
+      "permissions": [
+        "channel.view",
+        "message.post"
+      ],
+      "member_count": 1,
+      "etag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+      "created_at": "2026-01-02T12:00:00Z",
+      "updated_at": "2026-01-02T12:00:00Z"
+    },
+    isList: false,
+    idempotent: true,
+    requiresIfMatch: false,
+  },
+  "updateWorkspaceRole": {
+    operationId: "updateWorkspaceRole",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/roles/{role_id}",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "id": "00000000-0000-7000-8000-000000000011",
+      "workspace_id": "00000000-0000-7000-8000-000000000012",
+      "organisation_id": "00000000-0000-7000-8000-000000000013",
+      "name": "Builders",
+      "slug": "builders",
+      "kind": "role",
+      "color": "#2563eb",
+      "icon": "wrench",
+      "position": 10,
+      "is_hoisted": true,
+      "is_mentionable": true,
+      "permissions": [
+        "channel.view",
+        "message.post"
+      ],
+      "member_count": 1,
+      "etag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+      "created_at": "2026-01-02T12:00:00Z",
+      "updated_at": "2026-01-02T12:00:00Z"
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "deleteWorkspaceRole": {
+    operationId: "deleteWorkspaceRole",
+    method: "delete",
+    path: "/organisations/{organisation_id}/workspace/roles/{role_id}",
+    status: 204,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: null,
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "setWorkspaceMemberRoles": {
+    operationId: "setWorkspaceMemberRoles",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/members/{membership_id}/roles",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "membership_id": "00000000-0000-7000-8000-000000000014",
+      "role_ids": [
+        "00000000-0000-7000-8000-000000000011"
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceChannelOverrides": {
+    operationId: "getWorkspaceChannelOverrides",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "role_id": "00000000-0000-7000-8000-000000000011",
+          "allow": [
+            "channel.view"
+          ],
+          "deny": [
+            "message.post"
+          ]
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "setWorkspaceChannelOverrides": {
+    operationId: "setWorkspaceChannelOverrides",
+    method: "put",
+    path: "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "role_id": "00000000-0000-7000-8000-000000000011",
+          "allow": [
+            "channel.view"
+          ],
+          "deny": [
+            "message.post"
+          ]
+        }
+      ]
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "getWorkspaceProfile": {
+    operationId: "getWorkspaceProfile",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/profile",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "description": "Product and engineering workspace",
+      "banner_preset": "cobalt",
+      "icon_mxc": "",
+      "traits": [
+        {
+          "icon": "shield",
+          "label": "Verified"
+        }
+      ],
+      "arrivals_channel_id": "00000000-0000-7000-8000-000000000015",
+      "rules_channel_id": null,
+      "moderator_updates_channel_id": null,
+      "security_alerts_channel_id": null,
+      "invites_paused": false
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "updateWorkspaceProfile": {
+    operationId: "updateWorkspaceProfile",
+    method: "patch",
+    path: "/organisations/{organisation_id}/workspace/profile",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562",
+      "ETag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\""
+    },
+    body: {
+      "description": "Product and engineering workspace",
+      "banner_preset": "cobalt",
+      "icon_mxc": "",
+      "traits": [
+        {
+          "icon": "shield",
+          "label": "Verified"
+        }
+      ],
+      "arrivals_channel_id": "00000000-0000-7000-8000-000000000015",
+      "rules_channel_id": null,
+      "moderator_updates_channel_id": null,
+      "security_alerts_channel_id": null,
+      "invites_paused": false
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: true,
+  },
+  "listWorkspaceBans": {
+    operationId: "listWorkspaceBans",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/bans",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000016",
+          "membership_id": "00000000-0000-7000-8000-000000000017",
+          "display_name": "Suspended Member",
+          "email": "member@example.invalid",
+          "updated_at": "2026-01-02T12:00:00Z"
+        }
+      ],
+      "has_more": false,
+      "next_cursor": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
+  "listWorkspaceAuditLogs": {
+    operationId: "listWorkspaceAuditLogs",
+    method: "get",
+    path: "/organisations/{organisation_id}/workspace/audit-logs",
+    status: 200,
+    headers: {
+      "X-Request-Id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+    },
+    body: {
+      "data": [
+        {
+          "id": "00000000-0000-7000-8000-000000000018",
+          "occurred_at": "2026-01-02T12:00:00Z",
+          "actor_id": "00000000-0000-7000-8000-000000000019",
+          "actor_type": "tenant",
+          "action": "workspace.role.created",
+          "target_urn": "urn:kodera:workspace_role:00000000-0000-7000-8000-000000000011",
+          "request_id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+        }
+      ],
+      "has_more": false,
+      "next_cursor": null
+    },
+    isList: false,
+    idempotent: false,
+    requiresIfMatch: false,
+  },
   "getMe": {
     operationId: "getMe",
     method: "get",

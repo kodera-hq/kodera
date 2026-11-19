@@ -11,6 +11,8 @@ FUNCTIONS = frozenset(
     {
         ("workspace_iam_permissions", "value jsonb"),
         ("workspace_iam_scope", ""),
+        ("workspace_iam_cutoff_guard", ""),
+        ("workspace_iam_erasure_hook", ""),
         ("workspace_iam_profile_guard", ""),
         ("workspace_iam_invite_guard", ""),
     }
@@ -45,6 +47,8 @@ SHARED = frozenset(
         ),
         ("trigger", "workspaces_workspace", "workspace_iam_profile_guard"),
         ("trigger", "workspaces_workspaceinvitelink", "workspace_iam_invite_guard"),
+        ("trigger", "orgs_privacyerasure", "aa_03_workspace_iam_erasure"),
+        *(("trigger", table, "aa_privacy_cutoff") for table in TABLES),
     }
 )
 

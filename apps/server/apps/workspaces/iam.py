@@ -1,18 +1,20 @@
 """Serialized workspace role administration with strict hierarchy and tenant fences."""
 
+import re
 from typing import Any
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 
 from apps.orgs.actor_selectors import TenantCaller
 from services.identity.access_tokens import VerifiedAccessToken
 
 from .iam_validation import validate_permissions
-from .models import Workspace, WorkspaceMemberRole, WorkspaceRole
+from .models import Workspace, WorkspaceChannelRoleOverride, WorkspaceMemberRole, WorkspaceRole
 from .moderation import ADMINS, RefusalError, _audit, _context, _target, _text
+from .moderation_wire import tag
 from .selectors import lock_workspace
 
 ROLE_FIELDS = {
@@ -36,8 +38,14 @@ def capabilities(workspace: Workspace, caller: TenantCaller) -> set[str]:
 
 
 @transaction.atomic
-def authorize(verified: VerifiedAccessToken, organisation_id: UUID, capability: str | None = None):
-    workspace, caller = _context(verified, organisation_id, lock=False)
+def authorize(
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    capability: str | None = None,
+    *,
+    admin: bool = False,
+):
+    workspace, caller = _context(verified, organisation_id, admin=admin, lock=False)
     if (
         capability
         and caller.role not in ADMINS
@@ -48,11 +56,15 @@ def authorize(verified: VerifiedAccessToken, organisation_id: UUID, capability: 
 
 
 def mutation_context(
-    verified: VerifiedAccessToken, organisation_id: UUID, capability: str | None = None
+    verified: VerifiedAccessToken,
+    organisation_id: UUID,
+    capability: str | None = None,
+    *,
+    admin: bool = False,
 ):
-    workspace, _ = authorize(verified, organisation_id, capability)
+    workspace, _ = authorize(verified, organisation_id, capability, admin=admin)
     lock_workspace(workspace_id=workspace.id)
-    return authorize(verified, organisation_id, capability)
+    return authorize(verified, organisation_id, capability, admin=admin)
 
 
 def check_manage(
@@ -100,6 +112,19 @@ def resolve_roles(workspace: Workspace, value: Any) -> list[WorkspaceRole]:
     return roles
 
 
+def role_etag(role: WorkspaceRole) -> str:
+    return tag(
+        {
+            "id": str(role.id),
+            "workspace_id": str(role.workspace_id),
+            "organisation_id": str(role.organisation_id),
+            **{field: getattr(role, field) for field in sorted(ROLE_FIELDS)},
+            "created_at": role.created_at.isoformat(),
+            "updated_at": role.updated_at.isoformat(),
+        }
+    )
+
+
 def role_wire(role: WorkspaceRole, member_count: int = 0) -> dict[str, Any]:
     return {
         "id": str(role.id),
@@ -109,6 +134,7 @@ def role_wire(role: WorkspaceRole, member_count: int = 0) -> dict[str, Any]:
         "created_at": role.created_at.isoformat(),
         "updated_at": role.updated_at.isoformat(),
         "member_count": member_count,
+        "etag": role_etag(role),
     }
 
 
@@ -120,11 +146,17 @@ def _validate(role: WorkspaceRole) -> None:
         raise RefusalError(422)
     if any(not isinstance(getattr(role, key), str) for key in ("slug", "color", "kind", "icon")):
         raise RefusalError(422)
+    if (
+        not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", role.slug)
+        or not re.fullmatch(r"#[0-9a-fA-F]{6}", role.color)
+        or role.kind not in {"role", "subteam", "tag"}
+    ):
+        raise RefusalError(422)
     if role.icon:
         _text(role.icon, 32)
     try:
         validate_permissions(role.permissions)
-        role.full_clean(validate_unique=False)
+        role.full_clean(validate_unique=False, validate_constraints=False)
     except (ValidationError, TypeError, ValueError):
         raise RefusalError(422) from None
 
@@ -176,7 +208,11 @@ def create_role(
     role = WorkspaceRole(workspace=workspace, organisation_id=organisation_id, **data)
     _validate(role)
     check_manage(workspace, caller, [], position=role.position, permissions=role.permissions)
-    role.save(force_insert=True)
+    try:
+        with transaction.atomic():
+            role.save(force_insert=True)
+    except IntegrityError:
+        raise RefusalError(409) from None
     _audit(workspace, caller.identity_id, "workspace.role.created", role.id, request_id)
     return role_wire(role)
 
@@ -189,21 +225,39 @@ def update_role(
     role_id: UUID,
     data: dict[str, Any],
     request_id: str,
+    if_match: str = "",
 ) -> dict[str, Any]:
     workspace, caller = mutation_context(verified, organisation_id, "manage_roles")
     role = WorkspaceRole.objects.filter(workspace=workspace, id=role_id).first()
     if role is None:
         raise RefusalError(404)
+    check_manage(workspace, caller, [role])
+    token = if_match.strip()
+    if not token:
+        raise RefusalError(428)
+    current = role_etag(role)
+    if token not in {"*", current}:
+        raise RefusalError(412, current_etag=current)
     if not data or data.keys() - ROLE_FIELDS:
         raise RefusalError(422)
-    check_manage(workspace, caller, [role])
     for field, value in data.items():
         setattr(role, field, value)
     _validate(role)
     check_manage(workspace, caller, [], position=role.position, permissions=role.permissions)
-    role.save(update_fields=[*data, "updated_at"])
+    try:
+        with transaction.atomic():
+            role.save(update_fields=[*data, "updated_at"])
+    except IntegrityError:
+        raise RefusalError(409) from None
     _audit(workspace, caller.identity_id, "workspace.role.updated", role.id, request_id)
-    return role_wire(role, WorkspaceMemberRole.objects.filter(role=role).count())
+    active_members = WorkspaceMemberRole.objects.filter(
+        workspace=workspace,
+        role=role,
+        membership__state="active",
+        membership__deleted_at__isnull=True,
+        membership__accepted_at__isnull=False,
+    ).count()
+    return role_wire(role, active_members)
 
 
 @transaction.atomic
@@ -217,6 +271,15 @@ def delete_role(
     if role is None:
         raise RefusalError(404)
     check_manage(workspace, caller, [role])
+    override_permissions = {
+        permission
+        for allow, deny in WorkspaceChannelRoleOverride.objects.filter(
+            workspace=workspace, role=role
+        ).values_list("allow", "deny")
+        for permission in (*allow, *deny)
+    }
+    if override_permissions:
+        check_manage(workspace, caller, [], permissions=sorted(override_permissions))
     for link in WorkspaceInviteLink.objects.filter(
         workspace=workspace, auto_role_ids__contains=[str(role.id)]
     ):

@@ -104,6 +104,17 @@ function answerConditional(example: OperationExample, request: Request): Respons
 }
 
 export const handlers: HttpHandler[] = [
+  http.get(BASE + "/organisations/:organisation_id/workspace/roles", () => answer(EXAMPLES["listWorkspaceRoles"])),
+  http.post(BASE + "/organisations/:organisation_id/workspace/roles", ({ request }) => answerIdempotent(EXAMPLES["createWorkspaceRole"], request)),
+  http.patch(BASE + "/organisations/:organisation_id/workspace/roles/:role_id", ({ request }) => answerRequiringIfMatch(EXAMPLES["updateWorkspaceRole"], request)),
+  http.delete(BASE + "/organisations/:organisation_id/workspace/roles/:role_id", () => answer(EXAMPLES["deleteWorkspaceRole"])),
+  http.put(BASE + "/organisations/:organisation_id/workspace/members/:membership_id/roles", () => answer(EXAMPLES["setWorkspaceMemberRoles"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/channels/:channel_id/overrides", () => answer(EXAMPLES["getWorkspaceChannelOverrides"])),
+  http.put(BASE + "/organisations/:organisation_id/workspace/channels/:channel_id/overrides", () => answer(EXAMPLES["setWorkspaceChannelOverrides"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/profile", () => answer(EXAMPLES["getWorkspaceProfile"])),
+  http.patch(BASE + "/organisations/:organisation_id/workspace/profile", ({ request }) => answerRequiringIfMatch(EXAMPLES["updateWorkspaceProfile"], request)),
+  http.get(BASE + "/organisations/:organisation_id/workspace/bans", () => answer(EXAMPLES["listWorkspaceBans"])),
+  http.get(BASE + "/organisations/:organisation_id/workspace/audit-logs", () => answer(EXAMPLES["listWorkspaceAuditLogs"])),
   http.get(BASE + "/me", ({ request }) => answer({ ...EXAMPLES["getMe"], body: bindCurrentUserToMockRequest(EXAMPLES["getMe"].body as components['schemas']['Me'], request) })),
   http.patch(BASE + "/me", ({ request }) => answerRequiringIfMatch(EXAMPLES["patchMe"], request)),
   http.post(BASE + "/auth/passport/magic-link/request", () => answer(EXAMPLES["requestPassportMagicLink"])),

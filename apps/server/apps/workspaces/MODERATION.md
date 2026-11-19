@@ -64,7 +64,9 @@ up to five badges and workspace-local text-channel references. Owners/admins upd
 it. Its invite pause immediately refuses link creation, preview and redemption,
 including stored creation/redemption response admission. Link rows expose their creator,
 usage, expiry, target channel and configured auto-role IDs, never their code digest.
-First redemption assigns auto-roles atomically with the usage increment and audit event.
+First redemption by a newly joining member rechecks the creator's current role ceiling
+and assigns auto-roles atomically with the usage increment and audit event; existing
+members and administrators never receive invite auto-roles.
 Deleting a role removes its assignments, overrides and invite auto-role references.
 
 Owner/admin ban searches match email or display name and reuse the existing `unban`

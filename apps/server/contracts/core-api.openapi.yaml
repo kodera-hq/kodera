@@ -173,16 +173,14 @@ paths:
           headers:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkspaceRoles'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -198,7 +196,7 @@ paths:
     post:
       operationId: createWorkspaceRole
       summary: Create a workspace role
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an admin without an assigned role has no role hierarchy ceiling. Delegated managers cannot grant capabilities they do not hold.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold.'
       tags:
       - Workspace
       x-kodera-scope: workspace_role:create
@@ -217,6 +215,8 @@ paths:
           headers:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
             Idempotency-Replayed:
               $ref: '#/components/headers/IdempotencyReplayed'
           content:
@@ -224,11 +224,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkspaceRole'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -251,7 +247,7 @@ paths:
     patch:
       operationId: updateWorkspaceRole
       summary: Update a workspace role
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an admin without an assigned role has no role hierarchy ceiling. Delegated managers cannot grant capabilities they do not hold.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold.'
       tags:
       - Workspace
       x-kodera-scope: workspace_role:update
@@ -270,22 +266,21 @@ paths:
         schema:
           type: string
           format: uuid
+      - $ref: '#/components/parameters/IfMatch'
       responses:
         '200':
           description: Successful operation.
           headers:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkspaceRole'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -294,8 +289,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
         '429':
           $ref: '#/components/responses/RateLimited'
       requestBody:
@@ -307,7 +306,7 @@ paths:
     delete:
       operationId: deleteWorkspaceRole
       summary: Delete a workspace role
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an admin without an assigned role has no role hierarchy ceiling. Delegated managers cannot grant capabilities they do not hold. Removes member assignments, channel overrides and invite auto-role references atomically.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold. Removes member assignments, channel overrides and invite auto-role references atomically.'
       tags:
       - Workspace
       x-kodera-scope: workspace_role:delete
@@ -333,11 +332,7 @@ paths:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -354,7 +349,7 @@ paths:
     put:
       operationId: setWorkspaceMemberRoles
       summary: Replace a member's workspace roles
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an admin without an assigned role has no role hierarchy ceiling. Delegated managers cannot grant capabilities they do not hold. Checks both removed and assigned roles; delegates cannot change their own assignments or administrator memberships.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold. Checks both removed and assigned roles; delegates cannot change their own assignments or administrator memberships.'
       tags:
       - Workspace
       x-kodera-scope: workspace_role:update
@@ -384,11 +379,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkspaceMemberRoles'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -411,7 +402,7 @@ paths:
     get:
       operationId: getWorkspaceChannelOverrides
       summary: Read channel role overrides
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Administrative role permission metadata only; no channel content is returned.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Administrative role permission metadata only; no channel content is returned. Restricted channels invisible to a non-admin caller return 404.'
       tags:
       - Workspace
       x-kodera-scope: workspace_role:read
@@ -441,11 +432,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkspaceRoleOverrides'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -461,7 +448,7 @@ paths:
     put:
       operationId: setWorkspaceChannelOverrides
       summary: Replace channel role overrides
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an admin without an assigned role has no role hierarchy ceiling. Delegated managers cannot grant capabilities they do not hold. allow and deny must be disjoint; role IDs must be unique. Replacement is atomic.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller''s highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold. allow and deny must be disjoint; role IDs must be unique; restricted channels invisible to a non-admin caller return 404. Replacement is atomic.'
       tags:
       - Workspace
       x-kodera-scope: workspace_role:update
@@ -491,11 +478,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkspaceRoleOverrides'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -518,7 +501,7 @@ paths:
     get:
       operationId: getWorkspaceProfile
       summary: Read the workspace server profile
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. '
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event.'
       tags:
       - Workspace
       x-kodera-scope: workspace_profile:read
@@ -536,16 +519,14 @@ paths:
           headers:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkspaceProfile'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -571,22 +552,21 @@ paths:
         - org_admin
       parameters:
       - $ref: '#/components/parameters/OrganisationId'
+      - $ref: '#/components/parameters/IfMatch'
       responses:
         '200':
           description: Successful operation.
           headers:
             X-Request-Id:
               $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/WorkspaceProfile'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -595,8 +575,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
         '429':
           $ref: '#/components/responses/RateLimited'
       requestBody:
@@ -632,7 +616,7 @@ paths:
         description: Opaque cursor from the preceding page, valid for one hour.
         schema:
           type: string
-          maxLength: 1024
+          maxLength: 512
       - name: q
         in: query
         description: Case-insensitive email/display-name search.
@@ -650,11 +634,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkspaceBans'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -671,7 +651,7 @@ paths:
     get:
       operationId: listWorkspaceAuditLogs
       summary: List workspace audit logs
-      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Cursor pages are signed and bound to the organisation, caller and filters, ordered by descending event identifier. Requires owner/admin or the assigned view_audit_log capability. Exposes identifiers only, never raw audit evidence payloads.'
+      description: 'Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Cursor pages are signed and bound to the organisation, caller and filters, ordered by descending event identifier. Requires owner/admin or the assigned view_audit_log capability. Scopes strictly to workspace-level events (workspace.*) and exposes identifiers only, redacting non-tenant actor identifiers and omitting raw audit evidence payloads.'
       tags:
       - Workspace
       x-kodera-scope: workspace_audit:read
@@ -696,7 +676,7 @@ paths:
         description: Opaque cursor from the preceding page, valid for one hour.
         schema:
           type: string
-          maxLength: 1024
+          maxLength: 512
       - name: actor_id
         in: query
         description: Exact event filter.
@@ -720,11 +700,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkspaceAuditLogs'
         '400':
-          description: Workspace request refused.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
+          $ref: '#/components/responses/MalformedRequest'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -11325,6 +11301,7 @@ components:
       - is_mentionable
       - permissions
       - member_count
+      - etag
       - created_at
       - updated_at
       properties:
@@ -11343,6 +11320,8 @@ components:
           maxLength: 100
         slug:
           type: string
+          minLength: 1
+          maxLength: 64
           pattern: ^[a-z][a-z0-9_-]{0,63}$
         kind:
           type: string
@@ -11401,12 +11380,34 @@ components:
         member_count:
           type: integer
           minimum: 0
+        etag:
+          type: string
+          description: The role's own strong tag, for `If-Match`.
         created_at:
           type: string
           format: date-time
         updated_at:
           type: string
           format: date-time
+      examples:
+      - id: 00000000-0000-7000-8000-000000000011
+        workspace_id: 00000000-0000-7000-8000-000000000012
+        organisation_id: 00000000-0000-7000-8000-000000000013
+        name: Builders
+        slug: builders
+        kind: role
+        color: '#2563eb'
+        icon: wrench
+        position: 10
+        is_hoisted: true
+        is_mentionable: true
+        permissions:
+        - channel.view
+        - message.post
+        member_count: 1
+        etag: '"000000000000000000000000000000000000000000000000000000000000e7a9"'
+        created_at: '2026-01-02T12:00:00Z'
+        updated_at: '2026-01-02T12:00:00Z'
       title: WorkspaceRole
     WorkspaceRoleCreate:
       type: object
@@ -11421,6 +11422,8 @@ components:
           maxLength: 100
         slug:
           type: string
+          minLength: 1
+          maxLength: 64
           pattern: ^[a-z][a-z0-9_-]{0,63}$
         kind:
           type: string
@@ -11488,6 +11491,8 @@ components:
           maxLength: 100
         slug:
           type: string
+          minLength: 1
+          maxLength: 64
           pattern: ^[a-z][a-z0-9_-]{0,63}$
         kind:
           type: string
@@ -11562,6 +11567,10 @@ components:
             format: uuid
           maxItems: 100
           uniqueItems: true
+      examples:
+      - membership_id: 00000000-0000-7000-8000-000000000014
+        role_ids:
+        - 00000000-0000-7000-8000-000000000011
       title: WorkspaceMemberRoles
     WorkspaceMemberRolesRequest:
       type: object
@@ -11592,6 +11601,30 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkspaceMemberRoles'
+      examples:
+      - data:
+        - id: 00000000-0000-7000-8000-000000000011
+          workspace_id: 00000000-0000-7000-8000-000000000012
+          organisation_id: 00000000-0000-7000-8000-000000000013
+          name: Builders
+          slug: builders
+          kind: role
+          color: '#2563eb'
+          icon: wrench
+          position: 10
+          is_hoisted: true
+          is_mentionable: true
+          permissions:
+          - channel.view
+          - message.post
+          member_count: 1
+          etag: '"000000000000000000000000000000000000000000000000000000000000e7a9"'
+          created_at: '2026-01-02T12:00:00Z'
+          updated_at: '2026-01-02T12:00:00Z'
+        assignments:
+        - membership_id: 00000000-0000-7000-8000-000000000014
+          role_ids:
+          - 00000000-0000-7000-8000-000000000011
       title: WorkspaceRoles
     WorkspaceRoleOverride:
       type: object
@@ -11670,6 +11703,13 @@ components:
           items:
             $ref: '#/components/schemas/WorkspaceRoleOverride'
           maxItems: 100
+      examples:
+      - data:
+        - role_id: 00000000-0000-7000-8000-000000000011
+          allow:
+          - channel.view
+          deny:
+          - message.post
       title: WorkspaceRoleOverrides
     WorkspaceRoleOverridesRequest:
       type: object
@@ -11747,6 +11787,18 @@ components:
           format: uuid
         invites_paused:
           type: boolean
+      examples:
+      - description: Product and engineering workspace
+        banner_preset: cobalt
+        icon_mxc: ''
+        traits:
+        - icon: shield
+          label: Verified
+        arrivals_channel_id: 00000000-0000-7000-8000-000000000015
+        rules_channel_id: null
+        moderator_updates_channel_id: null
+        security_alerts_channel_id: null
+        invites_paused: false
       title: WorkspaceProfile
     WorkspaceProfilePatch:
       type: object
@@ -11890,6 +11942,16 @@ components:
           type:
           - string
           - 'null'
+          maxLength: 512
+      examples:
+      - data:
+        - id: 00000000-0000-7000-8000-000000000016
+          membership_id: 00000000-0000-7000-8000-000000000017
+          display_name: Suspended Member
+          email: member@example.invalid
+          updated_at: '2026-01-02T12:00:00Z'
+        has_more: false
+        next_cursor: null
       title: WorkspaceBans
     WorkspaceAuditLogs:
       type: object
@@ -11910,6 +11972,18 @@ components:
           type:
           - string
           - 'null'
+          maxLength: 512
+      examples:
+      - data:
+        - id: 00000000-0000-7000-8000-000000000018
+          occurred_at: '2026-01-02T12:00:00Z'
+          actor_id: 00000000-0000-7000-8000-000000000019
+          actor_type: tenant
+          action: workspace.role.created
+          target_urn: urn:kodera:workspace_role:00000000-0000-7000-8000-000000000011
+          request_id: 019467a3-0f9b-7cc3-98c2-1fa48f28f562
+        has_more: false
+        next_cursor: null
       title: WorkspaceAuditLogs
     WorkspaceModerationRequest:
       type: object

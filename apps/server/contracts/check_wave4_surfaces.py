@@ -22,7 +22,17 @@ def require(condition: bool, message: str) -> None:
 def validate(document: dict[str, Any]) -> None:
     require(
         document["info"]["version"]
-        in {"0.44.0", "0.44.1", "0.44.2", "0.45.0", "0.46.0", "0.47.0", "0.48.0", "0.49.0"},
+        in {
+            "0.44.0",
+            "0.44.1",
+            "0.44.2",
+            "0.45.0",
+            "0.46.0",
+            "0.47.0",
+            "0.48.0",
+            "0.49.0",
+            "0.50.0",
+        },
         "wave4 version",
     )
     schemas = document["components"]["schemas"]

@@ -18,21 +18,20 @@ from .moderation import _body, _json, _serve
 )
 def roles(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
     def post(verified: Any, request_id: str) -> HttpResponse:
-        return _json(
-            iam.create_role(
-                verified=verified,
-                organisation_id=organisation_id,
-                data=_body(request, iam.ROLE_FIELDS, {"name", "slug"}),
-                request_id=request_id,
-            ),
-            201,
+        body = iam.create_role(
+            verified=verified,
+            organisation_id=organisation_id,
+            data=_body(request, iam.ROLE_FIELDS, {"name", "slug"}),
+            request_id=request_id,
         )
+        return _json(body, 201, etag=body["etag"])
 
     return _serve(
         request,
         {
             "GET": lambda verified, _: _json(
-                iam.list_roles(verified=verified, organisation_id=organisation_id)
+                iam.list_roles(verified=verified, organisation_id=organisation_id),
+                etag=True,
             ),
             "POST": post,
             "AUTHORIZE": lambda verified: iam.authorize(verified, organisation_id, "manage_roles"),
@@ -45,6 +44,17 @@ def roles(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
     Operation("DELETE", "deleteWorkspaceRole", "workspace_role:delete"),
 )
 def role(request: HttpRequest, organisation_id: UUID, role_id: UUID) -> HttpResponse:
+    def patch(verified: Any, request_id: str) -> HttpResponse:
+        body = iam.update_role(
+            verified=verified,
+            organisation_id=organisation_id,
+            role_id=role_id,
+            data=_body(request, iam.ROLE_FIELDS, set()),
+            if_match=request.headers.get("If-Match", ""),
+            request_id=request_id,
+        )
+        return _json(body, etag=body["etag"])
+
     def delete(verified: Any, request_id: str) -> HttpResponse:
         iam.delete_role(
             verified=verified,
@@ -57,15 +67,7 @@ def role(request: HttpRequest, organisation_id: UUID, role_id: UUID) -> HttpResp
     return _serve(
         request,
         {
-            "PATCH": lambda verified, request_id: _json(
-                iam.update_role(
-                    verified=verified,
-                    organisation_id=organisation_id,
-                    role_id=role_id,
-                    data=_body(request, iam.ROLE_FIELDS, set()),
-                    request_id=request_id,
-                )
-            ),
+            "PATCH": patch,
             "DELETE": delete,
         },
     )
@@ -120,20 +122,27 @@ def overrides(request: HttpRequest, organisation_id: UUID, channel_id: UUID) -> 
     Operation("PATCH", "updateWorkspaceProfile", "workspace_profile:update"),
 )
 def profile(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
+    def get(verified: Any, _: str) -> HttpResponse:
+        body, etag = governance.profile_with_etag(
+            verified=verified, organisation_id=organisation_id
+        )
+        return _json(body, etag=etag)
+
+    def patch(verified: Any, request_id: str) -> HttpResponse:
+        body, etag = governance.profile_with_etag(
+            verified=verified,
+            organisation_id=organisation_id,
+            data=_body(request, governance.PROFILE_FIELDS, set()),
+            if_match=request.headers.get("If-Match", ""),
+            request_id=request_id,
+        )
+        return _json(body, etag=etag)
+
     return _serve(
         request,
         {
-            "GET": lambda verified, _: _json(
-                governance.profile(verified=verified, organisation_id=organisation_id)
-            ),
-            "PATCH": lambda verified, request_id: _json(
-                governance.profile(
-                    verified=verified,
-                    organisation_id=organisation_id,
-                    data=_body(request, governance.PROFILE_FIELDS, set()),
-                    request_id=request_id,
-                )
-            ),
+            "GET": get,
+            "PATCH": patch,
         },
     )
 

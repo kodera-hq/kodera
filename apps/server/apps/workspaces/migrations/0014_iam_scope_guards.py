@@ -1,4 +1,4 @@
-"""Database tenant fences and bounded JSON capability/profile shapes."""
+"""Database tenant fences, privacy cutoff guards, Core erasure hook and bounded JSON shapes."""
 
 from django.db import migrations
 
@@ -55,6 +55,63 @@ $$;
 CREATE TRIGGER workspace_role_scope BEFORE INSERT OR UPDATE ON workspaces_workspacerole FOR EACH ROW EXECUTE FUNCTION workspace_iam_scope();
 CREATE TRIGGER workspace_member_role_scope BEFORE INSERT OR UPDATE ON workspaces_workspacememberrole FOR EACH ROW EXECUTE FUNCTION workspace_iam_scope();
 CREATE TRIGGER workspace_override_scope BEFORE INSERT OR UPDATE ON workspaces_workspacechannelroleoverride FOR EACH ROW EXECUTE FUNCTION workspace_iam_scope();
+CREATE FUNCTION workspace_iam_cutoff_guard() RETURNS trigger LANGUAGE plpgsql
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE item jsonb := to_jsonb(CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD ELSE NEW END); org uuid;
+BEGIN
+    IF item ? 'organisation_id' THEN
+        org := (item->>'organisation_id')::uuid;
+    ELSIF item ? 'workspace_id' THEN
+        SELECT organisation_id INTO org FROM public.workspaces_workspace WHERE id=(item->>'workspace_id')::uuid;
+    END IF;
+    IF org IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock_shared(hashtextextended('privacy_erasure_cutoff:' || org::text, 0));
+        IF EXISTS (SELECT 1 FROM public.orgs_privacyerasure WHERE organisation_reference=org)
+           AND NOT public.privacy_erasure_context(org) THEN
+            RAISE EXCEPTION 'durable erasure cutoff refuses write' USING ERRCODE='23514';
+        END IF;
+    END IF;
+    IF TG_OP='DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION workspace_iam_cutoff_guard() FROM PUBLIC;
+CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE OR DELETE ON workspaces_workspacerole FOR EACH ROW EXECUTE FUNCTION workspace_iam_cutoff_guard();
+CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE OR DELETE ON workspaces_workspacememberrole FOR EACH ROW EXECUTE FUNCTION workspace_iam_cutoff_guard();
+CREATE TRIGGER aa_privacy_cutoff BEFORE INSERT OR UPDATE OR DELETE ON workspaces_workspacechannelroleoverride FOR EACH ROW EXECUTE FUNCTION workspace_iam_cutoff_guard();
+CREATE FUNCTION workspace_iam_erasure_hook() RETURNS trigger LANGUAGE plpgsql
+SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE org uuid := NEW.organisation_reference;
+BEGIN
+    IF OLD.core_purged_at IS NULL AND NEW.core_purged_at IS NOT NULL THEN
+        IF NOT public.privacy_erasure_context(org) THEN
+            RAISE EXCEPTION 'workspace iam erasure requires worker authority' USING ERRCODE='23514';
+        END IF;
+        UPDATE public.workspaces_workspaceinvitelink
+        SET auto_role_ids='[]'::jsonb, updated_at=clock_timestamp()
+        WHERE workspace_id IN (SELECT id FROM public.workspaces_workspace WHERE organisation_id=org)
+          AND auto_role_ids <> '[]'::jsonb;
+        DELETE FROM public.workspaces_workspacechannelroleoverride
+        WHERE workspace_id IN (SELECT id FROM public.workspaces_workspace WHERE organisation_id=org);
+        DELETE FROM public.workspaces_workspacememberrole
+        WHERE workspace_id IN (SELECT id FROM public.workspaces_workspace WHERE organisation_id=org);
+        DELETE FROM public.workspaces_workspacerole
+        WHERE workspace_id IN (SELECT id FROM public.workspaces_workspace WHERE organisation_id=org);
+        UPDATE public.workspaces_workspace
+        SET description='',
+            banner_preset='',
+            icon_mxc='',
+            traits='[]'::jsonb,
+            updated_at=clock_timestamp()
+        WHERE organisation_id=org;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION workspace_iam_erasure_hook() FROM PUBLIC;
+CREATE TRIGGER aa_03_workspace_iam_erasure BEFORE UPDATE ON public.orgs_privacyerasure FOR EACH ROW EXECUTE FUNCTION workspace_iam_erasure_hook();
 CREATE FUNCTION workspace_iam_profile_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE channel uuid; badge jsonb;
 BEGIN
@@ -109,17 +166,23 @@ $$;
 CREATE TRIGGER workspace_iam_invite_guard BEFORE INSERT OR UPDATE ON workspaces_workspaceinvitelink FOR EACH ROW EXECUTE FUNCTION workspace_iam_invite_guard();
 """
 REVERSE = """
-DROP TRIGGER workspace_iam_invite_guard ON workspaces_workspaceinvitelink;
-DROP FUNCTION workspace_iam_invite_guard();
-DROP TRIGGER workspace_iam_profile_guard ON workspaces_workspace;
-DROP FUNCTION workspace_iam_profile_guard();
-DROP TRIGGER workspace_override_scope ON workspaces_workspacechannelroleoverride;
-DROP TRIGGER workspace_member_role_scope ON workspaces_workspacememberrole;
-DROP TRIGGER workspace_role_scope ON workspaces_workspacerole;
-DROP FUNCTION workspace_iam_scope();
+DROP TRIGGER IF EXISTS workspace_iam_invite_guard ON workspaces_workspaceinvitelink;
+DROP FUNCTION IF EXISTS workspace_iam_invite_guard();
+DROP TRIGGER IF EXISTS workspace_iam_profile_guard ON workspaces_workspace;
+DROP FUNCTION IF EXISTS workspace_iam_profile_guard();
+DROP TRIGGER IF EXISTS aa_03_workspace_iam_erasure ON public.orgs_privacyerasure;
+DROP FUNCTION IF EXISTS workspace_iam_erasure_hook();
+DROP TRIGGER IF EXISTS aa_privacy_cutoff ON workspaces_workspacechannelroleoverride;
+DROP TRIGGER IF EXISTS aa_privacy_cutoff ON workspaces_workspacememberrole;
+DROP TRIGGER IF EXISTS aa_privacy_cutoff ON workspaces_workspacerole;
+DROP FUNCTION IF EXISTS workspace_iam_cutoff_guard();
+DROP TRIGGER IF EXISTS workspace_override_scope ON workspaces_workspacechannelroleoverride;
+DROP TRIGGER IF EXISTS workspace_member_role_scope ON workspaces_workspacememberrole;
+DROP TRIGGER IF EXISTS workspace_role_scope ON workspaces_workspacerole;
+DROP FUNCTION IF EXISTS workspace_iam_scope();
 ALTER TABLE workspaces_workspacechannelroleoverride DROP CONSTRAINT workspace_override_permissions_valid;
 ALTER TABLE workspaces_workspacerole DROP CONSTRAINT workspace_role_permissions_valid;
-DROP FUNCTION workspace_iam_permissions(jsonb);
+DROP FUNCTION IF EXISTS workspace_iam_permissions(jsonb);
 """
 
 

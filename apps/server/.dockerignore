@@ -299,9 +299,13 @@ config/settings/deploy_worker.py
 !apps/orgs/workspace_members.py
 !apps/orgs/privacy_selectors.py
 !apps/orgs/api/privacy.py
+!apps/workspaces/governance.py
+!apps/workspaces/iam.py
+!apps/workspaces/iam_validation.py
 !apps/workspaces/moderation.py
 !apps/workspaces/moderation_policy.py
 !apps/workspaces/moderation_wire.py
+!apps/workspaces/api/iam.py
 !apps/workspaces/api/moderation.py
 !apps/workspaces/api/moderation_urls.py
 !apps/media/__init__.py

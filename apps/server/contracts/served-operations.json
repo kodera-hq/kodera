@@ -137,6 +137,11 @@
       "path": "/organisations/{organisation_id}/workspace/invite-links"
     },
     {
+      "operation_id": "createWorkspaceRole",
+      "method": "POST",
+      "path": "/organisations/{organisation_id}/workspace/roles"
+    },
+    {
       "operation_id": "deleteCategory",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/workspace/categories/{category_id}"
@@ -160,6 +165,11 @@
       "operation_id": "deleteWorkspaceDocument",
       "method": "DELETE",
       "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
+      "operation_id": "deleteWorkspaceRole",
+      "method": "DELETE",
+      "path": "/organisations/{organisation_id}/workspace/roles/{role_id}"
     },
     {
       "operation_id": "discoverRealm",
@@ -317,6 +327,11 @@
       "path": "/organisations/{organisation_id}/workspace/administration"
     },
     {
+      "operation_id": "getWorkspaceChannelOverrides",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides"
+    },
+    {
       "operation_id": "getWorkspaceCollection",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/collections/{collection_id}"
@@ -345,6 +360,11 @@
       "operation_id": "getWorkspaceExportDownloadLink",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/privacy/exports/{request_id}/download"
+    },
+    {
+      "operation_id": "getWorkspaceProfile",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/profile"
     },
     {
       "operation_id": "getWorkspaceQuotaLimits",
@@ -457,6 +477,16 @@
       "path": "/organisations/{organisation_id}/tenants"
     },
     {
+      "operation_id": "listWorkspaceAuditLogs",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/audit-logs"
+    },
+    {
+      "operation_id": "listWorkspaceBans",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/bans"
+    },
+    {
       "operation_id": "listWorkspaceCollections",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/collections"
@@ -470,6 +500,11 @@
       "operation_id": "listWorkspaceInviteLinks",
       "method": "GET",
       "path": "/organisations/{organisation_id}/workspace/invite-links"
+    },
+    {
+      "operation_id": "listWorkspaceRoles",
+      "method": "GET",
+      "path": "/organisations/{organisation_id}/workspace/roles"
     },
     {
       "operation_id": "markNotificationsRead",
@@ -627,6 +662,16 @@
       "path": "/organisations/{organisation_id}/confidential/rooms/{room_id}/envelopes"
     },
     {
+      "operation_id": "setWorkspaceChannelOverrides",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides"
+    },
+    {
+      "operation_id": "setWorkspaceMemberRoles",
+      "method": "PUT",
+      "path": "/organisations/{organisation_id}/workspace/members/{membership_id}/roles"
+    },
+    {
       "operation_id": "switchPassportWorkspace",
       "method": "POST",
       "path": "/auth/passport/switch-workspace"
@@ -650,6 +695,16 @@
       "operation_id": "updateWorkspaceDocument",
       "method": "PATCH",
       "path": "/organisations/{organisation_id}/workspace/documents/{document_id}"
+    },
+    {
+      "operation_id": "updateWorkspaceProfile",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/profile"
+    },
+    {
+      "operation_id": "updateWorkspaceRole",
+      "method": "PATCH",
+      "path": "/organisations/{organisation_id}/workspace/roles/{role_id}"
     },
     {
       "operation_id": "validateBillingVat",

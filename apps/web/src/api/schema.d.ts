@@ -1,5 +1,161 @@
 // GENERATED FILE — DO NOT EDIT. Regenerate with: npm run api:generate
 export interface paths {
+    "/organisations/{organisation_id}/workspace/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace roles and assignments
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Includes role, subteam and tag kinds, active-member counts and role assignments.
+         */
+        get: operations["listWorkspaceRoles"];
+        put?: never;
+        /**
+         * Create a workspace role
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller's highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold.
+         */
+        post: operations["createWorkspaceRole"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/roles/{role_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a workspace role
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller's highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold. Removes member assignments, channel overrides and invite auto-role references atomically.
+         */
+        delete: operations["deleteWorkspaceRole"];
+        options?: never;
+        head?: never;
+        /**
+         * Update a workspace role
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller's highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold.
+         */
+        patch: operations["updateWorkspaceRole"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/members/{membership_id}/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace a member's workspace roles
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller's highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold. Checks both removed and assigned roles; delegates cannot change their own assignments or administrator memberships.
+         */
+        put: operations["setWorkspaceMemberRoles"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/channels/{channel_id}/overrides": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read channel role overrides
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Administrative role permission metadata only; no channel content is returned. Restricted channels invisible to a non-admin caller return 404.
+         */
+        get: operations["getWorkspaceChannelOverrides"];
+        /**
+         * Replace channel role overrides
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Owner/admin or an assigned manage_roles capability is required. Higher positions outrank lower positions. Only the owner can manage a role at or above the caller's highest assigned position; an org_admin without any owner-assigned workspace role has no assigned hierarchy ceiling and is refused (403) from managing roles. Delegated managers cannot grant capabilities they do not hold. allow and deny must be disjoint; role IDs must be unique; restricted channels invisible to a non-admin caller return 404. Replacement is atomic.
+         */
+        put: operations["setWorkspaceChannelOverrides"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the workspace server profile
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event.
+         */
+        get: operations["getWorkspaceProfile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update the workspace server profile
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Channel references must be active or provisioning text channels in this workspace. Pausing invites prevents workspace link creation, preview and redemption, including replay admission.
+         */
+        patch: operations["updateWorkspaceProfile"];
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/bans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace bans
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Cursor pages are signed and bound to the organisation, caller and filters, ordered by descending event identifier. Use moderateWorkspaceMember with action unban to revoke a ban.
+         */
+        get: operations["listWorkspaceBans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organisations/{organisation_id}/workspace/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List workspace audit logs
+         * @description Every request checks current active membership in this organisation. Responses are Cache-Control: no-store. Mutations take the workspace lock, recheck authority and append an audit event. Cursor pages are signed and bound to the organisation, caller and filters, ordered by descending event identifier. Requires owner/admin or the assigned view_audit_log capability. Scopes strictly to workspace-level events (workspace.*) and exposes identifiers only, redacting non-tenant actor identifiers and omitting raw audit evidence payloads.
+         */
+        get: operations["listWorkspaceAuditLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -4100,6 +4256,322 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * WorkspaceRole
+         * @example {
+         *       "id": "00000000-0000-7000-8000-000000000011",
+         *       "workspace_id": "00000000-0000-7000-8000-000000000012",
+         *       "organisation_id": "00000000-0000-7000-8000-000000000013",
+         *       "name": "Builders",
+         *       "slug": "builders",
+         *       "kind": "role",
+         *       "color": "#2563eb",
+         *       "icon": "wrench",
+         *       "position": 10,
+         *       "is_hoisted": true,
+         *       "is_mentionable": true,
+         *       "permissions": [
+         *         "channel.view",
+         *         "message.post"
+         *       ],
+         *       "member_count": 1,
+         *       "etag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+         *       "created_at": "2026-01-02T12:00:00Z",
+         *       "updated_at": "2026-01-02T12:00:00Z"
+         *     }
+         */
+        WorkspaceRole: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            workspace_id: string;
+            /** Format: uuid */
+            organisation_id: string;
+            name: string;
+            slug: string;
+            /**
+             * @default role
+             * @enum {string}
+             */
+            kind: "role" | "subteam" | "tag";
+            /** @default #808080 */
+            color: string;
+            /** @default  */
+            icon: string;
+            /** @default 0 */
+            position: number;
+            /** @default false */
+            is_hoisted: boolean;
+            /** @default false */
+            is_mentionable: boolean;
+            /** @default [] */
+            permissions: ("channel.history" | "channel.view" | "file.delete_any" | "file.delete_own" | "file.read" | "file.upload" | "media.connect" | "media.moderate" | "media.share" | "media.speak" | "media.video" | "message.delete_any" | "message.delete_own" | "message.edit_own" | "message.pin" | "message.post" | "message.react" | "message.reply" | "message.search" | "manage_roles" | "view_audit_log")[];
+            member_count: number;
+            /** @description The role's own strong tag, for `If-Match`. */
+            etag: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** WorkspaceRoleCreate */
+        WorkspaceRoleCreate: {
+            name: string;
+            slug: string;
+            /**
+             * @default role
+             * @enum {string}
+             */
+            kind: "role" | "subteam" | "tag";
+            /** @default #808080 */
+            color: string;
+            /** @default  */
+            icon: string;
+            /** @default 0 */
+            position: number;
+            /** @default false */
+            is_hoisted: boolean;
+            /** @default false */
+            is_mentionable: boolean;
+            /** @default [] */
+            permissions: ("channel.history" | "channel.view" | "file.delete_any" | "file.delete_own" | "file.read" | "file.upload" | "media.connect" | "media.moderate" | "media.share" | "media.speak" | "media.video" | "message.delete_any" | "message.delete_own" | "message.edit_own" | "message.pin" | "message.post" | "message.react" | "message.reply" | "message.search" | "manage_roles" | "view_audit_log")[];
+        };
+        /** WorkspaceRolePatch */
+        WorkspaceRolePatch: {
+            name?: string;
+            slug?: string;
+            /**
+             * @default role
+             * @enum {string}
+             */
+            kind: "role" | "subteam" | "tag";
+            /** @default #808080 */
+            color: string;
+            /** @default  */
+            icon: string;
+            /** @default 0 */
+            position: number;
+            /** @default false */
+            is_hoisted: boolean;
+            /** @default false */
+            is_mentionable: boolean;
+            /** @default [] */
+            permissions: ("channel.history" | "channel.view" | "file.delete_any" | "file.delete_own" | "file.read" | "file.upload" | "media.connect" | "media.moderate" | "media.share" | "media.speak" | "media.video" | "message.delete_any" | "message.delete_own" | "message.edit_own" | "message.pin" | "message.post" | "message.react" | "message.reply" | "message.search" | "manage_roles" | "view_audit_log")[];
+        };
+        /**
+         * WorkspaceMemberRoles
+         * @example {
+         *       "membership_id": "00000000-0000-7000-8000-000000000014",
+         *       "role_ids": [
+         *         "00000000-0000-7000-8000-000000000011"
+         *       ]
+         *     }
+         */
+        WorkspaceMemberRoles: {
+            /** Format: uuid */
+            membership_id: string;
+            role_ids: string[];
+        };
+        /** WorkspaceMemberRolesRequest */
+        WorkspaceMemberRolesRequest: {
+            role_ids: string[];
+        };
+        /**
+         * WorkspaceRoles
+         * @example {
+         *       "data": [
+         *         {
+         *           "id": "00000000-0000-7000-8000-000000000011",
+         *           "workspace_id": "00000000-0000-7000-8000-000000000012",
+         *           "organisation_id": "00000000-0000-7000-8000-000000000013",
+         *           "name": "Builders",
+         *           "slug": "builders",
+         *           "kind": "role",
+         *           "color": "#2563eb",
+         *           "icon": "wrench",
+         *           "position": 10,
+         *           "is_hoisted": true,
+         *           "is_mentionable": true,
+         *           "permissions": [
+         *             "channel.view",
+         *             "message.post"
+         *           ],
+         *           "member_count": 1,
+         *           "etag": "\"000000000000000000000000000000000000000000000000000000000000e7a9\"",
+         *           "created_at": "2026-01-02T12:00:00Z",
+         *           "updated_at": "2026-01-02T12:00:00Z"
+         *         }
+         *       ],
+         *       "assignments": [
+         *         {
+         *           "membership_id": "00000000-0000-7000-8000-000000000014",
+         *           "role_ids": [
+         *             "00000000-0000-7000-8000-000000000011"
+         *           ]
+         *         }
+         *       ]
+         *     }
+         */
+        WorkspaceRoles: {
+            data: components["schemas"]["WorkspaceRole"][];
+            assignments: components["schemas"]["WorkspaceMemberRoles"][];
+        };
+        /** WorkspaceRoleOverride */
+        WorkspaceRoleOverride: {
+            /** Format: uuid */
+            role_id: string;
+            allow: ("channel.history" | "channel.view" | "file.delete_any" | "file.delete_own" | "file.read" | "file.upload" | "media.connect" | "media.moderate" | "media.share" | "media.speak" | "media.video" | "message.delete_any" | "message.delete_own" | "message.edit_own" | "message.pin" | "message.post" | "message.react" | "message.reply" | "message.search" | "manage_roles" | "view_audit_log")[];
+            deny: ("channel.history" | "channel.view" | "file.delete_any" | "file.delete_own" | "file.read" | "file.upload" | "media.connect" | "media.moderate" | "media.share" | "media.speak" | "media.video" | "message.delete_any" | "message.delete_own" | "message.edit_own" | "message.pin" | "message.post" | "message.react" | "message.reply" | "message.search" | "manage_roles" | "view_audit_log")[];
+        };
+        /**
+         * WorkspaceRoleOverrides
+         * @example {
+         *       "data": [
+         *         {
+         *           "role_id": "00000000-0000-7000-8000-000000000011",
+         *           "allow": [
+         *             "channel.view"
+         *           ],
+         *           "deny": [
+         *             "message.post"
+         *           ]
+         *         }
+         *       ]
+         *     }
+         */
+        WorkspaceRoleOverrides: {
+            data: components["schemas"]["WorkspaceRoleOverride"][];
+        };
+        /** WorkspaceRoleOverridesRequest */
+        WorkspaceRoleOverridesRequest: {
+            overrides: components["schemas"]["WorkspaceRoleOverride"][];
+        };
+        /**
+         * WorkspaceProfile
+         * @example {
+         *       "description": "Product and engineering workspace",
+         *       "banner_preset": "cobalt",
+         *       "icon_mxc": "",
+         *       "traits": [
+         *         {
+         *           "icon": "shield",
+         *           "label": "Verified"
+         *         }
+         *       ],
+         *       "arrivals_channel_id": "00000000-0000-7000-8000-000000000015",
+         *       "rules_channel_id": null,
+         *       "moderator_updates_channel_id": null,
+         *       "security_alerts_channel_id": null,
+         *       "invites_paused": false
+         *     }
+         */
+        WorkspaceProfile: {
+            description: string;
+            banner_preset: string;
+            icon_mxc: string;
+            traits: {
+                icon: string;
+                label: string;
+            }[];
+            /** Format: uuid */
+            arrivals_channel_id: string | null;
+            /** Format: uuid */
+            rules_channel_id: string | null;
+            /** Format: uuid */
+            moderator_updates_channel_id: string | null;
+            /** Format: uuid */
+            security_alerts_channel_id: string | null;
+            invites_paused: boolean;
+        };
+        /** WorkspaceProfilePatch */
+        WorkspaceProfilePatch: {
+            description?: string;
+            banner_preset?: string;
+            icon_mxc?: string;
+            traits?: {
+                icon: string;
+                label: string;
+            }[];
+            /** Format: uuid */
+            arrivals_channel_id?: string | null;
+            /** Format: uuid */
+            rules_channel_id?: string | null;
+            /** Format: uuid */
+            moderator_updates_channel_id?: string | null;
+            /** Format: uuid */
+            security_alerts_channel_id?: string | null;
+            invites_paused?: boolean;
+        };
+        /** WorkspaceBan */
+        WorkspaceBan: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            membership_id: string;
+            display_name: string | null;
+            /** Format: email */
+            email: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** WorkspaceAdminAuditEvent */
+        WorkspaceAdminAuditEvent: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            occurred_at: string;
+            /** Format: uuid */
+            actor_id: string | null;
+            /** @enum {string} */
+            actor_type: "staff" | "tenant" | "agent" | "system";
+            action: string;
+            target_urn: string;
+            request_id: string | null;
+        };
+        /**
+         * WorkspaceBans
+         * @example {
+         *       "data": [
+         *         {
+         *           "id": "00000000-0000-7000-8000-000000000016",
+         *           "membership_id": "00000000-0000-7000-8000-000000000017",
+         *           "display_name": "Suspended Member",
+         *           "email": "member@example.invalid",
+         *           "updated_at": "2026-01-02T12:00:00Z"
+         *         }
+         *       ],
+         *       "has_more": false,
+         *       "next_cursor": null
+         *     }
+         */
+        WorkspaceBans: {
+            data: components["schemas"]["WorkspaceBan"][];
+            has_more: boolean;
+            next_cursor: string | null;
+        };
+        /**
+         * WorkspaceAuditLogs
+         * @example {
+         *       "data": [
+         *         {
+         *           "id": "00000000-0000-7000-8000-000000000018",
+         *           "occurred_at": "2026-01-02T12:00:00Z",
+         *           "actor_id": "00000000-0000-7000-8000-000000000019",
+         *           "actor_type": "tenant",
+         *           "action": "workspace.role.created",
+         *           "target_urn": "urn:kodera:workspace_role:00000000-0000-7000-8000-000000000011",
+         *           "request_id": "019467a3-0f9b-7cc3-98c2-1fa48f28f562"
+         *         }
+         *       ],
+         *       "has_more": false,
+         *       "next_cursor": null
+         *     }
+         */
+        WorkspaceAuditLogs: {
+            data: components["schemas"]["WorkspaceAdminAuditEvent"][];
+            has_more: boolean;
+            next_cursor: string | null;
+        };
+        /**
          * WorkspaceModerationRequest
          * @description Moderator actions are audited. Moderators cannot target owners or admins. Mute requires a future expiresAt, at most 30 days away; other actions refuse expiresAt. Bans block Core room tickets, Matrix joins and messages. Mutes are evaluated against server time on every publish and post.
          */
@@ -4177,6 +4649,7 @@ export interface components {
          * @description Only owners/admins can grant moderator. Scope is restricted to this organisation; channel must belong to its workspace. Expiration is mandatory and no more than 30 days away.
          */
         WorkspaceInviteLinkRequest: {
+            auto_role_ids?: string[];
             /** Format: date-time */
             expiresAt: string;
             maxUses: number;
@@ -4198,6 +4671,12 @@ export interface components {
          *     }
          */
         WorkspaceInviteLink: {
+            createdBy?: {
+                /** Format: uuid */
+                membershipId: string;
+                displayName: string | null;
+            } | null;
+            auto_role_ids?: string[];
             /** Format: uuid */
             id: string;
             /** Format: date-time */
@@ -12123,6 +12602,446 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listWorkspaceRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRoles"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createWorkspaceRole: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Client-generated key that makes this `POST` safe to retry. Use a UUID v4 per user
+                 *     intention, not per HTTP attempt: the console generates it when the button is rendered and
+                 *     keeps it across retries. Retry with the **same** key only after a `5xx` or a network
+                 *     failure, when the outcome is unknown; after any `4xx` the answer is final for that key and
+                 *     is replayed as it was, so a new attempt, after the cause is fixed, takes a **new** key.
+                 *
+                 *     The API stores the key with a fingerprint of the request body for 24 hours. A replay with
+                 *     the same key and the same body returns the first response verbatim, including its status,
+                 *     with `Idempotency-Replayed: true`. A replay with the same key and a different body is
+                 *     refused with `idempotency-key-reuse`, carrying `first_seen_at`.
+                 *
+                 *     The key is 16 to 255 visible ASCII characters (`0x21`–`0x7E`: no space, no control
+                 *     character, nothing outside ASCII). A missing or empty header is
+                 *     `400 idempotency-key-missing`; any other value outside that rule is
+                 *     `400 malformed-request`, without `errors[]`, whose pointers address the body.
+                 *
+                 *     `x-kodera-client-generated` marks it as a value the **client** produces, not one the
+                 *     caller of a generated method has to pass in. A code generator that honours the extension
+                 *     emits a key per request instead of adding a mandatory argument to every `POST` method
+                 *     that takes it; one that ignores it still gets a required header, which is what the wire
+                 *     needs. The extension changes no wire behaviour and is documented in
+                 *     `docs/api/CONVENTIONS.md` §8.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRoleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            201: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    /**
+                     * @description `true` on a response replayed from the `Idempotency-Key` store (`docs/api/CONVENTIONS.md`
+                     *     §8), whatever its status, and sent on nothing else: never on a first answer, never on an
+                     *     operation that does not take `Idempotency-Key`. A shared response such as `Conflict`
+                     *     declares it because keyed `POST` operations use that response too; on a `GET`, `PATCH`,
+                     *     `DELETE`, `discoverRealm` or `previewInvitation` it is never present. Its value is never
+                     *     `false`.
+                     */
+                    "Idempotency-Replayed"?: "true";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRole"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteWorkspaceRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier scoped to this workspace. */
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateWorkspaceRole: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier scoped to this workspace. */
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRolePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRole"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    setWorkspaceMemberRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier scoped to this workspace. */
+                membership_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceMemberRolesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceMemberRoles"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getWorkspaceChannelOverrides: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier scoped to this workspace. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRoleOverrides"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    setWorkspaceChannelOverrides: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+                /** @description Identifier scoped to this workspace. */
+                channel_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRoleOverridesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRoleOverrides"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getWorkspaceProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceProfile"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateWorkspaceProfile: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description The `ETag` of the representation this change was computed against. Required on every
+                 *     `PATCH` (`docs/api/CONVENTIONS.md` §10 and §14). Absent: `428 precondition-required`.
+                 *     Stale: `412 precondition-failed`, carrying the current tag, and the client re-reads and
+                 *     re-applies rather than overwriting a change it never saw.
+                 *
+                 *     The example is the same value the `ETag` header returns, and is deliberately non-random
+                 *     for the reason given there.
+                 */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceProfilePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    ETag: components["headers"]["ETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceProfile"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            412: components["responses"]["PreconditionFailed"];
+            422: components["responses"]["ValidationError"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaceBans: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows per page. */
+                limit?: number;
+                /** @description Opaque cursor from the preceding page, valid for one hour. */
+                cursor?: string;
+                /** @description Case-insensitive email/display-name search. */
+                q?: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBans"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listWorkspaceAuditLogs: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows per page. */
+                limit?: number;
+                /** @description Opaque cursor from the preceding page, valid for one hour. */
+                cursor?: string;
+                /** @description Exact event filter. */
+                actor_id?: string;
+                /** @description Exact event filter. */
+                action?: string;
+            };
+            header?: never;
+            path: {
+                organisation_id: components["parameters"]["OrganisationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful operation. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceAuditLogs"];
+                };
+            };
+            400: components["responses"]["MalformedRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     getMe: {
         parameters: {
             query?: never;

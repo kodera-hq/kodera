@@ -328,6 +328,38 @@ def preview_link(*, verified: VerifiedAccessToken, code: str) -> WorkspaceInvite
     return link
 
 
+def _verify_invite_auto_roles(workspace: Workspace, link: WorkspaceInviteLink) -> list[Any]:
+    from .models import WorkspaceRole
+
+    if not link.auto_role_ids:
+        return []
+    if link.created_by_id is None:
+        raise RefusalError(403)
+    creator = for_workspace(
+        organisation_id=workspace.organisation_id, membership_id=link.created_by_id
+    )
+    if creator is None or creator.role not in ADMINS:
+        raise RefusalError(403)
+    denied, _ = member_restrictions(workspace.id, creator.id)
+    if denied:
+        raise RefusalError(403)
+    roles = list(
+        WorkspaceRole.objects.filter(workspace=workspace, id__in=link.auto_role_ids).order_by("id")
+    )
+    if creator.role != "org_owner":
+        highest = (
+            WorkspaceRole.objects.filter(
+                workspace=workspace, workspacememberrole__membership_id=creator.id
+            )
+            .order_by("-position")
+            .values_list("position", flat=True)
+            .first()
+        )
+        if highest is None or any(role.position >= highest for role in roles):
+            raise RefusalError(403)
+    return roles
+
+
 @transaction.atomic
 def redeem_link(
     *, verified: VerifiedAccessToken, code: str, request_id: str
@@ -338,6 +370,8 @@ def redeem_link(
     link = _link(code, lock=True, allow_exhausted=True)
     person, identity = _identity(verified, link)
     membership = for_user(organisation_id=workspace.organisation_id, user_id=person.id, lock=True)
+    joined = membership is None
+    auto_roles = _verify_invite_auto_roles(workspace, link) if joined else []
     if membership is not None:
         if membership.state != "active" or membership.accepted_at is None:
             raise RefusalError(403)
@@ -372,13 +406,18 @@ def redeem_link(
     if updated != 1:
         raise RefusalError(404)
     WorkspaceInviteRedemption.objects.get_or_create(link=link, membership_id=membership.id)
-    from .models import WorkspaceMemberRole
+    if (
+        joined
+        and auto_roles
+        and membership.role not in ADMINS
+        and membership.id != link.created_by_id
+    ):
+        from .models import WorkspaceMemberRole
 
-    for role_id in link.auto_role_ids:
-        WorkspaceMemberRole.objects.get_or_create(
-            workspace=workspace, membership_id=membership.id, role_id=role_id
-        )
-    if link.auto_role_ids:
+        for role in auto_roles:
+            WorkspaceMemberRole.objects.get_or_create(
+                workspace=workspace, membership_id=membership.id, role=role
+            )
         _audit(workspace, identity.id, "workspace.member.roles_updated", membership.id, request_id)
     if link.role == "moderator":
         WorkspaceModerator.objects.get_or_create(workspace=workspace, membership_id=membership.id)
@@ -537,6 +576,8 @@ def admit_redemption(*, verified: VerifiedAccessToken, code: str) -> None:
     )
     if not redeemed and link.uses_count >= link.max_uses:
         raise RefusalError(404)
+    if member is None:
+        _verify_invite_auto_roles(link.workspace, link)
     if member is not None:
         restriction = WorkspaceMemberRestriction.objects.filter(
             workspace_id=link.workspace_id, membership_id=member.id
