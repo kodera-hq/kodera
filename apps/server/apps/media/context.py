@@ -7,6 +7,7 @@ from django.db import connection
 from apps.audit.services import record_workspace_resource_event
 from apps.identity.selectors import current_identity
 from apps.orgs.actor_selectors import TenantCaller
+from apps.workspaces.channel_sets import lock_workspace
 from apps.workspaces.moderation import RefusalError as WorkspaceRefusal, authorise_workspace
 from services.identity.access_tokens import VerifiedAccessToken
 
@@ -18,6 +19,15 @@ class RefusalError(ValueError):
 
 
 def caller(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -> TenantCaller:
+    # Refused callers never queue behind writers. Recheck after waiting so a
+    # committed moderation change cannot race the operation's effects.
+    principal = read_caller(verified, organisation_id)
+    if lock_workspace(principal.organisation_id) is None:
+        raise RefusalError(404)
+    return read_caller(verified, principal.organisation_id)
+
+
+def read_caller(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -> TenantCaller:
     if not connection.in_atomic_block:
         raise RuntimeError("workspace access is read in the operation transaction")
     if organisation_id is None:

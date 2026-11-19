@@ -13,7 +13,7 @@ from django.utils import timezone
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import outbound, unfurl
-from .context import RefusalError as RefusalError, audit, caller
+from .context import RefusalError as RefusalError, audit, caller, read_caller
 from .models import Attachment
 from .storage import ObjectDescriptor, ObjectMismatchError, StorageRefusedError
 from .storage_gateway import Gateway
@@ -115,7 +115,7 @@ def complete_upload(
 def get_attachment(
     *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID
 ) -> dict[str, Any]:
-    principal = caller(verified, organisation_id)
+    principal = read_caller(verified, organisation_id)
     row = Attachment.objects.filter(
         id=attachment_id, organisation_id=principal.organisation_id, completed_at__isnull=False
     ).first()
@@ -136,15 +136,15 @@ def prepare_preview(
     """Authorize and check the bounded cache before doing network I/O in autocommit."""
     if connection.in_atomic_block:
         raise RuntimeError("URL preview fetch requires no enclosing transaction")
-    if not isinstance(url, str) or len(url) > 8192:
-        raise RefusalError(422)
-    try:
-        digest = hashlib.sha256(url.encode()).hexdigest()
-    except UnicodeError:
-        raise RefusalError(422) from None
-    key = "media-preview:" + str(organisation_id) + ":" + digest
     with transaction.atomic():
-        caller(verified, organisation_id)
+        read_caller(verified, organisation_id)
+        if not isinstance(url, str) or len(url) > 8192:
+            raise RefusalError(422)
+        try:
+            digest = hashlib.sha256(url.encode()).hexdigest()
+        except UnicodeError:
+            raise RefusalError(422) from None
+        key = "media-preview:" + str(organisation_id) + ":" + digest
         cached = cache.get(key)
     if cached is not None:
         return cached
@@ -157,7 +157,7 @@ def prepare_preview(
             raise RefusalError(503, "service-unavailable") from None
         raise RefusalError(422) from None
     with transaction.atomic():
-        caller(verified, organisation_id)
+        read_caller(verified, organisation_id)
         cache.set(key, result, timeout=PREVIEW_TTL)
     return result
 
@@ -183,7 +183,7 @@ def preview(
 
 @transaction.atomic
 def authorize(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -> None:
-    caller(verified, organisation_id)
+    read_caller(verified, organisation_id)
 
 
 def quota_replay_policy():

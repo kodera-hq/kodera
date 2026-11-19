@@ -52,3 +52,10 @@ autocommit, before the HTTP replay transaction; the final audit rechecks current
 workspace authority. Successful metadata is cached for five minutes per organisation
 and URL digest using the configured Django cache. Replay hits and key reuse skip
 fetching, and missing or malformed replay keys do not start network work.
+
+Attachment writes and notification mutations precheck current authority, take the
+workspace `FOR UPDATE` fence before membership or resource locks, and recheck authority
+after waiting. Preview audit writes use the same fence. Attachment reads, media
+authorization, preview preparation and the read-only notification inbox use unlocked
+authority checks. Preview preparation checks authority before URL validation and
+rechecks it before caching fetched metadata.

@@ -12,7 +12,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
-from apps.media.context import RefusalError as RefusalError, audit, caller
+from apps.media.context import RefusalError as RefusalError, audit, caller, read_caller
 from apps.orgs.actor_selectors import TenantCaller
 from apps.orgs.workspace_members import for_workspace
 from core import sealing
@@ -191,7 +191,7 @@ def visible(row: Notification, principal: TenantCaller, verified: VerifiedAccess
 
 @transaction.atomic
 def inbox(*, verified: VerifiedAccessToken, cursor: str | None, limit: int) -> dict[str, Any]:
-    principal = caller(verified)
+    principal = read_caller(verified)
     if type(limit) is not int or not 1 <= limit <= 200:
         raise RefusalError(400)
     salt = f"notification-inbox:v1:{principal.organisation_id}:{principal.membership_id}:{verified.issuer}:{verified.subject}"
