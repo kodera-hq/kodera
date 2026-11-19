@@ -9,6 +9,7 @@ from .access_tokens import (
     IssuerKeySnapshot,
     TokenVerificationError,
     VerifiedAccessToken,
+    unverified_issuer,
     verify_access_token,
 )
 
@@ -109,7 +110,10 @@ def verify_configured_token(
 
     A customer-lane token must also name, as `azp`, one of its issuer's allowed clients: one with
     no `azp`, or another client's, is refused like any other token (`TokenVerificationError`)."""
+    issuer = unverified_issuer(compact)
     for entry in trusted:
+        if entry.snapshot.issuer != issuer:
+            continue
         try:
             verified = verify_access_token(compact, admitted=entry.snapshot)
         except TokenVerificationError:

@@ -13,7 +13,7 @@ def document_visible(
     principal: TenantCaller, document_id: UUID, *, verified: VerifiedAccessToken
 ) -> bool:
     try:
-        workspace_id, current = services.context(verified, principal.organisation_id)
+        workspace_id, current = services.read_context(verified, principal.organisation_id)
         if (current.membership_id, current.identity_id) != (
             principal.membership_id,
             principal.identity_id,

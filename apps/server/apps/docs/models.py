@@ -78,7 +78,10 @@ class DocumentLink(StoredModel):
                 name="docs_link_title_bound",
             ),
         ]
-        indexes = [models.Index(fields=["target", "-id"], name="docs_backlinks")]
+        indexes = [
+            models.Index(fields=["target", "-id"], name="docs_backlinks"),
+            models.Index(fields=["target_title"], name="docs_link_title_lookup"),
+        ]
 
 
 class DocumentSnapshot(StoredModel):

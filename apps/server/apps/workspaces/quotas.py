@@ -6,9 +6,9 @@ from typing import Any
 from django.db import connection, transaction
 from django.utils import timezone
 
-from .channel_sets import lock_workspace
 from .models import WorkspaceQuota
 from .moderation import RefusalError, authorise_workspace
+from .selectors import workspace_id_for
 
 
 def is_guard(error: Exception) -> bool:
@@ -50,10 +50,10 @@ def violation(error: Exception) -> dict[str, Any] | None:
 
 @transaction.atomic
 def read(*, verified, organisation_id):
-    workspace_id = lock_workspace(organisation_id)
+    workspace_id = workspace_id_for(organisation_id=organisation_id)
     if workspace_id is None:
         raise RefusalError(404)
-    authorise_workspace(verified=verified, organisation_id=organisation_id)
+    authorise_workspace(verified=verified, organisation_id=organisation_id, lock=False)
     policy = WorkspaceQuota.objects.filter(workspace_id=workspace_id).first()
     if policy is None:
         raise RefusalError(503, "service-unavailable")

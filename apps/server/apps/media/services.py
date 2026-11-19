@@ -1,17 +1,19 @@
 """Membership-authorized attachment tickets, verified completion and bounded previews."""
 
+import hashlib
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from django.conf import settings
-from django.db import transaction
+from django.core.cache import cache
+from django.db import connection, transaction
 from django.utils import timezone
 
 from services.identity.access_tokens import VerifiedAccessToken
 
 from . import outbound, unfurl
-from .context import RefusalError as RefusalError, audit, caller
+from .context import RefusalError as RefusalError, audit, caller, read_caller
 from .models import Attachment
 from .storage import ObjectDescriptor, ObjectMismatchError, StorageRefusedError
 from .storage_gateway import Gateway
@@ -113,7 +115,7 @@ def complete_upload(
 def get_attachment(
     *, verified: VerifiedAccessToken, organisation_id: UUID, attachment_id: UUID
 ) -> dict[str, Any]:
-    principal = caller(verified, organisation_id)
+    principal = read_caller(verified, organisation_id)
     row = Attachment.objects.filter(
         id=attachment_id, organisation_id=principal.organisation_id, completed_at__isnull=False
     ).first()
@@ -125,11 +127,27 @@ def get_attachment(
         raise RefusalError(503, "service-unavailable") from None
 
 
-@transaction.atomic
-def preview(
-    *, verified: VerifiedAccessToken, organisation_id: UUID, url: str, request_id: str
+PREVIEW_TTL = 300
+
+
+def prepare_preview(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, url: str
 ) -> dict[str, str]:
-    principal = caller(verified, organisation_id)
+    """Authorize and check the bounded cache before doing network I/O in autocommit."""
+    if connection.in_atomic_block:
+        raise RuntimeError("URL preview fetch requires no enclosing transaction")
+    with transaction.atomic():
+        read_caller(verified, organisation_id)
+        if not isinstance(url, str) or len(url) > 8192:
+            raise RefusalError(422)
+        try:
+            digest = hashlib.sha256(url.encode()).hexdigest()
+        except UnicodeError:
+            raise RefusalError(422) from None
+        key = "media-preview:" + str(organisation_id) + ":" + digest
+        cached = cache.get(key)
+    if cached is not None:
+        return cached
     try:
         result = unfurl.unfurl(url)
     except outbound.BlockedTargetError as failure:
@@ -138,14 +156,34 @@ def preview(
         if failure.reason in {"timeout", "unavailable", "resolver-busy"}:
             raise RefusalError(503, "service-unavailable") from None
         raise RefusalError(422) from None
+    with transaction.atomic():
+        read_caller(verified, organisation_id)
+        cache.set(key, result, timeout=PREVIEW_TTL)
+    return result
+
+
+@transaction.atomic
+def record_preview(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, result: dict[str, str], request_id: str
+) -> dict[str, str]:
+    principal = caller(verified, organisation_id)
     # The URL, its query and extracted content never enter the append-only audit record.
     audit(principal, "workspace.url.previewed", principal.membership_id, request_id)
     return result
 
 
+def preview(
+    *, verified: VerifiedAccessToken, organisation_id: UUID, url: str, request_id: str
+) -> dict[str, str]:
+    result = prepare_preview(verified=verified, organisation_id=organisation_id, url=url)
+    return record_preview(
+        verified=verified, organisation_id=organisation_id, result=result, request_id=request_id
+    )
+
+
 @transaction.atomic
 def authorize(verified: VerifiedAccessToken, organisation_id: UUID | None = None) -> None:
-    caller(verified, organisation_id)
+    read_caller(verified, organisation_id)
 
 
 def quota_replay_policy():

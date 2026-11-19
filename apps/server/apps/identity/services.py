@@ -106,8 +106,10 @@ def read_staff_community(*, verified: VerifiedAccessToken) -> CustomerRead:
 
     if not configured_slug():
         raise CustomerReadForbiddenError()
-    ensure_community_membership(verified=verified)
     shared = community_member(verified=verified)
+    if shared is None:
+        ensure_community_membership(verified=verified)
+        shared = community_member(verified=verified)
     if shared is None:
         raise CustomerReadForbiddenError()
     principal, member = shared

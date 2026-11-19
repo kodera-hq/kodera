@@ -61,15 +61,27 @@ def attachment(request: HttpRequest, organisation_id: UUID, attachment_id: UUID)
 
 @declares(Operation("POST", "unfurlUrl", "workspace_unfurl:create"))
 def unfurl(request: HttpRequest, organisation_id: UUID) -> HttpResponse:
-    def post(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+    def prepare(verified: VerifiedAccessToken, request_id: str) -> http.Handler:
         data = http.body(request, {"url"}, {"url"})
-        return http.json_response(
-            service.preview(
-                verified=verified,
-                organisation_id=organisation_id,
-                url=data["url"],
-                request_id=request_id,
-            )
+        result = service.prepare_preview(
+            verified=verified, organisation_id=organisation_id, url=data["url"]
         )
 
-    return http.serve(request, {"POST": post}, organisation_id)
+        def post(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+            return http.json_response(
+                service.record_preview(
+                    verified=verified,
+                    organisation_id=organisation_id,
+                    result=result,
+                    request_id=request_id,
+                )
+            )
+
+        return post
+
+    def unprepared(verified: VerifiedAccessToken, request_id: str) -> HttpResponse:
+        # An answer may expire between the preparation probe and the replay lookup.
+        # Retry in autocommit rather than fetching inside the replay transaction.
+        raise service.RefusalError(503, "service-unavailable")
+
+    return http.serve(request, {"POST": unprepared}, organisation_id, prepare=prepare)

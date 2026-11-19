@@ -27,7 +27,7 @@ def set_consent(
 ) -> DigestConsent:
     if enabled and WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
-    _, principal = documents.context(verified, organisation_id)
+    _, principal = documents.write_context(verified, organisation_id)
     if enabled and WorkspaceCutoff.objects.filter(organisation_id=organisation_id).exists():
         raise ExtensionRefusedError("extension_workspace_cut_off", 410)
     if type(enabled) is not bool or locale not in {"en", "fr"}:

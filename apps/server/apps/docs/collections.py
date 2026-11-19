@@ -63,7 +63,7 @@ def audit(principal, row, action, request_id):
 
 @transaction.atomic
 def create(*, verified, organisation_id, body, request_id):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.write_context(verified, organisation_id)
     schema.object_fields(body, {"title", "properties", "views"})
     schema.views(body["properties"], body["views"])
     row = Collection.objects.create(
@@ -79,13 +79,13 @@ def create(*, verified, organisation_id, body, request_id):
 
 @transaction.atomic
 def read(*, verified, organisation_id, collection_id):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.read_context(verified, organisation_id)
     return wire(get(workspace_id, collection_id, principal), principal)
 
 
 @transaction.atomic
 def patch(*, verified, organisation_id, collection_id, body, if_match, request_id):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.write_context(verified, organisation_id)
     row = get(workspace_id, collection_id, principal, True)
     if not if_match:
         raise RefusalError(428)
@@ -112,7 +112,7 @@ def patch(*, verified, organisation_id, collection_id, body, if_match, request_i
 
 @transaction.atomic
 def delete(*, verified, organisation_id, collection_id, request_id):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.write_context(verified, organisation_id)
     row = get(workspace_id, collection_id, principal, True)
     now = timezone.now()
     row.deleted_at, row.purge_after = now, now + timedelta(days=30)
@@ -130,7 +130,7 @@ def row_wire(row):
 
 @transaction.atomic
 def read_row(*, verified, organisation_id, collection_id, document_id):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.read_context(verified, organisation_id)
     collection = get(workspace_id, collection_id, principal)
     services.resource(
         workspace_id=workspace_id, principal=principal, verified=verified, document_id=document_id
@@ -153,7 +153,7 @@ def put_row(
     request_id,
     if_none_match="",
 ):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.write_context(verified, organisation_id)
     collection = get(workspace_id, collection_id, principal, True)
     services.resource(
         workspace_id=workspace_id,
@@ -196,7 +196,7 @@ def put_row(
 
 @transaction.atomic
 def list_collections(*, verified, organisation_id, cursor, limit):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.read_context(verified, organisation_id)
     salt = services.cursor_salt(principal, verified, "collections")
     after = services.anchor(cursor, salt, limit)
     rows = Collection.objects.filter(workspace_id=workspace_id, deleted_at__isnull=True)
@@ -226,7 +226,7 @@ def query(
     cursor: str | None,
     limit: int,
 ):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.read_context(verified, organisation_id)
     collection = get(workspace_id, collection_id, principal)
     schema.object_fields(body, set(), {"filters", "sorts", "viewId"})
     if type(limit) is not int or not 1 <= limit <= 200:
@@ -313,7 +313,7 @@ def query(
 
 @transaction.atomic
 def delete_row(*, verified, organisation_id, collection_id, document_id, if_match, request_id):
-    workspace_id, principal = services.context(verified, organisation_id)
+    workspace_id, principal = services.write_context(verified, organisation_id)
     collection = get(workspace_id, collection_id, principal, True)
     services.resource(
         workspace_id=workspace_id,

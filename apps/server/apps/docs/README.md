@@ -2,7 +2,7 @@
 
 Status: Implemented; production service release remains operator-controlled
 
-Workspace documents live in PostgreSQL under workspace-serialized ownership,
+Workspace documents live in PostgreSQL under workspace-serialized write ownership,
 parent-tree validation, wikilink resolution, prefix/full-text search, and an
 immutable binary update journal backed by compacted snapshots. Every read,
 mutation, backlink page, search page, and realtime session grant checks active
@@ -21,3 +21,9 @@ audit events through the bounded `docs_collab_audit` database port. Its dedicate
 database login holds only document table/column grants; authorization and audit
 ports fence foreign-table access. Each ticket nonce is committed as redeemed
 before its first snapshot is disclosed, so reconnects obtain a fresh ticket.
+
+Read context resolution (including collection queries and quota reads) takes no
+workspace row lock. Structural and quota-mutating writes authorize before taking
+the workspace lock and recheck authority after acquiring it. Document PATCHes
+replace outgoing links in batches only for changed Markdown; creation and renaming
+resolve incoming references through the indexed old/new title buckets.

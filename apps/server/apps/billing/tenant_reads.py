@@ -43,7 +43,10 @@ APP_STATE = {
     "maintenance": "maintenance",
 }
 # OrganisationStatusSummary.overall, by tenant status; any other status is `operational`.
+# Pending infrastructure is not operational, even when no application URL is present.
 OVERALL = {
+    "ordered": "maintenance",
+    "provisioning": "maintenance",
     "upgrading": "maintenance",
     "maintenance": "maintenance",
     "suspended": "major_outage",
