@@ -166,6 +166,7 @@ export class Actor {
     readonly page: Page,
     readonly budget: RateBudget,
     readonly ledger: NetworkLedger,
+    readonly foreignLedger: NetworkLedger | undefined,
     private readonly recorder: Awaited<ReturnType<typeof recordNetwork>>,
     private readonly origins: ReturnType<typeof targets>,
     readonly homeserverOrigin: string,
@@ -208,6 +209,7 @@ export class Actor {
   ) {
     const origins = targets()
     const actorInput = input.actors[alias]
+    const sharedHomeserver = exactOrigin(input.homeserverOrigin)
     const actorHomeserver = exactOrigin(actorInput.homeserverOrigin ?? input.homeserverOrigin)
     const identity = JSON.stringify([actorInput.realm, actorInput.account.username])
     guard(!claimedIdentities.has(identity), 'WAVE2_REUSED_IDENTITY')
@@ -225,13 +227,25 @@ export class Actor {
       const allowed = [
         ...new Set([
           ...Object.values(origins),
-          exactOrigin(input.homeserverOrigin),
           actorHomeserver,
           ...(input.livekitOrigin ? [exactOrigin(input.livekitOrigin)] : []),
           ...(instrumentation.extraOrigins ?? []).map(exactOrigin),
         ]),
       ]
-      const ledger = new NetworkLedger(actorInput.network, allowed)
+      const ownTemplates: NetworkTemplate[] = []
+      const foreignTemplates: NetworkTemplate[] = []
+      for (const template of actorInput.network) {
+        if (
+          actorHomeserver !== sharedHomeserver &&
+          exactOrigin(template.origin) === sharedHomeserver
+        )
+          foreignTemplates.push(template)
+        else ownTemplates.push(template)
+      }
+      const ledger = new NetworkLedger(ownTemplates, allowed)
+      const foreignLedger = foreignTemplates.length
+        ? new NetworkLedger(foreignTemplates, [sharedHomeserver])
+        : undefined
       const recorder = await recordNetwork(context, ledger, instrumentation.allowedRequestFailure)
       const detachNavigation = await installMatrixNavigationBarrier(
         context,
@@ -248,6 +262,7 @@ export class Actor {
         page,
         budget,
         ledger,
+        foreignLedger,
         recorder,
         origins,
         actorHomeserver,
@@ -372,6 +387,7 @@ export class Actor {
   }
   async assertClean() {
     await this.recorder.assertClean()
+    this.foreignLedger?.assertClean()
     this.budget.assertClean()
   }
   async denyForeignJoin(homeserver: string, roomId: string) {
@@ -380,6 +396,7 @@ export class Actor {
     if (this.homeserverOrigin !== target) {
       const parent = parentDomain(this.homeserverOrigin)
       guard(parent && parent === parentDomain(target), 'WAVE2_FOREIGN_DOMAIN_BOUNDARY')
+      guard(this.foreignLedger, 'R1_UNADMITTED_ORIGIN')
       this.budget.reserve(this.alias, 'local-join')
       const joinPath = `/_matrix/client/v3/join/${encodeURIComponent(roomId)}`
       const refusals = [
@@ -388,12 +405,14 @@ export class Actor {
           status: 502,
           errcode: 'M_UNKNOWN',
           marker: 'WAVE2_MATRIX_FOREIGN_JOIN',
+          ledger: this.ledger,
         },
         {
           url: `${target}${joinPath}`,
           status: 401,
           errcode: 'M_UNKNOWN_TOKEN',
           marker: 'WAVE2_MATRIX_FOREIGN_TOKEN',
+          ledger: this.foreignLedger,
         },
       ]
       for (const refusal of refusals) {
@@ -404,7 +423,7 @@ export class Actor {
           failOnStatusCode: false,
         })
         const body: unknown = await response.json()
-        this.ledger.observe({
+        refusal.ledger.observe({
           url: response.url(),
           method: 'POST',
           status: response.status(),

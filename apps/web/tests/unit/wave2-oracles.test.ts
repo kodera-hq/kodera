@@ -132,7 +132,7 @@ describe('actor homeserver isolation', () => {
     } as unknown as Wave2Input
   }
   const readFixture = async (input: Wave2Input) => {
-    const dir = await mkdtemp(webPath('tests/wave2/runtime/origin-unit-'))
+    const dir = await mkdtemp(webPath('tests/wave2/origin-unit-'))
     const path = resolve(dir, 'input.json')
     try {
       await writeFile(path, JSON.stringify(input))
@@ -146,7 +146,6 @@ describe('actor homeserver isolation', () => {
   it.each([undefined, HS, outsider, 'http://127.0.0.1:8008'])(
     'validates the optional actor origin %s',
     async (origin) => {
-      await mkdir(webPath('tests/wave2/runtime'), { recursive: true })
       expect((await readFixture(inputFor(origin))).actors.C.homeserverOrigin).toBe(origin)
     }
   )
@@ -167,7 +166,8 @@ describe('actor homeserver isolation', () => {
   const setup = async (
     origin: string | undefined,
     replies = [{ status: 403, body: { errcode: 'M_FORBIDDEN' } }],
-    capture = true
+    capture = true,
+    includeForeignTemplate = true
   ) => {
     const input = inputFor(origin)
     input.actors.C.network = [
@@ -180,7 +180,7 @@ describe('actor homeserver isolation', () => {
         query: origin && origin !== HS ? { server_name: new URL(HS).host } : {},
         requiredBodyKeys: ['errcode'],
       },
-      ...(origin && origin !== HS
+      ...(origin && origin !== HS && includeForeignTemplate
         ? [{ origin: HS, method: 'POST', pathPattern: joinPath, expectedStatus: 401, max: 1 }]
         : []),
     ]
@@ -227,6 +227,7 @@ describe('actor homeserver isolation', () => {
     try {
       expect(actor.homeserverOrigin).toBe(HS)
       expect(actor.ledger.allowedOrigins.filter((value) => value === HS)).toHaveLength(1)
+      expect(actor.foreignLedger).toBeUndefined()
       await actor.denyForeignJoin(HS, room)
       expect(post).toHaveBeenCalledExactlyOnceWith(`${HS}${joinPath}`, {
         headers: { authorization: 'Bearer synthetic-own-authority' },
@@ -247,9 +248,11 @@ describe('actor homeserver isolation', () => {
       { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
     ])
     try {
-      request(HS, 'Bearer foreign-authority')
       await actor.denyForeignJoin(HS, room)
       expect(actor.homeserverOrigin).toBe(outsider)
+      expect(actor.ledger.allowedOrigins).toContain(outsider)
+      expect(actor.ledger.allowedOrigins).not.toContain(HS)
+      expect(actor.foreignLedger?.allowedOrigins).toEqual([HS])
       expect(new Set(actor.ledger.allowedOrigins).size).toBe(actor.ledger.allowedOrigins.length)
       expect(post.mock.calls.map(([url]) => url)).toEqual([
         `${outsider}${joinPath}?server_name=matrix.example.test`,
@@ -266,12 +269,72 @@ describe('actor homeserver isolation', () => {
           },
         ])
       budget.assertExact('C', { 'local-join': 1 })
-      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1, 1])
+      expect(actor.ledger.receipt()).toEqual([
+        expect.objectContaining({ origin: outsider, expectedStatus: 502, count: 1 }),
+      ])
+      expect(actor.foreignLedger?.receipt()).toEqual([
+        expect.objectContaining({ origin: HS, expectedStatus: 401, count: 1 }),
+      ])
       await actor.assertClean()
       request(HS, 'Bearer foreign-authority', 'POST', '/_matrix/client/v3/login')
       budget.assertExact('C', { 'matrix-login': 0 })
       request(outsider, 'Bearer synthetic-own-authority', 'POST', '/_matrix/client/v3/login')
       budget.assertExact('C', { 'matrix-login': 1 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it('rejects a successful browser request to the shared homeserver while retaining both probe refusals', async () => {
+    const { actor, emitter, request } = await setup(outsider, [
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
+      { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
+    ])
+    try {
+      await actor.denyForeignJoin(HS, room)
+      await actor.assertClean()
+      request(HS, 'Bearer foreign-authority')
+      expect(actor.ledger.failures).toContain('R1_UNADMITTED_ORIGIN')
+      emitter.emit('response', {
+        url: () => `${HS}/_matrix/client/v3/sync`,
+        request: () => ({ method: () => 'GET' }),
+        status: () => 200,
+        headers: () => ({ 'content-type': 'application/json' }),
+      })
+      await expect(actor.assertClean()).rejects.toThrow('R1_UNADMITTED_ORIGIN')
+      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1])
+      expect(actor.foreignLedger?.receipt().map((row) => row.count)).toEqual([1])
+      actor.foreignLedger?.assertClean()
+    } finally {
+      await actor.close()
+    }
+  })
+  it('requires a foreign probe ledger before transmitting authority', async () => {
+    const { actor, post, budget } = await setup(outsider, [], true, false)
+    try {
+      expect(actor.foreignLedger).toBeUndefined()
+      await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow('R1_UNADMITTED_ORIGIN')
+      expect(post).not.toHaveBeenCalled()
+      budget.assertExact('C', { 'local-join': 0 })
+    } finally {
+      await actor.close()
+    }
+  })
+  it('checks foreign probe template limits when asserting actor cleanliness', async () => {
+    const { actor } = await setup(outsider, [
+      { status: 502, body: { errcode: 'M_UNKNOWN' } },
+      { status: 401, body: { errcode: 'M_UNKNOWN_TOKEN' } },
+    ])
+    try {
+      await actor.denyForeignJoin(HS, room)
+      actor.foreignLedger?.observe({
+        url: `${HS}${joinPath}`,
+        method: 'POST',
+        status: 401,
+        contentType: 'application/json',
+        body: { errcode: 'M_UNKNOWN_TOKEN' },
+      })
+      actor.ledger.assertClean()
+      await expect(actor.assertClean()).rejects.toThrow('R1_MAX_COUNT')
     } finally {
       await actor.close()
     }
@@ -310,7 +373,8 @@ describe('actor homeserver isolation', () => {
     try {
       await expect(actor.denyForeignJoin(HS, room)).rejects.toThrow('WAVE2_MATRIX_FOREIGN_TOKEN')
       expect(post).toHaveBeenCalledTimes(2)
-      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1, 1])
+      expect(actor.ledger.receipt().map((row) => row.count)).toEqual([1])
+      expect(actor.foreignLedger?.receipt().map((row) => row.count)).toEqual([1])
       budget.assertExact('C', { 'local-join': 1 })
     } finally {
       await actor.close()
@@ -408,6 +472,7 @@ describe('workspace font readiness', () => {
 describe('Matrix navigation response barrier', () => {
   const routeFor = (continued: () => Promise<void>) => ({
     continue: continued,
+    abort: vi.fn(async () => {}),
     request: () => ({ frame: () => ({ evaluate: async () => {} }) }),
   })
   it('finishes an in-flight Core body before continuing the full-page SSO navigation', async () => {
@@ -438,27 +503,47 @@ describe('Matrix navigation response barrier', () => {
     await navigation
     expect(continued).toHaveBeenCalledOnce()
   })
-  it('refuses a failed body read rather than exempting it', async () => {
-    const emitter = new EventEmitter()
-    let navigate!: (route: { continue(): Promise<void> }) => Promise<void>
-    const context = Object.assign(emitter, {
-      route: async (_match: unknown, callback: typeof navigate) => {
-        navigate = callback
-      },
-    }) as unknown as BrowserContext
-    await installMatrixNavigationBarrier(context, API, HS)
-    const request = { url: () => API + '/api/v1/me' }
-    emitter.emit('request', request)
-    emitter.emit('response', {
-      request: () => request,
-      body: async () => {
-        throw new Error('body refused')
-      },
-    })
-    const continued = vi.fn(async () => {})
-    await expect(navigate(routeFor(continued))).rejects.toThrow('WAVE2_CORE_RESPONSE_BARRIER')
-    expect(continued).not.toHaveBeenCalled()
-  })
+  it.each([false, true])(
+    'aborts a failed body read before refusing even if abort rejects: %s',
+    async (abortFails) => {
+      const emitter = new EventEmitter()
+      let navigate!: (route: { continue(): Promise<void> }) => Promise<void>
+      const context = Object.assign(emitter, {
+        route: async (_match: unknown, callback: typeof navigate) => {
+          navigate = callback
+        },
+      }) as unknown as BrowserContext
+      await installMatrixNavigationBarrier(context, API, HS)
+      const request = { url: () => API + '/api/v1/me' }
+      emitter.emit('request', request)
+      emitter.emit('response', {
+        request: () => request,
+        body: async () => {
+          throw new Error('body refused')
+        },
+      })
+      const continued = vi.fn(async () => {})
+      const route = routeFor(continued)
+      let finishAbort!: () => void
+      const aborted = new Promise<void>((resolve) => {
+        finishAbort = resolve
+      })
+      route.abort.mockImplementation(async () => {
+        await aborted
+        if (abortFails) throw new Error('abort refused')
+      })
+      let settled = false
+      const navigation = navigate(route).finally(() => {
+        settled = true
+      })
+      const refusal = expect(navigation).rejects.toThrow('WAVE2_CORE_RESPONSE_BARRIER')
+      await vi.waitFor(() => expect(route.abort).toHaveBeenCalledOnce())
+      expect(settled).toBe(false)
+      finishAbort()
+      await refusal
+      expect(continued).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('responsive Matrix sync lifecycle', () => {
@@ -1724,7 +1809,7 @@ describe('adversarial regression coverage', () => {
     const get = vi.fn().mockResolvedValue({ status: () => 200, json: async () => ({ messages }) })
     await expect(
       findMailLink({ get } as unknown as APIRequestContext, API, 'synthetic@example.test', /claim/)
-    ).rejects.toThrow(/^WAVE2_MAIL_SCAN$/)
+    ).rejects.toThrow(/^WAVE2_MAIL_SCAN_LIMIT$/)
     expect(get).toHaveBeenCalledTimes(100)
     get
       .mockReset()

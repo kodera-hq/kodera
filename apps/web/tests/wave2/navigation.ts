@@ -49,6 +49,7 @@ export async function installMatrixNavigationBarrier(
           })
         })
     } while (pending.size)
+    if (failed) await route.abort().catch(() => {})
     guard(!failed, 'WAVE2_CORE_RESPONSE_BARRIER')
     await route.continue()
   }

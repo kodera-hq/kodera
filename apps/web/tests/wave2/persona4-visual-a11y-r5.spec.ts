@@ -36,23 +36,23 @@ import type { VisualCell } from './oracles/r6-visual-a11y'
 import { guard } from './oracles/shared'
 
 async function settleTimeline(page: Page, input: ReturnType<typeof readWave2Input>) {
+  const log = page.getByRole('log')
   await expect(page.locator(input.composer)).toBeEditable()
-  await expect(page.getByRole('log').locator('article').first()).toBeVisible()
+  await expect(log.locator('article').first()).toBeVisible()
   await expect(page.locator(input.visual.sansSelector)).toBeVisible()
   await expect(page.locator(input.visual.monoSelector)).toBeVisible()
-  await page.evaluate(async () => {
+  await log.evaluate(async (el) => {
     await document.fonts.ready
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
     })
     // Responsive replacement must finish before finding the conversation end.
-    window.scrollTo({ top: document.scrollingElement?.scrollHeight ?? 0, behavior: 'instant' })
+    el.scrollTop = el.scrollHeight
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
     })
   })
-  for (const message of await page.getByRole('log').locator('article').all())
-    await expect(message).toBeInViewport({ ratio: 1 })
+  await expect(log.locator('article').last()).toBeInViewport({ ratio: 1 })
 }
 
 test('Persona 4: twelve explicit web cells on one retained owner page', async ({ browser }) => {

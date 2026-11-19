@@ -55,10 +55,10 @@ export async function findMailLink(
       }
       if (body.messages.length < limit) return undefined
     }
-    throw new Error('WAVE2_MAIL_SCAN_LIMIT')
   } catch {
     throw new Error('WAVE2_MAIL_SCAN')
   }
+  throw new Error('WAVE2_MAIL_SCAN_LIMIT')
 }
 
 export async function linkFromMail(
