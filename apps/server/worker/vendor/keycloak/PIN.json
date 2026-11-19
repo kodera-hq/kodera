@@ -1,10 +1,10 @@
 {
   "repository": "kodera-hq/kodera-ops",
-  "commit": "5d7b53c6a3c4ac7949491ede7330a2578659b23b",
+  "commit": "f1e6ddca2d511d305951ec714b15aa1b7edcac8f",
   "files": {
     "realm-apply.sh": {
       "source": "keycloak-ops/tools/realm-apply.sh",
-      "sha256": "8614884b4cc3c2369b96c0df2bc48ba45624fd12133d9ddf563a357b46f81a25"
+      "sha256": "d7bb4f3d6b40a8ace39f6acced1ffdba2566438d76e29ad63ffc49c1f0c00f90"
     },
     "org-realm-template.json": {
       "source": "keycloak-ops/deploy/keycloak/realms/org-realm-template.json",
